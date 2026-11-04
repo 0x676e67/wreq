@@ -19,7 +19,7 @@ async fn non_op_layer() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .layer(Identity::new())
         .no_proxy()
         .build()
@@ -36,7 +36,7 @@ async fn non_op_layer_with_timeout() {
 
     let server = server::http(move |_req| async { http::Response::default() });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .layer(Identity::new())
         .connector_layer(DelayLayer::new(Duration::from_secs(60)))
         .connect_timeout(Duration::from_millis(200))
@@ -59,7 +59,7 @@ async fn with_connect_timeout_layer_never_returning() {
 
     let server = server::http(move |_req| async { http::Response::default() });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .connector_layer(DelayLayer::new(Duration::from_secs(60)))
         .layer(TimeoutLayer::new(Duration::from_millis(100)))
         .no_proxy()
@@ -83,7 +83,7 @@ async fn with_connect_timeout_layer_slow() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .layer(DelayLayer::new(Duration::from_millis(200)))
         .layer(TimeoutLayer::new(Duration::from_millis(100)))
         .no_proxy()
@@ -105,7 +105,7 @@ async fn multiple_timeout_layers_under_threshold() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .layer(DelayLayer::new(Duration::from_millis(100)))
         .layer(TimeoutLayer::new(Duration::from_millis(200)))
         .layer(TimeoutLayer::new(Duration::from_millis(300)))
@@ -128,7 +128,7 @@ async fn multiple_timeout_layers_over_threshold() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .layer(DelayLayer::new(Duration::from_millis(100)))
         .layer(TimeoutLayer::new(Duration::from_millis(50)))
         .layer(TimeoutLayer::new(Duration::from_millis(50)))
@@ -157,7 +157,7 @@ async fn layer_insert_headers() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .layer(tower::util::MapRequestLayer::new(
             move |mut req: http::Request<wreq::Body>| {
                 req.headers_mut().insert(
@@ -184,7 +184,7 @@ async fn with_concurrency_limit_layer_timeout() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .layer(DelayLayer::new(Duration::from_millis(100)))
         .layer(SharedConcurrencyLimitLayer::new(2))
         .timeout(Duration::from_millis(200))
@@ -220,7 +220,7 @@ async fn with_concurrency_limit_layer_success() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .layer(DelayLayer::new(Duration::from_millis(100)))
         .layer(TimeoutLayer::new(Duration::from_millis(200)))
         .layer(ConcurrencyLimitLayer::new(1)) //2
@@ -259,7 +259,10 @@ async fn no_generic_bounds_required_for_client_new() {
 
     let url = format!("http://{}", server.addr());
 
-    let res = wreq::get(url).send().await;
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(url)
+        .send()
+        .await;
 
     assert!(res.is_ok());
 }

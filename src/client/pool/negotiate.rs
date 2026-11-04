@@ -140,24 +140,16 @@ pub(super) struct Builder<C, I, L, R> {
     signal: UpgradeSignal,
 }
 
-/// Type-state marker indicating that the connector has not been supplied.
-/// `Builder::connect` replaces it with a transport-producing service.
-/// It owns no connection and is absent from the built pool.
+/// Marks a builder awaiting [`Builder::connect`].
 #[derive(Debug)]
 pub(super) struct WantsConnect;
-/// Type-state marker indicating that the inspection predicate is missing.
-/// `Builder::inspect` replaces it with the protocol-selection predicate.
-/// It holds no runtime state and is absent from the built pool.
+/// Marks a builder awaiting [`Builder::inspect`].
 #[derive(Debug)]
 pub(super) struct WantsInspect;
-/// Type-state marker indicating that the fallback layer is missing.
-/// `Builder::fallback` replaces it with the layer for non-upgraded connections.
-/// It owns no fallback service and is absent from the built pool.
+/// Marks a builder awaiting [`Builder::fallback`].
 #[derive(Debug)]
 pub(super) struct WantsFallback;
-/// Type-state marker indicating that the upgrade layer is missing.
-/// `Builder::upgrade` replaces it with the layer for inspected connections.
-/// It owns no upgraded service and is absent from the built pool.
+/// Marks a builder awaiting [`Builder::upgrade`].
 #[derive(Debug)]
 pub(super) struct WantsUpgrade;
 

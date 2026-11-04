@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, fmt, io};
+use std::{borrow::Cow, error::Error as StdError, fmt, io};
 
 use http::Uri;
 use netty::ext::ReasonPhrase;
@@ -112,9 +112,15 @@ impl Error {
     /// # Examples
     ///
     /// ```
+    /// use std::time::Duration;
+    ///
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # async fn run() {
     /// // displays last stop of a redirect loop
-    /// let response = wreq::get("http://site.with.redirect.loop")
+    /// let response = Client::new(TokioRuntime)
+    ///     .get("http://site.with.redirect.loop")
+    ///     .timeout(Duration::from_secs(30))
     ///     .send()
     ///     .await;
     /// if let Err(e) = response {
@@ -412,7 +418,10 @@ pub(crate) struct TimedOut;
 pub(crate) struct BadScheme;
 
 #[derive(Debug)]
-pub(crate) struct ProxyConnect(pub(crate) BoxError);
+pub(crate) enum ProxyConnect {
+    Message(Cow<'static, str>),
+    Source(BoxError),
+}
 
 #[derive(Debug)]
 pub(crate) struct DnsError(pub(crate) BoxError);
@@ -442,13 +451,20 @@ impl fmt::Display for BadScheme {
 impl StdError for ProxyConnect {
     #[inline]
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        Some(&*self.0)
+        match self {
+            Self::Message(_) => None,
+            Self::Source(error) => Some(&**error),
+        }
     }
 }
 
 impl fmt::Display for ProxyConnect {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "proxy connect error: {}", self.0)
+        f.write_str("proxy connect error: ")?;
+        match self {
+            Self::Message(message) => f.write_str(message),
+            Self::Source(error) => fmt::Display::fmt(error, f),
+        }
     }
 }
 

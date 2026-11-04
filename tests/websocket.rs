@@ -26,7 +26,7 @@ async fn websocket_read_error_is_websocket() {
         }
     });
 
-    let mut websocket = Client::new()
+    let mut websocket = Client::new(wreq::rt::tokio::TokioRuntime)
         .websocket(format!("ws://{}", server.addr()))
         .send()
         .await

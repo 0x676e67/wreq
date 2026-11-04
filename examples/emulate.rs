@@ -100,14 +100,14 @@ async fn main() -> wreq::Result<()> {
 
     // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
     let emulation = Emulation::builder()
-        .tls_options(tls)
-        .http2_options(http2)
+        .config(tls)
+        .config(http2)
         .headers(headers)
         .orig_headers(orig_headers)
         .build();
 
     // Build a client with emulation config
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .emulation(emulation)
         .tls_cert_verification(false)
         .build()?;

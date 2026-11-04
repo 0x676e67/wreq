@@ -3,6 +3,7 @@ use std::{
     fmt,
     future::Future,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    sync::Arc,
     time::Duration,
 };
 
@@ -32,7 +33,7 @@ use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue},
-    conn::{extra::Extra, request::SocketOptions},
+    conn::{config::ConfigSet, transport::BindOptions},
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -51,6 +52,12 @@ pub struct RequestBuilder {
     client: Client,
     request: crate::Result<Request>,
 }
+
+/// Request-level HTTP version preference, resolved when the connection key is frozen.
+#[derive(Clone, Copy)]
+pub(crate) struct RequestVersion;
+
+impl_request_config_value!(RequestVersion, Version);
 
 impl Request {
     /// Constructs a new [`Request`].
@@ -113,18 +120,14 @@ impl Request {
     /// `None` uses the client's configured protocol preference.
     #[inline]
     pub fn version(&self) -> Option<Version> {
-        self.extensions()
-            .get::<Extra>()?
-            .get::<Option<Version>>()
-            .copied()
-            .flatten()
+        RequestConfig::<RequestVersion>::get(self.extensions()).copied()
     }
 
     /// Returns the request-level HTTP version override for mutation.
     /// Setting it to `None` restores the client's protocol preference.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        self.extra_mut().config_mut_or_default::<Option<Version>>()
+        self.config_mut::<RequestVersion>()
     }
 
     /// Returns a reference to the associated extensions.
@@ -132,8 +135,10 @@ impl Request {
     /// # Examples
     ///
     /// ```
-    /// # use wreq;
-    /// let request = wreq::get("http://httpbin.org/get")
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
+    /// let request = Client::new(TokioRuntime)
+    ///     .get("http://httpbin.org/get")
     ///     .build()
     ///     .expect("failed to build request");
     /// assert!(request.extensions().get::<i32>().is_none());
@@ -148,8 +153,10 @@ impl Request {
     /// # Examples
     ///
     /// ```
-    /// # use wreq;
-    /// let mut request = wreq::get("http://httpbin.org/get")
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
+    /// let mut request = Client::new(TokioRuntime)
+    ///     .get("http://httpbin.org/get")
     ///     .build()
     ///     .expect("failed to build request");
     /// request.extensions_mut().insert("hello");
@@ -184,8 +191,16 @@ impl Request {
     }
 
     #[inline]
-    fn extra_mut(&mut self) -> &mut Extra {
-        self.extensions_mut().get_or_insert_default::<Extra>()
+    fn config_set_mut(&mut self) -> &mut ConfigSet {
+        self.extensions_mut().get_or_insert_default::<ConfigSet>()
+    }
+
+    #[inline]
+    fn bind_options_mut(&mut self) -> &mut BindOptions {
+        Arc::make_mut(
+            self.extensions_mut()
+                .get_or_insert_default::<Arc<BindOptions>>(),
+        )
     }
 }
 
@@ -291,10 +306,12 @@ impl RequestBuilder {
     /// Enable HTTP authentication.
     ///
     /// ```rust
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # use wreq::Error;
     /// #
     /// # async fn run() -> Result<(), Error> {
-    /// let client = wreq::Client::new();
+    /// let client = Client::new(TokioRuntime);
     /// let resp = client
     ///     .get("http://httpbin.org/get")
     ///     .auth("your_token_here")
@@ -314,10 +331,12 @@ impl RequestBuilder {
     /// Enable HTTP basic authentication.
     ///
     /// ```rust
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # use wreq::Error;
     ///
     /// # async fn run() -> Result<(), Error> {
-    /// let client = wreq::Client::new();
+    /// let client = Client::new(TokioRuntime);
     /// let resp = client
     ///     .delete("http://httpbin.org/delete")
     ///     .basic_auth("admin", Some("good password"))
@@ -338,10 +357,12 @@ impl RequestBuilder {
     /// Enable HTTP bearer authentication.
     ///
     /// ```rust
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # use wreq::Error;
     /// #
     /// # async fn run() -> Result<(), Error> {
-    /// let client = wreq::Client::new();
+    /// let client = Client::new(TokioRuntime);
     /// let resp = client
     ///     .get("http://httpbin.org/get")
     ///     .bearer_auth("your_token_here")
@@ -441,6 +462,8 @@ impl RequestBuilder {
     /// header.
     ///
     /// ```rust
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # use wreq::Error;
     /// # use std::collections::HashMap;
     /// #
@@ -448,7 +471,7 @@ impl RequestBuilder {
     /// let mut params = HashMap::new();
     /// params.insert("lang", "rust");
     ///
-    /// let client = wreq::Client::new();
+    /// let client = Client::new(TokioRuntime);
     /// let res = client
     ///     .post("http://httpbin.org")
     ///     .form(&params)
@@ -527,11 +550,13 @@ impl RequestBuilder {
     /// Sends a multipart/form-data body.
     ///
     /// ```
+    /// use wreq::{Client, multipart::Form, rt::tokio::TokioRuntime};
+    ///
     /// # use wreq::Error;
     ///
     /// # async fn run() -> Result<(), Error> {
-    /// let client = wreq::Client::new();
-    /// let form = wreq::multipart::Form::new()
+    /// let client = Client::new(TokioRuntime);
+    /// let form = Form::new()
     ///     .text("key3", "value3")
     ///     .text("key4", "value4");
     ///
@@ -576,6 +601,7 @@ impl RequestBuilder {
     /// This preference preserves the configured TLS ALPN list and its order.
     /// Cleartext HTTP/2 uses prior knowledge without an HTTP/1 Upgrade.
     /// Negotiation does not rewrite an HTTP/2 WebSocket handshake into HTTP/1 Upgrade.
+    /// HTTP/3 requires an explicit `Version::HTTP_3` or an HTTP/3-only client.
     /// Requests with an explicit version are pooled apart from requests without one.
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
@@ -656,7 +682,7 @@ impl RequestBuilder {
     /// Set the proxy for this request.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.extra_mut().insert_config(proxy.into_matcher());
+            req.config_set_mut().insert(proxy.into_matcher());
         }
         self
     }
@@ -667,9 +693,7 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.extra_mut()
-                .config_mut_or_default::<SocketOptions>()
-                .set_local_address(local_address);
+            req.bind_options_mut().set_local_address(local_address);
         }
         self
     }
@@ -681,8 +705,7 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.extra_mut()
-                .config_mut_or_default::<SocketOptions>()
+            req.bind_options_mut()
                 .set_local_addresses(ipv4_address, ipv6_address);
         }
         self
@@ -709,9 +732,11 @@ impl RequestBuilder {
     /// # Example
     ///
     /// ```
+    /// use wreq::Client;
+    ///
     /// # fn doc() -> Result<(), wreq::Error> {
     /// let interface = "lo";
-    /// let client = wreq::Client::builder()
+    /// let client = Client::builder_tokio()
     ///     .interface(interface)
     ///     .build()?;
     /// # Ok(())
@@ -752,21 +777,24 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.extra_mut()
-                .config_mut_or_default::<SocketOptions>()
-                .set_interface(interface);
+            req.bind_options_mut().set_interface(interface);
         }
         self
     }
 
-    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
-    /// Supplied protocol options replace matching overrides; absent ones are kept.
-    /// Connection group, proxy, version, and socket settings remain unchanged.
+    /// Applies the emulation's headers and protocol options to this request.
+    /// Supplied options replace matching overrides; absent ones are kept. An empty
+    /// header order keeps the existing one. Group, proxy, version and socket settings stay.
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            let Emulation(headers, orig_headers, extra) = emulation.into_emulation();
-            req.extra_mut().extend(extra);
-            return self.headers(headers).orig_headers(orig_headers);
+            let Emulation(headers, orig_headers, config_set) = emulation.into_emulation();
+            req.config_set_mut().extend(config_set);
+            let builder = self.headers(headers);
+            return if orig_headers.is_empty() {
+                builder
+            } else {
+                builder.orig_headers(orig_headers)
+            };
         }
 
         self
@@ -777,7 +805,7 @@ impl RequestBuilder {
     /// incompatible connection settings share a connection.
     pub fn group(mut self, group: Group) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.extra_mut().insert_config(group);
+            req.config_set_mut().insert(group);
         }
         self
     }
@@ -810,10 +838,12 @@ impl RequestBuilder {
     /// # Example
     ///
     /// ```no_run
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # use wreq::Error;
     /// #
     /// # async fn run() -> Result<(), Error> {
-    /// let response = wreq::Client::new().get("https://hyper.rs").send().await?;
+    /// let response = Client::new(TokioRuntime).get("https://hyper.rs").send().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -832,10 +862,12 @@ impl RequestBuilder {
     /// # Examples
     ///
     /// ```
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # use wreq::Error;
     /// #
     /// # fn run() -> Result<(), Error> {
-    /// let client = wreq::Client::new();
+    /// let client = Client::new(TokioRuntime);
     /// let builder = client.post("http://httpbin.org/post").body("from a &str!");
     /// let clone = builder.try_clone();
     /// assert!(clone.is_some());
@@ -883,7 +915,13 @@ fn extract_authority(uri: &mut Uri) -> Option<(String, Option<String>)> {
 impl<T: Into<Body>> From<http::Request<T>> for Request {
     #[inline]
     fn from(req: http::Request<T>) -> Request {
-        Request(req.map(Into::into).map(Some))
+        let version = req.version();
+        let mut request = Request(req.map(Into::into).map(Some));
+        // HTTP/1.1 is http::Request's default; other versions are explicit.
+        if version != Version::HTTP_11 {
+            *request.version_mut() = Some(version);
+        }
+        request
     }
 }
 

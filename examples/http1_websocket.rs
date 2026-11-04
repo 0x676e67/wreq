@@ -1,16 +1,20 @@
+use std::time::Duration;
+
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use wreq::{header, ws::message::Message};
+use wreq::{Client, Version, header, rt::tokio::TokioRuntime, ws::message::Message};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
-    // Use the API you're already familiar with
-    let resp = wreq::websocket("wss://pingly.us.kg/api/websocket")
+    let resp = Client::builder(TokioRuntime)
+        .connect_timeout(Duration::from_secs(10))
+        .build()?
+        .websocket("wss://pingly.us.kg/api/websocket")
         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
         .read_buffer_size(1024 * 1024)
         .send()
         .await?;
 
-    assert_eq!(resp.version(), http::Version::HTTP_11);
+    assert_eq!(resp.version(), Version::HTTP_11);
 
     let websocket = resp.into_websocket().await?;
     if let Some(protocol) = websocket.protocol() {

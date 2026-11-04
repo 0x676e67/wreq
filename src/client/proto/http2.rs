@@ -3,10 +3,7 @@
 use std::{
     future::Future,
     marker::PhantomData,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::Arc,
     task::{self, Poll},
     time::{Duration, Instant},
 };
@@ -14,16 +11,15 @@ use std::{
 use futures_util::{TryFutureExt, future::BoxFuture};
 use http::{Request, Response};
 use http_body::Body;
-use netty::{body::Incoming, conn, rt::Executor as _};
+use netty::{body::Incoming, conn};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service};
 
-use super::{Established, SendError, clock_now, is_expired};
+use super::{ConnectionState, Established, SendError, is_expired};
 use crate::{
     client::error::Error,
     conn::Connected,
-    rt::{Executor, Timer},
-    sync::Mutex,
+    rt::{RuntimeHandle, Timer as _},
 };
 
 /// Cloneable request-side handle for one HTTP/2 connection.
@@ -35,15 +31,7 @@ pub struct Connection<B> {
     tx: conn::http2::SendRequest<B>,
     state: Arc<ConnectionState>,
     conn_info: Connected,
-    timer: Timer,
-}
-
-/// Shared checkout state for one HTTP/2 physical connection.
-/// Accounting ends at response headers or checkout cancellation, not stream end.
-/// Bodies and extended `CONNECT` upgrades do not hold this checkout state.
-struct ConnectionState {
-    checkouts: AtomicUsize,
-    idle_at: Mutex<Instant>,
+    runtime: RuntimeHandle,
 }
 
 /// Layers HTTP/2 handshaking over an established-transport service.
@@ -53,8 +41,7 @@ struct ConnectionState {
 /// pool's singleton service.
 #[derive(Clone)]
 pub struct ConnectLayer<B> {
-    exec: Executor,
-    timer: Timer,
+    runtime: RuntimeHandle,
     _body: PhantomData<fn(B)>,
 }
 
@@ -65,8 +52,7 @@ pub struct ConnectLayer<B> {
 /// shared sender stored by the singleton pool.
 pub struct Connect<S, B> {
     service: S,
-    exec: Executor,
-    timer: Timer,
+    runtime: RuntimeHandle,
     _body: PhantomData<fn(B)>,
 }
 
@@ -74,10 +60,9 @@ pub struct Connect<S, B> {
 
 impl<B> ConnectLayer<B> {
     /// Creates an HTTP/2 handshake layer for pooled connections.
-    pub fn new(exec: Executor, timer: Timer) -> Self {
+    pub fn new(runtime: RuntimeHandle) -> Self {
         Self {
-            exec,
-            timer,
+            runtime,
             _body: PhantomData,
         }
     }
@@ -89,8 +74,7 @@ impl<S, B> Layer<S> for ConnectLayer<B> {
     fn layer(&self, service: S) -> Self::Service {
         Connect {
             service,
-            exec: self.exec.clone(),
-            timer: self.timer.clone(),
+            runtime: self.runtime.clone(),
             _body: self._body,
         }
     }
@@ -102,8 +86,7 @@ impl<S: Clone, B> Clone for Connect<S, B> {
     fn clone(&self) -> Self {
         Self {
             service: self.service.clone(),
-            exec: self.exec.clone(),
-            timer: self.timer.clone(),
+            runtime: self.runtime.clone(),
             _body: self._body,
         }
     }
@@ -128,79 +111,8 @@ where
 
     fn call(&mut self, target: Dst) -> Self::Future {
         let future = self.service.call(target);
-        let exec = self.exec.clone();
-        let timer = self.timer.clone();
-        Box::pin(Connection::handshake(future, exec, timer))
-    }
-}
-
-// ===== impl ConnectionState =====
-
-impl ConnectionState {
-    /// Creates idle checkout state for a newly established connection.
-    fn new(idle_at: Instant) -> Self {
-        Self {
-            checkouts: AtomicUsize::new(0),
-            idle_at: Mutex::new(idle_at),
-        }
-    }
-
-    /// Registers one sender checkout.
-    fn acquire(&self) {
-        let _ = self
-            .checkouts
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                Some(count.saturating_add(1))
-            });
-    }
-
-    /// Releases one checkout and records the final release time.
-    fn release(&self, now: Instant) -> bool {
-        let mut checkouts = self.checkouts.load(Ordering::Acquire);
-
-        loop {
-            match checkouts {
-                0 => return false,
-                1 => {
-                    let mut idle_at = self.idle_at.lock();
-                    match self.checkouts.compare_exchange_weak(
-                        1,
-                        0,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    ) {
-                        Ok(_) => {
-                            // Cleanup that observes zero must also observe this timestamp.
-                            *idle_at = now;
-                            return true;
-                        }
-                        Err(actual) => {
-                            drop(idle_at);
-                            checkouts = actual;
-                        }
-                    }
-                }
-                count => match self.checkouts.compare_exchange_weak(
-                    count,
-                    count - 1,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                ) {
-                    Ok(_) => return false,
-                    Err(actual) => checkouts = actual,
-                },
-            }
-        }
-    }
-
-    /// Returns whether no sender checkout is active.
-    fn is_idle(&self) -> bool {
-        self.checkouts.load(Ordering::Acquire) == 0
-    }
-
-    /// Returns the last time the final checkout was released.
-    fn idle_at(&self) -> Instant {
-        *self.idle_at.lock()
+        let runtime = self.runtime.clone();
+        Box::pin(Connection::handshake(future, runtime))
     }
 }
 
@@ -212,7 +124,7 @@ impl<B> Clone for Connection<B> {
             tx: self.tx.clone(),
             conn_info: self.conn_info.clone(),
             state: self.state.clone(),
-            timer: self.timer.clone(),
+            runtime: self.runtime.clone(),
         }
     }
 }
@@ -223,7 +135,7 @@ where
 {
     /// Awaits a transport and returns a handshaken HTTP/2 sender.
     /// Starts the connection driver before waiting for sender readiness.
-    async fn handshake<F, T>(established: F, exec: Executor, timer: Timer) -> Result<Self, BoxError>
+    async fn handshake<F, T>(established: F, runtime: RuntimeHandle) -> Result<Self, BoxError>
     where
         F: Future<Output = Result<Established<T>, BoxError>>,
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -238,25 +150,28 @@ where
             ..
         } = established.await?;
 
-        let builder = config.proto.http2.clone();
-        let builder = match config.req.extra().get::<netty::http2::Http2Options>() {
-            Some(options) => builder.options(options.clone()),
-            None => builder,
-        };
+        let builder = config
+            .req
+            .config_override::<netty::http2::Http2Options>()
+            .map_or_else(
+                || config.proto.http2.clone(),
+                |options| config.proto.http2.clone().options(options.clone()),
+            );
         drop(config);
+
         let (mut tx, connection) = builder.handshake(io).await?;
-        exec.execute(async move {
+        runtime.execute(Box::pin(async move {
             if let Err(_error) = connection.await {
                 debug!("client connection error: {_error}");
             }
-        });
+        }));
         tx.ready().await?;
 
         Ok(Self {
             tx,
             conn_info: connected,
-            state: Arc::new(ConnectionState::new(clock_now(&timer))),
-            timer,
+            state: Arc::new(ConnectionState::new(runtime.now())),
+            runtime,
         })
     }
 
@@ -287,7 +202,7 @@ where
 
     /// Ends response-header checkout and records when its count reaches zero.
     pub fn finish_checkout(&self) {
-        let _ = self.state.release(clock_now(&self.timer));
+        let _ = self.state.release(self.runtime.now());
     }
 
     /// Returns whether no response-header checkout currently uses this sender.

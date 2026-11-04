@@ -142,6 +142,8 @@ impl Policy {
     /// # Example
     ///
     /// ```rust
+    /// use wreq::Client;
+    ///
     /// # use wreq::{Error, redirect};
     /// #
     /// # fn run() -> Result<(), Error> {
@@ -155,7 +157,7 @@ impl Policy {
     ///         attempt.follow()
     ///     }
     /// });
-    /// let client = wreq::Client::builder().redirect(custom).build()?;
+    /// let client = Client::builder_tokio().redirect(custom).build()?;
     /// # Ok(())
     /// # }
     /// ```

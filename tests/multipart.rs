@@ -45,7 +45,12 @@ async fn text_part() {
 
     let url = format!("http://{}/multipart/1", server.addr());
 
-    let res = wreq::post(&url).multipart(form).send().await.unwrap();
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .post(&url)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
@@ -87,7 +92,12 @@ async fn text_part_with_custom_boundary() {
 
     let url = format!("http://{}/multipart/1", server.addr());
 
-    let res = wreq::post(&url).multipart(form).send().await.unwrap();
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .post(&url)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
@@ -144,7 +154,8 @@ async fn stream_part() {
 
     let url = format!("http://{}/multipart/1", server.addr());
 
-    let res = wreq::post(&url)
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .post(&url)
         .multipart(form)
         .send()
         .await
@@ -200,7 +211,12 @@ async fn async_impl_file_part() {
 
     let url = format!("http://{}/multipart/3", server.addr());
 
-    let res = wreq::post(&url).multipart(form).send().await.unwrap();
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .post(&url)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);

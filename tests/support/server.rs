@@ -54,7 +54,7 @@ impl Drop for Server {
 }
 
 /// Builds the local certificate fixture and optionally selects an offered ALPN.
-/// An empty list leaves ALPN unacknowledged for negotiation-failure tests.
+/// An empty list leaves ALPN unacknowledged.
 #[allow(
     dead_code,
     reason = "Shared support is also compiled by tests without TLS fixtures"

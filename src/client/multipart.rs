@@ -78,7 +78,9 @@ impl Form {
     /// # Examples
     ///
     /// ```
-    /// let form = wreq::multipart::Form::new()
+    /// use wreq::multipart::Form;
+    ///
+    /// let form = Form::new()
     ///     .text("username", "seanmonstar")
     ///     .text("password", "secret");
     /// ```
@@ -97,8 +99,10 @@ impl Form {
     /// # Examples
     ///
     /// ```no_run
+    /// use wreq::multipart::Form;
+    ///
     /// # async fn run() -> std::io::Result<()> {
-    /// let form = wreq::multipart::Form::new()
+    /// let form = Form::new()
     ///     .file("key", "/path/to/file")
     ///     .await?;
     /// # Ok(())

@@ -27,7 +27,8 @@ async fn test_gzip_empty_body() {
             .unwrap()
     });
 
-    let res = wreq::head(format!("http://{}/gzip", server.addr()))
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .head(format!("http://{}/gzip", server.addr()))
         .send()
         .await
         .unwrap();
@@ -50,7 +51,8 @@ async fn test_accept_header_is_not_changed_if_set() {
         http::Response::default()
     });
 
-    let res = wreq::get(format!("http://{}/accept", server.addr()))
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(format!("http://{}/accept", server.addr()))
         .header(
             wreq::header::ACCEPT,
             wreq::header::HeaderValue::from_static("application/json"),
@@ -70,7 +72,8 @@ async fn test_accept_encoding_header_is_not_changed_if_set() {
         http::Response::default()
     });
 
-    let res = wreq::get(format!("http://{}/accept-encoding", server.addr()))
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(format!("http://{}/accept-encoding", server.addr()))
         .header(wreq::header::ACCEPT, "*/*")
         .header(
             wreq::header::ACCEPT_ENCODING,
@@ -109,7 +112,7 @@ async fn test_range_requests_use_identity_encoding() {
     });
     let base = format!("http://{}", server.addr());
 
-    let client = wreq::Client::new();
+    let client = wreq::Client::new(wreq::rt::tokio::TokioRuntime);
     client
         .get(format!("{base}/range"))
         .header(header::RANGE, "bytes=0-3")
@@ -119,7 +122,7 @@ async fn test_range_requests_use_identity_encoding() {
         .unwrap();
     client.get(format!("{base}/regular")).send().await.unwrap();
 
-    wreq::Client::builder()
+    wreq::Client::builder_tokio()
         .no_gzip()
         .no_brotli()
         .no_zstd()
@@ -185,7 +188,8 @@ async fn gzip_case(response_size: usize, chunk_size: usize) {
         }
     });
 
-    let res = wreq::get(format!("http://{}/gzip", server.addr()))
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(format!("http://{}/gzip", server.addr()))
         .send()
         .await
         .expect("response");
@@ -229,7 +233,8 @@ async fn test_non_chunked_non_fragmented_response() {
         })
     });
 
-    let res = wreq::get(format!("http://{}/", server.addr()))
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(format!("http://{}/", server.addr()))
         .send()
         .await
         .expect("response");
@@ -281,7 +286,8 @@ async fn test_chunked_fragmented_response_1() {
     });
 
     let start = tokio::time::Instant::now();
-    let res = wreq::get(format!("http://{}/", server.addr()))
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(format!("http://{}/", server.addr()))
         .send()
         .await
         .expect("response");
@@ -335,7 +341,8 @@ async fn test_chunked_fragmented_response_2() {
     });
 
     let start = tokio::time::Instant::now();
-    let res = wreq::get(format!("http://{}/", server.addr()))
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(format!("http://{}/", server.addr()))
         .send()
         .await
         .expect("response");
@@ -388,7 +395,8 @@ async fn test_chunked_fragmented_response_with_extra_bytes() {
     });
 
     let start = tokio::time::Instant::now();
-    let res = wreq::get(format!("http://{}/", server.addr()))
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(format!("http://{}/", server.addr()))
         .send()
         .await
         .expect("response");

@@ -20,7 +20,7 @@ async fn client_timeout() {
         }
     });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -45,7 +45,7 @@ async fn request_timeout() {
         }
     });
 
-    let client = Client::builder().no_proxy().build().unwrap();
+    let client = Client::builder_tokio().no_proxy().build().unwrap();
 
     let url = format!("http://{}/slow", server.addr());
 
@@ -66,7 +66,7 @@ async fn connect_timeout() {
 
     let server = server::http(move |_req| async { http::Response::default() });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .connector_layer(DelayLayer::new(Duration::from_secs(60)))
         .connect_timeout(Duration::from_millis(100))
         .no_proxy()
@@ -95,7 +95,7 @@ async fn connect_many_timeout_succeeds() {
     drop(unavailable);
     let port = server.addr().port();
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .resolve_to_addrs("many_addrs", [unavailable_addr, server.addr()])
         .connect_timeout(Duration::from_millis(100))
         .no_proxy()
@@ -116,7 +116,7 @@ async fn connect_many_timeout_succeeds() {
 async fn connect_many_timeout() {
     let _ = env_logger::try_init();
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .resolve_to_addrs(
             "many_addrs",
             [
@@ -159,7 +159,7 @@ async fn response_timeout() {
         }
     });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .timeout(Duration::from_millis(500))
         .no_proxy()
         .build()
@@ -187,7 +187,7 @@ async fn total_timeout_includes_response_head_and_body() {
         http::Response::new(body)
     });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .timeout(Duration::from_millis(220))
         .no_proxy()
         .build()
@@ -212,7 +212,7 @@ async fn read_timeout_applies_to_headers() {
         }
     });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .read_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -243,7 +243,7 @@ async fn read_timeout_applies_to_body() {
         }
     });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .read_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -258,7 +258,9 @@ async fn read_timeout_applies_to_body() {
 
 #[cfg(feature = "stream")]
 #[tokio::test]
-async fn read_timeout_allows_slow_response_body() {
+async fn read_timeout_allows_slow_reads_and_caller_pauses() {
+    use futures_util::StreamExt;
+
     let _ = env_logger::try_init();
 
     let server = server::http(move |_req| {
@@ -281,43 +283,21 @@ async fn read_timeout_allows_slow_response_body() {
         }
     });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .read_timeout(Duration::from_millis(200))
-        //.timeout(Duration::from_millis(200))
         .no_proxy()
         .build()
         .unwrap();
 
     let url = format!("http://{}/slow", server.addr());
     let res = client.get(&url).send().await.expect("Failed to get");
-    let body = res.text().await.expect("body text");
-
-    assert_eq!(body, "012");
-}
-
-#[cfg(feature = "stream")]
-#[tokio::test]
-async fn read_timeout_ignores_time_between_reads() {
-    use futures_util::StreamExt;
-
-    let _ = env_logger::try_init();
-
-    let server = server::http(move |_req| async { http::Response::new("Hello".into()) });
-
-    let client = Client::builder()
-        .read_timeout(Duration::from_millis(100))
-        .no_proxy()
-        .build()
-        .unwrap();
-
-    let url = format!("http://{}/pause", server.addr());
-    let res = client.get(&url).send().await.expect("Failed to get");
     let mut stream = res.bytes_stream();
-    assert_eq!(stream.next().await.unwrap().unwrap(), "Hello");
-
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let next = stream.next().await.transpose().expect("read after pause");
-    assert!(next.is_none());
+    let mut body = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        body.extend_from_slice(&chunk.expect("body chunk"));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    assert_eq!(body, b"012");
 }
 
 #[tokio::test]
@@ -326,7 +306,7 @@ async fn response_body_timeout_forwards_size_hint() {
 
     let server = server::http(move |_req| async { http::Response::new(b"hello".to_vec().into()) });
 
-    let client = Client::builder().no_proxy().build().unwrap();
+    let client = Client::builder_tokio().no_proxy().build().unwrap();
 
     let url = format!("http://{}/slow", server.addr());
 

@@ -165,10 +165,14 @@ impl Policy {
     /// # Example
     ///
     /// ```rust
-    /// # fn with_policy(policy: wreq::retry::Policy) -> wreq::retry::Policy {
+    /// use http::Method;
+    /// use http::StatusCode;
+    /// use wreq::retry::Policy;
+    ///
+    /// # fn with_policy(policy: Policy) -> Policy {
     /// policy.classify_fn(|req_rep| {
     ///     match (req_rep.method(), req_rep.status()) {
-    ///         (&http::Method::GET, Some(http::StatusCode::SERVICE_UNAVAILABLE)) => {
+    ///         (&Method::GET, Some(StatusCode::SERVICE_UNAVAILABLE)) => {
     ///             req_rep.retryable()
     ///         },
     ///         _ => req_rep.success()

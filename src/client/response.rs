@@ -22,7 +22,7 @@ use serde::de::DeserializeOwned;
 use crate::cookie;
 use crate::{
     Body, Error,
-    conn::{Connected, http::HttpInfo},
+    conn::{Connected, HttpInfo},
     error::BoxError,
     ext::RequestUri,
 };
@@ -115,6 +115,7 @@ impl Response {
     }
 
     /// Get the local address used to get this [`Response`].
+    /// For QUIC this is the UDP socket binding, which may use an unspecified IP.
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.res
             .extensions()
@@ -149,8 +150,10 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let content = wreq::Client::new()
+    /// let content = Client::new(TokioRuntime)
     ///     .get("http://httpbin.org/range/26")
     ///     .send()
     ///     .await?
@@ -195,8 +198,10 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let content = wreq::Client::new()
+    /// let content = Client::new(TokioRuntime)
     ///     .get("http://httpbin.org/range/26")
     ///     .send()
     ///     .await?
@@ -238,6 +243,8 @@ impl Response {
     /// # Examples
     ///
     /// ```
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # extern crate wreq;
     /// # extern crate serde;
     /// #
@@ -251,7 +258,7 @@ impl Response {
     /// }
     ///
     /// # async fn run() -> Result<(), Error> {
-    /// let ip = wreq::Client::new()
+    /// let ip = Client::new(TokioRuntime)
     ///     .get("http://httpbin.org/ip")
     ///     .send()
     ///     .await?
@@ -291,8 +298,10 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let bytes = wreq::Client::new()
+    /// let bytes = Client::new(TokioRuntime)
     ///     .get("http://httpbin.org/ip")
     ///     .send()
     ///     .await?
@@ -317,9 +326,10 @@ impl Response {
     ///
     /// ```
     /// use futures_util::StreamExt;
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut stream = wreq::Client::new()
+    /// let mut stream = Client::new(TokioRuntime)
     ///     .get("http://httpbin.org/ip")
     ///     .send()
     ///     .await?
@@ -352,7 +362,7 @@ impl Response {
     /// # use wreq::{Client, tls::TlsInfo};
     /// # async fn run() -> wreq::Result<()> {
     /// // Build a client that records TLS information.
-    /// let client = Client::builder()
+    /// let client = Client::builder_tokio()
     ///     .tls_info(true)
     ///     .build()?;
     ///
@@ -381,7 +391,7 @@ impl Response {
     /// # use wreq::{Client, tls::TlsInfo};
     /// # async fn run() -> wreq::Result<()> {
     /// // Build a client that records TLS information.
-    /// let client = Client::builder()
+    /// let client = Client::builder_tokio()
     ///     .tls_info(true)
     ///     .build()?;
     ///
@@ -429,6 +439,8 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// use wreq::StatusCode;
+    ///
     /// # use wreq::Response;
     /// fn on_response(res: Response) {
     ///     match res.error_for_status() {
@@ -436,7 +448,7 @@ impl Response {
     ///         Err(err) => {
     ///             // asserting a 400 as an example
     ///             // it could be any status between 400...599
-    ///             assert_eq!(err.status(), Some(wreq::StatusCode::BAD_REQUEST));
+    ///             assert_eq!(err.status(), Some(StatusCode::BAD_REQUEST));
     ///         }
     ///     }
     /// }
@@ -457,6 +469,8 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// use wreq::StatusCode;
+    ///
     /// # use wreq::Response;
     /// fn on_response(res: &Response) {
     ///     match res.error_for_status_ref() {
@@ -464,7 +478,7 @@ impl Response {
     ///         Err(err) => {
     ///             // asserting a 400 as an example
     ///             // it could be any status between 400...599
-    ///             assert_eq!(err.status(), Some(wreq::StatusCode::BAD_REQUEST));
+    ///             assert_eq!(err.status(), Some(StatusCode::BAD_REQUEST));
     ///         }
     ///     }
     /// }

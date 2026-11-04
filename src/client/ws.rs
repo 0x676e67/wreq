@@ -58,18 +58,8 @@ impl WebSocketRequestBuilder {
         }
     }
 
-    /// Sets a custom WebSocket accept key.
-    ///
-    /// This method allows you to set a custom WebSocket accept key for the connection.
-    /// The key is unused when the handshake runs over HTTP/2.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The custom WebSocket accept key to set.
-    ///
-    /// # Returns
-    ///
-    /// * `Self` - The modified instance with the custom WebSocket accept key.
+    /// Sets the `Sec-WebSocket-Key` used for an HTTP/1.1 handshake.
+    /// HTTP/2 handshakes do not use this key.
     #[inline]
     pub fn accept_key<K>(mut self, key: K) -> Self
     where
@@ -79,9 +69,7 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Set HTTP version
-    ///
-    /// Configures the HTTP version used for the WebSocket handshake.
+    /// Sets the HTTP version used for the WebSocket handshake.
     ///
     /// # Default
     ///
@@ -215,10 +203,12 @@ impl WebSocketRequestBuilder {
     /// Enable HTTP authentication.
     ///
     /// ```rust
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # use wreq::Error;
     /// #
     /// # async fn run() -> Result<(), Error> {
-    /// let client = wreq::Client::new();
+    /// let client = Client::new(TokioRuntime);
     /// let resp = client
     ///     .websocket("http://httpbin.org/get")
     ///     .auth("your_token_here")
@@ -240,10 +230,12 @@ impl WebSocketRequestBuilder {
     /// Enable HTTP basic authentication.
     ///
     /// ```rust
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # use wreq::Error;
     ///
     /// # async fn run() -> Result<(), Error> {
-    /// let client = wreq::Client::new();
+    /// let client = Client::new(TokioRuntime);
     /// let resp = client
     ///     .websocket("http://httpbin.org/delete")
     ///     .basic_auth("admin", Some("good password"))
@@ -265,10 +257,12 @@ impl WebSocketRequestBuilder {
     /// Enable HTTP bearer authentication.
     ///
     /// ```rust
+    /// use wreq::{Client, rt::tokio::TokioRuntime};
+    ///
     /// # use wreq::Error;
     /// #
     /// # async fn run() -> Result<(), Error> {
-    /// let client = wreq::Client::new();
+    /// let client = Client::new(TokioRuntime);
     /// let resp = client
     ///     .websocket("http://httpbin.org/get")
     ///     .bearer_auth("your_token_here")
@@ -363,9 +357,11 @@ impl WebSocketRequestBuilder {
     /// # Example
     ///
     /// ```
+    /// use wreq::Client;
+    ///
     /// # fn doc() -> Result<(), wreq::Error> {
     /// let interface = "lo";
-    /// let client = wreq::Client::builder()
+    /// let client = Client::builder_tokio()
     ///     .interface(interface)
     ///     .build()?;
     /// # Ok(())
@@ -409,9 +405,9 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
-    /// Existing values in those categories may be replaced; connection group,
-    /// proxy, version, and socket settings remain unchanged.
+    /// Applies the emulation's headers and protocol options to this request.
+    /// Supplied options replace matching overrides; an empty header order keeps the existing
+    /// one. Group, proxy, version and socket settings stay.
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> Self {
         self.inner = self.inner.emulation(emulation);
@@ -471,7 +467,7 @@ impl WebSocketRequestBuilder {
                 *request.method_mut() = Method::GET;
                 *request.version_mut() = Some(Version::HTTP_11);
                 // Never reuse an idle socket or return this one to the pool. The default
-                // route may still ride an established HTTP/2 connection instead.
+                // route may still reuse an established HTTP/2 connection instead.
                 request.extensions_mut().insert(DedicatedConnection {
                     #[cfg(feature = "http2")]
                     extended_connect: version.is_none(),

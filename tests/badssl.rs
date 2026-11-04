@@ -36,7 +36,7 @@ fn is_connection_reset(err: &(dyn StdError + 'static)) -> bool {
 
 #[tokio::test]
 async fn test_badssl_modern() {
-    let text = Client::builder()
+    let text = Client::builder_tokio()
         .no_proxy()
         .retry(badssl_connection_reset_retry_policy())
         .build()
@@ -54,7 +54,7 @@ async fn test_badssl_modern() {
 
 #[tokio::test]
 async fn test_badssl_self_signed() {
-    let text = Client::builder()
+    let text = Client::builder_tokio()
         .tls_cert_verification(false)
         .no_proxy()
         .retry(badssl_connection_reset_retry_policy())
@@ -73,7 +73,7 @@ async fn test_badssl_self_signed() {
 
 #[tokio::test]
 async fn test_badssl_wrong_host() {
-    let text = Client::builder()
+    let text = Client::builder_tokio()
         .tls_verify_hostname(false)
         .no_proxy()
         .retry(badssl_connection_reset_retry_policy())
@@ -89,7 +89,7 @@ async fn test_badssl_wrong_host() {
 
     assert!(text.contains("<title>wrong.host.badssl.com</title>"));
 
-    let result = Client::builder()
+    let result = Client::builder_tokio()
         .tls_verify_hostname(false)
         .no_proxy()
         .build()
@@ -103,7 +103,7 @@ async fn test_badssl_wrong_host() {
 
 #[tokio::test]
 async fn test_tls_self_signed_cert() {
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .tls_cert_verification(false)
         .tls_info(true)
         .retry(badssl_connection_reset_retry_policy())
@@ -128,7 +128,7 @@ async fn test_tls_self_signed_cert() {
         .build()
         .unwrap();
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .tls_cert_store(self_signed_cert_store)
         .retry(badssl_connection_reset_retry_policy())
         .no_proxy()

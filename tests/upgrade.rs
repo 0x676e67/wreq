@@ -30,7 +30,7 @@ async fn http_upgrade() {
         }
     });
 
-    let res = Client::builder()
+    let res = Client::builder_tokio()
         .build()
         .unwrap()
         .get(format!("http://{}", server.addr()))
@@ -77,7 +77,7 @@ async fn http2_upgrade() {
         },
     );
 
-    let res = Client::builder()
+    let res = Client::builder_tokio()
         .http2_only()
         .build()
         .unwrap()
@@ -146,7 +146,7 @@ async fn websocket_uses_dedicated_http1_connection() {
         }
     });
 
-    let client = Client::builder().no_proxy().build().unwrap();
+    let client = Client::builder_tokio().no_proxy().build().unwrap();
     let get = || {
         client
             .get(format!("http://{addr}"))
@@ -240,11 +240,15 @@ async fn websocket_reuses_established_http2_with_extended_connect() {
                 .count();
             accepted
         };
-        let client = Client::builder().http2_only().no_proxy().build().unwrap();
+        let client = Client::builder_tokio()
+            .http2_only()
+            .no_proxy()
+            .build()
+            .unwrap();
         let ws_url = format!("ws://{}", server.addr());
         let http_url = format!("http://{}", server.addr());
 
-        // A WebSocket never opens an HTTP/2 connection for itself.
+        // The default WebSocket route does not open an HTTP/2 connection.
         let response = client.websocket(&ws_url).send().await.unwrap();
         assert_eq!(response.version(), http::Version::HTTP_11);
         drop(response);
@@ -255,7 +259,7 @@ async fn websocket_reuses_established_http2_with_extended_connect() {
         response.bytes().await.unwrap();
         assert_eq!(accepted(&mut server), 2);
 
-        // The default route rides the established connection only if its peer allows it.
+        // The default route reuses the connection only if its peer enabled extended CONNECT.
         let response = client.websocket(&ws_url).send().await.unwrap();
         let expected = if enabled {
             http::Version::HTTP_2

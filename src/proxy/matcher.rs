@@ -17,11 +17,7 @@ use std::net::IpAddr;
 use std::{path::Path, sync::Arc};
 
 use bytes::Bytes;
-use http::{
-    HeaderMap, Uri,
-    header::HeaderValue,
-    uri::{Authority, Scheme},
-};
+use http::{HeaderMap, Uri, header::HeaderValue, uri::Authority};
 use ipnet::IpNet;
 use percent_encoding::percent_decode_str;
 
@@ -317,18 +313,24 @@ fn get_first_env(names: &[&str]) -> String {
 fn parse_env_uri(val: &str) -> Option<Intercept> {
     let uri = val.parse::<Uri>().ok()?;
     let mut builder = Uri::builder();
+    let is_quic = uri
+        .scheme_str()
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("quic"));
     let mut is_httpish = false;
     let mut is_socks = false;
     let mut auth = Auth::Empty;
 
-    builder = builder.scheme(match uri.scheme() {
+    builder = builder.scheme(match uri.scheme_str() {
         Some(s) => {
-            if s == &Scheme::HTTP || s == &Scheme::HTTPS {
+            if is_quic {
                 is_httpish = true;
-                s.clone()
-            } else if matches!(s.as_str(), "socks4" | "socks4a" | "socks5" | "socks5h") {
+                "quic"
+            } else if matches!(s, "http" | "https") {
+                is_httpish = true;
+                s
+            } else if matches!(s, "socks4" | "socks4a" | "socks5" | "socks5h") {
                 is_socks = true;
-                s.clone()
+                s
             } else {
                 // can't use this proxy scheme
                 return None;
@@ -337,17 +339,25 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
         // if no scheme provided, assume they meant 'http'
         None => {
             is_httpish = true;
-            Scheme::HTTP
+            "http"
         }
     });
 
     let authority = {
         let authority = uri.authority()?;
-        // default SOCKS port to 1080 if missing
-        if is_socks && authority.port().is_none() {
-            Authority::from_maybe_shared(Bytes::from(format!("{authority}:1080"))).ok()?
+        let default_port = if is_socks {
+            Some(1080)
+        } else if is_quic {
+            // Keep invalid environment proxies intercepted so connection setup rejects them.
+            super::quic_port(&uri).ok()
         } else {
-            authority.clone()
+            None
+        };
+        match default_port {
+            Some(port) if authority.port().is_none() => {
+                Authority::from_maybe_shared(Bytes::from(format!("{authority}:{port}"))).ok()?
+            }
+            _ => authority.clone(),
         }
     };
 
@@ -694,6 +704,21 @@ mod tests {
             intercept(&p, "http://example.local").uri(),
             "http://127.0.0.1:8887"
         );
+    }
+
+    #[test]
+    fn test_quic_environment_keeps_invalid_ports_intercepted() {
+        for address in [
+            "QUIC://proxy.test:70000",
+            "quic://proxy.test:abc",
+            "quic://[::1]:",
+            "quic://user:pass@proxy.test:0",
+        ] {
+            let matcher = p! { all = address, };
+            let proxy = intercept(&matcher, "https://origin.test/");
+            assert_eq!(proxy.uri().scheme_str(), Some("quic"));
+            assert!(crate::proxy::quic_port(proxy.uri()).is_err(), "{address}");
+        }
     }
 
     #[test]

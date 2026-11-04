@@ -18,7 +18,7 @@ impl Identity {
     /// Parses a DER-formatted PKCS #12 archive, using the specified password to decrypt the key.
     ///
     /// The archive should contain a leaf certificate and its private key, as well any intermediate
-    /// certificates that allow clients to build a chain to a trusted root.
+    /// certificates that allow the server to build a chain to a trusted root.
     /// The chain certificates should be in order from the leaf certificate towards the root.
     ///
     /// PKCS #12 archives typically have the file extension `.p12` or `.pfx`, and can be created
@@ -31,12 +31,14 @@ impl Identity {
     /// # Examples
     ///
     /// ```
+    /// use wreq::tls::trust::Identity;
+    ///
     /// # use std::fs::File;
     /// # use std::io::Read;
     /// # fn pkcs12() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut buf = Vec::new();
     /// File::open("my-ident.pfx")?.read_to_end(&mut buf)?;
-    /// let pkcs12 = wreq::tls::trust::Identity::from_pkcs12_der(&buf, "my-privkey-password")?;
+    /// let pkcs12 = Identity::from_pkcs12_der(&buf, "my-privkey-password")?;
     /// # drop(pkcs12);
     /// # Ok(())
     /// # }
@@ -58,18 +60,20 @@ impl Identity {
     /// `key` is a PEM encoded PKCS #8 formatted private key for the leaf certificate.
     ///
     /// The certificate chain should contain any intermediate certificates that should be sent to
-    /// clients to allow them to build a chain to a trusted root.
+    /// the server to allow it to build a chain to a trusted root.
     ///
     /// A certificate chain here means a series of PEM encoded certificates concatenated together.
     ///
     /// # Examples
     ///
     /// ```
+    /// use wreq::tls::trust::Identity;
+    ///
     /// # use std::fs;
     /// # fn pkcs8() -> Result<(), Box<dyn std::error::Error>> {
     /// let cert = fs::read("client.pem")?;
     /// let key = fs::read("key.pem")?;
-    /// let pkcs8 = wreq::tls::trust::Identity::from_pkcs8_pem(&cert, &key)?;
+    /// let pkcs8 = Identity::from_pkcs8_pem(&cert, &key)?;
     /// # drop(pkcs8);
     /// # Ok(())
     /// # }

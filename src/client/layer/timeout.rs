@@ -4,16 +4,19 @@ pub mod body;
 mod future;
 
 use std::{
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
 use http::{Request, Response};
-use netty::rt::Timer as _;
 use tower::{BoxError, Layer, Service};
 
 use self::{body::TimeoutBody, future::ResponseFuture};
-use crate::{config::RequestConfig, rt::Timer};
+use crate::{
+    config::RequestConfig,
+    rt::{RuntimeHandle, Timer},
+};
 
 /// Options for configuring timeouts.
 #[derive(Clone, Copy, Default)]
@@ -44,15 +47,15 @@ impl_request_config_value!(TimeoutOptions);
 // This layer allows you to set a total timeout and a read timeout for requests.
 #[derive(Clone)]
 pub struct TimeoutLayer {
-    timer: Timer,
+    timer: Arc<dyn Timer>,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
 impl TimeoutLayer {
     /// Create a new [`TimeoutLayer`].
-    pub fn new(timer: Timer, options: TimeoutOptions) -> Self {
+    pub fn new(runtime: RuntimeHandle, options: TimeoutOptions) -> Self {
         TimeoutLayer {
-            timer,
+            timer: runtime.timer(),
             timeout: RequestConfig::new(Some(options)),
         }
     }
@@ -75,7 +78,7 @@ impl<S> Layer<S> for TimeoutLayer {
 #[derive(Clone)]
 pub struct Timeout<T> {
     inner: T,
-    timer: Timer,
+    timer: Arc<dyn Timer>,
     timeout: RequestConfig<TimeoutOptions>,
 }
 

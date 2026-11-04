@@ -39,7 +39,7 @@ use wreq::{
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
     // Create a client with a custom certificate store using webpki-roots
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .tls_cert_store(CertStore::from_der_certs(
             webpki_root_certs::TLS_SERVER_ROOT_CERTS,
         )?)
@@ -50,7 +50,7 @@ async fn main() -> wreq::Result<()> {
 
     // Self-signed certificate Client
     // Skip certificate verification for self-signed certificates
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .tls_info(true)
         .tls_cert_verification(false)
         .build()?;
@@ -64,7 +64,7 @@ async fn main() -> wreq::Result<()> {
         let self_signed_store = CertStore::from_der_certs([peer_cert_der])?;
 
         // Create a client with self-signed certificate store
-        let client = Client::builder()
+        let client = Client::builder_tokio()
             .tls_cert_store(self_signed_store)
             .connect_timeout(Duration::from_secs(10))
             .build()?;

@@ -5,7 +5,10 @@
 //! more code.
 
 // These require the `serde` dependency.
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
+use wreq::{Client, rt::tokio::TokioRuntime};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Post {
@@ -27,7 +30,9 @@ async fn main() -> wreq::Result<()> {
         body: "https://docs.rs/wreq".into(),
         user_id: 1,
     };
-    let new_post: Post = wreq::post("https://jsonplaceholder.typicode.com/posts")
+    let new_post: Post = Client::new(TokioRuntime)
+        .post("https://jsonplaceholder.typicode.com/posts")
+        .timeout(Duration::from_secs(30))
         .json(&new_post)
         .send()
         .await?

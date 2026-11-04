@@ -8,7 +8,7 @@ use std::{fmt::Debug, io};
 
 use btls::{
     error::ErrorStack,
-    ssl::{self, SslConnectorBuilder},
+    ssl::{self, SslContextBuilder},
 };
 use btls_sys as ffi;
 // Re-export the `CertificateCompressionAlgorithm` enum for users of this module.
@@ -32,7 +32,7 @@ pub enum Codec {
 ///
 /// The algorithm must remain stable for the object's lifetime, and both codecs
 /// must implement it. Implementations reporting the same algorithm are treated
-/// as interchangeable for connection and TLS session identity.
+/// as interchangeable for connection, TLS session and compiled context identity.
 ///
 /// See [RFC 8879, §3](https://www.rfc-editor.org/rfc/rfc8879.html#name-compression-algorithms)
 /// for the list of IANA-assigned compression algorithm identifiers.
@@ -93,10 +93,10 @@ impl<const ALGORITHM: i32> ssl::CertificateCompressor for Compressor<ALGORITHM> 
     }
 }
 
-/// Register a certificate compressor with the given [`SslConnectorBuilder`].
+/// Register a certificate compressor with the given [`SslContextBuilder`].
 pub(super) fn register(
     compressor: &dyn CertificateCompressor,
-    builder: &mut SslConnectorBuilder,
+    builder: &mut SslContextBuilder,
 ) -> Result<(), ErrorStack> {
     match compressor.algorithm() {
         CertificateCompressionAlgorithm::ZLIB => {

@@ -1,9 +1,9 @@
-use wreq::tls::keylog::KeyLog;
+use wreq::{Client, tls::keylog::KeyLog};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
     // Build a client
-    let client = wreq::Client::builder()
+    let client = Client::builder_tokio()
         .tls_keylog(KeyLog::from_file("keylog.txt"))
         .tls_cert_verification(false)
         .build()?;

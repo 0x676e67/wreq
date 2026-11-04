@@ -35,7 +35,6 @@ use http::{
 };
 use http_body::Body as HttpBody;
 use netty::{body::Incoming, conn};
-use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
@@ -72,25 +71,24 @@ use crate::dns::hickory::HickoryDnsResolver;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
-    HttpVersion, IntoUri, Method, Proxy,
+    IntoUri, Method, Protocol, Proxy,
     conn::{
-        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection, Connector, ConnectorLayer,
-        HttpConnector, Unnameable,
-        http::HttpConnect,
-        net::TcpConnector,
-        request::{ConnectRequest, SocketOptions},
+        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connector, Unnameable,
+        config::ConfigSet,
+        request::ConnectRequest,
+        transport::{self, BindOptions},
     },
-    dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
+    dns::{DnsResolverWithOverrides, DynResolver, IntoResolve, Resolve},
     error::Error,
     header::OrigHeaderMap,
     http1::Http1Options,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
-    rt::{Executor, Timer},
+    rt::{IntoRuntime, RuntimeHandle},
     tls::{
         TlsOptions, TlsVersion,
-        conn::TlsConnector,
+        config::TlsConnectorBuilder,
         keylog::KeyLog,
         session::{IntoTlsSessionStore, TlsSessionStore},
         trust::{CertStore, Identity},
@@ -131,9 +129,7 @@ type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>
 
 type ClientService = Timeout<
     ConfigService<
-        MaybeDecompression<
-            Retry<RetryPolicy, FollowRedirect<sealed::Client<crate::conn::Stack, Body>>>,
-        >,
+        MaybeDecompression<Retry<RetryPolicy, FollowRedirect<sealed::Client<Connector, Body>>>>,
     >,
 >;
 
@@ -158,7 +154,7 @@ type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
 ///
 /// The Client has various configuration values to tweak, but the defaults
 /// are set to what is usually the most commonly desired value. To configure a
-/// [`Client`], use [`Client::builder()`].
+/// [`Client`], use [`Client::builder`] with your chosen runtime.
 ///
 /// The [`Client`] holds a connection pool internally, so it is advised that
 /// you create one and **reuse** it.
@@ -174,6 +170,7 @@ pub struct Client(Arc<Either<ClientService, BoxedClientService>>);
 #[must_use]
 pub struct ClientBuilder {
     config: Config,
+    runtime: RuntimeHandle,
 }
 
 /// Configuration collected before the client service stack is built.
@@ -207,7 +204,7 @@ struct Config {
     tcp_send_buffer_size: Option<usize>,
     tcp_recv_buffer_size: Option<usize>,
     tcp_happy_eyeballs_timeout: Option<Duration>,
-    socket_options: SocketOptions,
+    bind_options: BindOptions,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     retry_policy: retry::Policy,
@@ -220,7 +217,7 @@ struct Config {
     hickory_dns: bool,
     dns_overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
-    http_version: HttpVersion,
+    protocol: Protocol,
     https_only: bool,
     layers: Vec<BoxedClientServiceLayer>,
     connector_layers: Vec<BoxedConnectorLayer>,
@@ -234,39 +231,36 @@ struct Config {
     tls_min_version: Option<TlsVersion>,
     tls_max_version: Option<TlsVersion>,
     tls_session_store: Option<Arc<dyn TlsSessionStore>>,
-    tls_options: Option<TlsOptions>,
-    http1_options: Option<Http1Options>,
-    #[cfg(feature = "http2")]
-    http2_options: Option<Http2Options>,
-    timer: Timer,
-    executor: Executor,
+    config_set: ConfigSet,
 }
 
 // ===== impl Client =====
 
-impl Default for Client {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Client {
-    /// Constructs a new [`Client`].
+    /// Constructs a new [`Client`] using the selected runtime.
     ///
     /// # Panics
     ///
     /// This method panics if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
     ///
-    /// Use [`Client::builder()`] if you wish to handle the failure as a [`crate::Error`]
+    /// Use [`Client::builder`] if you wish to handle the failure as a [`crate::Error`]
     /// instead of panicking.
     #[inline]
-    pub fn new() -> Client {
-        Client::builder().build().expect("Client::new()")
+    pub fn new<R>(runtime: R) -> Client
+    where
+        R: IntoRuntime,
+    {
+        Client::builder(runtime).build().expect("Client::new")
     }
 
-    /// Creates a [`ClientBuilder`] to configure a [`Client`].
-    pub fn builder() -> ClientBuilder {
+    /// Creates a client builder with the selected runtime.
+    /// Accepts a runtime value or an existing `Arc`; its DNS resolver is used
+    /// unless explicitly overridden.
+    pub fn builder<R>(runtime: R) -> ClientBuilder
+    where
+        R: IntoRuntime,
+    {
         ClientBuilder {
             config: Config {
                 error: None,
@@ -296,7 +290,7 @@ impl Client {
                 tcp_send_buffer_size: None,
                 tcp_recv_buffer_size: None,
                 tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
-                socket_options: SocketOptions::default(),
+                bind_options: BindOptions::default(),
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
@@ -304,16 +298,13 @@ impl Client {
                 referer: true,
                 timeout_options: TimeoutOptions::default(),
                 #[cfg(feature = "hickory-dns")]
-                hickory_dns: cfg!(feature = "hickory-dns"),
+                hickory_dns: false,
                 #[cfg(feature = "cookies")]
                 cookie_store: None,
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
-                http_version: HttpVersion::Auto,
+                protocol: Protocol::Auto,
                 https_only: false,
-                http1_options: None,
-                #[cfg(feature = "http2")]
-                http2_options: None,
                 layers: Vec::new(),
                 connector_layers: Vec::new(),
                 tls_sni: true,
@@ -326,11 +317,22 @@ impl Client {
                 tls_min_version: None,
                 tls_max_version: None,
                 tls_session_store: None,
-                tls_options: None,
-                timer: Timer::default(),
-                executor: Executor::default(),
+                config_set: ConfigSet::default(),
             },
+            runtime: RuntimeHandle::new(runtime),
         }
+    }
+
+    /// Creates a client builder using Tokio for tasks, timers and DNS.
+    #[cfg(feature = "tokio-rt")]
+    pub fn builder_tokio() -> ClientBuilder {
+        Self::builder(crate::rt::tokio::TokioRuntime)
+    }
+
+    /// Creates a client builder using Compio for tasks, timers and DNS.
+    #[cfg(all(feature = "compio-rt", not(feature = "http3")))]
+    pub fn builder_compio() -> ClientBuilder {
+        Self::builder(crate::rt::compio::CompioRuntime)
     }
 
     /// Convenience method to make a `GET` request to a URI.
@@ -489,134 +491,97 @@ impl ClientBuilder {
     ///
     /// This method fails if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
-    pub fn build(self) -> crate::Result<Client> {
-        let mut config = self.config;
-
-        if let Some(err) = config.error {
+    pub fn build(mut self) -> crate::Result<Client> {
+        if let Some(err) = self.config.error {
             return Err(err);
         }
 
         // Prepare proxies
-        if config.auto_sys_proxy {
-            config.proxies.push(ProxyMatcher::system());
+        if self.config.auto_sys_proxy {
+            self.config.proxies.push(ProxyMatcher::system());
         }
 
         // Create base client service
         let service = {
             let resolver = {
-                let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
+                let mut resolver: Arc<dyn Resolve> = match self.config.dns_resolver {
                     Some(dns_resolver) => dns_resolver,
                     #[cfg(feature = "hickory-dns")]
-                    None if config.hickory_dns => Arc::new(HickoryDnsResolver::new()),
-                    None => Arc::new(GaiResolver::new()),
+                    None if self.config.hickory_dns => Arc::new(HickoryDnsResolver::new()),
+                    None => self.runtime.resolver(),
                 };
 
-                if !config.dns_overrides.is_empty() {
+                if !self.config.dns_overrides.is_empty() {
                     resolver = Arc::new(DnsResolverWithOverrides::new(
                         resolver,
-                        config.dns_overrides,
+                        self.config.dns_overrides,
                     ));
                 }
                 DynResolver::new(resolver)
             };
 
-            let tls = TlsConnector::builder()
-                .http_version(config.http_version)
-                .keylog(config.tls_keylog)
-                .cert_store(config.tls_cert_store)
-                .identity(config.tls_identity)
-                .max_version(config.tls_max_version)
-                .min_version(config.tls_min_version)
-                .verify_hostname(config.tls_verify_hostname)
-                .cert_verification(config.tls_cert_verification)
-                .tls_sni(config.tls_sni)
-                .tls_session_store(config.tls_session_store)
-                .build(config.tls_options)?;
+            let tcp = transport::TcpConnector::new(self.runtime.clone())
+                .set_keepalive(self.config.tcp_keepalive)
+                .set_keepalive_interval(self.config.tcp_keepalive_interval)
+                .set_keepalive_retries(self.config.tcp_keepalive_retries)
+                .set_reuse_address(self.config.tcp_reuse_address)
+                .set_linger(self.config.tcp_linger)
+                .set_nodelay(self.config.tcp_nodelay)
+                .set_send_buffer_size(self.config.tcp_send_buffer_size)
+                .set_recv_buffer_size(self.config.tcp_recv_buffer_size)
+                .set_happy_eyeballs_timeout(self.config.tcp_happy_eyeballs_timeout)
+                .set_tcp_user_timeout(
+                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                    self.config.tcp_user_timeout,
+                );
 
-            #[cfg(feature = "socks")]
-            let socks_resolver = resolver.clone();
+            let connector = {
+                let tls = TlsConnectorBuilder::new()
+                    .protocol(self.config.protocol)
+                    .keylog(self.config.tls_keylog)
+                    .cert_store(self.config.tls_cert_store)
+                    .identity(self.config.tls_identity)
+                    .max_version(self.config.tls_max_version)
+                    .min_version(self.config.tls_min_version)
+                    .session_store(self.config.tls_session_store)
+                    .sni(self.config.tls_sni)
+                    .verify_hostname(self.config.tls_verify_hostname)
+                    .cert_verification(self.config.tls_cert_verification);
+                let config = crate::conn::Config {
+                    proxies: Arc::new(self.config.proxies),
+                    verbose: self.config.connection_verbose,
+                    nodelay: self.config.tcp_nodelay,
+                    tls_info: self.config.tls_info,
+                };
+                Connector::builder(self.runtime.clone(), tls, config)
+                    .connect_timeout(self.config.connect_timeout)
+                    .bind_options(self.config.bind_options)
+                    .layers(self.config.connector_layers)
+                    .build(tcp, resolver, self.config.config_set.clone())?
+            };
 
-            let mut http = HttpConnector::new(resolver, TcpConnector::new());
-            http.enforce_http(false);
-            http.set_keepalive(config.tcp_keepalive);
-            http.set_keepalive_interval(config.tcp_keepalive_interval);
-            http.set_keepalive_retries(config.tcp_keepalive_retries);
-            http.set_reuse_address(config.tcp_reuse_address);
-            http.set_linger(config.tcp_linger);
-            http.set_connect_timeout(config.connect_timeout);
-            http.set_nodelay(config.tcp_nodelay);
-            http.set_send_buffer_size(config.tcp_send_buffer_size);
-            http.set_recv_buffer_size(config.tcp_recv_buffer_size);
-            http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            http.set_tcp_user_timeout(config.tcp_user_timeout);
-            #[cfg(any(
-                target_os = "android",
-                target_os = "fuchsia",
-                target_os = "illumos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "macos",
-                target_os = "solaris",
-                target_os = "tvos",
-                target_os = "visionos",
-                target_os = "watchos",
-            ))]
-            if let Some(interface) = config.socket_options.interface {
-                http.set_interface(interface);
-            }
-            http.set_local_addresses(
-                config.socket_options.ipv4_address,
-                config.socket_options.ipv6_address,
-            );
-
-            let connector = ServiceBuilder::new()
-                .layer(ConnectorLayer::new(
-                    config.connector_layers,
-                    config.timer.clone(),
-                    config.connect_timeout,
-                ))
-                .service(Connector::new(
-                    crate::conn::Config {
-                        proxies: Arc::new(config.proxies),
-                        verbose: config.connection_verbose,
-                        nodelay: config.tcp_nodelay,
-                        tls_info: config.tls_info,
-                    },
-                    http,
-                    tls,
-                    #[cfg(feature = "socks")]
-                    socks_resolver,
-                ));
-
-            let builder = sealed::Builder::new(config.executor)
+            sealed::Builder::new(self.runtime.clone())
                 .cookie_store(
                     #[cfg(feature = "cookies")]
-                    config.cookie_store,
+                    self.config.cookie_store,
                 )
-                .http1_options(config.http1_options)
-                .http_version(config.http_version);
-            #[cfg(feature = "http2")]
-            let builder = builder
-                .http2_options(config.http2_options)
-                .http2_timer(config.timer.clone());
-            builder
-                .pool_timer(config.timer.clone())
-                .pool_idle_timeout(config.pool_idle_timeout)
-                .pool_max_idle_per_host(config.pool_max_idle_per_host)
-                .pool_max_size(config.pool_max_size)
-                .pool_strategy(config.pool_strategy)
+                .config_set(self.config.config_set)
+                .protocol(self.config.protocol)
+                .pool_idle_timeout(self.config.pool_idle_timeout)
+                .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
+                .pool_max_size(self.config.pool_max_size)
+                .pool_strategy(self.config.pool_strategy)
                 .build(connector)
         };
 
         // Configured client service with layers
         let client = {
             let service = ServiceBuilder::new()
-                .layer(RetryLayer::new(RetryPolicy::new(config.retry_policy)))
+                .layer(RetryLayer::new(RetryPolicy::new(self.config.retry_policy)))
                 .layer({
-                    let policy = FollowRedirectPolicy::new(config.redirect_policy)
-                        .with_referer(config.referer)
-                        .with_https_only(config.https_only);
+                    let policy = FollowRedirectPolicy::new(self.config.redirect_policy)
+                        .with_referer(self.config.referer)
+                        .with_https_only(self.config.https_only);
                     FollowRedirectLayer::with_policy(policy)
                 })
                 .service(service);
@@ -628,25 +593,26 @@ impl ClientBuilder {
                 feature = "deflate",
             ))]
             let service = ServiceBuilder::new()
-                .layer(DecompressionLayer::new(config.accept_encoding))
+                .layer(DecompressionLayer::new(self.config.accept_encoding))
                 .service(service);
 
             let service = ServiceBuilder::new()
                 .layer(ConfigServiceLayer::new(
-                    config.https_only,
-                    config.headers,
-                    config.orig_headers,
+                    self.config.https_only,
+                    self.config.headers,
+                    self.config.orig_headers,
                 ))
                 .service(service);
 
-            if config.layers.is_empty() {
+            if self.config.layers.is_empty() {
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.timer, config.timeout_options))
+                    .layer(TimeoutLayer::new(self.runtime, self.config.timeout_options))
                     .service(service);
 
                 Either::Left(service)
             } else {
-                let service = config
+                let service = self
+                    .config
                     .layers
                     .into_iter()
                     .fold(BoxCloneSyncService::new(service), |service, layer| {
@@ -654,7 +620,7 @@ impl ClientBuilder {
                     });
 
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.timer, config.timeout_options))
+                    .layer(TimeoutLayer::new(self.runtime, self.config.timeout_options))
                     .service(service)
                     .map_err(crate::error::map_timeout_to_request_error);
 
@@ -672,11 +638,13 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```rust
+    /// use wreq::Client;
+    ///
     /// # async fn doc() -> wreq::Result<()> {
     /// // Name your user agent after your app?
     /// static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
     ///
-    /// let client = wreq::Client::builder().user_agent(APP_USER_AGENT).build()?;
+    /// let client = Client::builder_tokio().user_agent(APP_USER_AGENT).build()?;
     /// let res = client.get("https://www.rust-lang.org").send().await?;
     /// # Ok(())
     /// # }
@@ -702,7 +670,8 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```rust
-    /// use wreq::header;
+    /// use wreq::{Client, header};
+    ///
     /// # async fn doc() -> wreq::Result<()> {
     /// let mut headers = header::HeaderMap::new();
     /// headers.insert("X-MY-HEADER", header::HeaderValue::from_static("value"));
@@ -713,7 +682,7 @@ impl ClientBuilder {
     /// headers.insert(header::AUTHORIZATION, auth_value);
     ///
     /// // get a client builder
-    /// let client = wreq::Client::builder().default_headers(headers).build()?;
+    /// let client = Client::builder_tokio().default_headers(headers).build()?;
     /// let res = client.get("https://www.rust-lang.org").send().await?;
     /// # Ok(())
     /// # }
@@ -722,13 +691,14 @@ impl ClientBuilder {
     /// Override the default headers:
     ///
     /// ```rust
-    /// use wreq::header;
+    /// use wreq::{Client, header};
+    ///
     /// # async fn doc() -> wreq::Result<()> {
     /// let mut headers = header::HeaderMap::new();
     /// headers.insert("X-MY-HEADER", header::HeaderValue::from_static("value"));
     ///
     /// // get a client builder
-    /// let client = wreq::Client::builder().default_headers(headers).build()?;
+    /// let client = Client::builder_tokio().default_headers(headers).build()?;
     /// let res = client
     ///     .get("https://www.rust-lang.org")
     ///     .header("X-MY-HEADER", "new_value")
@@ -999,7 +969,7 @@ impl ClientBuilder {
     /// use wreq::{Client, Proxy};
     ///
     /// let proxy = Proxy::http("http://proxy:8080").unwrap();
-    /// let client = Client::builder().proxy(proxy).build().unwrap();
+    /// let client = Client::builder_tokio().proxy(proxy).build().unwrap();
     /// ```
     #[inline]
     pub fn proxy(mut self, proxy: Proxy) -> ClientBuilder {
@@ -1097,8 +1067,8 @@ impl ClientBuilder {
 
     /// Sets the maximum number of compatibility groups retaining reusable connections.
     ///
-    /// Idle HTTP/1 senders and shared HTTP/2 senders count toward this limit,
-    /// including HTTP/2 senders with active requests. Eviction leaves existing
+    /// Idle HTTP/1 senders and shared HTTP/2 and HTTP/3 senders count toward this limit,
+    /// including shared senders with active requests. Eviction leaves existing
     /// requests running. This does not limit physical connections; `0` means unlimited.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
@@ -1122,21 +1092,13 @@ impl ClientBuilder {
         self
     }
 
-    /// Selects the client's HTTP protocol, defaulting to [`HttpVersion::Auto`].
-    /// An explicit request [`version`](RequestBuilder::version) overrides this setting.
-    /// Fixed modes take precedence over TLS ALPN options.
-    #[inline]
-    pub fn http_version(mut self, version: HttpVersion) -> ClientBuilder {
-        self.config.http_version = version;
-        self
-    }
-
     /// Uses HTTP/1 for both cleartext and TLS connections, without upgrading to H2.
     /// Only `http/1.1` is offered through TLS ALPN. A request-level
     /// [`version`](RequestBuilder::version) overrides this client setting.
     #[inline]
-    pub fn http1_only(self) -> ClientBuilder {
-        self.http_version(HttpVersion::Http1)
+    pub fn http1_only(mut self) -> ClientBuilder {
+        self.config.protocol = Protocol::Http1;
+        self
     }
 
     /// Uses HTTP/2 without falling back to HTTP/1.
@@ -1150,8 +1112,18 @@ impl ClientBuilder {
     #[inline]
     #[cfg(feature = "http2")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_only(self) -> ClientBuilder {
-        self.http_version(HttpVersion::Http2)
+    pub fn http2_only(mut self) -> ClientBuilder {
+        self.config.protocol = Protocol::Http2;
+        self
+    }
+
+    /// Uses HTTP/3 over QUIC without falling back to TCP.
+    /// Enabling the `http3` feature alone does not select HTTP/3.
+    /// An explicit request [`version`](RequestBuilder::version) overrides this setting.
+    #[cfg(feature = "http3")]
+    pub fn http3_only(mut self) -> ClientBuilder {
+        self.config.protocol = Protocol::Http3;
+        self
     }
 
     /// Sets the HTTP/1 options for the client.
@@ -1160,7 +1132,7 @@ impl ClientBuilder {
     where
         T: Into<Option<Http1Options>>,
     {
-        self.config.http1_options = options.into();
+        self.config.config_set.set(options.into());
         self
     }
 
@@ -1172,7 +1144,28 @@ impl ClientBuilder {
     where
         T: Into<Option<Http2Options>>,
     {
-        self.config.http2_options = options.into();
+        self.config.config_set.set(options.into());
+        self
+    }
+
+    /// Sets the HTTP/3 options for the client.
+    #[cfg(feature = "http3")]
+    pub fn http3_options<T>(mut self, options: T) -> ClientBuilder
+    where
+        T: Into<Option<netty::http3::Http3Options>>,
+    {
+        self.config.config_set.set(options.into());
+        self
+    }
+
+    /// Sets the QUIC transport and TLS options of HTTP/3 connections.
+    /// TCP connections use [`tls_options`](Self::tls_options) instead.
+    #[cfg(feature = "http3")]
+    pub fn quic_options<T>(mut self, options: T) -> ClientBuilder
+    where
+        T: Into<Option<crate::quic::QuicOptions>>,
+    {
+        self.config.config_set.set(options.into());
         self
     }
 
@@ -1329,8 +1322,10 @@ impl ClientBuilder {
     ///
     /// ```
     /// use std::net::IpAddr;
+    /// use wreq::Client;
+    ///
     /// let local_addr = IpAddr::from([12, 4, 1, 8]);
-    /// let client = wreq::Client::builder()
+    /// let client = Client::builder_tokio()
     ///     .local_address(local_addr)
     ///     .build()
     ///     .unwrap();
@@ -1340,7 +1335,7 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.config.socket_options.set_local_address(addr.into());
+        self.config.bind_options.set_local_address(addr);
         self
     }
 
@@ -1351,9 +1346,11 @@ impl ClientBuilder {
     /// ///
     /// ```
     /// use std::net::{Ipv4Addr, Ipv6Addr};
+    /// use wreq::Client;
+    ///
     /// let ipv4 = Ipv4Addr::new(127, 0, 0, 1);
     /// let ipv6 = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
-    /// let client = wreq::Client::builder()
+    /// let client = Client::builder_tokio()
     ///     .local_addresses(ipv4, ipv6)
     ///     .build()
     ///     .unwrap();
@@ -1364,7 +1361,7 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.config.socket_options.set_local_addresses(ipv4, ipv6);
+        self.config.bind_options.set_local_addresses(ipv4, ipv6);
         self
     }
 
@@ -1389,9 +1386,11 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```
+    /// use wreq::Client;
+    ///
     /// # fn doc() -> Result<(), wreq::Error> {
     /// let interface = "lo";
-    /// let client = wreq::Client::builder()
+    /// let client = Client::builder_tokio()
     ///     .interface(interface)
     ///     .build()?;
     /// # Ok(())
@@ -1432,7 +1431,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.socket_options.set_interface(interface);
+        self.config.bind_options.set_interface(interface);
         self
     }
 
@@ -1530,7 +1529,7 @@ impl ClientBuilder {
         self
     }
 
-    /// Replaces the built-in store of 256 connection keys with two tickets each.
+    /// Replaces the built-in store of 1024 connection keys with two tickets each.
     /// The supplied store controls retention when ticket-based resumption is enabled.
     /// Session keys remain scoped to this client and its request configuration.
     #[inline]
@@ -1539,23 +1538,21 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the TLS options for the client.
+    /// Sets the TLS options of TCP connections.
+    /// HTTP/3 connections use `quic_options` instead.
     #[inline]
     pub fn tls_options<T>(mut self, options: T) -> ClientBuilder
     where
         T: Into<Option<TlsOptions>>,
     {
-        self.config.tls_options = options.into();
+        self.config.config_set.set(options.into());
         self
     }
 
     // DNS options
 
-    /// Disables the hickory-dns async resolver.
-    ///
-    /// This method exists even if the optional `hickory-dns` feature is not enabled.
-    /// This can be used to ensure a `Client` doesn't use the hickory-dns async resolver
-    /// even if another dependency were to enable the optional `hickory-dns` feature.
+    /// Disables automatic selection of the built-in Hickory DNS resolver.
+    /// Does not replace a resolver supplied by the runtime or [`Self::dns_resolver`].
     #[inline]
     #[cfg(feature = "hickory-dns")]
     #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
@@ -1624,10 +1621,12 @@ impl ClientBuilder {
     /// Example usage:
     /// ```
     /// use std::time::Duration;
+    /// use tower::timeout::TimeoutLayer;
+    /// use wreq::Client;
     ///
-    /// let client = wreq::Client::builder()
+    /// let client = Client::builder_tokio()
     ///     .timeout(Duration::from_millis(200))
-    ///     .layer(tower::timeout::TimeoutLayer::new(Duration::from_millis(50)))
+    ///     .layer(TimeoutLayer::new(Duration::from_millis(50)))
     ///     .build()
     ///     .unwrap();
     /// ```
@@ -1659,24 +1658,28 @@ impl ClientBuilder {
         self
     }
 
-    /// Adds a new Tower [`Layer`](https://docs.rs/tower/latest/tower/trait.Layer.html) to the
-    /// base connector [`Service`](https://docs.rs/tower/latest/tower/trait.Service.html) which
-    /// is responsible for connection establishment.a
+    /// Adds a Tower [`Layer`](https://docs.rs/tower/latest/tower/trait.Layer.html) around
+    /// connection establishment, including TCP, proxies, TLS and QUIC.
+    /// Both transport paths share the same layer stack.
     ///
     /// Each subsequent invocation of this function will wrap previous layers.
     ///
-    /// If configured, the `connect_timeout` will be the outermost layer.
+    /// If configured, `connect_timeout` wraps the layer stack. It starts when the
+    /// service is called, after readiness waits such as concurrency admission.
     ///
     /// Example usage:
     /// ```
     /// use std::time::Duration;
+    /// use tower::limit::ConcurrencyLimitLayer;
+    /// use tower::timeout::TimeoutLayer;
+    /// use wreq::Client;
     ///
-    /// let client = wreq::Client::builder()
-    ///     // resolved to outermost layer, meaning while we are waiting on concurrency limit
+    /// let client = Client::builder_tokio()
+    ///     // The outer connection deadline starts after concurrency admission.
     ///     .connect_timeout(Duration::from_millis(200))
     ///     // underneath the concurrency check, so only after concurrency limit lets us through
-    ///     .connector_layer(tower::timeout::TimeoutLayer::new(Duration::from_millis(50)))
-    ///     .connector_layer(tower::limit::concurrency::ConcurrencyLimitLayer::new(2))
+    ///     .connector_layer(TimeoutLayer::new(Duration::from_millis(50)))
+    ///     .connector_layer(ConcurrencyLimitLayer::new(2))
     ///     .build()
     ///     .unwrap();
     /// ```
@@ -1693,29 +1696,15 @@ impl ClientBuilder {
         self
     }
 
-    // TLS/HTTP2 emulation options
+    // Emulation options
 
-    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
-    /// Supplied protocol options replace matching settings; absent ones are kept.
-    /// The profile does not create a connection group.
+    /// Applies the emulation's headers and protocol options.
+    /// Supplied options replace matching settings; absent ones are kept.
+    /// The emulation does not create a connection group.
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> ClientBuilder {
-        let emulate::Emulation(headers, orig_headers, mut extra) = emulation.into_emulation();
-        self.config.tls_options = extra
-            .remove::<TlsOptions>()
-            .map(Arc::unwrap_or_clone)
-            .or(self.config.tls_options);
-        self.config.http1_options = extra
-            .remove::<Http1Options>()
-            .map(Arc::unwrap_or_clone)
-            .or(self.config.http1_options);
-        #[cfg(feature = "http2")]
-        {
-            self.config.http2_options = extra
-                .remove::<Http2Options>()
-                .map(Arc::unwrap_or_clone)
-                .or(self.config.http2_options);
-        }
+        let emulate::Emulation(headers, orig_headers, config_set) = emulation.into_emulation();
+        self.config.config_set.extend(config_set);
         self.default_headers(headers).orig_headers(orig_headers)
     }
 }
@@ -1724,20 +1713,18 @@ impl ClientBuilder {
 mod sealed {
     use super::*;
 
-    /// Validates and sends low-level HTTP requests through the client service stack.
-    ///
-    /// This is the caller-facing Tower service used beneath [`crate::Client`]. It
-    /// validates request versions and absolute URIs before request-local
-    /// configuration, internal cancellation retries, connection checkout, and
-    /// protocol dispatch. Clones share all connection-pool state and never clone
-    /// request bodies.
+    /// Tower service beneath [`crate::Client`] that validates and sends HTTP requests.
+    /// Applies request configuration, cancellation retries, pool checkout and protocol dispatch.
+    /// Clones share the pool without cloning request bodies.
     #[must_use]
     pub struct Client<C, B>
     where
-        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
-        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-        C::Error: Into<BoxError>,
-        C::Future: Unpin + Send + 'static,
+        C: Service<ConnectRequest, Response = Conn, Error = BoxError>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+        C::Future: Send + 'static,
         B: HttpBody + Send + Unpin + 'static,
         B::Data: Send,
         B::Error: Into<BoxError>,
@@ -1748,7 +1735,7 @@ mod sealed {
 
     /// Assembles the protocol, runtime, and pool services used by [`Client`].
     ///
-    /// The builder owns base handshake configuration until [`Builder::build`]
+    /// The builder owns client handshake configuration until [`Builder::build`]
     /// consumes it. The resulting client clones share the pool created around
     /// the supplied connector.
     #[derive(Clone)]
@@ -1757,30 +1744,36 @@ mod sealed {
         config: svc::Config,
 
         /// Runtime used by protocol drivers and pool maintenance.
-        exec: Executor,
+        runtime: RuntimeHandle,
 
-        /// Base HTTP/1 handshake configuration.
+        /// Client HTTP/1 handshake configuration.
         h1_builder: conn::http1::Builder,
 
-        /// Base HTTP/2 handshake configuration.
+        /// Client HTTP/2 handshake configuration.
         #[cfg(feature = "http2")]
-        h2_builder: conn::http2::Builder<Executor>,
+        h2_builder: conn::http2::Builder<RuntimeHandle>,
+
+        /// Client HTTP/3 handshake configuration.
+        #[cfg(feature = "http3")]
+        h3_builder: conn::http3::Builder<RuntimeHandle>,
 
         /// Connection-pool reuse and retention policy.
         pool_config: pool::Config,
 
-        /// Clock used by connection-pool maintenance.
-        pool_timer: Timer,
+        /// Client protocol options.
+        config_set: ConfigSet,
     }
 
     // ===== impl Client =====
 
     impl<C, B> Service<HttpRequest<B>> for Client<C, B>
     where
-        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
-        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-        C::Error: Into<BoxError>,
-        C::Future: Unpin + Send + 'static,
+        C: Service<ConnectRequest, Response = Conn, Error = BoxError>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+        C::Future: Send + 'static,
         B: HttpBody + Send + Unpin + 'static,
         B::Data: Send,
         B::Error: Into<BoxError>,
@@ -1805,9 +1798,9 @@ mod sealed {
                         error::Error::from_kind(error::ErrorKind::UserUnsupportedRequestMethod);
                     return FutureEither::Right(future_err(error.into()));
                 }
-                Version::HTTP_10 | Version::HTTP_11 => {}
-                #[cfg(feature = "http2")]
-                Version::HTTP_2 => {}
+                Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2 => {}
+                #[cfg(feature = "http3")]
+                Version::HTTP_3 => {}
                 _unsupported => {
                     warn!("Request has unsupported version: {:?}", _unsupported);
                     let error = error::Error::from_kind(error::ErrorKind::UserUnsupportedVersion);
@@ -1824,10 +1817,12 @@ mod sealed {
 
     impl<C, B> Clone for Client<C, B>
     where
-        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
-        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-        C::Error: Into<BoxError>,
-        C::Future: Unpin + Send + 'static,
+        C: Service<ConnectRequest, Response = Conn, Error = BoxError>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+        C::Future: Send + 'static,
         B: HttpBody + Send + Unpin + 'static,
         B::Data: Send,
         B::Error: Into<BoxError>,
@@ -1842,36 +1837,35 @@ mod sealed {
     // ===== impl Builder =====
 
     impl Builder {
-        /// Creates a builder using `exec` for protocol drivers and pool tasks.
-        pub fn new(exec: Executor) -> Self {
-            #[cfg(feature = "http2")]
-            let h2_builder = conn::http2::Builder::new(exec.clone());
+        /// Creates a builder using `runtime` for protocol drivers and pool tasks.
+        pub fn new(runtime: RuntimeHandle) -> Self {
             Self {
                 config: svc::Config {
                     retry_unsent: true,
                     set_host: true,
-                    version: HttpVersion::Auto,
+                    protocol: Protocol::Auto,
                     #[cfg(feature = "cookies")]
                     cookie_store: None,
                 },
-                exec,
+                runtime: runtime.clone(),
                 h1_builder: conn::http1::Builder::default(),
                 #[cfg(feature = "http2")]
-                h2_builder,
+                h2_builder: conn::http2::Builder::new(runtime.clone()).timer(runtime.clone()),
+                #[cfg(feature = "http3")]
+                h3_builder: conn::http3::Builder::new(runtime),
                 pool_config: pool::Config {
                     idle_timeout: Some(Duration::from_secs(90)),
                     max_idle_per_host: usize::MAX,
                     max_pool_size: None,
                     ..pool::Config::default()
                 },
-                pool_timer: Timer::default(),
+                config_set: ConfigSet::default(),
             }
         }
 
         /// Sets how long a connection considered idle remains eligible for reuse.
         ///
-        /// `None` disables time-based eviction. Without a [`Builder::pool_timer`],
-        /// expiration is checked only during checkout. The default is 90 seconds.
+        /// `None` disables time-based eviction. The default is 90 seconds.
         #[inline]
         pub fn pool_idle_timeout<D>(mut self, val: D) -> Self
         where
@@ -1891,7 +1885,7 @@ mod sealed {
             self
         }
 
-        /// Sets the maximum number of compatibility groups retaining idle state.
+        /// Sets the maximum number of compatibility groups retaining reusable senders.
         ///
         /// An entry is counted only while it owns a reusable sender. Routing-only
         /// and connecting entries are not counted. This does not limit physical
@@ -1911,53 +1905,29 @@ mod sealed {
 
         /// Shares the client's protocol selection with the request stack and pool.
         #[inline]
-        pub fn http_version(mut self, version: HttpVersion) -> Self {
-            self.config.version = version;
+        pub fn protocol(mut self, protocol: Protocol) -> Self {
+            self.config.protocol = protocol;
             self
         }
 
-        /// Sets the timer used by the HTTP/2 protocol driver.
-        #[inline]
-        #[cfg(feature = "http2")]
-        pub fn http2_timer(mut self, timer: Timer) -> Self {
-            self.h2_builder = self.h2_builder.timer(timer);
-            self
-        }
-
-        /// Sets the base HTTP/1 handshake options.
+        /// Sets the client's protocol options.
         ///
-        /// Request-local options may override this base for one connection attempt.
+        /// Protocol builders start from these options. Requests count only the
+        /// options that differ from them, both for pool reuse and for handshakes.
         #[inline]
-        pub fn http1_options<O>(mut self, opts: O) -> Self
-        where
-            O: Into<Option<Http1Options>>,
-        {
-            if let Some(opts) = opts.into() {
-                self.h1_builder = self.h1_builder.options(opts);
+        pub fn config_set(mut self, config_set: ConfigSet) -> Self {
+            if let Some(opts) = config_set.get::<Http1Options>() {
+                self.h1_builder = self.h1_builder.options(opts.clone());
             }
-
-            self
-        }
-
-        /// Sets the base HTTP/2 handshake options.
-        ///
-        /// Request-local options may override this base for one connection attempt.
-        #[inline]
-        #[cfg(feature = "http2")]
-        pub fn http2_options<O>(mut self, opts: O) -> Self
-        where
-            O: Into<Option<Http2Options>>,
-        {
-            if let Some(opts) = opts.into() {
-                self.h2_builder = self.h2_builder.options(opts);
+            #[cfg(feature = "http2")]
+            if let Some(opts) = config_set.get::<Http2Options>() {
+                self.h2_builder = self.h2_builder.options(opts.clone());
             }
-            self
-        }
-
-        /// Sets the clock and sleeper used by pool delays and idle cleanup.
-        #[inline]
-        pub fn pool_timer(mut self, timer: Timer) -> Self {
-            self.pool_timer = timer;
+            #[cfg(feature = "http3")]
+            if let Some(opts) = config_set.get::<netty::http3::Http3Options>() {
+                self.h3_builder = self.h3_builder.options(opts.clone());
+            }
+            self.config_set = config_set;
             self
         }
 
@@ -1978,13 +1948,15 @@ mod sealed {
             self
         }
 
-        /// Consumes the builder and wraps `connector` in the complete client stack.
-        pub fn build<C, B>(self, connector: C) -> Client<C, B>
+        /// Consumes the builder and wraps both transports in the complete client stack.
+        pub fn build<C, B>(self, (connector, bind_options): (C, BindOptions)) -> Client<C, B>
         where
-            C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
-            C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-            C::Error: Into<BoxError>,
-            C::Future: Unpin + Send + 'static,
+            C: Service<ConnectRequest, Response = Conn, Error = BoxError>
+                + Clone
+                + Send
+                + Sync
+                + 'static,
+            C::Future: Send + 'static,
             B: HttpBody + Send + Unpin + 'static,
             B::Data: Send,
             B::Error: Into<BoxError>,
@@ -1995,15 +1967,18 @@ mod sealed {
                         self.h1_builder,
                         #[cfg(feature = "http2")]
                         self.h2_builder,
+                        #[cfg(feature = "http3")]
+                        self.h3_builder,
                         self.config.retry_unsent,
-                        self.config.version,
+                        self.config.protocol,
+                        self.config_set,
+                        bind_options,
                     ))
                     .service(svc::Dispatch::new(
                         self.pool_config,
                         connector,
                         self.config,
-                        self.exec,
-                        self.pool_timer,
+                        self.runtime,
                     )),
             }
         }

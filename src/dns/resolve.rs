@@ -2,14 +2,15 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     fmt,
-    future::Future,
     net::SocketAddr,
-    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
-use futures_util::{TryFutureExt, future::MapErr};
+use futures_util::{
+    TryFutureExt,
+    future::{BoxFuture, MapErr},
+};
 use tower::{BoxError, Service};
 
 use crate::error::DnsError;
@@ -56,7 +57,7 @@ impl fmt::Display for Name {
 pub type Addrs = Box<dyn Iterator<Item = SocketAddr> + Send>;
 
 /// Alias for the `Future` type returned by a DNS resolver.
-pub type Resolving = Pin<Box<dyn Future<Output = Result<Addrs, BoxError>> + Send>>;
+pub type Resolving = BoxFuture<'static, Result<Addrs, BoxError>>;
 
 /// Trait for customizing DNS resolution in wreq.
 pub trait Resolve: Send + Sync {

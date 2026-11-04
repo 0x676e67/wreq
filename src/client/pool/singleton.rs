@@ -118,6 +118,7 @@ where
     /// Clones the completed service without joining or starting creation.
     ///
     /// Returns `None` while the singleton is empty or still making its service.
+    #[cfg(feature = "http2")]
     pub(super) fn checkout_made(&self) -> Option<Singled<M::Future, M::Response>> {
         match &*self.state.lock() {
             State::Made {

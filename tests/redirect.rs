@@ -33,7 +33,8 @@ async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
 
         let url = format!("http://{}/{}", redirect.addr(), code);
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
-        let res = wreq::post(&url)
+        let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+            .post(&url)
             .redirect(Policy::default())
             .send()
             .await
@@ -69,7 +70,8 @@ async fn test_redirect_307_and_308_tries_to_get_again() {
 
         let url = format!("http://{}/{}", redirect.addr(), code);
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
-        let res = wreq::get(&url)
+        let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+            .get(&url)
             .redirect(Policy::default())
             .send()
             .await
@@ -119,7 +121,8 @@ async fn test_redirect_307_and_308_tries_to_post_again() {
 
         let url = format!("http://{}/{}", redirect.addr(), code);
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
-        let res = wreq::post(&url)
+        let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+            .post(&url)
             .redirect(Policy::default())
             .body("Hello")
             .send()
@@ -162,7 +165,7 @@ async fn test_redirect_removes_sensitive_headers() {
             .unwrap()
     });
 
-    let response = Client::builder()
+    let response = Client::builder_tokio()
         .redirect(Policy::default())
         .build()
         .unwrap()
@@ -234,7 +237,7 @@ async fn test_redirect_referrer_policy() {
         }
     });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .redirect(Policy::default())
         .build()
         .unwrap();
@@ -282,7 +285,8 @@ async fn test_redirect_policy_can_return_errors() {
     });
 
     let url = format!("http://{}/loop", server.addr());
-    let err = wreq::get(&url)
+    let err = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(&url)
         .redirect(Policy::default())
         .send()
         .await
@@ -303,7 +307,7 @@ async fn test_redirect_policy_can_stop_redirects_without_an_error() {
 
     let url = format!("http://{}/no-redirect", server.addr());
 
-    let res = Client::builder()
+    let res = Client::builder_tokio()
         .redirect(Policy::none())
         .build()
         .unwrap()
@@ -336,7 +340,7 @@ async fn test_referer_is_preserved_if_disabled() {
         }
     });
 
-    let response = Client::builder()
+    let response = Client::builder_tokio()
         .redirect(Policy::default())
         .referer(false)
         .build()
@@ -365,7 +369,11 @@ async fn test_invalid_location_stops_redirect_gh484() {
 
     let url = format!("http://{}/yikes", server.addr());
 
-    let res = wreq::get(&url).send().await.unwrap();
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(&url)
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::FOUND);
@@ -383,7 +391,8 @@ async fn test_invalid_scheme_is_rejected() {
 
     let url = format!("http://{}/yikes", server.addr());
 
-    let err = wreq::get(&url)
+    let err = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(&url)
         .redirect(Policy::default())
         .send()
         .await
@@ -413,7 +422,7 @@ async fn test_redirect_302_with_set_cookies() {
     let url = format!("http://{}/{}", server.addr(), code);
     let dst = format!("http://{}/{}", server.addr(), "dst");
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .cookie_store(true)
         .redirect(Policy::default())
         .build()
@@ -445,7 +454,7 @@ async fn test_redirect_limit_to_1() {
     // The number at the end of the uri indicates the total number of redirections
     let url = format!("http://{}/redirect/0", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .redirect(Policy::limited(1))
         .build()
         .unwrap();
@@ -469,7 +478,7 @@ async fn test_scheme_only_check_after_policy_return_follow() {
     });
 
     let url = format!("http://{}/yikes", server.addr());
-    let res = Client::builder()
+    let res = Client::builder_tokio()
         .redirect(Policy::custom(|attempt| attempt.stop()))
         .build()
         .unwrap()
@@ -480,7 +489,7 @@ async fn test_scheme_only_check_after_policy_return_follow() {
     assert!(res.is_ok());
     assert_eq!(res.unwrap().status(), wreq::StatusCode::FOUND);
 
-    let res = Client::builder()
+    let res = Client::builder_tokio()
         .redirect(Policy::custom(|attempt| attempt.follow()))
         .build()
         .unwrap()
@@ -533,7 +542,8 @@ async fn test_redirect_301_302_303_empty_payload_headers() {
 
         let url = format!("http://{}/{}", redirect.addr(), code);
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
-        let res = wreq::post(&url)
+        let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+            .post(&url)
             .redirect(Policy::default())
             .body("Hello")
             .header(header::CONTENT_TYPE, "text/plain")
@@ -576,7 +586,7 @@ async fn test_redirect_history() {
     let url = format!("http://{}/first", redirect.addr());
     let dst = format!("http://{}/{}", redirect.addr(), "dst");
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .redirect(Policy::default())
         .build()
         .unwrap();
@@ -631,7 +641,7 @@ async fn test_redirect_applies_set_cookie_from_redirect() {
     let start = format!("http://{}/start", server.addr());
     let dst = format!("http://{}/dst", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .cookie_store(true)
         .redirect(Policy::default())
         .build()
@@ -663,7 +673,7 @@ async fn test_redirect_async_pending_follow() {
     let url = format!("http://{}/async-redirect", server.addr());
     let dst = format!("http://{}/dst", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .redirect(Policy::custom(|attempt| {
             attempt.pending(|attempt| async move {
                 // Simulate async decision-making
@@ -704,7 +714,8 @@ async fn test_redirect_utf8_location_is_encoded() {
     let url = format!("http://{}/start", server.addr());
     let dst = format!("http://{}/caf%C3%A9", server.addr());
 
-    let res = wreq::get(&url)
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(&url)
         .redirect(Policy::default())
         .send()
         .await
@@ -736,7 +747,7 @@ async fn test_redirect_location_is_encoded() {
     let url = format!("http://{}/start", server.addr());
     let dst = format!("http://{}/dst%20path", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .redirect(Policy::default())
         .build()
         .unwrap();

@@ -1,18 +1,18 @@
 use std::{
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll, ready},
     time::Duration,
 };
 
 use http_body::Body;
-use netty::rt::{Sleep, Timer as _};
 use pin_project_lite::pin_project;
 
 use crate::{
     Error,
     error::{BoxError, TimedOut},
-    rt::Timer,
+    rt::{BoxSleep, Timer},
 };
 
 pin_project! {
@@ -47,7 +47,7 @@ pin_project! {
     pub struct TotalTimeoutBody<B> {
         #[pin]
         body: B,
-        timeout: Pin<Box<dyn Sleep>>,
+        timeout: BoxSleep,
     }
 }
 
@@ -60,10 +60,10 @@ pin_project! {
         #[pin]
         body: B,
         #[pin]
-        sleep: Option<Pin<Box<dyn Sleep>>>,
+        sleep: Option<BoxSleep>,
         armed: bool,
         timeout: Duration,
-        timer: Timer,
+        timer: Arc<dyn Timer>,
     }
 }
 
@@ -71,11 +71,11 @@ pin_project! {
 
 impl<B> TimeoutBody<B> {
     /// Wraps a body with the active total timeout and an optional read timeout.
-    pub fn new(
+    pub(crate) fn new(
         body: B,
-        timer: Timer,
+        timer: Arc<dyn Timer>,
         read_timeout: Option<Duration>,
-        total_timeout: Option<Pin<Box<dyn Sleep>>>,
+        total_timeout: Option<BoxSleep>,
     ) -> Self {
         match (total_timeout, read_timeout) {
             (Some(total_timeout), Some(read_timeout)) => TimeoutBody::CombinedTimeout {
@@ -178,7 +178,7 @@ where
         cx: &mut Context,
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let this = self.project();
-        if let Poll::Ready(()) = this.timeout.as_mut().poll(cx) {
+        if let Poll::Ready(()) = Pin::new(this.timeout).poll(cx) {
             return Poll::Ready(Some(Err(Error::body(TimedOut).into())));
         }
         poll_and_map_body(this.body, cx)
@@ -215,7 +215,7 @@ where
         if !*this.armed {
             let deadline = this.timer.now() + *this.timeout;
             match this.sleep.as_mut().as_pin_mut() {
-                Some(sleep) => this.timer.reset(sleep.get_mut(), deadline),
+                Some(sleep) => sleep.get_mut().reset(deadline),
                 None => this.sleep.set(Some(this.timer.sleep_until(deadline))),
             }
             *this.armed = true;

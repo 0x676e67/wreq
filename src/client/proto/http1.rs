@@ -23,21 +23,21 @@ use http::{
     header::{HOST, PROXY_AUTHORIZATION},
 };
 use http_body::Body;
-use netty::{body::Incoming, conn, rt::Executor as _};
+use netty::{body::Incoming, conn};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::oneshot,
 };
 use tower::{BoxError, Layer, Service};
 
-use super::{Established, SendError, clock_now, is_expired};
+use super::{Established, SendError, is_expired};
 use crate::{
     client::{
         error::{Error, ErrorKind},
         pool::cache::Started,
     },
     conn::Connected,
-    rt::{Executor, Timer},
+    rt::{RuntimeHandle, Timer as _},
 };
 
 /// Prepares and sends requests over one reusable HTTP/1 connection.
@@ -49,7 +49,7 @@ pub struct Connection<B> {
     conn_info: Connected,
     set_host: bool,
     idle_at: Instant,
-    timer: Timer,
+    runtime: RuntimeHandle,
 }
 
 /// Layers HTTP/1 handshaking over a transport-producing service.
@@ -59,8 +59,7 @@ pub struct Connection<B> {
 #[derive(Clone)]
 pub struct ConnectLayer<B> {
     set_host: bool,
-    exec: Executor,
-    timer: Timer,
+    runtime: RuntimeHandle,
     _body: PhantomData<fn(B)>,
 }
 
@@ -72,8 +71,7 @@ pub struct ConnectLayer<B> {
 pub struct Connect<S, B> {
     service: S,
     set_host: bool,
-    exec: Executor,
-    timer: Timer,
+    runtime: RuntimeHandle,
     _body: PhantomData<fn(B)>,
 }
 
@@ -85,8 +83,7 @@ pub struct Connect<S, B> {
 pub struct ConnectFuture<F, T, B> {
     state: ConnectState<F, B>,
     set_host: bool,
-    exec: Option<Executor>,
-    timer: Option<Timer>,
+    runtime: Option<RuntimeHandle>,
     _io: PhantomData<fn(T)>,
 }
 
@@ -101,7 +98,7 @@ enum ConnectState<F, B> {
 }
 
 /// Reports a consumed HTTP/1 handshake state.
-/// Returned if the connect future no longer owns its executor or timer.
+/// Returned if the connect future no longer owns its runtime.
 /// Carries no transport; the failed future releases its connection state.
 #[derive(Debug)]
 struct HandshakeStateError;
@@ -110,10 +107,9 @@ struct HandshakeStateError;
 
 impl<B> ConnectLayer<B> {
     /// Creates an HTTP/1 handshake layer for pooled connections.
-    pub fn new(exec: Executor, timer: Timer, set_host: bool) -> Self {
+    pub fn new(runtime: RuntimeHandle, set_host: bool) -> Self {
         Self {
-            exec,
-            timer,
+            runtime,
             set_host,
             _body: PhantomData,
         }
@@ -126,8 +122,7 @@ impl<S, B> Layer<S> for ConnectLayer<B> {
     fn layer(&self, service: S) -> Self::Service {
         Connect {
             service,
-            exec: self.exec.clone(),
-            timer: self.timer.clone(),
+            runtime: self.runtime.clone(),
             set_host: self.set_host,
             _body: PhantomData,
         }
@@ -140,8 +135,7 @@ impl<S: Clone, B> Clone for Connect<S, B> {
     fn clone(&self) -> Self {
         Self {
             service: self.service.clone(),
-            exec: self.exec.clone(),
-            timer: self.timer.clone(),
+            runtime: self.runtime.clone(),
             set_host: self.set_host,
             _body: PhantomData,
         }
@@ -168,8 +162,7 @@ where
     fn call(&mut self, target: Dst) -> Self::Future {
         ConnectFuture {
             state: ConnectState::Connecting(self.service.call(target)),
-            exec: Some(self.exec.clone()),
-            timer: Some(self.timer.clone()),
+            runtime: Some(self.runtime.clone()),
             set_host: self.set_host,
             _io: PhantomData,
         }
@@ -199,19 +192,14 @@ where
                             return Poll::Ready(Err(error));
                         }
                     };
-                    let Some(exec) = self.exec.take() else {
-                        self.state = ConnectState::Done;
-                        return Poll::Ready(Err(HandshakeStateError.into()));
-                    };
-                    let Some(timer) = self.timer.take() else {
+                    let Some(runtime) = self.runtime.take() else {
                         self.state = ConnectState::Done;
                         return Poll::Ready(Err(HandshakeStateError.into()));
                     };
 
                     self.state = ConnectState::Handshaking(Box::pin(Connection::handshake(
                         established,
-                        exec,
-                        timer,
+                        runtime,
                         self.set_host,
                     )));
                 }
@@ -255,8 +243,7 @@ where
     /// the sender closes during setup.
     async fn handshake<T>(
         established: Established<T>,
-        exec: Executor,
-        timer: Timer,
+        runtime: RuntimeHandle,
         set_host: bool,
     ) -> Result<Self, BoxError>
     where
@@ -270,20 +257,23 @@ where
             ..
         } = established;
 
-        let builder = config.proto.http1.clone();
-        let builder = match config.req.extra().get::<netty::http1::Http1Options>() {
-            Some(options) => builder.options(options.clone()),
-            None => builder,
-        };
+        let builder = config
+            .req
+            .config_override::<netty::http1::Http1Options>()
+            .map_or_else(
+                || config.proto.http1.clone(),
+                |options| config.proto.http1.clone().options(options.clone()),
+            );
         drop(config);
+
         let (mut tx, connection) = builder.handshake(io).await?;
         let (error_tx, error_rx) = oneshot::channel();
-        exec.execute(async move {
+        runtime.execute(Box::pin(async move {
             if let Err(error) = connection.with_upgrades().await {
                 debug!("client connection error: {error:?}");
                 let _ = error_tx.send(error);
             }
-        });
+        }));
 
         match tx.ready().await {
             Ok(()) => drop(error_rx),
@@ -298,8 +288,8 @@ where
             tx,
             conn_info: connected,
             set_host,
-            idle_at: clock_now(&timer),
-            timer,
+            idle_at: runtime.now(),
+            runtime,
         })
     }
 
@@ -315,7 +305,7 @@ where
 
     /// Records when the exclusive sender becomes idle.
     pub fn mark_idle(&mut self) {
-        self.idle_at = clock_now(&self.timer);
+        self.idle_at = self.runtime.now();
     }
 
     /// Returns whether the exclusive sender can safely re-enter the cache.

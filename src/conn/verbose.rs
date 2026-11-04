@@ -58,6 +58,11 @@ mod sealed {
         fn connected(&self) -> Connected {
             self.inner.connected()
         }
+
+        #[inline]
+        fn remote_addr(&self) -> Option<std::net::SocketAddr> {
+            self.inner.remote_addr()
+        }
     }
 
     impl<T: AsyncRead + AsyncWrite + Unpin> AsyncRead for Wrapper<T> {

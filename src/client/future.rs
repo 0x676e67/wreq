@@ -75,7 +75,11 @@ mod test {
     #[tokio::test]
     async fn error_has_url() {
         let u = "http://does.not.exist.local/ever";
-        let err = crate::Client::new().get(u).send().await.unwrap_err();
+        let err = crate::Client::new(crate::rt::tokio::TokioRuntime)
+            .get(u)
+            .send()
+            .await
+            .unwrap_err();
         assert_eq!(err.uri().unwrap(), u, "{err:?}");
     }
 }

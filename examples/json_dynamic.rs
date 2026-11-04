@@ -7,9 +7,15 @@
 // This is using the `tokio` runtime. You'll need the following dependency:
 //
 // `tokio = { version = "1", features = ["full"] }`
+use std::time::Duration;
+
+use wreq::{Client, rt::tokio::TokioRuntime};
+
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
-    let echo_json: serde_json::Value = wreq::post("https://jsonplaceholder.typicode.com/posts")
+    let echo_json: serde_json::Value = Client::new(TokioRuntime)
+        .post("https://jsonplaceholder.typicode.com/posts")
+        .timeout(Duration::from_secs(30))
         .json(&serde_json::json!({
             "title": "wreq.rs",
             "body": "https://docs.rs/wreq",

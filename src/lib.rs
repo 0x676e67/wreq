@@ -26,13 +26,22 @@
 //! - [The Rust Cookbook](https://doc.rust-lang.org/stable/book/ch00-00-introduction.html)
 //! - [Repository Examples](https://github.com/0x676e67/wreq/tree/main/examples)
 //!
+//! Construct a client with an explicit runtime, using `Client::builder(runtime)`
+//! or `Client::builder_tokio()` / `Client::builder_compio()`. The `http3` feature
+//! requires a runtime with QUIC support; Compio currently supports HTTP/1 and HTTP/2.
+//!
 //! ## Making a GET request
 //!
-//! Making a GET request is simple.
-//!
 //! ```rust
+//! use std::time::Duration;
+//!
+//! use wreq::{Client, rt::tokio::TokioRuntime};
+//!
 //! # async fn run() -> wreq::Result<()> {
-//! let body = wreq::get("https://www.rust-lang.org")
+//! let client = Client::new(TokioRuntime);
+//! let body = client
+//!     .get("https://www.rust-lang.org")
+//!     .timeout(Duration::from_secs(30))
 //!     .send()
 //!     .await?
 //!     .text()
@@ -43,9 +52,8 @@
 //! # }
 //! ```
 //!
-//! **NOTE**: If you plan to perform multiple requests, it is best to create a
-//! [`Client`][client] and reuse it, taking advantage of keep-alive connection
-//! pooling.
+//! Reuse the [`Client`][client] for later requests to take advantage of
+//! keep-alive connection pooling.
 //!
 //! ## Making POST requests (or setting request bodies)
 //!
@@ -56,10 +64,12 @@
 //! type, you can use the `wreq::Body` constructors.
 //!
 //! ```rust
+//! use wreq::{Client, rt::tokio::TokioRuntime};
+//!
 //! # use wreq::Error;
 //! #
 //! # async fn run() -> Result<(), Error> {
-//! let client = wreq::Client::new();
+//! let client = Client::new(TokioRuntime);
 //! let res = client
 //!     .post("http://httpbin.org/post")
 //!     .body("the exact body that is sent")
@@ -80,12 +90,14 @@
 //! The feature `form` is required.
 //!
 //! ```rust
+//! use wreq::{Client, rt::tokio::TokioRuntime};
+//!
 //! # use wreq::Error;
 //! # #[cfg(feature = "form")]
 //! # async fn run() -> Result<(), Error> {
 //! // This will POST a body of `foo=bar&baz=quux`
 //! let params = [("foo", "bar"), ("baz", "quux")];
-//! let client = wreq::Client::new();
+//! let client = Client::new(TokioRuntime);
 //! let res = client
 //!     .post("http://httpbin.org/post")
 //!     .form(&params)
@@ -102,6 +114,8 @@
 //! serialized into JSON. The feature `json` is required.
 //!
 //! ```rust
+//! use wreq::{Client, rt::tokio::TokioRuntime};
+//!
 //! # use wreq::Error;
 //! # use std::collections::HashMap;
 //! #
@@ -112,7 +126,7 @@
 //! map.insert("lang", "rust");
 //! map.insert("body", "json");
 //!
-//! let client = wreq::Client::new();
+//! let client = Client::new(TokioRuntime);
 //! let res = client
 //!     .post("http://httpbin.org/post")
 //!     .json(&map)
@@ -128,6 +142,11 @@
 //! The `ws` feature is required.
 //!
 //! ```rust,no_run
+//! use std::time::Duration;
+//!
+//! use http::Version;
+//! use wreq::{Client, rt::tokio::TokioRuntime};
+//!
 //! # #[cfg(feature = "ws")]
 //! use futures_util::{SinkExt, StreamExt, TryStreamExt};
 //! # #[cfg(feature = "ws")]
@@ -136,13 +155,15 @@
 //! # #[cfg(feature = "ws")]
 //! #[tokio::main]
 //! async fn main() -> wreq::Result<()> {
-//!     // Use the API you're already familiar with
-//!     let websocket = wreq::websocket("wss://echo.websocket.org")
+//!     let websocket = Client::builder(TokioRuntime)
+//!         .connect_timeout(Duration::from_secs(10))
+//!         .build()?
+//!         .websocket("wss://echo.websocket.org")
 //!         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
 //!         .send()
 //!         .await?;
 //!
-//!     assert_eq!(websocket.version(), http::Version::HTTP_11);
+//!     assert_eq!(websocket.version(), Version::HTTP_11);
 //!
 //!     let (mut tx, mut rx) = websocket.into_websocket().await?.split();
 //!
@@ -213,7 +234,7 @@
 //!
 //! ## Certificate Store
 //!
-//! By default, wreq uses static certificates from the Mozilla Root Store. The `chromium-roots`
+//! By default, wreq uses static Mozilla root certificates. The `chromium-roots`
 //! feature can be used alone or combined with it; certificates shared by both bundles are loaded
 //! once. Bundled roots ignore certificates installed on the host and update only with their
 //! dependencies. Chromium-specific root metadata constraints are not applied. Disable both root
@@ -227,8 +248,9 @@
 //! The following are a list of [Cargo features][cargo-features] that can be
 //! enabled or disabled:
 //!
-//! - **http2** *(enabled by default)*: Provides HTTP/2 support. Without it, ALPN only offers
-//!   `http/1.1`.
+//! - **tokio-rt** *(enabled by default)*: Provides the Tokio runtime adapter.
+//! - **compio-rt**: Provides the Compio runtime adapter for HTTP/1 and HTTP/2.
+//! - **http3**: Enables HTTP/3 over QUIC with a runtime that supports it.
 //! - **cookies**: Provides cookie session support.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **brotli**: Provides response body brotli decompression.
@@ -242,69 +264,21 @@
 //! - **stream**: Adds support for `futures::Stream`.
 //! - **socks**: Provides SOCKS5 and SOCKS4 proxy support.
 //! - **ws**: Provides websocket support.
-//! - **hickory-dns**: Enables a hickory-dns async resolver instead of default threadpool using
-//!   `getaddrinfo`.
-//! - **chromium-roots**: Load static Chromium Root Store certificates.
-//! - **webpki-roots** *(enabled by default)*: Load static Mozilla root certificates.
+//! - **hickory-dns**: Includes the optional Hickory DNS backend. Client builders currently retain
+//!   the resolver supplied by their runtime.
+//! - **chromium-roots**: Loads static Chromium Root Store certificates.
+//! - **webpki-roots** *(enabled by default)*: Loads static Mozilla root certificates.
 //! - **system-proxy**: Enable system proxy support.
 //! - **tracing**: Enable tracing logging support.
 //! - **prefix-symbols**: Prefix BoringSSL symbols to avoid OpenSSL conflicts.
 //!
 //! [client]: ./struct.Client.html
 //! [response]: ./struct.Response.html
-//! [get]: ./fn.get.html
 //! [builder]: ./struct.RequestBuilder.html
 //! [serde]: http://serde.rs
 //! [redirect]: crate::redirect
 //! [Proxy]: ./struct.Proxy.html
 //! [cargo-features]: https://doc.rust-lang.org/stable/cargo/reference/manifest.html#the-features-section
-
-macro_rules! if_tokio_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
-        $($tt)*
-    };
-    ($($item:item)*) => {$(
-        #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
-        $item
-    )*};
-}
-
-macro_rules! if_compio_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-        $($tt)*
-    };
-    ($($item:item)*) => {$(
-        #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-        $item
-    )*};
-}
-
-macro_rules! if_all_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
-        $($tt)*
-    };
-    ($($item:item)*) => {$(
-        #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
-        $item
-    )*};
-}
-
-macro_rules! if_any_rt {
-    ($($item:item)*) => {$(
-        #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
-        $item
-    )*};
-}
-
-macro_rules! if_no_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
-        $($tt)*
-    };
-}
 
 #[macro_use]
 mod trace;
@@ -317,11 +291,11 @@ mod conn;
 mod error;
 mod group;
 mod into_uri;
+mod proto;
 mod proxy;
-mod rt;
+pub mod rt;
 mod sync;
 mod util;
-mod version;
 
 #[cfg(feature = "cookies")]
 pub mod cookie;
@@ -335,11 +309,12 @@ pub mod tls;
 pub use self::client::multipart;
 #[cfg(feature = "ws")]
 pub use self::client::ws;
+pub(crate) use self::proto::Protocol;
 pub use self::{
     client::{
         Client, ClientBuilder,
         body::Body,
-        emulate::{Emulation, EmulationBuilder, IntoEmulation},
+        emulate::{Emulation, EmulationBuilder, IntoEmulation, ProtocolConfig},
         pool::PoolStrategy,
         request::{Request, RequestBuilder},
         response::Response,
@@ -350,7 +325,6 @@ pub use self::{
     group::Group,
     into_uri::IntoUri,
     proxy::{NoProxy, Proxy},
-    version::HttpVersion,
 };
 
 pub mod http1 {
@@ -370,6 +344,19 @@ pub mod http2 {
     };
     pub use netty::http2::{Http2Options, Http2OptionsBuilder};
 }
+
+#[cfg(feature = "http3")]
+pub mod http3 {
+    //! HTTP/3 protocol options and utilities.
+
+    pub use netty::http3::{
+        Http3Options, Http3OptionsBuilder, Protocol, PseudoId, PseudoOrder, PseudoOrderBuilder,
+        SettingId, SettingsOrder, SettingsOrderBuilder,
+    };
+}
+
+#[cfg(feature = "http3")]
+pub mod quic;
 
 pub use http::{Method, StatusCode, Uri, Version};
 #[cfg(unix)]
@@ -397,256 +384,4 @@ fn _assert_impls() {
 
     assert_send::<Error>();
     assert_sync::<Error>();
-}
-
-/// Shortcut method to quickly make a `GET` request.
-///
-/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
-/// type.
-///
-/// **NOTE**: This function creates a new internal `Client` on each call,
-/// and so should not be used if making many requests. Create a
-/// [`Client`](./struct.Client.html) instead.
-///
-/// # Examples
-///
-/// ```rust
-/// # async fn run() -> wreq::Result<()> {
-/// let body = wreq::get("https://www.rust-lang.org")
-///     .send()
-///     .await?
-///     .text()
-///     .await?;
-/// # Ok(())
-/// # }
-/// ```
-#[inline]
-pub fn get<T: IntoUri>(uri: T) -> RequestBuilder {
-    Client::new().get(uri)
-}
-
-/// Shortcut method to quickly make a `POST` request.
-///
-/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
-/// type.
-///
-/// **NOTE**: This function creates a new internal `Client` on each call,
-/// and so should not be used if making many requests. Create a
-/// [`Client`](./struct.Client.html) instead.
-///
-/// # Examples
-///
-/// ```rust
-/// # async fn run() -> wreq::Result<()> {
-/// let res = wreq::post("https://httpbin.org/post")
-///     .body("example body")
-///     .send()
-///     .await?;
-/// # Ok(())
-/// # }
-/// ```
-#[inline]
-pub fn post<T: IntoUri>(uri: T) -> RequestBuilder {
-    Client::new().post(uri)
-}
-
-/// Shortcut method to quickly make a `PUT` request.
-///
-/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
-/// type.
-///
-/// **NOTE**: This function creates a new internal `Client` on each call,
-/// and so should not be used if making many requests. Create a
-/// [`Client`](./struct.Client.html) instead.
-///
-/// # Examples
-///
-/// ```rust
-/// # async fn run() -> wreq::Result<()> {
-/// let res = wreq::put("https://httpbin.org/put")
-///     .body("update content")
-///     .send()
-///     .await?;
-/// # Ok(())
-/// # }
-/// ```
-#[inline]
-pub fn put<T: IntoUri>(uri: T) -> RequestBuilder {
-    Client::new().put(uri)
-}
-
-/// Shortcut method to quickly make a `DELETE` request.
-///
-/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
-/// type.
-///
-/// **NOTE**: This function creates a new internal `Client` on each call,
-/// and so should not be used if making many requests. Create a
-/// [`Client`](./struct.Client.html) instead.
-///
-/// # Examples
-///
-/// ```rust
-/// # async fn run() -> wreq::Result<()> {
-/// let res = wreq::delete("https://httpbin.org/delete")
-///     .send()
-///     .await?;
-/// # Ok(())
-/// # }
-/// ```
-#[inline]
-pub fn delete<T: IntoUri>(uri: T) -> RequestBuilder {
-    Client::new().delete(uri)
-}
-
-/// Shortcut method to quickly make a `HEAD` request.
-///
-/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
-/// type.
-///
-/// **NOTE**: This function creates a new internal `Client` on each call,
-/// and so should not be used if making many requests. Create a
-/// [`Client`](./struct.Client.html) instead.
-///
-/// # Examples
-///
-/// ```rust
-/// # async fn run() -> wreq::Result<()> {
-/// let res = wreq::head("https://httpbin.org/get")
-///     .send()
-///     .await?;
-/// # Ok(())
-/// # }
-/// ```
-#[inline]
-pub fn head<T: IntoUri>(uri: T) -> RequestBuilder {
-    Client::new().head(uri)
-}
-
-/// Shortcut method to quickly make a `PATCH` request.
-///
-/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
-/// type.
-///
-/// **NOTE**: This function creates a new internal `Client` on each call,
-/// and so should not be used if making many requests. Create a
-/// [`Client`](./struct.Client.html) instead.
-///
-/// # Examples
-///
-/// ```rust
-/// # async fn run() -> wreq::Result<()> {
-/// let res = wreq::patch("https://httpbin.org/patch")
-///     .body("patch content")
-///     .send()
-///     .await?;
-/// # Ok(())
-/// # }
-/// ```
-#[inline]
-pub fn patch<T: IntoUri>(uri: T) -> RequestBuilder {
-    Client::new().patch(uri)
-}
-
-/// Shortcut method to quickly make an `OPTIONS` request.
-///
-/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
-/// type.
-///
-/// **NOTE**: This function creates a new internal `Client` on each call,
-/// and so should not be used if making many requests. Create a
-/// [`Client`](./struct.Client.html) instead.
-///
-/// # Examples
-///
-/// ```rust
-/// # async fn run() -> wreq::Result<()> {
-/// let res = wreq::options("https://httpbin.org/get")
-///     .send()
-///     .await?;
-/// # Ok(())
-/// # }
-/// ```
-#[inline]
-pub fn options<T: IntoUri>(uri: T) -> RequestBuilder {
-    Client::new().options(uri)
-}
-
-/// Shortcut method to quickly make a request with a custom HTTP method.
-///
-/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
-/// type.
-///
-/// **NOTE**: This function creates a new internal `Client` on each call,
-/// and so should not be used if making many requests. Create a
-/// [`Client`](./struct.Client.html) instead.
-///
-/// # Examples
-///
-/// ```rust
-/// # async fn run() -> wreq::Result<()> {
-/// use http::Method;
-/// let res = wreq::request(Method::TRACE, "https://httpbin.org/trace")
-///     .send()
-///     .await?;
-/// # Ok(())
-/// # }
-/// ```
-#[inline]
-pub fn request<T: IntoUri>(method: Method, uri: T) -> RequestBuilder {
-    Client::new().request(method, uri)
-}
-
-/// Shortcut method to quickly make a WebSocket request.
-///
-/// See also the methods on the
-/// [`wreq::ws::WebSocketRequestBuilder`](./ws/struct.WebSocketRequestBuilder.html) type.
-///
-/// **NOTE**: This function creates a new internal `Client` on each call,
-/// and so should not be used if making many requests. Create a
-/// [`Client`](./struct.Client.html) instead.
-///
-/// # Examples
-///
-/// ```rust
-/// # async fn run() -> wreq::Result<()> {
-/// use futures_util::{SinkExt, StreamExt, TryStreamExt};
-/// use wreq::{header, ws::message::Message};
-///
-/// let resp = wreq::websocket("wss://echo.websocket.org")
-///     .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
-///     .read_buffer_size(1024 * 1024)
-///     .send()
-///     .await?;
-///
-/// assert_eq!(resp.version(), http::Version::HTTP_11);
-///
-/// let websocket = resp.into_websocket().await?;
-/// if let Some(protocol) = websocket.protocol() {
-///     println!("WebSocket subprotocol: {:?}", protocol);
-/// }
-///
-/// let (mut tx, mut rx) = websocket.split();
-///
-/// tokio::spawn(async move {
-///     for i in 1..11 {
-///         if let Err(err) = tx.send(Message::text(format!("Hello, World! {i}"))).await {
-///             eprintln!("failed to send message: {err}");
-///         }
-///     }
-/// });
-///
-/// while let Some(message) = rx.try_next().await? {
-///     if let Message::Text(text) = message {
-///         println!("received: {text}");
-///     }
-/// }
-/// # Ok(())
-/// # }
-/// ```
-#[inline]
-#[cfg(feature = "ws")]
-#[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
-pub fn websocket<T: IntoUri>(uri: T) -> ws::WebSocketRequestBuilder {
-    Client::new().websocket(uri)
 }

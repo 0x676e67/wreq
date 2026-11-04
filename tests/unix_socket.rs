@@ -1,14 +1,17 @@
 #![cfg(unix)]
 
+mod support;
+
 use std::{hash::BuildHasher, time::Duration};
 
-use http::Method;
+use http::{Method, Version};
 use http_body_util::Full;
 use hyper::{Request, Response, body::Incoming, service::service_fn};
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
     server::conn::auto::Builder,
 };
+use support::server;
 use tokio::{net::UnixListener, task};
 use wreq::{Client, Proxy};
 
@@ -45,7 +48,7 @@ async fn test_unix_socket() {
     };
     tokio::spawn(server);
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .proxy(Proxy::unix(sock_path).unwrap())
         .timeout(Duration::from_secs(10))
         .build()
@@ -59,6 +62,24 @@ async fn test_unix_socket() {
 #[tokio::test]
 async fn test_proxy_unix_socket() {
     let sock_path = random_sock_path();
+
+    let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("https://{}/resource", target.local_addr().unwrap());
+    let acceptor = server::tls_acceptor(b"\x08http/1.1");
+    let target = tokio::spawn(async move {
+        let (socket, _) = target.accept().await.unwrap();
+        let stream = server::tls_accept(&acceptor, socket).await;
+        server::serve_connection(stream, Version::HTTP_11, |request| async move {
+            assert_eq!(request.method(), Method::GET);
+            assert_eq!(request.uri(), "/resource");
+            Response::builder()
+                .header(http::header::CONNECTION, "close")
+                .body(Full::new(&b"hello tunnel"[..]))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    });
 
     let listener = UnixListener::bind(&sock_path).unwrap();
     let server = async move {
@@ -124,12 +145,18 @@ async fn test_proxy_unix_socket() {
     };
     tokio::spawn(server);
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .proxy(Proxy::unix(sock_path).unwrap())
+        .tls_cert_verification(false)
         .timeout(Duration::from_secs(10))
         .build()
         .unwrap();
 
-    let resp = client.get("https://www.google.com").send().await.unwrap();
+    let resp = client.get(url).send().await.unwrap();
     assert!(resp.status().is_success(), "Expected successful response");
+    assert_eq!(resp.text().await.unwrap(), "hello tunnel");
+    tokio::time::timeout(Duration::from_secs(5), target)
+        .await
+        .unwrap()
+        .unwrap();
 }

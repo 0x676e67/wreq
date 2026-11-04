@@ -21,20 +21,17 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 default = ["webpki-roots", "tokio-rt", "http2"]
 
-# Enable HTTP/2 support (default).
-http2 = ["dep:http2", "netty/http2"]
-
-# Enable tokio as the async runtime (default).
-tokio-rt = ["tokio/rt", "tokio/time", "tokio/net", "tokio/fs"]
+# Enable tokio as the async runtime.
+tokio-rt = ["tokio/rt", "tokio/net", "tokio/fs", "tokio/time", "quic?/runtime-tokio"]
 
 # Enable compio as the async runtime (completion-based, io_uring/IOCP).
-compio-rt = [
-    "dep:compio",
-    "compio?/runtime",
-    "compio?/time",
-    "compio?/net",
-    "dep:send_wrapper",
-]
+compio-rt = ["dep:compio", "compio?/runtime", "compio?/net", "compio?/time", "dep:send_wrapper"]
+
+# Enable HTTP/2 support.
+http2 = ["dep:http2", "netty/http2"]
+
+# Enable HTTP/3 support (QUIC-based).
+http3 = ["tokio/sync", "netty/masque", "dep:quic", "dep:http3-quic"]
 
 # Enable support for decoding text.
 charset = ["dep:encoding_rs", "dep:mime"]
@@ -73,7 +70,7 @@ hickory-dns = ["dep:hickory-resolver"]
 stream = ["dep:tokio-util", "dep:sync_wrapper", "sync_wrapper?/futures"]
 
 # Enable SOCKS/4/5 proxy support.
-socks = ["dep:tokio-socks"]
+socks = ["netty/socks"]
 
 # Enable WebSocket support.
 ws = ["dep:tokio-tungstenite", "tokio-tungstenite?/handshake"]
@@ -95,15 +92,14 @@ parking_lot = ["dep:parking_lot", "http2?/parking_lot"]
 
 # Prefix BoringSSL symbols in libcrypto/libssl to avoid linker conflicts
 # when multiple OpenSSL versions coexist in the same process.
-prefix-symbols = ["btls/prefix-symbols"]
+prefix-symbols = ["btls/prefix-symbols", "quic?/btls-prefix-symbols"]
 
 [dependencies]
-educe = { version = "0.7.6", default-features = false, features = ["Default", "PartialEq", "Eq", "Hash"] }
 url = "2.5.8"
 bytes = "1.11.1"
 http = "1.4.0"
 http2 = { version = "0.5.17", optional = true }
-httparse = "1.10.1"
+http3-quic = { version = "0.2.0", optional = true }
 http-body = "1.0.1"
 http-body-util = "0.1.4"
 percent-encoding = "2.3.2"
@@ -115,15 +111,18 @@ lru = "0.19.0"
 btls = "0.5.6"
 btls-sys = "0.5.6"
 tokio-btls = "0.5.6"
-tokio = { version = "1.52.3", default-features = false, features = ["io-util", "sync"] }
-compio = { version = "0.19.2", features = ["io", "io-compat"], optional = true }
-send_wrapper = { version = "0.6.0", features = ["futures"], optional = true }
-netty = { version = "0.2.5", default-features = false }
+netty = { version = "0.2.5", default-features = false, features = ["tunnel"] }
+quic = { version = "=0.12.2", default-features = false, features = ["btls"], optional = true }
+send_wrapper = { version = "0.6.0", optional = true }
 tower = { version = "0.5.3", default-features = false, features = [
     "timeout",
     "util",
     "retry",
 ] }
+tokio = { version = "1.52.3", default-features = false, features = ["io-util", "sync"] }
+compio = { version = "0.19.2", features = ["io", "io-compat"], optional = true }
+educe = { version = "0.7.6", default-features = false, features = ["Default"] }
+derive-deftly = { version = "1.14.0", default-features = false, features = ["minimal-1", "meta-as-expr"] }
 
 # Optional deps...
 
@@ -154,9 +153,6 @@ cookie = { version = "0.18", optional = true }
 ## tower http
 tower-http = { version = "0.7.1", default-features = false, optional = true }
 
-## tokio socks
-tokio-socks = { version = "0.5.2", optional = true }
-
 ## tokio websocket
 tokio-tungstenite = { version = "0.29.0", default-features = false, optional = true }
 
@@ -185,9 +181,15 @@ system-configuration = { version = "0.8.0", optional = true }
 libc = "0.2.186"
 
 [dev-dependencies]
+quic = { version = "=0.12.2", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+http3 = "=0.2.0"
+rcgen = "=0.14.9"
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
 tokio = { version = "1.0", default-features = false, features = [
     "macros",
     "rt-multi-thread",
+    "time",
+    "sync",
 ] }
 compio = { version = "0.19.2", features = ["macros", "net", "runtime", "time", "io", "io-compat"] }
 hyper = { version = "1.7.0", default-features = false, features = [
@@ -237,49 +239,49 @@ required-features = ["tokio-rt", "stream"]
 name = "http1_current_thread"
 path = "bench/http1_current_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream", "http2"]
+required-features = ["http2", "tokio-rt", "stream"]
 
 [[bench]]
 name = "http1_multi_thread"
 path = "bench/http1_multi_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream", "http2"]
+required-features = ["http2", "tokio-rt", "stream"]
 
 [[bench]]
 name = "http2_current_thread"
 path = "bench/http2_current_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream", "http2"]
+required-features = ["http2", "tokio-rt", "stream"]
 
 [[bench]]
 name = "http2_multi_thread"
 path = "bench/http2_multi_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream", "http2"]
+required-features = ["http2", "tokio-rt", "stream"]
 
 [[bench]]
 name = "http1_over_tls_current_thread"
 path = "bench/http1_over_tls_current_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream", "http2"]
+required-features = ["http2", "tokio-rt", "stream"]
 
 [[bench]]
 name = "http1_over_tls_multi_thread"
 path = "bench/http1_over_tls_multi_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream", "http2"]
+required-features = ["http2", "tokio-rt", "stream"]
 
 [[bench]]
 name = "http2_over_tls_current_thread"
 path = "bench/http2_over_tls_current_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream", "http2"]
+required-features = ["http2", "tokio-rt", "stream"]
 
 [[bench]]
 name = "http2_over_tls_multi_thread"
 path = "bench/http2_over_tls_multi_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream", "http2"]
+required-features = ["http2", "tokio-rt", "stream"]
 
 [[test]]
 name = "cookie"
@@ -312,11 +314,6 @@ path = "tests/multipart.rs"
 required-features = ["multipart", "stream"]
 
 [[test]]
-name = "emulate"
-path = "tests/emulate.rs"
-required-features = ["http2"]
-
-[[test]]
 name = "retry"
 path = "tests/retry.rs"
 
@@ -343,12 +340,12 @@ required-features = ["form"]
 [[example]]
 name = "connect_via_lower_priority_tokio_runtime"
 path = "examples/connect_via_lower_priority_tokio_runtime.rs"
-required-features = ["tracing"]
+required-features = ["http3", "tokio-rt", "tracing"]
 
 [[example]]
 name = "emulate"
 path = "examples/emulate.rs"
-required-features = ["gzip", "brotli", "zstd", "deflate", "tracing", "http2"]
+required-features = ["http2", "gzip", "brotli", "zstd", "deflate", "tracing"]
 
 [[example]]
 name = "cert_store"
@@ -356,40 +353,19 @@ path = "examples/cert_store.rs"
 required-features = ["webpki-roots"]
 
 [[example]]
-name = "request_with_redirect"
-path = "examples/request_with_redirect.rs"
-
-[[example]]
-name = "request_with_version"
-path = "examples/request_with_version.rs"
-
-[[example]]
-name = "request_with_proxy"
-path = "examples/request_with_proxy.rs"
-required-features = ["socks"]
-
-[[example]]
-name = "request_with_emulate"
-path = "examples/request_with_emulate.rs"
-required-features = ["gzip", "brotli", "zstd", "deflate", "tracing", "http2"]
-
-[[example]]
-name = "request_with_local_address"
-path = "examples/request_with_local_address.rs"
-
-[[example]]
-name = "request_with_interface"
-path = "examples/request_with_interface.rs"
+name = "request"
+path = "examples/request.rs"
+required-features = ["tokio-rt"]
 
 [[example]]
 name = "http1_websocket"
 path = "examples/http1_websocket.rs"
-required-features = ["ws", "futures-util/std"]
+required-features = ["http2", "ws", "futures-util/std"]
 
 [[example]]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
-required-features = ["ws", "futures-util/std", "http2"]
+required-features = ["http2", "ws", "futures-util/std"]
 
 [[example]]
 name = "keylog"
@@ -399,9 +375,24 @@ path = "examples/keylog.rs"
 name = "unix_socket"
 path = "examples/unix_socket.rs"
 
+[[example]]
+name = "http3"
+path = "examples/http3.rs"
+required-features = ["http3", "tokio-rt"]
+
+[[test]]
+name = "emulate"
+path = "tests/emulate.rs"
+required-features = ["http2"]
+
 [patch.crates-io]
+# Remove once an http3 release includes the connection-wide pseudo-header order and
+# SETTINGS value checks.
+http3 = { git = "https://github.com/0x676e67/http3", branch = "main" }
+quic = { git = "https://github.com/0x676e67/quic", branch = "main" }
+netty = { git = "https://github.com/0x676e67/netty", rev = "6e53746abc632056e3a8e518e10e26f6b86a21e6" }
+# Match netty until it adopts http2's new headers_priority API.
+http2 = { git = "https://github.com/0x676e67/http2", rev = "fb5bf8bdbf3e9d9aad7073759a6f06f47373342e" }
 btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
 btls-sys = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
 tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
-http2 = { git = "https://github.com/0x676e67/http2", rev = "fb5bf8bdbf3e9d9aad7073759a6f06f47373342e" }
-netty = { git = "https://github.com/0x676e67/netty", rev = "6e53746abc632056e3a8e518e10e26f6b86a21e6" }

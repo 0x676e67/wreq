@@ -241,7 +241,10 @@ struct CancelResult<S> {
 
 impl<Ev> Builder<Ev> {
     /// Completes useful maker work in the supplied executor after reuse wins.
-    pub(super) fn executor<E>(self, executor: E) -> Builder<events::WithExecutor<E>> {
+    pub(super) fn executor(
+        self,
+        executor: crate::rt::RuntimeHandle,
+    ) -> Builder<events::WithExecutor> {
         Builder {
             events: events::WithExecutor {
                 executor,
@@ -282,7 +285,7 @@ impl<Ev> Builder<Ev> {
     }
 }
 
-impl<E> Builder<events::WithExecutor<E>> {
+impl Builder<events::WithExecutor> {
     /// Runs `callback` after useful lost maker work finishes.
     pub(super) fn on_background_complete<F>(mut self, callback: F) -> Self
     where
@@ -1266,8 +1269,6 @@ mod tests {
 pub(super) mod events {
     use std::sync::Arc;
 
-    use futures_util::future::BoxFuture;
-
     use super::Started;
 
     /// Policy that cancels maker futures after another service wins the race.
@@ -1283,9 +1284,9 @@ pub(super) mod events {
     /// Once physical connection work starts, the executor can finish it and put
     /// a successful service into the cache for a later checkout.
     #[derive(Clone)]
-    pub struct WithExecutor<E> {
+    pub struct WithExecutor {
         /// Runtime used to finish a connection attempt.
-        pub(super) executor: E,
+        pub(super) executor: crate::rt::RuntimeHandle,
         /// Optional maintenance callback invoked after completion.
         pub(super) on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
     }
@@ -1305,10 +1306,9 @@ pub(super) mod events {
 
     // ===== impl WithExecutor =====
 
-    impl<E, F> Events<F> for WithExecutor<E>
+    impl<F> Events<F> for WithExecutor
     where
         F: Started<Output = ()> + Send + 'static,
-        E: netty::rt::Executor<BoxFuture<'static, ()>>,
     {
         /// Spawns the maker only when it has started useful work.
         fn on_race_lost(&self, future: F) {

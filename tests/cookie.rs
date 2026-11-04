@@ -27,7 +27,11 @@ async fn cookie_response_accessor() {
     });
 
     let url = format!("http://{}/", server.addr());
-    let res = wreq::get(&url).send().await.unwrap();
+    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(&url)
+        .send()
+        .await
+        .unwrap();
 
     let cookies = res.cookies().collect::<Vec<_>>();
 
@@ -86,7 +90,7 @@ async fn cookie_store_simple() {
             .unwrap()
     });
 
-    let client = Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder_tokio().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -116,7 +120,7 @@ async fn cookie_store_overwrite_existing() {
         }
     });
 
-    let client = Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder_tokio().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -138,7 +142,7 @@ async fn cookie_store_max_age() {
             .unwrap()
     });
 
-    let client = Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder_tokio().cookie_store(true).build().unwrap();
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
     client.get(&url).send().await.unwrap();
@@ -157,7 +161,7 @@ async fn cookie_store_expires() {
             .unwrap()
     });
 
-    let client = Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder_tokio().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -180,7 +184,7 @@ async fn cookie_store_path() {
         }
     });
 
-    let client = Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder_tokio().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -207,7 +211,7 @@ async fn cookie_store_stores_response_cookie_with_manual_cookie() {
             .unwrap()
     });
 
-    let client = Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder_tokio().cookie_store(true).build().unwrap();
 
     let set_url = format!("http://{}/1", server.addr());
     let _ = client
@@ -269,7 +273,7 @@ async fn cookie_request_level_compression() {
     let base_url = format!("http://{}", server.addr());
 
     // Create a client with this jar
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .cookie_provider(Jar::default())
         .build()
         .unwrap();
@@ -347,7 +351,10 @@ async fn cookie_request_order_matches_chromium() {
         jar.add(cookie, &base_url);
     }
 
-    let client = Client::builder().cookie_provider(jar).build().unwrap();
+    let client = Client::builder_tokio()
+        .cookie_provider(jar)
+        .build()
+        .unwrap();
     client
         .get(format!("{base_url}/foo/bar/http1"))
         .version(Version::HTTP_11)

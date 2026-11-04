@@ -121,38 +121,51 @@ impl Policy<Req, Res, BoxError> for RetryPolicy {
     }
 }
 
-/// Determines whether the given error is considered retryable for HTTP/2 requests.
-///
-/// Returns `true` if the error type or content indicates that the request can be retried,
-/// otherwise returns `false`.
-#[cfg(feature = "http2")]
+/// Recognizes protocol rejections that guarantee no application processing.
 fn is_retryable_error(err: &(dyn StdError + 'static)) -> bool {
-    let err = if let Some(err) = err.source() {
-        err
-    } else {
-        return false;
-    };
-
-    if let Some(cause) = err.source()
-        && let Some(err) = cause.downcast_ref::<http2::Error>()
+    #[cfg(feature = "http3")]
     {
-        // They sent us a graceful shutdown, try with a new connection!
-        if err.is_go_away() && err.is_remote() && err.reason() == Some(http2::Reason::NO_ERROR) {
-            return true;
-        }
-
-        // REFUSED_STREAM was sent from the server, which is safe to retry.
-        // https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7-3.2
-        if err.is_reset() && err.is_remote() && err.reason() == Some(http2::Reason::REFUSED_STREAM)
-        {
-            return true;
+        // Rejected streams and requests excluded by GOAWAY were not processed.
+        // https://www.rfc-editor.org/rfc/rfc9114.html#section-4.1.1
+        let mut source = Some(err);
+        while let Some(error) = source {
+            if let Some(error) = error.downcast_ref::<netty::Error>()
+                && error.is_h3_request_rejected()
+            {
+                return true;
+            }
+            source = error.source();
         }
     }
-    false
-}
 
-/// Without HTTP/2 there are no protocol NACKs to retry.
-#[cfg(not(feature = "http2"))]
-fn is_retryable_error(_: &(dyn StdError + 'static)) -> bool {
+    #[cfg(feature = "http2")]
+    {
+        let err = if let Some(err) = err.source() {
+            err
+        } else {
+            return false;
+        };
+
+        if let Some(cause) = err.source()
+            && let Some(err) = cause.downcast_ref::<http2::Error>()
+        {
+            // They sent us a graceful shutdown, try with a new connection!
+            if err.is_go_away() && err.is_remote() && err.reason() == Some(http2::Reason::NO_ERROR)
+            {
+                return true;
+            }
+
+            // REFUSED_STREAM was sent from the server, which is safe to retry.
+            // https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7-3.2
+            if err.is_reset()
+                && err.is_remote()
+                && err.reason() == Some(http2::Reason::REFUSED_STREAM)
+            {
+                return true;
+            }
+        }
+    }
+    #[cfg(not(any(feature = "http2", feature = "http3")))]
+    let _ = err;
     false
 }

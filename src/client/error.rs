@@ -2,18 +2,13 @@
 
 use std::{error::Error as StdError, fmt};
 
+use netty::proxy;
 use tower::BoxError;
 
-use crate::{
-    conn::{Connected, proxy},
-    error::ProxyConnect,
-};
+use crate::{conn::Connected, error::ProxyConnect};
 
-/// Error returned by the low-level client service.
-///
-/// The category identifies the failed stage. When another component supplied
-/// the failure, `source` keeps its error chain and `connect_info` records the
-/// selected transport for higher-level diagnostics.
+/// A client service failure, classified by stage.
+/// Retains the source error and connection metadata when available.
 #[derive(Debug)]
 pub struct Error {
     kind: ErrorKind,
@@ -44,7 +39,7 @@ pub(super) enum ErrorKind {
     /// The request requires an unsupported HTTP version.
     UserUnsupportedVersion,
 
-    /// The request target could not be normalized from an absolute URI.
+    /// The request target could not be normalized to an absolute URI.
     UserAbsoluteUriRequired,
 
     /// Protocol dispatch failed after a sender was selected.
@@ -159,9 +154,7 @@ fn is_proxy_connect_error(error: &(dyn StdError + 'static)) -> bool {
 mod tests {
     use super::*;
 
-    /// Adds an error-chain layer around a test failure.
-    /// Exposes the wrapped error through `source` for recursive classification.
-    /// Owns that error until the wrapper is dropped.
+    /// Wraps a source error to test recursive classification.
     #[derive(Debug)]
     struct WrappedError(BoxError);
 
@@ -180,7 +173,7 @@ mod tests {
     #[test]
     fn classifies_wrapped_proxy_errors() {
         let source = std::io::Error::other("proxy unavailable");
-        let error = WrappedError(Box::new(ProxyConnect(Box::new(source))));
+        let error = WrappedError(Box::new(ProxyConnect::Source(Box::new(source))));
         let error = Error::new(ErrorKind::Connect, error);
 
         assert!(error.is_proxy_connect());

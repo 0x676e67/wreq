@@ -1,89 +1,77 @@
-//! Typed connection configuration shared by pool lookup and transport setup.
+//! Frozen connection identity shared by pool lookup and transport setup.
 //!
-//! Configuration is editable before the connection request is constructed. Once frozen,
-//! its values define reuse identity and must remain stable for its lifetime.
+//! Request configuration is editable until a [`ConnectRequest`] is built. Its key then counts
+//! socket bindings and typed entries that differ from the client's configuration.
 
 use std::{
+    fmt,
     hash::{BuildHasher, Hash, Hasher},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 
 use http::{Uri, uri::PathAndQuery};
-use lru::DefaultHasher;
 
-use super::extra::Extra;
-use crate::{HttpVersion, error::BoxError};
+use super::{
+    config::{ConfigSet, ConnectConfig, HASHER, Overrides},
+    transport::BindOptions,
+};
+use crate::{Protocol, error::BoxError};
 
 /// Connection request shared by pool lookup and transport connection attempts.
-/// Exposes the frozen origin, protocol choice, and typed connection data.
+/// Keeps the origin, protocol choice, bindings and typed configuration fixed for an attempt.
 /// A proxy may change the route without changing the original reuse identity.
 #[derive(Debug, Clone)]
 pub struct ConnectRequest {
-    inner: Arc<RequestData>,
+    key: ConnectionKey,
+    resolved_protocol: Protocol,
     route_uri: Option<Uri>,
 }
 
-/// Value identity for interchangeable connections.
-/// Pool entries and TLS sessions share the request's frozen configuration.
-/// Cached hashes accelerate lookup; equality still checks the complete values.
-#[derive(Debug, Clone)]
-pub(crate) struct ConnectionKey(Arc<RequestData>);
-
-/// Immutable values backing a connection request and its pool/session keys.
-/// The hash is computed once when request configuration is frozen.
-/// Neither routing changes nor protocol builders are retained here.
-#[derive(Debug)]
-struct RequestData {
-    uri: Uri,
-    version: Option<HttpVersion>,
-    extra: Extra,
+/// Reuse identity for pool entries, extended CONNECT probes and QUIC address tokens.
+/// Clones share configuration values and socket bindings.
+#[derive(Clone)]
+pub(crate) struct ConnectionKey {
+    origin: Uri,
+    /// Preference; `None` inherits the client.
+    protocol: Option<Protocol>,
+    bind_options: Option<Arc<BindOptions>>,
+    overrides: Overrides,
     hash: u64,
-}
-
-/// Local addresses and interface selected for an outbound socket.
-/// Request configuration applies these bindings before a transport connects.
-/// Connection configuration retains the values to prevent incompatible reuse.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct SocketOptions {
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    pub interface: Option<std::borrow::Cow<'static, str>>,
-    pub ipv4_address: Option<Ipv4Addr>,
-    pub ipv6_address: Option<Ipv6Addr>,
 }
 
 // ===== impl ConnectRequest =====
 
 impl ConnectRequest {
-    /// Validates the absolute target and freezes its connection configuration.
-    /// The origin retains scheme and authority; its path is replaced with `/`.
-    /// Only configuration in `extra` contributes to the cached reuse identity.
+    /// Validates the absolute target and freezes its connection identity.
     ///
-    /// Returns an error if the URI lacks a scheme or authority, or rebuilding
-    /// the origin fails. The caller retains the HTTP request's original target.
+    /// The origin keeps scheme and authority with `/` as the path. The key counts the
+    /// request entries the resolved protocol can use that differ from `client_config_set`.
+    ///
+    /// Returns an error if the URI lacks a scheme or authority.
     pub(crate) fn new(
-        uri: Uri,
-        version: Option<HttpVersion>,
-        extra: Extra,
+        uri: &Uri,
+        protocol: Option<Protocol>,
+        client: Protocol,
+        config_set: ConfigSet,
+        client_config_set: &ConfigSet,
+        bind_options: Option<Arc<BindOptions>>,
+        base_bind_options: &BindOptions,
     ) -> Result<Self, BoxError> {
-        let uri = Uri::builder()
+        let origin = Uri::builder()
             .scheme(uri.scheme().ok_or("URI missing scheme")?.clone())
             .authority(uri.authority().ok_or("URI missing authority")?.clone())
             .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
         Ok(Self {
-            inner: RequestData::new(uri, version, extra),
+            key: ConnectionKey::new(
+                origin,
+                protocol,
+                client,
+                config_set,
+                client_config_set,
+                bind_options.filter(|options| options.as_ref() != base_bind_options),
+            ),
+            resolved_protocol: protocol.unwrap_or(client),
             route_uri: None,
         })
     }
@@ -92,39 +80,70 @@ impl ConnectRequest {
     /// Pool and session keys use this origin, not the request's path or query.
     /// Proxy routing leaves it unchanged; use `route_uri` for transport setup.
     pub(crate) fn uri(&self) -> &Uri {
-        &self.inner.uri
+        &self.key.origin
     }
 
     /// Returns the request's connection protocol preference.
-    /// None inherits the client; Auto explicitly allows protocol negotiation.
+    /// `None` inherits the client; `Some(Protocol::Auto)` allows protocol negotiation.
     /// This is a selection policy, not the established connection's wire version.
-    pub(crate) fn version(&self) -> Option<HttpVersion> {
-        self.inner.version
+    pub(crate) fn protocol(&self) -> Option<Protocol> {
+        self.key.protocol
     }
 
-    /// Borrows the typed configuration and metadata frozen into this request.
-    /// Only configuration participates in reuse identity; metadata is ignored.
-    /// No mutable access is exposed, so clones and existing keys remain stable.
-    pub(crate) fn extra(&self) -> &Extra {
-        &self.inner.extra
+    /// Returns the protocol selection after inheriting the client's preference.
+    /// Frozen before pool checkout; proxy routing does not change this selection.
+    pub(crate) fn resolved_protocol(&self) -> Protocol {
+        self.resolved_protocol
     }
 
-    /// Shares the original origin, protocol preference, and configuration identity.
-    /// Lookup reuses a cached hash but still compares complete configuration values.
-    /// The key keeps those values alive independently of this request's route.
+    /// All request connection options, including those this key does not count.
+    pub(crate) fn config_set(&self) -> &ConfigSet {
+        self.key.overrides.config_set()
+    }
+
+    /// Returns a request override selected for this connection's protocol.
+    /// Unselected values are inherited from the client; see [`Overrides`] for selection rules.
+    #[inline]
+    pub(crate) fn config_override<T: ConnectConfig>(&self) -> Option<&T> {
+        self.key.overrides.get::<T>()
+    }
+
+    /// Shares a request override used by this connection's protocol.
+    /// Has the same inheritance rules as [`Self::config_override`].
+    #[inline]
+    #[cfg(feature = "http3")]
+    pub(crate) fn config_override_arc<T: ConnectConfig>(&self) -> Option<Arc<T>> {
+        self.key.overrides.get_arc::<T>()
+    }
+
+    /// Request socket bindings shared by transport setup, pool and session keys.
+    /// `None` inherits the client's bindings.
+    pub(crate) fn bind_options(&self) -> &Option<Arc<BindOptions>> {
+        &self.key.bind_options
+    }
+
+    /// Returns the reuse identity of this origin and configuration.
     pub(crate) fn key(&self) -> ConnectionKey {
-        ConnectionKey(self.inner.clone())
+        self.key.clone()
     }
 
-    /// Returns the reuse identity of this origin and configuration under another
-    /// protocol preference, without changing this request.
-    #[cfg(feature = "http2")]
-    pub(crate) fn key_with_version(&self, version: Option<HttpVersion>) -> ConnectionKey {
-        ConnectionKey(RequestData::new(
-            self.inner.uri.clone(),
-            version,
-            self.inner.extra.clone(),
-        ))
+    /// Returns the identity of this origin and configuration under another preference.
+    #[cfg(any(test, feature = "http2"))]
+    pub(crate) fn key_with_protocol(
+        &self,
+        protocol: Option<Protocol>,
+        client: Protocol,
+        client_config_set: &ConfigSet,
+    ) -> ConnectionKey {
+        let config_set = self.key.overrides.config_set().clone();
+        ConnectionKey::new(
+            self.key.origin.clone(),
+            protocol,
+            client,
+            config_set,
+            client_config_set,
+            self.key.bind_options.clone(),
+        )
     }
 
     /// Returns the address used for transport setup and TLS host selection.
@@ -143,34 +162,37 @@ impl ConnectRequest {
     }
 }
 
-// ===== impl RequestData =====
+// ===== impl ConnectionKey =====
 
-impl RequestData {
-    /// Freezes reuse identity and caches its hash.
-    fn new(uri: Uri, version: Option<HttpVersion>, extra: Extra) -> Arc<Self> {
-        static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
-        let mut hasher = HASHER.build_hasher();
-        (&uri, version).hash(&mut hasher);
-        extra.hash(&mut hasher);
-        let hash = hasher.finish();
-        Arc::new(Self {
-            uri,
-            version,
-            extra,
+impl ConnectionKey {
+    fn new(
+        origin: Uri,
+        protocol: Option<Protocol>,
+        client: Protocol,
+        config_set: ConfigSet,
+        client_config_set: &ConfigSet,
+        bind_options: Option<Arc<BindOptions>>,
+    ) -> Self {
+        let overrides =
+            Overrides::for_pool(config_set, client_config_set, protocol.unwrap_or(client));
+        let hash = HASHER.hash_one((&origin, protocol, &bind_options, overrides.hash()));
+        Self {
+            origin,
+            protocol,
+            bind_options,
+            overrides,
             hash,
-        })
+        }
     }
 }
 
-// ===== impl ConnectionKey =====
-
 impl PartialEq for ConnectionKey {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-            || (self.0.hash == other.0.hash
-                && self.0.uri == other.0.uri
-                && self.0.version == other.0.version
-                && self.0.extra == other.0.extra)
+        self.hash == other.hash
+            && self.protocol == other.protocol
+            && self.origin == other.origin
+            && self.bind_options == other.bind_options
+            && self.overrides == other.overrides
     }
 }
 
@@ -178,63 +200,27 @@ impl Eq for ConnectionKey {}
 
 impl Hash for ConnectionKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Repeated pool/session lookups do not rehash the full configuration.
-        state.write_u64(self.0.hash);
+        state.write_u64(self.hash);
     }
 }
 
-// ===== impl SocketOptions =====
-
-impl SocketOptions {
-    /// Selects the interface used when opening the outbound socket.
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    pub(crate) fn set_interface<I>(&mut self, interface: I) -> &mut Self
-    where
-        I: Into<std::borrow::Cow<'static, str>>,
-    {
-        self.interface = Some(interface.into());
-        self
-    }
-
-    pub(crate) fn set_local_address<V>(&mut self, address: V)
-    where
-        V: Into<Option<IpAddr>>,
-    {
-        match address.into() {
-            Some(IpAddr::V4(address)) => self.ipv4_address = Some(address),
-            Some(IpAddr::V6(address)) => self.ipv6_address = Some(address),
-            None => {}
-        }
-    }
-
-    pub(crate) fn set_local_addresses<V4, V6>(&mut self, ipv4: V4, ipv6: V6)
-    where
-        V4: Into<Option<Ipv4Addr>>,
-        V6: Into<Option<Ipv6Addr>>,
-    {
-        if let Some(address) = ipv4.into() {
-            self.ipv4_address = Some(address);
-        }
-        if let Some(address) = ipv6.into() {
-            self.ipv6_address = Some(address);
-        }
+impl fmt::Debug for ConnectionKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConnectionKey")
+            .field("origin", &self.origin)
+            .field("protocol", &self.protocol)
+            .field("bind_options", &self.bind_options)
+            .field("overrides", &self.overrides)
+            .finish()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, hash::DefaultHasher};
+    use std::{
+        borrow::Cow,
+        net::{Ipv4Addr, Ipv6Addr},
+    };
 
     use super::*;
     #[cfg(feature = "http2")]
@@ -245,130 +231,303 @@ mod tests {
         tls::{AlpnProtocol, TlsOptions},
     };
 
-    fn request(extra: Extra) -> ConnectRequest {
+    impl ConnectRequest {
+        /// Freezes `config_set` for a client without options in automatic mode.
+        pub(crate) fn test(uri: Uri, protocol: Option<Protocol>, config_set: ConfigSet) -> Self {
+            Self::new(
+                &uri,
+                protocol,
+                Protocol::Auto,
+                config_set,
+                &ConfigSet::default(),
+                None,
+                &BindOptions::default(),
+            )
+            .unwrap()
+        }
+    }
+
+    fn request(
+        protocol: Option<Protocol>,
+        config_set: ConfigSet,
+        client_config_set: &ConfigSet,
+    ) -> ConnectRequest {
+        let uri = Uri::from_static("https://localhost/upload?part=1");
         ConnectRequest::new(
-            "https://localhost/upload?part=1".parse().unwrap(),
+            &uri,
+            protocol,
+            Protocol::Auto,
+            config_set,
+            client_config_set,
             None,
-            extra,
+            &BindOptions::default(),
         )
         .unwrap()
     }
 
-    fn hash(value: &impl Hash) -> u64 {
-        let mut state = DefaultHasher::new();
-        value.hash(&mut state);
-        state.finish()
+    fn key(
+        protocol: Option<Protocol>,
+        config_set: ConfigSet,
+        client_config_set: &ConfigSet,
+    ) -> ConnectionKey {
+        request(protocol, config_set, client_config_set).key()
+    }
+
+    fn with<T: ConnectConfig>(mut config_set: ConfigSet, value: T) -> ConfigSet {
+        config_set.insert(value);
+        config_set
+    }
+
+    fn tls(alpn: AlpnProtocol) -> TlsOptions {
+        TlsOptions::builder().alpn_protocols([alpn]).build()
     }
 
     #[test]
-    fn typed_extensions_freeze_value_identity() {
-        let mut first = Extra::default();
-        *first.config_mut_or_default::<u32>() = 6;
-        *first.config_mut_or_default::<u32>() += 1;
-        first.insert_config(Cow::Borrowed("config"));
-        let frozen = request(first.clone());
-        let mut second = Extra::default();
-        second
-            .insert_config(Cow::<'static, str>::Owned("config".into()))
-            .insert_config(7_u32);
-        // Ordinary metadata neither partitions reuse nor needs value identity.
-        second.insert_metadata(Arc::new(std::sync::atomic::AtomicUsize::new(1)));
-        assert_eq!(first, second);
-        assert_eq!(hash(&first), hash(&second));
-        assert_eq!(frozen.key(), request(second.clone()).key());
-        assert_eq!(hash(&frozen.key()), hash(&request(second.clone()).key()));
-        second.insert_config(9_u32);
-        assert_ne!(first, second);
-        assert_eq!(frozen.extra().get::<u32>(), Some(&7));
-        assert_ne!(frozen.key(), request(second.clone()).key());
-        second.remove::<u32>();
-        assert!(second.get::<u32>().is_none());
-        second.insert_config(7_u64);
-        assert_ne!(frozen.key(), request(second).key());
-        *first.config_mut_or_default::<u32>() = 8;
-        assert_eq!(first.get::<u32>(), Some(&8));
-        assert_eq!(frozen.extra().get::<u32>(), Some(&7));
-        assert_ne!(frozen.key(), request(first.clone()).key());
-        first.remove::<u32>();
-        assert!(first.get::<u32>().is_none());
+    fn keys_count_only_request_options_that_differ_from_the_client() {
+        let client_config_set = with(ConfigSet::default(), tls(AlpnProtocol::HTTP2));
+        let plain = key(None, ConfigSet::default(), &client_config_set);
+        let hasher = lru::DefaultHasher::default();
 
-        let rerouted = frozen
+        // Equal values and a shared emulation inherit the client's options.
+        let inherited = with(ConfigSet::default(), tls(AlpnProtocol::HTTP2));
+        for config_set in [inherited, client_config_set.clone()] {
+            let other = key(None, config_set, &client_config_set);
+            assert_eq!(plain, other);
+            assert_eq!(hasher.hash_one(&plain), hasher.hash_one(&other));
+        }
+
+        let changed = request(
+            None,
+            with(ConfigSet::default(), tls(AlpnProtocol::HTTP1)),
+            &client_config_set,
+        );
+        assert_ne!(plain, changed.key());
+        assert!(changed.config_override::<TlsOptions>().is_some());
+        assert_ne!(
+            plain,
+            key(
+                Some(Protocol::Auto),
+                ConfigSet::default(),
+                &client_config_set
+            )
+        );
+
+        let rerouted = changed
             .clone()
-            .with_route_uri("https://proxy:8443/".parse().unwrap());
+            .with_route_uri(Uri::from_static("https://proxy:8443/"));
         assert_eq!(rerouted.uri(), "https://localhost/");
         assert_eq!(rerouted.route_uri(), "https://proxy:8443/");
-        assert_eq!(rerouted.key(), frozen.key());
-        assert_eq!(hash(&rerouted.key()), hash(&frozen.key()));
-        assert!(ConnectRequest::new("/relative".parse().unwrap(), None, Extra::default()).is_err());
+        assert_eq!(rerouted.key(), changed.key());
 
-        // A cached-hash collision must still compare all frozen values.
-        let mut collision = request(Extra::default());
-        Arc::get_mut(&mut collision.inner).unwrap().hash = frozen.inner.hash;
-        assert_ne!(collision.key(), frozen.key());
+        // Inherited and explicit choices keep their meaning through proxy routing.
+        for (client, protocol, resolved) in [
+            (Protocol::Http1, None, Protocol::Http1),
+            #[cfg(feature = "http2")]
+            (Protocol::Http2, None, Protocol::Http2),
+            #[cfg(feature = "http2")]
+            (Protocol::Http2, Some(Protocol::Auto), Protocol::Auto),
+            #[cfg(feature = "http3")]
+            (Protocol::Http3, None, Protocol::Http3),
+            #[cfg(feature = "http3")]
+            (Protocol::Http3, Some(Protocol::Auto), Protocol::Auto),
+            #[cfg(feature = "http3")]
+            (Protocol::Http3, Some(Protocol::Http1), Protocol::Http1),
+            #[cfg(all(feature = "http2", feature = "http3"))]
+            (Protocol::Http3, Some(Protocol::Http2), Protocol::Http2),
+            #[cfg(feature = "http3")]
+            (Protocol::Auto, Some(Protocol::Http3), Protocol::Http3),
+        ] {
+            let request = ConnectRequest::new(
+                changed.uri(),
+                protocol,
+                client,
+                ConfigSet::default(),
+                &client_config_set,
+                None,
+                &BindOptions::default(),
+            )
+            .unwrap();
+            let key = request.key();
+            let rerouted = request.with_route_uri(Uri::from_static("https://proxy:8443/"));
+            assert_eq!(rerouted.protocol(), protocol);
+            assert_eq!(rerouted.resolved_protocol(), resolved);
+            assert_eq!(rerouted.key(), key);
+        }
+
+        // Equal hashes still compare the counted values.
+        let mut collision = changed.key();
+        collision.hash = plain.hash;
+        assert_ne!(plain, collision);
+
+        let relative = Uri::from_static("/relative");
+        let client_config_set = ConfigSet::default();
+        assert!(
+            ConnectRequest::new(
+                &relative,
+                None,
+                Protocol::Auto,
+                client_config_set.clone(),
+                &client_config_set,
+                None,
+                &BindOptions::default(),
+            )
+            .is_err()
+        );
     }
 
     #[test]
-    fn connection_options_partition_reuse_by_value() {
-        let tls_options = TlsOptions::builder()
-            .alpn_protocols([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
-            .build();
-        let mut extra = Extra::default();
-        extra
-            .insert_config(tls_options)
-            .insert_config(Http1Options::builder().max_headers(32).build());
-        #[cfg(feature = "http2")]
-        extra.insert_config(Http2Options::builder().header_table_size(4096).build());
-        let baseline = request(extra.clone()).key();
-        assert_eq!(baseline, request(extra.clone()).key());
-
-        let mut variants = Vec::new();
-        let mut changed = extra.clone();
-        changed.insert_config(
-            TlsOptions::builder()
-                .alpn_protocols([AlpnProtocol::HTTP1, AlpnProtocol::HTTP2])
-                .build(),
-        );
-        variants.push(changed);
-        let mut changed = extra.clone();
-        changed.insert_config(Http1Options::builder().max_headers(64).build());
-        variants.push(changed);
-        #[cfg(feature = "http2")]
-        {
-            let mut changed = extra.clone();
-            changed.insert_config(Http2Options::builder().header_table_size(8192).build());
-            variants.push(changed);
-        }
-        let mut changed = extra.clone();
-        changed.insert_config(Group::new("tenant"));
-        variants.push(changed);
-        let mut changed = extra.clone();
-        changed.insert_config(
-            crate::Proxy::all("http://localhost:8080")
-                .unwrap()
-                .into_matcher(),
-        );
-        variants.push(changed);
-        let mut changed = extra.clone();
-        changed.insert_config(SocketOptions {
+    fn socket_bindings_keep_pool_identities_isolated() {
+        let client_config_set = ConfigSet::default();
+        let uri = Uri::from_static("https://localhost/");
+        let mut bindings = BindOptions::default();
+        bindings.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
+        let partial_bindings = BindOptions {
             ipv4_address: Some(Ipv4Addr::LOCALHOST),
             ..Default::default()
-        });
-        variants.push(changed);
-        for changed in variants {
-            assert_ne!(baseline, request(changed).key());
+        };
+        let mut effective = bindings.clone();
+        effective.merge(&partial_bindings);
+        assert_eq!(effective, bindings);
+        let other_bindings = BindOptions {
+            ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
+            ..Default::default()
+        };
+        for protocol in [
+            None,
+            Some(Protocol::Http1),
+            #[cfg(feature = "http2")]
+            Some(Protocol::Http2),
+            #[cfg(feature = "http3")]
+            Some(Protocol::Http3),
+        ] {
+            let request = |bind_options, base_bind_options| {
+                ConnectRequest::new(
+                    &uri,
+                    protocol,
+                    Protocol::Auto,
+                    ConfigSet::default(),
+                    &client_config_set,
+                    bind_options,
+                    base_bind_options,
+                )
+                .unwrap()
+            };
+            let inherited = request(None, &bindings);
+            let same = request(Some(Arc::new(bindings.clone())), &bindings);
+            assert!(same.bind_options().is_none());
+            assert_eq!(same.key(), inherited.key());
+            assert_eq!(same.key().hash, inherited.key().hash);
+
+            let partial = request(Some(Arc::new(partial_bindings.clone())), &bindings);
+            assert_ne!(partial.key(), inherited.key());
+            assert_eq!(partial.bind_options().as_deref(), Some(&partial_bindings));
+
+            let changed = request(Some(Arc::new(other_bindings.clone())), &bindings);
+            assert_ne!(changed.key(), inherited.key());
+            assert_eq!(changed.bind_options().as_deref(), Some(&other_bindings));
+            assert_eq!(
+                changed.key_with_protocol(protocol, Protocol::Auto, &client_config_set),
+                changed.key()
+            );
+            assert_eq!(
+                changed
+                    .clone()
+                    .with_route_uri(Uri::from_static("https://proxy:8443/"))
+                    .key(),
+                changed.key()
+            );
+
+            let mut collision = changed.key();
+            collision.hash = inherited.key().hash;
+            assert_ne!(collision, inherited.key());
         }
-        let explicit = ConnectRequest::new(
-            "https://localhost/".parse().unwrap(),
-            Some(HttpVersion::Auto),
-            extra,
-        )
-        .unwrap();
-        assert_ne!(baseline, explicit.key());
+    }
+
+    #[test]
+    fn keys_ignore_options_of_protocols_a_connection_cannot_use() {
+        let client_config_set = ConfigSet::default();
+        let http1 = with(
+            ConfigSet::default(),
+            Http1Options::builder().max_headers(8).build(),
+        );
+        let h1 = Some(Protocol::Http1);
+        assert_ne!(
+            key(h1, http1.clone(), &client_config_set),
+            key(h1, ConfigSet::default(), &client_config_set)
+        );
+        #[cfg(feature = "http2")]
+        {
+            let http2 = with(
+                ConfigSet::default(),
+                Http2Options::builder().header_table_size(1024).build(),
+            );
+
+            let h2 = Some(Protocol::Http2);
+            assert_eq!(
+                key(h1, http2.clone(), &client_config_set),
+                key(h1, ConfigSet::default(), &client_config_set)
+            );
+            assert_eq!(
+                key(h2, http1.clone(), &client_config_set),
+                key(h2, ConfigSet::default(), &client_config_set)
+            );
+            assert_ne!(
+                key(None, http2.clone(), &client_config_set),
+                key(None, ConfigSet::default(), &client_config_set)
+            );
+
+            // Another preference selects again from the whole request storage.
+            let probe = request(h1, http2, &client_config_set).key_with_protocol(
+                None,
+                Protocol::Auto,
+                &client_config_set,
+            );
+            assert_ne!(probe, key(None, ConfigSet::default(), &client_config_set));
+        }
+
+        // Groups and proxies shape every connection.
+        let proxy = crate::Proxy::all("http://localhost:8080")
+            .unwrap()
+            .into_matcher();
+        for config_set in [
+            with(ConfigSet::default(), Group::new("tenant")),
+            with(ConfigSet::default(), proxy),
+        ] {
+            assert_ne!(
+                key(h1, config_set, &client_config_set),
+                key(h1, ConfigSet::default(), &client_config_set)
+            );
+        }
+
+        #[cfg(feature = "http3")]
+        {
+            let h3 = Some(Protocol::Http3);
+            let http3 = netty::http3::Http3Options::builder()
+                .max_field_section_size(1024)
+                .build();
+            let tcp = with(http1, tls(AlpnProtocol::HTTP1));
+            assert_eq!(
+                key(h3, tcp, &client_config_set),
+                key(h3, ConfigSet::default(), &client_config_set)
+            );
+            let quic = with(ConfigSet::default(), http3);
+            assert_eq!(
+                key(None, quic.clone(), &client_config_set),
+                key(None, ConfigSet::default(), &client_config_set)
+            );
+            assert_ne!(
+                key(h3, quic, &client_config_set),
+                key(h3, ConfigSet::default(), &client_config_set)
+            );
+        }
     }
 
     #[test]
     fn compressor_identity_uses_ordered_algorithms() {
-        use crate::tls::compress::{CertificateCompressionAlgorithm, CertificateCompressor, Codec};
+        use crate::{
+            conn::config::KeyPart,
+            tls::compress::{CertificateCompressionAlgorithm, CertificateCompressor, Codec},
+        };
 
         /// Supplies algorithm identity without installing a TLS codec.
         /// Distinct instances model independently constructed configurations.
@@ -389,18 +548,51 @@ mod tests {
         static FIRST: Compressor = Compressor(CertificateCompressionAlgorithm::ZLIB);
         static SECOND: Compressor = Compressor(CertificateCompressionAlgorithm::ZLIB);
         static BROTLI: Compressor = Compressor(CertificateCompressionAlgorithm::BROTLI);
-        let key = |compressors: Option<Vec<&'static dyn CertificateCompressor>>| {
-            let mut extra = Extra::default();
-            extra.insert_config(TlsOptions {
-                certificate_compressors: compressors.map(Cow::Owned),
-                ..Default::default()
-            });
-            request(extra).key()
+
+        fn check_parts<T: ConnectConfig>(
+            options: impl Fn(Option<Vec<&'static dyn CertificateCompressor>>) -> T,
+        ) {
+            let first = options(Some(vec![&FIRST, &BROTLI]));
+            let second = options(Some(vec![&SECOND, &BROTLI]));
+            let reordered = options(Some(vec![&BROTLI, &FIRST]));
+            let absent = options(None);
+            let empty = options(Some(Vec::new()));
+            assert!(first == second);
+            assert!(first != reordered);
+            assert!(absent == empty);
+            assert_eq!(HASHER.hash_one(&first), HASHER.hash_one(&second));
+            assert_eq!(HASHER.hash_one(&absent), HASHER.hash_one(&empty));
+            for part in [KeyPart::Whole, KeyPart::Session, KeyPart::Context] {
+                assert!(first.eq_part(&second, part));
+                assert!(!first.eq_part(&reordered, part));
+                assert!(absent.eq_part(&empty, part));
+            }
+            assert_eq!(first.hash_parts(), second.hash_parts());
+            assert_eq!(absent.hash_parts(), empty.hash_parts());
+        }
+
+        let options = |compressors: Option<Vec<&'static dyn CertificateCompressor>>| TlsOptions {
+            certificate_compressors: compressors.map(Cow::Owned),
+            ..Default::default()
+        };
+        check_parts(options);
+        #[cfg(feature = "http3")]
+        check_parts(|compressors| crate::quic::QuicOptions {
+            certificate_compressors: compressors.map(Cow::Owned),
+            ..Default::default()
+        });
+
+        let key = |compressors| {
+            key(
+                None,
+                with(ConfigSet::default(), options(compressors)),
+                &ConfigSet::default(),
+            )
         };
         let first = key(Some(vec![&FIRST, &BROTLI]));
         let second = key(Some(vec![&SECOND, &BROTLI]));
         assert_eq!(first, second);
-        assert_eq!(hash(&first), hash(&second));
+        assert_eq!(first.hash, second.hash);
         assert_ne!(first, key(Some(vec![&BROTLI, &FIRST])));
         assert_eq!(key(None), key(Some(vec![])));
     }

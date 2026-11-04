@@ -68,7 +68,7 @@ async fn auto_headers() {
     });
 
     let url = format!("http://{}/1", server.addr());
-    let res = Client::builder()
+    let res = Client::builder_tokio()
         .no_proxy()
         .build()
         .unwrap()
@@ -126,7 +126,7 @@ async fn test_headers_order_with_client() {
 
     let url = format!("http://{}/test", server.addr());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .no_proxy()
         .default_headers({
             let mut headers = HeaderMap::new();
@@ -207,7 +207,7 @@ async fn test_headers_order_with_request() {
 
     let url = format!("http://{}/test", server.addr());
 
-    let client = Client::builder().no_proxy().build().unwrap();
+    let client = Client::builder_tokio().no_proxy().build().unwrap();
 
     let res = client
         .post(&url)
@@ -295,7 +295,7 @@ async fn test_overwrite_headers() {
     default_headers.insert(COOKIE, header::HeaderValue::from_static("a=b"));
     default_headers.append(COOKIE, header::HeaderValue::from_static("c=d"));
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .no_proxy()
         .default_headers(default_headers)
         .build()
@@ -351,7 +351,7 @@ async fn donot_set_content_length_0_if_have_no_body() {
     });
 
     let url = format!("http://{}/content-length", server.addr());
-    let res = Client::builder()
+    let res = Client::builder_tokio()
         .no_proxy()
         .build()
         .expect("client builder")
@@ -371,7 +371,7 @@ async fn user_agent() {
     });
 
     let url = format!("http://{}/ua", server.addr());
-    let res = Client::builder()
+    let res = Client::builder_tokio()
         .user_agent("wreq-test-agent")
         .build()
         .expect("client builder")
@@ -389,7 +389,7 @@ async fn response_text() {
 
     let server = server::http(move |_req| async { http::Response::new("Hello".into()) });
 
-    let client = Client::new();
+    let client = Client::new(wreq::rt::tokio::TokioRuntime);
 
     let res = client
         .get(format!("http://{}/text", server.addr()))
@@ -407,7 +407,7 @@ async fn response_bytes() {
 
     let server = server::http(move |_req| async { http::Response::new("Hello".into()) });
 
-    let client = Client::new();
+    let client = Client::new(wreq::rt::tokio::TokioRuntime);
 
     let res = client
         .get(format!("http://{}/bytes", server.addr()))
@@ -426,7 +426,7 @@ async fn response_json() {
 
     let server = server::http(move |_req| async { http::Response::new("\"Hello\"".into()) });
 
-    let client = Client::new();
+    let client = Client::new(wreq::rt::tokio::TokioRuntime);
 
     let res = client
         .get(format!("http://{}/json", server.addr()))
@@ -462,7 +462,7 @@ async fn body_pipe_response() {
         }
     });
 
-    let client = Client::new();
+    let client = Client::new(wreq::rt::tokio::TokioRuntime);
 
     let res1 = client
         .get(format!("http://{}/get", server.addr()))
@@ -494,7 +494,7 @@ async fn overridden_dns_resolution_with_gai() {
         "http://{overridden_domain}:{}/domain_override",
         server.addr().port()
     );
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .no_proxy()
         .resolve(overridden_domain, server.addr())
         .build()
@@ -519,7 +519,7 @@ async fn overridden_dns_resolution_with_gai_multiple() {
     );
     // the server runs on IPv4 localhost, so provide both IPv4 and IPv6 and let the happy eyeballs
     // algorithm decide which address to use.
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .no_proxy()
         .resolve_to_addrs(
             overridden_domain,
@@ -552,7 +552,7 @@ async fn overridden_dns_resolution_with_hickory_dns() {
         "http://{overridden_domain}:{}/domain_override",
         server.addr().port()
     );
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .no_proxy()
         .resolve(overridden_domain, server.addr())
         .build()
@@ -578,7 +578,7 @@ async fn overridden_dns_resolution_with_hickory_dns_multiple() {
     );
     // the server runs on IPv4 localhost, so provide both IPv4 and IPv6 and let the happy eyeballs
     // algorithm decide which address to use.
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .no_proxy()
         .resolve_to_addrs(
             overridden_domain,
@@ -603,7 +603,7 @@ async fn overridden_dns_resolution_with_hickory_dns_multiple() {
 #[test]
 #[cfg(feature = "query")]
 fn query_appends_parameters() {
-    let client = Client::new();
+    let client = Client::new(wreq::rt::tokio::TokioRuntime);
     let empty: [(&str, &str); 0] = [];
     let cases = [
         (
@@ -653,14 +653,6 @@ fn query_appends_parameters() {
             .build()
             .unwrap();
         assert_eq!(request.uri().to_string(), expected);
-        assert!(
-            request
-                .uri()
-                .path_and_query()
-                .unwrap()
-                .as_str()
-                .starts_with('/')
-        );
     }
 
     let error = client
@@ -690,7 +682,7 @@ fn add_json_default_content_type_if_not_set_manually() {
     let mut map = HashMap::new();
     map.insert("body", "json");
     let content_type = http::HeaderValue::from_static("application/vnd.api+json");
-    let req = Client::new()
+    let req = Client::new(wreq::rt::tokio::TokioRuntime)
         .post("https://google.com/")
         .header(CONTENT_TYPE, &content_type)
         .json(&map)
@@ -705,7 +697,7 @@ fn add_json_default_content_type_if_not_set_manually() {
 fn update_json_content_type_if_set_manually() {
     let mut map = HashMap::new();
     map.insert("body", "json");
-    let req = Client::new()
+    let req = Client::new(wreq::rt::tokio::TokioRuntime)
         .post("https://google.com/")
         .json(&map)
         .build()
@@ -716,7 +708,7 @@ fn update_json_content_type_if_set_manually() {
 
 #[tokio::test]
 async fn test_tls_info() {
-    let resp = Client::builder()
+    let resp = Client::builder_tokio()
         .tls_info(true)
         .build()
         .expect("client builder")
@@ -730,7 +722,7 @@ async fn test_tls_info() {
     let der = peer_certificate.unwrap();
     assert_eq!(der[0], 0x30); // ASN.1 SEQUENCE
 
-    let resp = Client::builder()
+    let resp = Client::builder_tokio()
         .build()
         .expect("client builder")
         .get("https://google.com")
@@ -745,7 +737,7 @@ async fn test_tls_info() {
 async fn close_connection_after_idle_timeout() {
     let mut server = server::http(move |_| async move { http::Response::default() });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .pool_idle_timeout(std::time::Duration::from_secs(1))
         .build()
         .unwrap();
@@ -775,7 +767,7 @@ async fn http1_reason_phrase() {
         })
     });
 
-    let client = Client::new();
+    let client = Client::new(wreq::rt::tokio::TokioRuntime);
 
     let res = client
         .get(format!("http://{}", server.addr()))
@@ -795,7 +787,11 @@ async fn http1_reason_phrase() {
 #[tokio::test]
 async fn error_has_url() {
     let u = "http://does.not.exist.local/ever";
-    let err = wreq::get(u).send().await.unwrap_err();
+    let err = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(u)
+        .send()
+        .await
+        .unwrap_err();
     assert_eq!(
         err.uri().map(ToString::to_string).as_deref(),
         Some(u),
@@ -811,7 +807,7 @@ async fn http1_only() {
             .body(Default::default())
             .unwrap()
     });
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .http1_only()
         .no_proxy()
         .timeout(Duration::from_secs(5))
@@ -848,7 +844,8 @@ async fn http1_only() {
         "HTTP/1 minor versions share a reusable connection"
     );
 
-    let resp = wreq::get(url)
+    let resp = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(url)
         .version(Version::HTTP_11)
         .send()
         .await
@@ -862,7 +859,10 @@ async fn http1_only() {
 async fn http2_requires_feature() {
     let server = server::http(move |_| async move { http::Response::default() });
 
-    let err = wreq::get(format!("http://{}", server.addr()))
+    let err = Client::builder_tokio()
+        .build()
+        .unwrap()
+        .get(format!("http://{}", server.addr()))
         .version(Version::HTTP_2)
         .send()
         .await
@@ -896,7 +896,11 @@ async fn request_version_configuration_survives_clone_and_conversion() {
     }
 
     let server = server::http(|_| async { http::Response::default() });
-    let client = Client::builder().http2_only().no_proxy().build().unwrap();
+    let client = Client::builder_tokio()
+        .http2_only()
+        .no_proxy()
+        .build()
+        .unwrap();
     let request = wreq::Request::new(
         http::Method::GET,
         format!("http://{}", server.addr()).parse().unwrap(),
@@ -922,7 +926,7 @@ async fn request_version_configuration_survives_clone_and_conversion() {
         .build()
         .unwrap();
     *request.version_mut() = None;
-    let resp = Client::builder()
+    let resp = Client::builder_tokio()
         .http1_only()
         .no_proxy()
         .build()
@@ -932,7 +936,7 @@ async fn request_version_configuration_survives_clone_and_conversion() {
         .unwrap();
     assert_eq!(resp.version(), wreq::Version::HTTP_11);
 
-    let layered_client = Client::builder()
+    let layered_client = Client::builder_tokio()
         .http2_only()
         .layer(tower::util::MapRequestLayer::new(
             |mut request: http::Request<wreq::Body>| {
@@ -966,7 +970,7 @@ async fn request_version_configuration_survives_clone_and_conversion() {
 async fn http2_only() {
     let server = server::http(move |_| async move { http::Response::default() });
 
-    let resp = Client::builder()
+    let resp = Client::builder_tokio()
         .http2_only()
         .build()
         .unwrap()
@@ -977,7 +981,7 @@ async fn http2_only() {
 
     assert_eq!(resp.version(), wreq::Version::HTTP_2);
 
-    let resp = Client::builder()
+    let resp = Client::builder_tokio()
         .http1_only()
         .build()
         .unwrap()
@@ -997,9 +1001,7 @@ async fn connection_pool_respects_https_version_policy() {
 
     use wreq::tls::{AlpnProtocol, TlsOptions};
 
-    /// Echoes the cookie serialization version into the request headers.
-    /// Lets the server verify that cookies follow the negotiated wire protocol.
-    /// Holds no cookie state and ignores response updates.
+    /// Reports the cookie serialization version so the server can check protocol selection.
     #[cfg(feature = "cookies")]
     struct VersionCookies;
 
@@ -1122,11 +1124,12 @@ async fn connection_pool_respects_https_version_policy() {
                 result.unwrap();
             }
         });
-        let builder = Client::builder().http_version(match client_version {
-            Some(Version::HTTP_11) => wreq::HttpVersion::Http1,
-            Some(Version::HTTP_2) => wreq::HttpVersion::Http2,
-            _ => wreq::HttpVersion::Auto,
-        });
+        let builder = Client::builder_tokio();
+        let builder = match client_version {
+            Some(Version::HTTP_11) => builder.http1_only(),
+            Some(Version::HTTP_2) => builder.http2_only(),
+            _ => builder,
+        };
         #[cfg(feature = "cookies")]
         let builder = builder.cookie_provider(VersionCookies);
         let tls = tls_alpn.map(|protocols| {
@@ -1235,8 +1238,8 @@ async fn tls_alps_follows_alpn_offer() {
     let tls = TlsOptions::builder()
         .alps_protocols([AlpsProtocol::HTTP2])
         .build();
-    let client = Client::builder()
-        .emulation(Emulation::builder().tls_options(tls).build())
+    let client = Client::builder_tokio()
+        .emulation(Emulation::builder().config(tls).build())
         .no_proxy()
         .timeout(Duration::from_secs(5))
         .build()
@@ -1306,9 +1309,9 @@ async fn connection_pool_http2_errors_respect_negotiation() {
         });
 
         let builder = if forced {
-            Client::builder().http2_only()
+            Client::builder_tokio().http2_only()
         } else {
-            Client::builder()
+            Client::builder_tokio()
         };
         let client = builder
             .no_proxy()
@@ -1365,13 +1368,13 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
     let mut server = server::http(move |_| async move { http::Response::default() });
     let url = format!("http://{}", server.addr());
 
-    let http1 = Client::builder().http1_only().build().unwrap();
+    let http1 = Client::builder_tokio().http1_only().build().unwrap();
     for _ in 0..2 {
         http1.get(&url).send().await.unwrap().bytes().await.unwrap();
     }
 
     #[cfg(feature = "http2")]
-    let http2 = Client::builder().http2_only().build().unwrap();
+    let http2 = Client::builder_tokio().http2_only().build().unwrap();
     #[cfg(feature = "http2")]
     {
         let responses =
@@ -1439,7 +1442,7 @@ async fn connection_pool_reuse_first_waits_for_busy_http1_connection() {
             }
         }
     });
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .http1_only()
         .pool_strategy(PoolStrategy::ReuseFirst(Duration::from_secs(3)))
         .build()
@@ -1507,7 +1510,7 @@ async fn connection_pool_applies_client_http1_options() {
     let url = format!("http://{}", server.addr());
 
     for max_headers in [4, 16] {
-        let client = Client::builder()
+        let client = Client::builder_tokio()
             .http1_only()
             .no_proxy()
             .http1_options(Http1Options::builder().max_headers(max_headers).build())
@@ -1560,7 +1563,7 @@ async fn connection_pool_closes_idle_transports() {
                 .await
                 .unwrap();
             });
-            let client = Client::builder()
+            let client = Client::builder_tokio()
                 .no_proxy()
                 .pool_idle_timeout(None)
                 .pool_max_idle_per_host(if keep_alive { 1 } else { 0 })
@@ -1628,7 +1631,11 @@ async fn connection_pool_cancellation_closes_http1_transport() {
                 result => panic!("canceled transport remained open: {result:?}"),
             }
         });
-        let client = Client::builder().http1_only().no_proxy().build().unwrap();
+        let client = Client::builder_tokio()
+            .http1_only()
+            .no_proxy()
+            .build()
+            .unwrap();
         let mut request = Box::pin(client.get(url).send());
         tokio::time::timeout(Duration::from_secs(2), async {
             if response_started {
@@ -1686,7 +1693,7 @@ async fn connection_pool_preserves_upload_after_response_headers() {
             .await
             .unwrap();
         });
-        let client = Client::builder()
+        let client = Client::builder_tokio()
             .no_proxy()
             .pool_idle_timeout(None)
             .pool_strategy(PoolStrategy::ReuseFirst(Duration::from_secs(30)))
@@ -1757,7 +1764,9 @@ async fn http1_send_case_sensitive_headers() {
     orig_headers.insert("X-custom-header");
     orig_headers.insert("Host");
 
-    let resp = wreq::get("https://tls.browserleaks.com")
+    let resp = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get("https://tls.browserleaks.com")
+        .timeout(Duration::from_secs(30))
         .header("X-Custom-Header", "value")
         .orig_headers(orig_headers)
         .version(Version::HTTP_11)
@@ -1795,7 +1804,7 @@ async fn tunnel_includes_proxy_auth_with_multiple_proxies() {
     let mut headers2 = wreq::header::HeaderMap::new();
     headers2.insert("proxy-header", "proxy2".parse().unwrap());
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         // When processing proxy headers, the first one is iterated,
         // and if the current URL does not match, the proxy is skipped
         .proxy(
@@ -1818,7 +1827,7 @@ async fn tunnel_includes_proxy_auth_with_multiple_proxies() {
     assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         // When processing proxy headers, the first one is iterated,
         // and for the current URL matching, the proxy will be used
         .proxy(
@@ -1863,7 +1872,7 @@ async fn skip_default_headers() {
         http::Response::default()
     });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .default_headers({
             let mut headers = wreq::header::HeaderMap::new();
             headers.insert(USER_AGENT, "test-agent".parse().unwrap());
@@ -1913,7 +1922,7 @@ async fn test_client_same_header_values_append() {
         http::Response::default()
     });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .no_proxy()
         .default_headers({
             let mut headers = HeaderMap::new();
@@ -1965,7 +1974,7 @@ async fn test_client_default_accept_encoding() {
         http::Response::default()
     });
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .default_headers({
             let mut headers = HeaderMap::new();
             headers.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("zstd"));
@@ -2013,7 +2022,8 @@ async fn response_trailers() {
         resp
     });
 
-    let mut res = wreq::get(format!("http://{}/trailers", server.addr()))
+    let mut res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .get(format!("http://{}/trailers", server.addr()))
         .header(header::TE, "trailers")
         .send()
         .await
@@ -2057,7 +2067,7 @@ async fn dns_resolution_failure_is_dns_error() {
         }
     }
 
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .no_proxy()
         .dns_resolver(FailingResolver)
         .build()
@@ -2067,4 +2077,73 @@ async fn dns_resolution_failure_is_dns_error() {
 
     assert!(err.is_dns(), "expected a DNS error, got: {err:?}");
     assert!(err.is_connect(), "expected is_connect() to also be true");
+}
+
+#[tokio::test]
+async fn runtime_resolver_is_used_without_dns_configuration() {
+    use std::net::SocketAddr;
+
+    use futures_util::future::BoxFuture;
+    use wreq::{
+        dns::{Addrs, Name, Resolve, Resolving},
+        rt::{Connecting, Runtime, Timer, tokio::TokioRuntime},
+    };
+
+    #[derive(Clone, Debug)]
+    struct SelectedRuntime {
+        address: SocketAddr,
+        lookups: Arc<AtomicUsize>,
+    }
+
+    impl Runtime for SelectedRuntime {
+        fn new_timer(&self) -> Arc<dyn Timer> {
+            Arc::new(TokioRuntime)
+        }
+
+        fn execute(&self, future: BoxFuture<'static, ()>) {
+            TokioRuntime.execute(future);
+        }
+
+        fn connect_tcp(&self, socket: std::net::TcpStream, address: SocketAddr) -> Connecting {
+            Runtime::connect_tcp(&TokioRuntime, socket, address)
+        }
+
+        #[cfg(unix)]
+        fn connect_unix(&self, path: Arc<std::path::Path>) -> Connecting {
+            Runtime::connect_unix(&TokioRuntime, path)
+        }
+
+        fn resolver(&self) -> Arc<dyn Resolve> {
+            Arc::new(self.clone())
+        }
+
+        #[cfg(feature = "http3")]
+        fn quic(&self) -> Arc<dyn quic::Runtime> {
+            Arc::new(quic::TokioRuntime)
+        }
+    }
+
+    impl Resolve for SelectedRuntime {
+        fn resolve(&self, name: Name) -> Resolving {
+            assert_eq!(name.as_str(), "runtime.example");
+            self.lookups.fetch_add(1, Ordering::Relaxed);
+            let address = self.address;
+            Box::pin(async move { Ok(Box::new(std::iter::once(address)) as Addrs) })
+        }
+    }
+
+    let server = server::http(|_| async { http::Response::default() });
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let runtime = SelectedRuntime {
+        address: server.addr(),
+        lookups: lookups.clone(),
+    };
+    let client = Client::builder(runtime).no_proxy().build().unwrap();
+    let response = client
+        .get(format!("http://runtime.example:{}/", server.addr().port()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(lookups.load(Ordering::Relaxed), 1);
 }

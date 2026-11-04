@@ -1,16 +1,11 @@
-//! TLS Key Log Management
+//! TLS key logging for debugging and traffic analysis.
 //!
-//! This module provides utilities for managing TLS key logging, allowing session keys to be
-//! written to a file for debugging or analysis (e.g., with Wireshark).
-//!
-//! The [`KeyLog`] enum lets you control key log behavior, either by respecting the
-//! `SSLKEYLOGFILE` environment variable or by specifying a custom file path. Handles are cached
-//! globally to avoid duplicate file access.
+//! [`KeyLog`] selects a file explicitly or from `SSLKEYLOGFILE`. File handles are
+//! shared globally, and a background thread writes the session keys for each file.
 
 use std::{
-    borrow::Cow,
     collections::{HashMap, hash_map::Entry},
-    io::{Error, ErrorKind, Result},
+    io::Result,
     path::{Component, Path, PathBuf},
     sync::{Arc, OnceLock},
 };
@@ -19,12 +14,13 @@ use handle::Handle;
 
 use crate::sync::RwLock;
 
-/// Specifies the intent for a (TLS) keylogger.
+/// Selects the file used for TLS key logging.
 #[derive(Debug, Clone)]
 pub struct KeyLog(Option<Arc<Path>>);
 
 impl KeyLog {
     /// Creates a [`KeyLog`] based on the `SSLKEYLOGFILE` environment variable.
+    /// Key logging stays off when the variable is unset or blank.
     pub fn from_env() -> KeyLog {
         match std::env::var("SSLKEYLOGFILE") {
             Ok(ref s) if !s.trim().is_empty() => {
@@ -39,55 +35,46 @@ impl KeyLog {
         KeyLog(Some(Arc::from(normalize_path(path.as_ref()))))
     }
 
-    /// Creates a new key log file [`Handle`] based on the policy.
-    pub(crate) fn handle(self) -> Result<Handle> {
+    /// Opens the key log file, or returns `None` when the policy names no file.
+    pub(crate) fn handle(self) -> Result<Option<Handle>> {
         static GLOBAL_KEYLOG_CACHE: OnceLock<RwLock<HashMap<Arc<Path>, Handle>>> = OnceLock::new();
 
-        let path = self
-            .0
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, "KeyLog: file path is not specified"))?;
+        let Some(path) = self.0 else {
+            return Ok(None);
+        };
 
         let cache = GLOBAL_KEYLOG_CACHE.get_or_init(RwLock::default);
         if let Some(handle) = cache.read().get(path.as_ref()).cloned() {
-            return Ok(handle);
+            return Ok(Some(handle));
         }
 
         match cache.write().entry(path.clone()) {
-            Entry::Occupied(entry) => Ok(entry.get().clone()),
+            Entry::Occupied(entry) => Ok(Some(entry.get().clone())),
             Entry::Vacant(entry) => {
                 let handle = Handle::new(path)?;
                 entry.insert(handle.clone());
-                Ok(handle)
+                Ok(Some(handle))
             }
         }
     }
 }
 
-fn normalize_path<'a, P>(path: P) -> PathBuf
-where
-    P: Into<Cow<'a, Path>>,
-{
-    let path = path.into();
-    let mut components = path.components().peekable();
-    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
-        components.next();
-        PathBuf::from(c.as_os_str())
-    } else {
-        PathBuf::new()
-    };
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut ret = PathBuf::new();
 
-    for component in components {
+    for component in path.components() {
         match component {
-            Component::Prefix(..) => unreachable!(),
-            Component::RootDir => {
+            Component::Prefix(..) | Component::RootDir | Component::Normal(_) => {
                 ret.push(component.as_os_str());
             }
             Component::CurDir => {}
             Component::ParentDir => {
-                ret.pop();
-            }
-            Component::Normal(c) => {
-                ret.push(c);
+                if matches!(ret.components().next_back(), Some(Component::Normal(_))) {
+                    ret.pop();
+                } else if !ret.has_root() {
+                    // Preserve relative parents, including those after a Windows drive prefix.
+                    ret.push(component.as_os_str());
+                }
             }
         }
     }
@@ -114,7 +101,7 @@ mod handle {
     }
 
     impl Handle {
-        /// Create a new [`Handle`] with the specified path and sender.
+        /// Opens the file for append and starts its background writer.
         pub fn new(filepath: Arc<Path>) -> Result<Self> {
             if let Some(parent) = filepath.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -157,6 +144,53 @@ mod handle {
                     "Handle: failed to send log line for writing",
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_path_disables_key_logging() {
+        // `from_env` yields this policy when SSLKEYLOGFILE is unset or blank.
+        assert!(KeyLog(None).handle().unwrap().is_none());
+    }
+
+    #[test]
+    fn normalization_preserves_relative_parents_and_roots() {
+        for (input, expected) in [
+            ("", ""),
+            (".", ""),
+            ("..", ".."),
+            ("../keys.log", "../keys.log"),
+            ("../../keys.log", "../../keys.log"),
+            ("foo/../../keys.log", "../keys.log"),
+            ("foo/../bar/./keys.log", "bar/keys.log"),
+            ("/../../keys.log", "/keys.log"),
+            ("/tmp/./keys/../sslkeys.log", "/tmp/sslkeys.log"),
+        ] {
+            assert_eq!(
+                normalize_path(Path::new(input)),
+                Path::new(expected),
+                "{input}"
+            );
+        }
+
+        #[cfg(windows)]
+        for (input, expected) in [
+            (r"C:..\keys.log", r"C:..\keys.log"),
+            (r"C:..\..\keys.log", r"C:..\..\keys.log"),
+            (r"C:foo\..\..\keys.log", r"C:..\keys.log"),
+            (r"C:\..\..\keys.log", r"C:\keys.log"),
+            (r"\\server\share\..\keys.log", r"\\server\share\keys.log"),
+        ] {
+            assert_eq!(
+                normalize_path(Path::new(input)),
+                Path::new(expected),
+                "{input}"
+            );
         }
     }
 }

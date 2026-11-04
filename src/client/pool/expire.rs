@@ -2,7 +2,7 @@
 //!
 //! The component follows the boundary proposed in
 //! <https://github.com/hyperium/hyper/issues/3948>: protocol pools expose a
-//! retention operation, while one outer watcher owns the timer and decides when
+//! retention operation, while one outer watcher owns the runtime and decides when
 //! to inspect them. wreq wraps the destination [`Map`](super::map::Map), keeping
 //! one watcher for the whole client instead of one task per destination.
 //!
@@ -21,16 +21,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use netty::rt::{Executor as _, Sleep, Timer as _};
 use tokio::sync::watch;
 
-use crate::rt::{Executor, Timer};
+use crate::rt::{BoxSleep, RuntimeHandle, Timer as _};
 
 /// Inspects retained state owned by an expiration target.
 ///
 /// Implementations move rejected services out of their locks before dropping
-/// them. Returning the next interval keeps expiration policy outside the task
-/// driver and allows future policies to choose a different inspection cadence.
+/// them. The returned interval determines when the watcher next inspects the pool.
 pub(super) trait Inspect: Send + Sync + 'static {
     /// Removes expired state and returns the next required inspection interval.
     fn retain(&self, now: Instant) -> Option<Duration>;
@@ -56,36 +54,25 @@ pub(super) struct Expire<T> {
     shutdown: watch::Sender<()>,
 
     /// Runtime used to execute the watcher.
-    executor: Executor,
-
-    /// Clock and sleep provider used by expiration checks.
-    timer: Timer,
+    runtime: RuntimeHandle,
 }
 
 impl<T> Expire<T> {
     /// Creates an expiration component around `target`.
-    ///
-    /// An unavailable timer disables proactive checks. Callers may still use
-    /// [`Expire::now`] for checkout-time expiration.
-    pub(super) fn new(target: Weak<T>, executor: Executor, timer: Timer) -> Self {
+    pub(super) fn new(target: Weak<T>, runtime: RuntimeHandle) -> Self {
         let (shutdown, _) = watch::channel(());
 
         Self {
             target,
             running: Arc::new(AtomicBool::new(false)),
             shutdown,
-            executor,
-            timer,
+            runtime,
         }
     }
 
-    /// Reads the configured clock, falling back to [`Instant::now`].
+    /// Reads the selected runtime clock.
     pub(super) fn now(&self) -> Instant {
-        if self.timer.is_empty() {
-            Instant::now()
-        } else {
-            self.timer.now()
-        }
+        self.runtime.now()
     }
 
     /// Returns whether the expiration watcher is active.
@@ -105,13 +92,10 @@ where
     /// lock while spawning or waking another task. A zero interval disables the
     /// watcher to prevent an accidental busy loop.
     pub(super) fn schedule(&self, interval: Option<Duration>) {
-        if self.timer.is_empty() {
-            return;
-        }
         let Some(interval) = interval.filter(|interval| *interval != Duration::ZERO) else {
             return;
         };
-        let Some(deadline) = self.timer.now().checked_add(interval) else {
+        let Some(deadline) = self.runtime.now().checked_add(interval) else {
             return;
         };
         if self
@@ -127,10 +111,10 @@ where
             flag: self.running.clone(),
             owned: true,
         };
-        let timer = self.timer.clone();
+        let timer = self.runtime.timer();
         let mut shutdown = self.shutdown.subscribe();
 
-        self.executor.execute(async move {
+        self.runtime.execute(Box::pin(async move {
             let mut sleep = timer.sleep_until(deadline);
 
             loop {
@@ -147,7 +131,7 @@ where
                     .filter(|next| *next != Duration::ZERO)
                     .and_then(|next| timer.now().checked_add(next))
                 {
-                    timer.reset(&mut sleep, deadline);
+                    sleep.reset(deadline);
                     continue;
                 }
 
@@ -158,12 +142,12 @@ where
                     .and_then(|next| timer.now().checked_add(next))
                     && running.reacquire()
                 {
-                    timer.reset(&mut sleep, deadline);
+                    sleep.reset(deadline);
                     continue;
                 }
                 return;
             }
-        });
+        }));
     }
 }
 
@@ -203,16 +187,13 @@ impl Drop for Running {
 }
 
 /// Waits for the next expiration tick or target shutdown.
-async fn wait_for_tick(
-    sleep: &mut Pin<Box<dyn Sleep>>,
-    shutdown: &mut watch::Receiver<()>,
-) -> bool {
+async fn wait_for_tick(sleep: &mut BoxSleep, shutdown: &mut watch::Receiver<()>) -> bool {
     let mut changed = std::pin::pin!(shutdown.changed());
 
     std::future::poll_fn(|cx| {
         if changed.as_mut().poll(cx).is_ready() {
             Poll::Ready(false)
-        } else if sleep.as_mut().poll(cx).is_ready() {
+        } else if Pin::new(&mut *sleep).poll(cx).is_ready() {
             Poll::Ready(true)
         } else {
             Poll::Pending
@@ -264,8 +245,7 @@ mod tests {
         let expire = runtime.block_on(async {
             let expire = Expire::new(
                 Arc::downgrade(&target),
-                Executor::default(),
-                Timer::default(),
+                RuntimeHandle::new(crate::rt::tokio::TokioRuntime),
             );
             expire.schedule(Some(Duration::from_secs(60)));
             expire
@@ -285,8 +265,7 @@ mod tests {
         });
         let expire = Expire::new(
             Arc::downgrade(&target),
-            Executor::default(),
-            Timer::default(),
+            RuntimeHandle::new(crate::rt::tokio::TokioRuntime),
         );
 
         expire.schedule(Some(Duration::from_millis(100)));

@@ -212,8 +212,9 @@ impl Jar {
     /// # Example
     ///
     /// ```
-    /// use wreq::cookie::Jar;
     /// use cookie::CookieBuilder;
+    /// use wreq::cookie::Jar;
+    ///
     /// let jar = Jar::default();
     /// let cookie = CookieBuilder::new("foo", "bar")
     ///     .domain("example.com")

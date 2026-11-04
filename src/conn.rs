@@ -1,102 +1,66 @@
-//! Transport connector composition and established stream adapters.
-//! Connection metadata is exposed through [`Connected`]; protocol pools live in the client.
+//! Connector composition, established connections and response metadata.
+//! [`layer`] handles proxy routing, stream TLS and connection timeouts;
+//! [`transport`] handles dialing and QUIC endpoints. Protocol pools live in the client.
 
-pub(crate) mod extra;
+pub(crate) mod config;
 pub(crate) mod request;
-mod timeout;
-mod tls_info;
+
+mod layer;
 mod verbose;
 
-pub(super) mod http;
-pub(super) mod net;
-pub(super) mod proxy;
+pub(super) mod transport;
 
 use std::{
+    any::{TypeId, type_name},
     fmt::{self, Debug, Formatter},
+    future::Future,
     io::{self, IoSlice},
+    iter,
+    net::SocketAddr,
     pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
     time::Duration,
 };
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
-use extra::Extra;
+use bytes::Bytes;
+use config::ConfigSet;
 use futures_util::future::BoxFuture;
-use http::HttpConnect;
-#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
-use net::TcpConnector;
-#[cfg(unix)]
-use net::UnixConnector;
+use layer::{
+    proxy::{ProxyConnector, ProxyLayer},
+    timeout::{Timeout, TimeoutLayer},
+    tls::{TlsConnector, TlsLayer},
+};
 use pin_project_lite::pin_project;
-use request::{ConnectRequest, SocketOptions};
-use timeout::{Timeout, TimeoutLayer};
-use tls_info::TlsInfoFactory;
+use request::ConnectRequest;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapRequest, MapRequestLayer},
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapRequestLayer},
 };
-use verbose::Verbose;
+use transport::{BindOptions, SocketConnector};
+#[cfg(feature = "http3")]
+use {
+    crate::Protocol,
+    futures_util::future::Either,
+    layer::proxy::{QuicProxyConnector, QuicProxyLayer},
+};
 
 use crate::{
     dns::DynResolver,
-    error::{ProxyConnect, map_timeout_to_connector_error},
-    ext::UriExt,
-    proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
-    rt::Timer,
-    tls::{
-        AlpnProtocol, TlsInfo, TlsOptions,
-        conn::{EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector},
-    },
+    error::map_timeout_to_connector_error,
+    proxy::{Matcher as ProxyMatcher, matcher::Intercept},
+    rt::RuntimeHandle,
+    tls::{AlpnProtocol, TlsInfo, config::TlsConnectorBuilder, connector::MaybeHttpsStream},
 };
 
-/// Client-wide connection settings retained by each transport connector.
-/// Controls proxy selection, connection instrumentation, and post-handshake socket policy.
-/// Request-local socket and TLS options remain in the connection context.
-#[derive(Clone)]
-pub(crate) struct Config {
-    pub proxies: Arc<Vec<ProxyMatcher>>,
-    pub verbose: bool,
-    pub nodelay: bool,
-    pub tls_info: bool,
-}
-
-/// The connector graph produced by [`ConnectorLayer`] and retained by the client.
-/// Uses a concrete timeout wrapper without custom layers, otherwise a type-erased stack.
-/// Both branches accept connection inputs and time each connection attempt separately.
-pub type Stack = Either<
-    Timeout<Connector>,
-    MapRequest<BoxedTransportConnector, fn(ConnectRequest) -> Unnameable>,
->;
-
-/// Composes user connector layers inside the complete connection timeout.
-/// The uncustomized path remains concrete; only user layers require type erasure.
-/// Applying the layer does not configure sockets or build TLS contexts.
-#[derive(Clone)]
-pub struct ConnectorLayer {
-    layers: Vec<BoxedConnectorLayer>,
-    timeout: TimeoutLayer,
-}
-
-/// Establishes the transport consumed by the HTTP protocol layer.
-/// Selects the proxy path and composes the configured HTTP and TLS connectors.
-/// Clones share TLS state; this service owns no initialization builder or pool state.
-#[derive(Clone)]
-pub struct Connector {
-    config: Config,
-    #[cfg(feature = "socks")]
-    resolver: DynResolver,
-    tls: TlsConnector,
-    http: HttpConnector,
-}
-
-/// HTTP connector with dynamic DNS resolver.
-pub type HttpConnector = http::HttpConnector<DynResolver, TcpConnector>;
+/// Concrete stream path; [`Connector`] wraps both transports in any user layers.
+type Stack = Timeout<TlsConnector<ProxyConnector<SocketConnector>>>;
 
 /// Type-erased transport service retained after custom connector layers are composed.
 pub type BoxedTransportConnector = BoxCloneSyncService<Unnameable, Conn, BoxError>;
@@ -105,50 +69,278 @@ pub type BoxedTransportConnector = BoxCloneSyncService<Unnameable, Conn, BoxErro
 pub type BoxedConnectorLayer =
     BoxCloneSyncServiceLayer<BoxedTransportConnector, Unnameable, Conn, BoxError>;
 
-/// A wrapper type for [`ConnectRequest`] used to erase its concrete type.
-///
-/// [`Unnameable`] allows passing connection requests through trait objects or
-/// type-erased interfaces where the concrete type of the request is not important.
-/// This is mainly used internally to simplify service composition and dynamic dispatch.
-pub struct Unnameable(pub(super) ConnectRequest);
+/// Client settings for proxy selection, tracing and post-handshake socket policy.
+/// Request-specific bindings and protocol configuration travel in [`ConnectRequest`].
+#[derive(Clone)]
+pub(crate) struct Config {
+    pub proxies: Arc<Vec<ProxyMatcher>>,
+    pub verbose: bool,
+    pub nodelay: bool,
+    pub tls_info: bool,
+}
 
-/// A trait alias for types that can be used as async connections.
-///
-/// This trait is automatically implemented for any type that satisfies the required bounds:
-/// - [`AsyncRead`] + [`AsyncWrite`]: For I/O operations
-/// - [`Connection`]: For connection metadata
-/// - [`Send`] + [`Sync`] + [`Unpin`] + `'static`: For async/await compatibility
-trait AsyncConn: AsyncRead + AsyncWrite + Connection + Send + Sync + Unpin + 'static {}
+/// Establishes stream and QUIC transports through one shared middleware stack.
+/// Without user layers, each transport retains its concrete connection service.
+#[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum Connector {
+    Direct {
+        stream: Stack,
+        #[cfg(feature = "http3")]
+        quic: Timeout<QuicProxyConnector>,
+    },
+    Layered(BoxedTransportConnector),
+}
 
-/// An async connection that can also provide TLS information.
-///
-/// This extends [`AsyncConn`] with the ability to extract TLS certificate information
-/// when available. Useful for connections that may be either plain TCP or TLS-encrypted.
-trait AsyncConnWithInfo: AsyncConn + TlsInfoFactory {}
+/// Builds the stream and QUIC paths from common client settings.
+/// Client TLS contexts are compiled before connection middleware is initialized.
+#[must_use]
+pub(crate) struct ConnectorBuilder {
+    config: Config,
+    runtime: RuntimeHandle,
+    tls: TlsConnectorBuilder,
+    timeout: Option<Duration>,
+    bind_options: BindOptions,
+    layers: Vec<BoxedConnectorLayer>,
+}
 
-impl<T> AsyncConn for T where T: AsyncRead + AsyncWrite + Connection + Send + Sync + Unpin + 'static {}
+/// Drives one selected transport or the shared middleware stack without extra boxing.
+pub(crate) enum Connecting {
+    Stream {
+        future: <Stack as Service<ConnectRequest>>::Future,
+    },
+    #[cfg(feature = "http3")]
+    Quic {
+        future: <Timeout<QuicProxyConnector> as Service<ConnectRequest>>::Future,
+    },
+    Layered {
+        future: BoxFuture<'static, Result<Conn, BoxError>>,
+    },
+}
 
-impl<T> AsyncConnWithInfo for T where T: AsyncConn + TlsInfoFactory {}
+// ===== impl Connector =====
 
-pin_project! {
-    /// Note: the `is_proxy` member means *is plain text HTTP proxy*.
-    /// This tells core whether the URI should be written in
-    /// * origin-form (`GET /just/a/path HTTP/1.1`), when `proxy == None`, or
-    /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
-    pub struct Conn {
-        tls_info: bool,
-        proxy: Option<Intercept>,
-        #[pin]
-        stream: Box<dyn AsyncConnWithInfo>,
+impl Connector {
+    /// Starts configuring both transports with common runtime, TLS and connection policy.
+    pub(crate) fn builder(
+        runtime: RuntimeHandle,
+        tls: TlsConnectorBuilder,
+        config: Config,
+    ) -> ConnectorBuilder {
+        ConnectorBuilder {
+            runtime,
+            tls,
+            config,
+            timeout: None,
+            bind_options: BindOptions::default(),
+            layers: Vec::new(),
+        }
     }
 }
 
+impl Service<ConnectRequest> for Connector {
+    type Response = Conn;
+    type Error = BoxError;
+    type Future = Connecting;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self {
+            Self::Direct {
+                stream,
+                #[cfg(feature = "http3")]
+                quic,
+            } => {
+                // Both built-in paths are always ready; user layers reserve capacity outside.
+                ready!(stream.poll_ready(cx))?;
+                #[cfg(feature = "http3")]
+                ready!(quic.poll_ready(cx))?;
+                Poll::Ready(Ok(()))
+            }
+            Self::Layered(service) => service.poll_ready(cx),
+        }
+    }
+
+    fn call(&mut self, request: ConnectRequest) -> Self::Future {
+        match self {
+            Self::Direct {
+                stream,
+                #[cfg(feature = "http3")]
+                quic,
+            } => {
+                #[cfg(feature = "http3")]
+                if request.resolved_protocol() == Protocol::Http3 {
+                    return Connecting::Quic {
+                        future: quic.call(request),
+                    };
+                }
+                Connecting::Stream {
+                    future: stream.call(request),
+                }
+            }
+            Self::Layered(service) => Connecting::Layered {
+                future: service.call(Unnameable(request)),
+            },
+        }
+    }
+}
+
+// ===== impl Connecting =====
+
+impl Future for Connecting {
+    type Output = Result<Conn, BoxError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut() {
+            Self::Stream { future } => Pin::new(future).poll(cx),
+            #[cfg(feature = "http3")]
+            Self::Quic { future } => Pin::new(future).poll(cx),
+            Self::Layered { future } => future.as_mut().poll(cx),
+        }
+    }
+}
+
+// ===== impl ConnectorBuilder =====
+
+impl ConnectorBuilder {
+    /// Sets the connection deadline for both transport paths.
+    #[inline]
+    pub(crate) fn connect_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Sets the local addresses and interface inherited by TCP and QUIC sockets.
+    #[inline]
+    pub(crate) fn bind_options(mut self, bind_options: BindOptions) -> Self {
+        self.bind_options = bind_options;
+        self
+    }
+
+    /// Adds middleware shared by stream and QUIC connection attempts.
+    #[inline]
+    pub(crate) fn layers(mut self, layers: Vec<BoxedConnectorLayer>) -> Self {
+        self.layers = layers;
+        self
+    }
+
+    /// Attaches DNS and compiles client TLS contexts, then assembles both transport paths.
+    /// QUIC endpoints remain lazy until a connection future is polled.
+    /// Returns the socket bindings used to normalize request pool identities.
+    pub(crate) fn build(
+        self,
+        tcp: transport::TcpConnector<()>,
+        resolver: DynResolver,
+        config_set: ConfigSet,
+    ) -> Result<(Connector, BindOptions), crate::Error> {
+        // With user layers, one outer timeout covers the complete middleware call.
+        let transport_timeout = self.layers.is_empty().then_some(self.timeout).flatten();
+        let tcp = tcp
+            .enforce_http(false)
+            .set_connect_timeout(self.timeout)
+            .set_bind_options(&self.bind_options)
+            .build(resolver.clone());
+
+        #[cfg(feature = "http3")]
+        let quic = {
+            let tls = self.tls.clone().build_quic(config_set.clone())?;
+            ServiceBuilder::new()
+                .layer(TimeoutLayer::new(self.runtime.clone(), transport_timeout))
+                .layer(QuicProxyLayer::new(
+                    self.runtime.clone(),
+                    self.config.proxies.clone(),
+                    #[cfg(feature = "socks")]
+                    tcp.clone(),
+                    #[cfg(feature = "socks")]
+                    resolver.clone(),
+                ))
+                .service(
+                    transport::QuicConnector::builder(
+                        self.runtime.clone(),
+                        tls,
+                        self.config.tls_info,
+                    )
+                    .bind_options(self.bind_options.clone())
+                    .build(resolver.clone()),
+                )
+        };
+
+        let stream = {
+            let tls = self.tls.build(config_set)?;
+            ServiceBuilder::new()
+                .layer(TimeoutLayer::new(self.runtime.clone(), transport_timeout))
+                .layer(TlsLayer::new(
+                    self.config.verbose,
+                    self.config.nodelay,
+                    self.config.tls_info,
+                ))
+                .layer(ProxyLayer::new(self.config.proxies, tls, resolver))
+                .service(SocketConnector::new(
+                    #[cfg(unix)]
+                    self.runtime.clone(),
+                    tcp,
+                ))
+        };
+
+        let connector = Connector::Direct {
+            stream,
+            #[cfg(feature = "http3")]
+            quic,
+        };
+
+        if self.layers.is_empty() {
+            return Ok((connector, self.bind_options));
+        }
+
+        let service = self.layers.iter().fold(
+            BoxCloneSyncService::new(
+                ServiceBuilder::new()
+                    .layer(MapRequestLayer::new(|request: Unnameable| request.0))
+                    .service(connector),
+            ),
+            |service, layer| layer.layer(service),
+        );
+
+        // Keep the built-in timeout outside user layers so it covers their work too.
+        // The final mapping also handles a tower timeout supplied by the caller.
+        let service = TimeoutLayer::new(self.runtime, self.timeout)
+            .layer(service)
+            .map_err(map_timeout_to_connector_error);
+
+        Ok((
+            Connector::Layered(BoxCloneSyncService::new(service)),
+            self.bind_options,
+        ))
+    }
+}
+
+/// Opaque request passed through user-supplied connector layers.
+/// Keeps transport selection and connection configuration internal.
+pub struct Unnameable(pub(super) ConnectRequest);
+
+/// Byte-stream I/O passed to HTTP/1 or HTTP/2 after connection setup.
+pub(crate) trait AsyncConn: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
+
+/// An async connection with optional TLS certificate information.
+trait AsyncConnWithInfo: AsyncConn + Connection + TlsInfoFactory {}
+
+impl<T> AsyncConn for T where T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
+
+impl<T> AsyncConnWithInfo for T where T: AsyncConn + Connection + TlsInfoFactory {}
+
+/// Established connection and metadata returned through connector middleware.
+/// Protocol handshakes take the stream or QUIC resources together with their metadata.
+/// A QUIC endpoint remains owned until it can move into the HTTP/3 driver.
+pub struct Conn {
+    #[cfg(feature = "http3")]
+    pub(crate) inner: Either<Box<dyn AsyncConn>, (::quic::Connection, ::quic::Endpoint)>,
+    #[cfg(not(feature = "http3"))]
+    pub(crate) inner: Box<dyn AsyncConn>,
+    pub(crate) connected: Connected,
+}
+
 pin_project! {
-    /// A wrapper around `SslStream` that adapts it for use as a generic async connection.
-    ///
-    /// This type enables unified handling of plain TCP and TLS-encrypted streams by providing
-    /// implementations of `Connection`, `Read`, `Write`, and `TlsInfoFactory`.
-    /// It is mainly used internally to abstract over different connection types.
+    /// TLS stream that adds negotiated ALPN to the underlying connection metadata.
+    /// Forwards async I/O and exposes the peer's TLS certificate information.
     pub struct TlsConn<T> {
         #[pin]
         stream: SslStream<T>,
@@ -178,6 +370,15 @@ struct ProxyIdentity {
     headers: Option<HeaderMap>,
 }
 
+/// Local and remote socket addresses captured after connecting a transport.
+/// Stored in connection metadata and attached to response extensions.
+/// Custom transports may omit this information.
+#[derive(Clone, Debug)]
+pub(crate) struct HttpInfo {
+    pub(crate) remote_addr: SocketAddr,
+    pub(crate) local_addr: SocketAddr,
+}
+
 /// Metadata describing the established transport and its negotiated protocol.
 /// Carries proxy details and extra values copied into response extensions.
 /// Clones share the poison flag so reuse can be disabled from any response.
@@ -185,434 +386,40 @@ struct ProxyIdentity {
 pub struct Connected {
     alpn: Alpn,
     proxy: Arc<ProxyIdentity>,
-    extra: Extra,
+    metadata: Metadata,
     poisoned: PoisonPill,
+}
+
+/// Shared response metadata, ordered by concrete type.
+/// Edits copy shared handles; values are cloned only when exported to a response.
+#[derive(Clone, Default)]
+#[expect(
+    clippy::type_complexity,
+    reason = "Keep the single-use metadata entry representation inline"
+)]
+struct Metadata(Option<Arc<[(TypeId, Arc<dyn MetadataValue>)]>>);
+
+trait MetadataValue: Send + Sync {
+    fn copy_to(&self, extensions: &mut Extensions);
+    fn type_name(&self) -> &'static str;
 }
 
 /// Describes a type returned by a connector.
 pub trait Connection {
     /// Return metadata describing the connection.
     fn connected(&self) -> Connected;
-}
 
-// ===== impl ConnectorLayer =====
-
-impl ConnectorLayer {
-    /// Retains middleware and timeout policy until the transport graph is assembled.
-    pub fn new(layers: Vec<BoxedConnectorLayer>, timer: Timer, timeout: Option<Duration>) -> Self {
-        Self {
-            layers,
-            timeout: TimeoutLayer::new(timer, timeout),
-        }
+    /// Returns the socket's remote address; a proxied stream reports the proxy.
+    fn remote_addr(&self) -> Option<SocketAddr> {
+        None
     }
 }
 
-impl Layer<Connector> for ConnectorLayer {
-    type Service = Stack;
-
-    fn layer(&self, service: Connector) -> Self::Service {
-        if self.layers.is_empty() {
-            return Either::Left(self.timeout.layer(service));
-        }
-
-        let service = self.layers.iter().fold(
-            BoxCloneSyncService::new(
-                ServiceBuilder::new()
-                    .layer(MapRequestLayer::new(|request: Unnameable| request.0))
-                    .service(service),
-            ),
-            |service, layer| layer.layer(service),
-        );
-
-        // Keep the built-in timeout outside user layers so it covers their work too.
-        // The final mapping also handles a tower timeout supplied by the caller.
-        let service = self
-            .timeout
-            .layer(service)
-            .map_err(map_timeout_to_connector_error);
-
-        Either::Right(MapRequest::new(
-            BoxCloneSyncService::new(service),
-            Unnameable as fn(ConnectRequest) -> Unnameable,
-        ))
-    }
-}
-
-// ===== impl Connector =====
-
-impl Connector {
-    /// Combines initialized HTTP and TLS components with transport policy.
-    pub(crate) fn new(
-        config: Config,
-        http: HttpConnector,
-        tls: TlsConnector,
-        #[cfg(feature = "socks")] resolver: DynResolver,
-    ) -> Self {
-        Self {
-            config,
-            http,
-            tls,
-            #[cfg(feature = "socks")]
-            resolver,
-        }
-    }
-
-    fn http_for_connection(&self, https: bool, req: &ConnectRequest) -> HttpConnector {
-        let mut http = self.http.clone();
-
-        // Disable Nagle's algorithm for TLS handshake
-        //
-        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        if https && !self.config.nodelay {
-            http.set_nodelay(true);
-        }
-
-        // Apply request-local socket configuration before connecting.
-        if let Some(socket_options) = req.extra().get::<SocketOptions>() {
-            http.set_local_addresses(socket_options.ipv4_address, socket_options.ipv6_address);
-            #[cfg(any(
-                target_os = "android",
-                target_os = "fuchsia",
-                target_os = "illumos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "macos",
-                target_os = "solaris",
-                target_os = "tvos",
-                target_os = "visionos",
-                target_os = "watchos",
-            ))]
-            if let Some(interface) = &socket_options.interface {
-                http.set_interface(interface.clone());
-            }
-        }
-
-        http
-    }
-
-    fn build_https_connector(
-        &self,
-        https: bool,
-        req: &ConnectRequest,
-    ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        self.tls
-            .layer(self.http_for_connection(https, req))
-            .with_options(req.extra().get::<TlsOptions>())
-            .map_err(Into::into)
-    }
-
-    fn tunnel_conn_from_stream<IO>(&self, io: MaybeHttpsStream<IO>) -> Conn
-    where
-        IO: AsyncConnWithInfo,
-        TlsConn<IO>: Connection,
-        SslStream<IO>: TlsInfoFactory,
-    {
-        match io {
-            MaybeHttpsStream::Http(stream) => Conn {
-                stream: Verbose(self.config.verbose).wrap(stream),
-                tls_info: false,
-                proxy: None,
-            },
-            MaybeHttpsStream::Https(stream) => Conn {
-                stream: Verbose(self.config.verbose).wrap(TlsConn { stream }),
-                tls_info: self.config.tls_info,
-                proxy: None,
-            },
-        }
-    }
-
-    fn conn_from_stream<IO, P>(&self, io: MaybeHttpsStream<IO>, proxy: P) -> Conn
-    where
-        IO: AsyncConnWithInfo,
-        TlsConn<IO>: Connection,
-        SslStream<IO>: TlsInfoFactory,
-        P: Into<Option<Intercept>>,
-    {
-        let conn = match io {
-            MaybeHttpsStream::Http(stream) => Verbose(self.config.verbose).wrap(stream),
-            MaybeHttpsStream::Https(stream) => {
-                Verbose(self.config.verbose).wrap(TlsConn { stream })
-            }
-        };
-
-        Conn {
-            stream: conn,
-            tls_info: self.config.tls_info,
-            proxy: proxy.into(),
-        }
-    }
-
-    async fn connect_auto_proxy<P: Into<Option<Intercept>>>(
-        self,
-        req: ConnectRequest,
-        proxy: P,
-    ) -> Result<Conn, BoxError> {
-        let is_https = req.route_uri().is_https();
-        let proxy = proxy.into();
-
-        trace!("connect with maybe proxy: {:?}", proxy);
-
-        let mut connector = self.build_https_connector(is_https, &req)?;
-
-        // When using a proxy for HTTPS targets, disable ALPN to avoid protocol negotiation issues
-        if proxy.is_some() && is_https {
-            connector.no_alpn();
-        }
-
-        let io = connector.call(req).await?;
-
-        // Re-enable Nagle's algorithm if it was disabled earlier
-        if_tokio_rt!(block:{
-            if is_https && !self.config.nodelay {
-                io.as_ref().set_nodelay(false)?;
-            }
-        });
-
-        Ok(self.conn_from_stream(io, proxy))
-    }
-
-    async fn connect_via_proxy(
-        self,
-        req: ConnectRequest,
-        proxy: Intercepted,
-    ) -> Result<Conn, BoxError> {
-        let uri = req.uri().clone();
-
-        match proxy {
-            Intercepted::Proxy(proxy) => {
-                let is_https = uri.is_https();
-                let proxy_uri = proxy.uri().clone();
-
-                #[cfg(feature = "socks")]
-                {
-                    use proxy::socks::{DnsResolve, SocksConnector, Version};
-
-                    if let Some((version, dns_resolve)) = match proxy_uri.scheme_str() {
-                        Some("socks4") => Some((Version::V4, DnsResolve::Local)),
-                        Some("socks4a") => Some((Version::V4, DnsResolve::Remote)),
-                        Some("socks5") => Some((Version::V5, DnsResolve::Local)),
-                        Some("socks5h") => Some((Version::V5, DnsResolve::Remote)),
-                        _ => None,
-                    } {
-                        trace!("connecting via SOCKS proxy: {:?}", proxy_uri);
-
-                        // Connect to the proxy and establish the SOCKS connection.
-                        let conn = {
-                            // Build a SOCKS connector.
-                            let mut socks = SocksConnector::new(
-                                proxy_uri,
-                                self.http_for_connection(is_https, &req),
-                                self.resolver.clone(),
-                            );
-                            socks.set_auth(proxy.raw_auth());
-                            socks.set_version(version);
-                            socks.set_dns_mode(dns_resolve);
-                            socks.call(uri).await?
-                        };
-
-                        // Build an HTTPS connector.
-                        let mut connector = self.build_https_connector(is_https, &req)?;
-
-                        // Wrap the established SOCKS connection with TLS if needed.
-                        let io = connector.call(EstablishedConn::new(conn, req)).await?;
-
-                        // Re-enable Nagle's algorithm if it was disabled earlier
-                        if_tokio_rt!(block:{
-                            if is_https && !self.config.nodelay {
-                                io.as_ref().set_nodelay(false)?;
-                            }
-                        });
-
-                        return Ok(self.tunnel_conn_from_stream(io));
-                    }
-                }
-
-                if is_https {
-                    trace!("tunneling over HTTP(s) proxy: {:?}", proxy_uri);
-
-                    // Build an HTTPS connector.
-                    let mut connector = self.build_https_connector(is_https, &req)?;
-
-                    // Build a tunnel connector to establish the CONNECT tunnel.
-                    let tunneled = {
-                        let mut tunnel =
-                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
-
-                        // If the proxy requires basic authentication, add it to the tunnel.
-                        if let Some(auth) = proxy.basic_auth() {
-                            tunnel = tunnel.with_auth(auth.clone());
-                        }
-
-                        // If the proxy has custom headers, add them to the tunnel.
-                        if let Some(headers) = proxy.custom_headers() {
-                            tunnel = tunnel.with_headers(headers.clone());
-                        }
-
-                        // Connect to the proxy and establish the tunnel.
-                        tunnel.call(uri).await?
-                    };
-
-                    // Wrap the established tunneled stream with TLS.
-                    let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
-
-                    // Re-enable Nagle's algorithm if it was disabled earlier
-                    if_tokio_rt!(block:{
-                        if !self.config.nodelay {
-                            io.as_ref().as_ref().set_nodelay(false)?;
-                        }
-                    });
-
-                    return Ok(self.tunnel_conn_from_stream(io));
-                }
-
-                self.connect_auto_proxy(req.with_route_uri(proxy_uri), proxy)
-                    .await
-                    .map_err(ProxyConnect)
-                    .map_err(Into::into)
-            }
-            #[cfg(unix)]
-            Intercepted::Unix(unix_socket) => {
-                trace!("connecting via Unix socket: {:?}", unix_socket);
-
-                // Create a Unix connector with the specified socket path.
-                let mut connector = self
-                    .tls
-                    .layer(UnixConnector::new(unix_socket))
-                    .with_options(req.extra().get::<TlsOptions>())?;
-
-                // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
-                // then upgrade the tunneled stream to TLS.
-                if uri.is_https() {
-                    // Use a dummy HTTP URI so the HTTPS connector works over the Unix socket.
-                    let proxy_uri = ::http::Uri::from_static("http://localhost");
-
-                    // The tunnel connector will first establish a CONNECT tunnel,
-                    // then perform the TLS handshake over the tunneled stream.
-                    let tunneled = {
-                        // Create a tunnel connector using the Unix socket and the HTTPS
-                        // connector.
-                        let mut tunnel =
-                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
-
-                        tunnel.call(uri).await?
-                    };
-
-                    // Wrap the established tunneled stream with TLS.
-                    let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
-
-                    return Ok(self.tunnel_conn_from_stream(io));
-                }
-
-                // For plain HTTP, use the Unix connector directly.
-                let io = connector.call(req).await?;
-
-                Ok(self.conn_from_stream(io, None))
-            }
-        }
-    }
-
-    async fn connect_auto(self, req: ConnectRequest) -> Result<Conn, BoxError> {
-        debug!("starting new connection: {:?}", req.uri());
-
-        // Determine if a proxy should be used for this request.
-        let intercepted = req
-            .extra()
-            .get::<ProxyMatcher>()
-            .and_then(|prox| prox.intercept(req.uri()))
-            .or_else(|| {
-                self.config
-                    .proxies
-                    .iter()
-                    .find_map(|prox| prox.intercept(req.uri()))
-            });
-
-        // If a proxy is matched, connect via proxy; otherwise, connect directly.
-        if let Some(intercepted) = intercepted {
-            self.connect_via_proxy(req, intercepted).await
-        } else {
-            self.connect_auto_proxy(req, None).await
-        }
-    }
-}
-
-impl Service<ConnectRequest> for Connector {
-    type Response = Conn;
-    type Error = BoxError;
-    type Future = BoxFuture<'static, Result<Conn, BoxError>>;
-
+/// A trait for extracting TLS information from a connection.
+pub trait TlsInfoFactory {
     #[inline]
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    #[inline]
-    fn call(&mut self, req: ConnectRequest) -> Self::Future {
-        Box::pin(self.clone().connect_auto(req))
-    }
-}
-
-// ===== impl Conn =====
-
-impl Connection for Conn {
-    fn connected(&self) -> Connected {
-        let mut connected = self.stream.connected();
-
-        if let Some(proxy) = &self.proxy {
-            connected = connected.proxy(proxy.clone());
-        }
-
-        if self.tls_info
-            && let Some(tls_info) = self.stream.tls_info()
-        {
-            connected = connected.extra(tls_info);
-        }
-        connected
-    }
-}
-
-impl AsyncRead for Conn {
-    #[inline]
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        AsyncRead::poll_read(self.project().stream, cx, buf)
-    }
-}
-
-impl AsyncWrite for Conn {
-    #[inline]
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        AsyncWrite::poll_write(self.project().stream, cx, buf)
-    }
-
-    #[inline]
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<Result<usize, io::Error>> {
-        AsyncWrite::poll_write_vectored(self.project().stream, cx, bufs)
-    }
-
-    #[inline]
-    fn is_write_vectored(&self) -> bool {
-        self.stream.is_write_vectored()
-    }
-
-    #[inline]
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        AsyncWrite::poll_flush(self.project().stream, cx)
-    }
-
-    #[inline]
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        AsyncWrite::poll_shutdown(self.project().stream, cx)
+    fn tls_info(&self) -> Option<TlsInfo> {
+        None
     }
 }
 
@@ -693,11 +500,73 @@ where
     }
 }
 
+// ===== impl SslStream =====
+
+impl<T> TlsInfoFactory for SslStream<T> {
+    #[inline]
+    fn tls_info(&self) -> Option<TlsInfo> {
+        Some(extract_tls_info(self))
+    }
+}
+
+fn extract_tls_info<S>(ssl_stream: &SslStream<S>) -> TlsInfo {
+    let ssl = ssl_stream.ssl();
+    TlsInfo {
+        peer_certificate: ssl
+            .peer_certificate()
+            .and_then(|cert| cert.to_der().ok())
+            .map(Bytes::from),
+        peer_certificate_chain: ssl.peer_cert_chain().map(|chain| {
+            chain
+                .iter()
+                .filter_map(|cert| cert.to_der().ok())
+                .map(Bytes::from)
+                .collect()
+        }),
+    }
+}
+
+// ===== impl MaybeHttpsStream =====
+
+impl<T: TlsInfoFactory> TlsInfoFactory for MaybeHttpsStream<T> {
+    fn tls_info(&self) -> Option<TlsInfo> {
+        match self {
+            MaybeHttpsStream::Https(tls) => tls.tls_info(),
+            MaybeHttpsStream::Http(_) => None,
+        }
+    }
+}
+
+// ===== impl quic::Connection =====
+
+#[cfg(feature = "http3")]
+impl TlsInfoFactory for quic::Connection {
+    fn tls_info(&self) -> Option<TlsInfo> {
+        let chain = self
+            .peer_identity()?
+            .downcast::<Vec<btls::x509::X509>>()
+            .ok()?;
+        Some(TlsInfo {
+            peer_certificate: chain
+                .first()
+                .and_then(|cert| cert.to_der().ok())
+                .map(Bytes::from),
+            peer_certificate_chain: Some(
+                chain
+                    .iter()
+                    .filter_map(|cert| cert.to_der().ok())
+                    .map(Bytes::from)
+                    .collect(),
+            ),
+        })
+    }
+}
+
 // ===== impl PoisonPill =====
 
 impl fmt::Debug for PoisonPill {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // print the address of the pill—this makes debugging issues much easier
+        // print the address of the pill鈥攖his makes debugging issues much easier
         write!(
             f,
             "PoisonPill@{:p} {{ poisoned: {} }}",
@@ -715,6 +584,20 @@ impl PoisonPill {
     }
 }
 
+// ===== impl HttpInfo =====
+
+impl HttpInfo {
+    /// Get the remote address of the transport used.
+    pub(crate) fn remote_addr(&self) -> SocketAddr {
+        self.remote_addr
+    }
+
+    /// Get the local address of the transport used.
+    pub(crate) fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+}
+
 // ===== impl Connected =====
 
 impl Connected {
@@ -723,7 +606,7 @@ impl Connected {
         Connected {
             alpn: Alpn::None,
             proxy: Arc::new(ProxyIdentity::default()),
-            extra: Extra::default(),
+            metadata: Metadata::default(),
             poisoned: PoisonPill::healthy(),
         }
     }
@@ -732,15 +615,15 @@ impl Connected {
     /// A later value replaces an earlier value of the same Rust type.
     /// Other connection clones retain their existing metadata.
     pub fn extra<T: Clone + Send + Sync + 'static>(mut self, extra: T) -> Connected {
-        self.extra.insert_metadata(extra);
+        self.metadata.insert(extra);
         self
     }
 
     /// Copies attached metadata into response extensions by concrete Rust type.
-    /// Each stored metadata value is cloned once; connection configuration is omitted.
+    /// Each stored metadata value is cloned once.
     #[inline]
     pub fn set_extras(&self, extensions: &mut Extensions) {
-        self.extra.copy_metadata_to(extensions);
+        self.metadata.copy_to(extensions);
     }
 
     /// Set that the proxy was used for this connected transport.
@@ -809,52 +692,88 @@ impl Connected {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::{
-        net::{Ipv4Addr, Ipv6Addr},
-        sync::atomic::AtomicUsize,
-    };
+// ===== impl Metadata =====
 
-    use ::http::{Uri, header::VIA};
-
-    use super::*;
-    use crate::{
-        conn::net::TcpConnector,
-        dns::{DynResolver, GaiResolver},
-    };
-
-    #[test]
-    fn request_socket_options_configure_each_tcp_attempt() {
-        let resolver = DynResolver::new(Arc::new(GaiResolver::new()));
-        let connector = Connector::new(
-            Config {
-                proxies: Arc::new(Vec::new()),
-                verbose: false,
-                nodelay: false,
-                tls_info: false,
-            },
-            HttpConnector::new(resolver.clone(), TcpConnector::new()),
-            TlsConnector::builder().build(None).unwrap(),
-            #[cfg(feature = "socks")]
-            resolver,
+impl Metadata {
+    fn insert<T: Clone + Send + Sync + 'static>(&mut self, value: T) {
+        let entries = self.0.as_deref().unwrap_or_default();
+        let id = TypeId::of::<T>();
+        let (index, replaced) = match entries.binary_search_by_key(&id, |entry| entry.0) {
+            Ok(index) => (index, 1),
+            Err(index) => (index, 0),
+        };
+        let value: Arc<dyn MetadataValue> = Arc::new(value);
+        self.0 = Some(
+            entries[..index]
+                .iter()
+                .cloned()
+                .chain(iter::once((id, value)))
+                .chain(entries[index + replaced..].iter().cloned())
+                .collect(),
         );
-        let mut socket_options = SocketOptions::default();
-        socket_options.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
-        let mut extra = Extra::default();
-        extra.insert_config(socket_options.clone());
-        let req =
-            ConnectRequest::new(Uri::from_static("https://example.test/"), None, extra).unwrap();
-
-        let http = connector.http_for_connection(true, &req);
-        assert_eq!(http.socket_options(), &socket_options);
-        assert!(http.nodelay());
-        assert_eq!(connector.http.socket_options(), &SocketOptions::default());
     }
 
-    /// Counts copies of user metadata, excluding shared handle clones.
-    /// Acts as a response extra whose Clone increments the test's counter.
-    /// The counter survives metadata drops so each insertion remains observable.
+    fn copy_to(&self, extensions: &mut Extensions) {
+        for (_, value) in self.0.as_deref().unwrap_or_default() {
+            value.as_ref().copy_to(extensions);
+        }
+    }
+}
+
+impl Debug for Metadata {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_set()
+            .entries(
+                self.0
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|(_, value)| value.as_ref().type_name()),
+            )
+            .finish()
+    }
+}
+
+// ===== impl MetadataValue =====
+
+impl<T: Clone + Send + Sync + 'static> MetadataValue for T {
+    fn copy_to(&self, extensions: &mut Extensions) {
+        extensions.insert(self.clone());
+    }
+
+    fn type_name(&self) -> &'static str {
+        type_name::<T>()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use ::http::header::VIA;
+
+    use super::*;
+
+    impl Conn {
+        pub(crate) fn test(stream: tokio::io::DuplexStream) -> Self {
+            Self {
+                #[cfg(feature = "http3")]
+                inner: Either::Left(Box::new(stream)),
+                #[cfg(not(feature = "http3"))]
+                inner: Box::new(stream),
+                connected: Connected::new(),
+            }
+        }
+    }
+
+    impl TlsInfoFactory for tokio::io::DuplexStream {}
+    impl Connection for tokio::io::DuplexStream {
+        fn connected(&self) -> Connected {
+            Connected::new()
+        }
+    }
+
+    /// Counts metadata value clones independently of shared handle clones.
     #[derive(Debug)]
     struct CloneCount(Arc<AtomicUsize>);
 
@@ -873,6 +792,7 @@ mod tests {
             .extra(String::from("original"));
         let changed = original
             .clone()
+            .extra(42_u32)
             .extra(CloneCount(clones.clone()))
             .extra(String::from("changed"));
         let proxy = crate::Proxy::http("http://localhost:8080")
@@ -902,6 +822,10 @@ mod tests {
             connected.set_extras(&mut extensions);
             assert_eq!(extensions.get::<String>().unwrap(), value);
             assert!(extensions.get::<CloneCount>().is_some());
+            assert_eq!(
+                extensions.get::<u32>().copied(),
+                (value == "changed").then_some(42)
+            );
         }
         assert_eq!(clones.load(Ordering::Relaxed), 2);
         changed.poison();

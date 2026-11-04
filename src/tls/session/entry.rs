@@ -3,15 +3,17 @@
 //! [`SessionEntry`] owns the two ticket slots for one full session key. The
 //! parent cache serializes state changes and drops retired values outside its lock.
 
-use btls::ssl::{SslSession, SslSessionRef};
+use btls::ssl::SslSessionRef;
+
+use super::Ticket;
 
 /// Tickets retained for one compatible connection identity.
 ///
-/// The parent LRU key supplies the endpoint and complete TLS configuration.
+/// The parent LRU key supplies the endpoint and configuration relevant to session resumption.
 /// This entry owns only the ordered ticket state.
 pub(in crate::tls) struct SessionEntry {
     /// Preferred and fallback tickets issued for the parent key.
-    tickets: TicketSlots<SslSession>,
+    tickets: TicketSlots<Ticket>,
 }
 
 /// Two ordered TLS session tickets belonging to one cache entry.
@@ -32,7 +34,7 @@ struct TicketSlots<T> {
 
 impl SessionEntry {
     /// Creates an entry with `ticket` as the preferred session.
-    pub(in crate::tls) fn new(ticket: SslSession) -> Self {
+    pub(in crate::tls) fn new(ticket: Ticket) -> Self {
         Self {
             tickets: TicketSlots::with_primary(ticket),
         }
@@ -40,15 +42,16 @@ impl SessionEntry {
 
     /// Inserts a newly issued ticket and returns any displaced ticket.
     /// The parent cache drops the returned value after releasing its lock.
-    pub(in crate::tls) fn push(&mut self, ticket: SslSession) -> Option<SslSession> {
+    pub(in crate::tls) fn push(&mut self, ticket: Ticket) -> Option<Ticket> {
         self.tickets
-            .push(ticket, |session| session.should_be_single_use())
+            .push(ticket, |ticket| ticket.session().should_be_single_use())
     }
 
     /// Retrieves the preferred ticket according to its single-use policy.
     /// Single-use tickets are consumed while reusable tickets are up-referenced.
-    pub(in crate::tls) fn pop(&mut self) -> Option<SslSession> {
-        self.tickets.pop(|session| session.should_be_single_use())
+    pub(in crate::tls) fn pop(&mut self) -> Option<Ticket> {
+        self.tickets
+            .pop(|ticket| ticket.session().should_be_single_use())
     }
 
     /// Removes expired tickets and returns them for destruction outside the
@@ -56,8 +59,9 @@ impl SessionEntry {
     ///
     /// A missing time or expired primary clears both slots. Otherwise only the
     /// fallback is checked; expiration never promotes it.
-    pub(in crate::tls) fn expire(&mut self, now: Option<u64>) -> [Option<SslSession>; 2] {
-        self.tickets.expire(|ticket| is_expired(ticket, now))
+    pub(in crate::tls) fn expire(&mut self, now: Option<u64>) -> [Option<Ticket>; 2] {
+        self.tickets
+            .expire(|ticket| is_expired(ticket.session(), now))
     }
 
     /// Returns whether the entry no longer owns a ticket.

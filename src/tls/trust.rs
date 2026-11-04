@@ -24,6 +24,8 @@ pub enum CertificateInput<'c> {
     Parsed(Certificate),
 }
 
+// ===== impl CertificateInput =====
+
 impl<'a> CertificateInput<'a> {
     pub(crate) fn with_parser<F>(self, parser: F) -> crate::Result<Certificate>
     where
@@ -52,6 +54,8 @@ impl<'c, T: AsRef<[u8]> + ?Sized + 'c> From<&'c T> for CertificateInput<'c> {
 #[derive(Clone)]
 pub struct Certificate(X509);
 
+// ===== impl Certificate =====
+
 impl Certificate {
     /// Parse a certificate from DER data.
     #[inline]
@@ -65,7 +69,7 @@ impl Certificate {
         X509::from_pem(cert.as_ref()).map(Self).map_err(Error::tls)
     }
 
-    /// Parse a stack of certificates from DER data.
+    /// Parse a stack of certificates from PEM data.
     #[inline]
     pub fn stack_from_pem<C: AsRef<[u8]>>(cert: C) -> crate::Result<Vec<Self>> {
         let certs = X509::stack_from_pem(cert.as_ref()).map_err(Error::tls)?;

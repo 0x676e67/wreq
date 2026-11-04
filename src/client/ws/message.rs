@@ -35,10 +35,12 @@ impl Deref for Utf8Bytes {
     type Target = str;
 
     /// ```
+    /// use wreq::ws::message::Utf8Bytes;
+    ///
     /// /// Example fn that takes a str slice
     /// fn a(s: &str) {}
     ///
-    /// let data = wreq::ws::message::Utf8Bytes::from_static("foo123");
+    /// let data = Utf8Bytes::from_static("foo123");
     ///
     /// // auto-deref as arg
     /// a(&data);
@@ -110,11 +112,14 @@ where
     for<'a> &'a str: PartialEq<T>,
 {
     /// ```
-    /// let payload = wreq::ws::message::Utf8Bytes::from_static("foo123");
+    /// use std::borrow::Cow;
+    /// use wreq::ws::message::Utf8Bytes;
+    ///
+    /// let payload = Utf8Bytes::from_static("foo123");
     /// assert_eq!(payload, "foo123");
     /// assert_eq!(payload, "foo123".to_string());
     /// assert_eq!(payload, &"foo123".to_string());
-    /// assert_eq!(payload, std::borrow::Cow::from("foo123"));
+    /// assert_eq!(payload, Cow::from("foo123"));
     /// ```
     #[inline]
     fn eq(&self, other: &T) -> bool {

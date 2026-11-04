@@ -20,7 +20,7 @@ pub(super) fn create_client(
     target: BenchTarget,
     pool_strategy: ::wreq::PoolStrategy,
 ) -> Result<::wreq::Client, BoxError> {
-    let builder = ::wreq::Client::builder()
+    let builder = ::wreq::Client::builder_tokio()
         .no_proxy()
         .redirect(::wreq::redirect::Policy::none())
         .pool_strategy(pool_strategy)

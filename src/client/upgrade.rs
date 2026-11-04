@@ -9,9 +9,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::Error;
 
-/// An upgraded HTTP connection.
-/// Returned after the response completes an HTTP upgrade.
-/// Owns the connection and exposes asynchronous reads and writes.
+/// A bidirectional stream from an HTTP upgrade or CONNECT tunnel.
+/// An HTTP/2 tunnel owns one stream on a shared connection.
 #[derive(Debug)]
 pub struct Upgraded(upgrade::Upgraded);
 

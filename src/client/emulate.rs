@@ -1,70 +1,80 @@
 use http::HeaderMap;
-use netty::http1::Http1Options;
+
 #[cfg(feature = "http2")]
-use netty::http2::Http2Options;
+use crate::http2::Http2Options;
+use crate::{
+    conn::config::{ConfigSet, ConnectConfig},
+    header::OrigHeaderMap,
+    http1::Http1Options,
+    tls::TlsOptions,
+};
 
-use crate::{conn::extra::Extra, header::OrigHeaderMap, tls::TlsOptions};
+/// Implements [`ProtocolConfig`] for the given protocol option type.
+macro_rules! impl_protocol_config {
+    ($type:ty) => {
+        impl ProtocolConfig for $type {}
+    };
+}
 
-/// Converts a predefined or user-defined profile into [`Emulation`].
+/// Converts predefined or user-defined settings into [`Emulation`].
 pub trait IntoEmulation {
     /// Converts `self` into an [`Emulation`] configuration.
     fn into_emulation(self) -> Emulation;
 }
 
-/// Builder for creating an [`Emulation`] configuration.
-/// Collects headers and typed protocol options before applying a profile.
-/// Building transfers those settings without copying shared configuration.
+/// Protocol options an [`Emulation`] carries: [`TlsOptions`], [`Http1Options`],
+/// and options for enabled HTTP/2 and HTTP/3 protocols.
+/// This trait is sealed.
+pub trait ProtocolConfig: ConnectConfig {}
+
+/// Collects headers, header order and protocol options for an [`Emulation`].
+/// Building transfers those settings without cloning them.
 #[must_use]
 #[derive(Debug)]
 pub struct EmulationBuilder {
     emulation: Emulation,
 }
 
-/// HTTP emulation settings for a client profile.
-/// Stores default and original headers alongside typed protocol options.
-/// Clones share options; only protocol configuration participates in pool identity.
+/// HTTP emulation settings: headers, header order and protocol options.
+/// Protocol options affect connection reuse; headers do not.
+/// Clones share the protocol options.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct Emulation(
     pub(super) HeaderMap,
     pub(super) OrigHeaderMap,
-    pub(super) Extra,
+    pub(super) ConfigSet,
 );
+
+// ===== impl ProtocolConfig =====
+
+impl_protocol_config!(Http1Options);
+#[cfg(feature = "http2")]
+impl_protocol_config!(Http2Options);
+#[cfg(feature = "http3")]
+impl_protocol_config!(crate::http3::Http3Options);
+#[cfg(feature = "http3")]
+impl_protocol_config!(crate::quic::QuicOptions);
+impl_protocol_config!(TlsOptions);
 
 // ===== impl EmulationBuilder =====
 
 impl EmulationBuilder {
-    /// Sets the HTTP/1 options configuration.
+    /// Sets one kind of protocol options; a later value of the same type replaces it.
     #[inline]
-    pub fn http1_options(mut self, opts: Http1Options) -> Self {
-        self.emulation.2.insert_config(opts);
+    pub fn config<T: ProtocolConfig>(mut self, value: T) -> Self {
+        self.emulation.2.insert(value);
         self
     }
 
-    /// Sets the HTTP/2 options configuration.
-    #[inline]
-    #[cfg(feature = "http2")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_options(mut self, opts: Http2Options) -> Self {
-        self.emulation.2.insert_config(opts);
-        self
-    }
-
-    /// Sets the TLS options configuration.
-    #[inline]
-    pub fn tls_options(mut self, opts: TlsOptions) -> Self {
-        self.emulation.2.insert_config(opts);
-        self
-    }
-
-    /// Sets the default headers.
+    /// Adds default headers, replacing existing values for the supplied names.
     #[inline]
     pub fn headers(mut self, src: HeaderMap) -> Self {
         crate::util::replace_headers(&mut self.emulation.0, src);
         self
     }
 
-    /// Sets the original headers.
+    /// Adds original header names to the existing map.
     #[inline]
     pub fn orig_headers(mut self, src: OrigHeaderMap) -> Self {
         self.emulation.1.extend(src);
@@ -85,8 +95,15 @@ impl Emulation {
     #[inline]
     pub fn builder() -> EmulationBuilder {
         EmulationBuilder {
-            emulation: Emulation(HeaderMap::new(), OrigHeaderMap::new(), Extra::default()),
+            emulation: Emulation(HeaderMap::new(), OrigHeaderMap::new(), ConfigSet::default()),
         }
+    }
+}
+
+impl<T: ProtocolConfig> From<T> for Emulation {
+    #[inline]
+    fn from(value: T) -> Self {
+        Emulation::builder().config(value).build()
     }
 }
 
@@ -94,108 +111,5 @@ impl<T: Into<Emulation>> IntoEmulation for T {
     #[inline]
     fn into_emulation(self) -> Emulation {
         self.into()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Client, Group, config::RequestConfig, conn::request::SocketOptions};
-
-    #[test]
-    fn profiles_replace_protocol_options_and_preserve_request_settings() {
-        let tls = TlsOptions::builder()
-            .min_tls_version(crate::tls::TlsVersion::TLS_1_2)
-            .build();
-        let http1 = Http1Options::builder().max_headers(32).build();
-        #[cfg(feature = "http2")]
-        let http2 = Http2Options::builder().header_table_size(4096).build();
-        let headers =
-            HeaderMap::from_iter([("x-profile".parse().unwrap(), "first".parse().unwrap())]);
-        let mut orig_headers = OrigHeaderMap::new();
-        orig_headers.insert("X-Profile");
-        let profile = Emulation::builder()
-            .headers(headers.clone())
-            .orig_headers(orig_headers.clone())
-            .tls_options(tls.clone())
-            .http1_options(http1.clone());
-        #[cfg(feature = "http2")]
-        let profile = profile.http2_options(http2.clone());
-        let profile = profile.build();
-        let client = Client::builder().emulation(profile.clone());
-        assert_eq!(client.config.tls_options.as_ref(), Some(&tls));
-        assert_eq!(client.config.http1_options.as_ref(), Some(&http1));
-        #[cfg(feature = "http2")]
-        assert_eq!(client.config.http2_options.as_ref(), Some(&http2));
-        assert_eq!(client.config.headers["x-profile"], "first");
-        assert_eq!(client.config.orig_headers, orig_headers);
-
-        let client = client.emulation(Emulation::builder().build());
-        assert_eq!(client.config.tls_options.as_ref(), Some(&tls));
-        assert_eq!(client.config.http1_options.as_ref(), Some(&http1));
-        #[cfg(feature = "http2")]
-        assert_eq!(client.config.http2_options.as_ref(), Some(&http2));
-        assert_eq!(client.config.orig_headers, orig_headers);
-        let client = client.build().unwrap();
-        let group = Group::new("profile");
-        let base = client
-            .get("https://localhost/")
-            .group(group.clone())
-            .version(http::Version::HTTP_11)
-            .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
-            .proxy(crate::Proxy::http("http://localhost:8080").unwrap())
-            .emulation(profile.clone());
-        let request = base.try_clone().unwrap().build().unwrap();
-        let extra = request.extensions().get::<Extra>().unwrap();
-        assert_eq!(extra.get::<TlsOptions>(), Some(&tls));
-        assert_eq!(extra.get::<Http1Options>(), Some(&http1));
-        #[cfg(feature = "http2")]
-        assert_eq!(extra.get::<Http2Options>(), Some(&http2));
-        assert!(extra.get::<OrigHeaderMap>().is_none());
-        assert_eq!(
-            RequestConfig::<OrigHeaderMap>::get(request.extensions()),
-            Some(&orig_headers)
-        );
-
-        // A partial profile replaces matching types and retains the other request options.
-        let replacement = Http1Options::builder().max_headers(64).build();
-        let replaced = base
-            .emulation(
-                Emulation::builder()
-                    .http1_options(replacement.clone())
-                    .build(),
-            )
-            .build()
-            .unwrap();
-        let replaced_extra = replaced.extensions().get::<Extra>().unwrap();
-        assert_eq!(replaced_extra.get::<TlsOptions>(), Some(&tls));
-        #[cfg(feature = "http2")]
-        assert_eq!(replaced_extra.get::<Http2Options>(), Some(&http2));
-        assert_eq!(replaced_extra.get::<Http1Options>(), Some(&replacement));
-        assert_eq!(replaced_extra.get::<Group>(), Some(&group));
-        assert_eq!(
-            replaced_extra.get::<SocketOptions>(),
-            extra.get::<SocketOptions>()
-        );
-        assert_eq!(
-            replaced_extra.get::<crate::proxy::Matcher>(),
-            extra.get::<crate::proxy::Matcher>()
-        );
-        assert_eq!(replaced.version(), request.version());
-        assert_eq!(replaced.headers()["x-profile"], "first");
-        assert!(
-            RequestConfig::<OrigHeaderMap>::get(replaced.extensions())
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(extra.get::<Http1Options>(), Some(&http1));
-        assert_eq!(profile.2.get::<TlsOptions>(), Some(&tls));
-
-        // Header values and spelling cannot partition protocol configuration identity.
-        let same_options = Emulation::builder().tls_options(tls).http1_options(http1);
-        #[cfg(feature = "http2")]
-        let same_options = same_options.http2_options(http2);
-        let same_options = same_options.build();
-        assert_eq!(profile.2, same_options.2);
     }
 }

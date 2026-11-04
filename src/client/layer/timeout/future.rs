@@ -1,18 +1,18 @@
 use std::{
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll, ready},
     time::Duration,
 };
 
 use http::Response;
-use netty::rt::Sleep;
 use pin_project_lite::pin_project;
 
 use super::body::TimeoutBody;
 use crate::{
     error::{BoxError, Error, TimedOut},
-    rt::Timer,
+    rt::{BoxSleep, Timer},
 };
 
 pin_project! {
@@ -20,10 +20,10 @@ pin_project! {
     pub struct ResponseFuture<Fut> {
         #[pin]
         pub(super) fut: Fut,
-        pub(super) timer: Timer,
+        pub(super) timer: Arc<dyn Timer>,
         pub(super) read_timeout: Option<Duration>,
-        pub(super) read_timeout_fut: Option<Pin<Box<dyn Sleep>>>,
-        pub(super) total_timeout_fut: Option<Pin<Box<dyn Sleep>>>,
+        pub(super) read_timeout_fut: Option<BoxSleep>,
+        pub(super) total_timeout_fut: Option<BoxSleep>,
     }
 }
 
@@ -40,7 +40,7 @@ where
         // The total timer covers response headers and body. Poll it first so an
         // expired timeout wins, then move it into `TimeoutBody` below.
         if let Some(timeout) = this.total_timeout_fut.as_mut()
-            && timeout.as_mut().poll(cx).is_ready()
+            && Pin::new(timeout).poll(cx).is_ready()
         {
             return Poll::Ready(Err(Error::request(TimedOut).into()));
         }
@@ -48,7 +48,7 @@ where
         // Before headers arrive, the read timer limits that wait. The body rearms
         // the timer when each frame read begins.
         if let Some(timeout) = this.read_timeout_fut.as_mut()
-            && timeout.as_mut().poll(cx).is_ready()
+            && Pin::new(timeout).poll(cx).is_ready()
         {
             return Poll::Ready(Err(Error::request(TimedOut).into()));
         }

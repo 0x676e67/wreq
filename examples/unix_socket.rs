@@ -1,14 +1,18 @@
 #[cfg(unix)]
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
+    use std::time::Duration;
+
+    use wreq::{Client, Proxy};
+
     // Create a Unix socket proxy
-    let proxy = wreq::Proxy::unix("/var/run/docker.sock")?;
+    let proxy = Proxy::unix("/var/run/docker.sock")?;
 
     // Build a client
-    let client = wreq::Client::builder()
+    let client = Client::builder_tokio()
         // Specify the Unix socket path
         .proxy(proxy.clone())
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(Duration::from_secs(10))
         .build()?;
 
     // Use the API you're already familiar with

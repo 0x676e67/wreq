@@ -36,8 +36,10 @@ use crate::{IntoUri, ext::UriExt};
 /// For instance, let's look at `Proxy::http`:
 ///
 /// ```rust
+/// use wreq::Proxy;
+///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let proxy = wreq::Proxy::http("https://secure.example")?;
+/// let proxy = Proxy::http("https://secure.example")?;
 /// # Ok(())
 /// # }
 /// ```
@@ -53,11 +55,29 @@ use crate::{IntoUri, ext::UriExt};
 ///
 /// By enabling the `"socks"` feature it is possible to use a socks proxy:
 /// ```rust
+/// use wreq::Proxy;
+///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let proxy = wreq::Proxy::http("socks5://192.168.1.1:9000")?;
+/// let proxy = Proxy::http("socks5://192.168.1.1:9000")?;
 /// # Ok(())
 /// # }
 /// ```
+///
+/// With both `socks` and `http3`, SOCKS5 proxies relay HTTP/3 using
+/// [UDP ASSOCIATE](https://www.rfc-editor.org/rfc/rfc1928.html#section-7).
+/// `socks5://` resolves targets locally; `socks5h://` leaves target DNS to the proxy.
+/// The TCP control connection remains open while its QUIC connection is in use.
+/// A relay hostname is resolved locally, including with `socks5h://`.
+/// SOCKS4 and HTTP CONNECT proxies do not support HTTP/3.
+///
+/// With the `http3` feature, `quic://host:port` selects an HTTP/3 MASQUE proxy for
+/// HTTP/3 requests. The port defaults to 443. This uses the
+/// [RFC 9298 default template](https://www.rfc-editor.org/rfc/rfc9298.html#section-2),
+/// `https://host:port/.well-known/masque/udp/{target_host}/{target_port}/`.
+/// Proxy credentials and custom headers are sent in the CONNECT-UDP request.
+/// HTTP/1 and HTTP/2 requests through this proxy return an error.
+/// The established tunnel must carry 1200-byte UDP payloads or the connection fails.
+/// Connection setup does not wait for outer path MTU discovery to finish.
 #[derive(Clone, Debug)]
 pub struct Proxy {
     extra: Extra,
@@ -86,6 +106,10 @@ pub(crate) struct Matcher {
     inner: Box<matcher::Matcher>,
 }
 
+impl crate::conn::config::ConnectConfig for Matcher {
+    const SCOPE: crate::conn::config::ConfigScope = crate::conn::config::ConfigScope::ROUTE;
+}
+
 #[derive(Clone, Debug)]
 enum ProxyScheme {
     All(Uri),
@@ -101,6 +125,31 @@ struct Extra {
     misc: Option<HeaderMap>,
 }
 
+/// Validates an explicit QUIC proxy port, or supplies HTTPS's default port.
+/// `Authority::port` alone cannot distinguish a missing port from an invalid one.
+pub(crate) fn quic_port(uri: &Uri) -> Result<u16, &'static str> {
+    let authority = uri.authority().ok_or("QUIC proxy has no authority")?;
+    if authority.host().is_empty() {
+        return Err("QUIC proxy has no host");
+    }
+    let authority = authority
+        .as_str()
+        .rsplit_once('@')
+        .map_or(authority.as_str(), |(_, host)| host);
+    let suffix = authority
+        .strip_prefix(uri.host().ok_or("QUIC proxy has no host")?)
+        .ok_or("invalid QUIC proxy authority")?;
+    if suffix.is_empty() {
+        return Ok(443);
+    }
+    suffix
+        .strip_prefix(':')
+        .filter(|port| port.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|port| port.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .ok_or("QUIC proxy port must be between 1 and 65535")
+}
+
 // ===== impl Proxy =====
 
 impl Proxy {
@@ -109,17 +158,19 @@ impl Proxy {
     /// # Example
     ///
     /// ```
+    /// use wreq::{Client, Proxy};
+    ///
     /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = wreq::Client::builder()
-    ///     .proxy(wreq::Proxy::http("https://my.prox")?)
+    /// let client = Client::builder_tokio()
+    ///     .proxy(Proxy::http("https://my.prox")?)
     ///     .build()?;
     /// # Ok(())
     /// # }
     /// # fn main() {}
     /// ```
     pub fn http<U: IntoUri>(uri: U) -> crate::Result<Proxy> {
-        uri.into_uri().map(ProxyScheme::Http).map(Proxy::new)
+        uri.into_uri().map(ProxyScheme::Http).and_then(Proxy::new)
     }
 
     /// Proxy all HTTPS traffic to the passed URI.
@@ -127,17 +178,19 @@ impl Proxy {
     /// # Example
     ///
     /// ```
+    /// use wreq::{Client, Proxy};
+    ///
     /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = wreq::Client::builder()
-    ///     .proxy(wreq::Proxy::https("https://example.prox:4545")?)
+    /// let client = Client::builder_tokio()
+    ///     .proxy(Proxy::https("https://example.prox:4545")?)
     ///     .build()?;
     /// # Ok(())
     /// # }
     /// # fn main() {}
     /// ```
     pub fn https<U: IntoUri>(uri: U) -> crate::Result<Proxy> {
-        uri.into_uri().map(ProxyScheme::Https).map(Proxy::new)
+        uri.into_uri().map(ProxyScheme::Https).and_then(Proxy::new)
     }
 
     /// Proxy **all** traffic to the passed URI.
@@ -148,17 +201,19 @@ impl Proxy {
     /// # Example
     ///
     /// ```
+    /// use wreq::{Client, Proxy};
+    ///
     /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = wreq::Client::builder()
-    ///     .proxy(wreq::Proxy::all("http://pro.xy")?)
+    /// let client = Client::builder_tokio()
+    ///     .proxy(Proxy::all("http://pro.xy")?)
     ///     .build()?;
     /// # Ok(())
     /// # }
     /// # fn main() {}
     /// ```
     pub fn all<U: IntoUri>(uri: U) -> crate::Result<Proxy> {
-        uri.into_uri().map(ProxyScheme::All).map(Proxy::new)
+        uri.into_uri().map(ProxyScheme::All).and_then(Proxy::new)
     }
 
     /// Proxy all traffic to the passed Unix Domain Socket path.
@@ -166,10 +221,12 @@ impl Proxy {
     /// # Example
     ///
     /// ```
+    /// use wreq::{Client, Proxy};
+    ///
     /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = wreq::Client::builder()
-    ///     .proxy(wreq::Proxy::unix("/var/run/docker.sock")?)
+    /// let client = Client::builder_tokio()
+    ///     .proxy(Proxy::unix("/var/run/docker.sock")?)
     ///     .build()?;
     /// # Ok(())
     /// # }
@@ -177,18 +234,28 @@ impl Proxy {
     /// ```
     #[cfg(unix)]
     pub fn unix<P: uds::IntoUnixSocket>(unix: P) -> crate::Result<Proxy> {
-        Ok(Proxy::new(ProxyScheme::Unix(unix.unix_socket())))
+        Proxy::new(ProxyScheme::Unix(unix.unix_socket()))
     }
 
-    fn new(scheme: ProxyScheme) -> Proxy {
-        Proxy {
+    fn new(scheme: ProxyScheme) -> crate::Result<Proxy> {
+        match &scheme {
+            ProxyScheme::All(uri) | ProxyScheme::Http(uri) | ProxyScheme::Https(uri)
+                if uri
+                    .scheme_str()
+                    .is_some_and(|scheme| scheme.eq_ignore_ascii_case("quic")) =>
+            {
+                quic_port(uri).map_err(crate::Error::builder)?;
+            }
+            _ => {}
+        }
+        Ok(Proxy {
             extra: Extra {
                 auth: None,
                 misc: None,
             },
             scheme,
             no_proxy: None,
-        }
+        })
     }
 
     /// Set the `Proxy-Authorization` header using Basic auth.
@@ -196,9 +263,11 @@ impl Proxy {
     /// # Example
     ///
     /// ```
+    /// use wreq::Proxy;
+    ///
     /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let proxy = wreq::Proxy::https("http://localhost:1234")?.basic_auth("Aladdin", "open sesame");
+    /// let proxy = Proxy::https("http://localhost:1234")?.basic_auth("Aladdin", "open sesame");
     /// # Ok(())
     /// # }
     /// # fn main() {}
@@ -227,10 +296,12 @@ impl Proxy {
     /// # Example
     ///
     /// ```
+    /// use wreq::Proxy;
+    ///
     /// # extern crate wreq;
     /// # use wreq::header::*;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let proxy = wreq::Proxy::https("http://localhost:1234")?
+    /// let proxy = Proxy::https("http://localhost:1234")?
     ///     .custom_http_auth(HeaderValue::from_static("justletmeinalreadyplease"));
     /// # Ok(())
     /// # }
@@ -246,12 +317,14 @@ impl Proxy {
     ///
     /// # Example
     /// ```
+    /// use wreq::Proxy;
+    ///
     /// # extern crate wreq;
     /// # use wreq::header::*;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut headers = HeaderMap::new();
     /// headers.insert(USER_AGENT, "wreq".parse().unwrap());
-    /// let proxy = wreq::Proxy::https("http://localhost:1234")?.custom_http_headers(headers);
+    /// let proxy = Proxy::https("http://localhost:1234")?.custom_http_headers(headers);
     /// # Ok(())
     /// # }
     /// # fn main() {}
@@ -276,10 +349,12 @@ impl Proxy {
     /// # Example
     ///
     /// ```
+    /// use wreq::{NoProxy, Proxy};
+    ///
     /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let proxy = wreq::Proxy::https("http://localhost:1234")?
-    ///     .no_proxy(wreq::NoProxy::from_string("direct.tld, sub.direct2.tld"));
+    /// let proxy = Proxy::https("http://localhost:1234")?
+    ///     .no_proxy(NoProxy::from_string("direct.tld, sub.direct2.tld"));
     /// # Ok(())
     /// # }
     /// # fn main() {}
@@ -475,6 +550,72 @@ mod tests {
         assert_eq!(intercepted_uri(&p, http), target);
         assert_eq!(intercepted_uri(&p, https), target);
         //assert_eq!(intercepted_uri(&p, other), target);
+    }
+
+    #[test]
+    fn test_quic_proxy() {
+        let destination = uri("https://example.com/");
+        for (address, expected) in [
+            ("quic://proxy.test", "quic://proxy.test:443/"),
+            ("QUIC://proxy.test", "quic://proxy.test:443/"),
+            ("QuIc://proxy.test:8443", "quic://proxy.test:8443/"),
+            ("quic://proxy.test:8443", "quic://proxy.test:8443/"),
+            ("quic://[::1]", "quic://[::1]:443/"),
+            ("quic://[::1]:8443", "quic://[::1]:8443/"),
+        ] {
+            let matcher = Proxy::https(address).unwrap().into_matcher();
+            assert_eq!(intercept(&matcher, &destination).uri(), expected);
+            assert!(matcher.intercept(&uri("http://example.com/")).is_none());
+        }
+        for address in [
+            "quic://proxy.test:",
+            "quic://proxy.test:0",
+            "quic://proxy.test:70000",
+            "quic://proxy.test:abc",
+            "quic://proxy.test:+443",
+            "quic://[::1]:70000",
+            "QUIC://user:pass@proxy.test:abc",
+        ] {
+            for result in [
+                Proxy::all(address),
+                Proxy::http(address),
+                Proxy::https(address),
+            ] {
+                assert!(result.unwrap_err().is_builder(), "{address}");
+            }
+        }
+
+        let proxy = Proxy::all("quic://Aladdin:open%20sesame@proxy.test")
+            .unwrap()
+            .no_proxy(NoProxy::from_string(".direct.test,127.0.0.1"));
+        let matcher = proxy.clone().into_matcher();
+        let intercepted = intercept(&matcher, &destination);
+        assert_eq!(intercepted.uri(), "quic://proxy.test:443/");
+        assert_eq!(
+            intercepted.basic_auth(),
+            Some(&crate::util::basic_auth("Aladdin", Some("open sesame")))
+        );
+        assert!(intercepted.basic_auth().unwrap().is_sensitive());
+        for direct in ["https://sub.direct.test/", "https://127.0.0.1/"] {
+            assert!(matcher.intercept(&uri(direct)).is_none());
+        }
+
+        let matcher = proxy.clone().basic_auth("other", "password").into_matcher();
+        assert_eq!(
+            intercept(&matcher, &destination).basic_auth(),
+            Some(&crate::util::basic_auth("other", Some("password")))
+        );
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-proxy-header", HeaderValue::from_static("proxy-only"));
+        let matcher = proxy
+            .custom_http_auth(HeaderValue::from_static("Bearer proxy-token"))
+            .custom_http_headers(headers.clone())
+            .into_matcher();
+        let intercepted = intercept(&matcher, &destination);
+        assert_eq!(intercepted.basic_auth().unwrap(), "Bearer proxy-token");
+        assert_eq!(intercepted.custom_headers(), Some(&headers));
+        assert_eq!(intercepted.uri(), "quic://proxy.test:443/");
     }
 
     #[test]

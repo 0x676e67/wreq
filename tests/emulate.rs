@@ -181,6 +181,11 @@ fn tls_options_template() -> TlsOptions {
             KeyShare::X25519,
             KeyShare::P256,
         ])
+        .tls13_cipher_list(&[
+            Tls13Cipher::AES_128_GCM_SHA256,
+            Tls13Cipher::CHACHA20_POLY1305_SHA256,
+            Tls13Cipher::AES_256_GCM_SHA384,
+        ])
         .extension_permutation(&[
             ExtensionType::SERVER_NAME,
             ExtensionType::EXTENDED_MASTER_SECRET,
@@ -252,15 +257,15 @@ fn http2_options_template() -> Http2Options {
 fn emulation_template() -> Emulation {
     // This provider encapsulates TLS, HTTP/1, HTTP/2
     Emulation::builder()
-        .tls_options(tls_options_template())
-        .http1_options(http1_options_template())
-        .http2_options(http2_options_template())
+        .config(tls_options_template())
+        .config(http1_options_template())
+        .config(http2_options_template())
         .build()
 }
 
 #[tokio::test]
 async fn test_emulation() -> wreq::Result<()> {
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .emulation(emulation_template())
         .connect_timeout(Duration::from_secs(10))
         .tls_cert_verification(false)
@@ -287,7 +292,7 @@ async fn test_emulation() -> wreq::Result<()> {
 
 #[tokio::test]
 async fn test_request_with_emulation() -> wreq::Result<()> {
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .connect_timeout(Duration::from_secs(10))
         .tls_cert_verification(false)
         .build()?;
@@ -314,14 +319,12 @@ async fn test_request_with_emulation() -> wreq::Result<()> {
 
 #[tokio::test]
 async fn test_request_with_emulation_tls() -> wreq::Result<()> {
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .connect_timeout(Duration::from_secs(10))
         .tls_cert_verification(false)
         .build()?;
 
-    let emulation = Emulation::builder()
-        .tls_options(tls_options_template())
-        .build();
+    let emulation = Emulation::builder().config(tls_options_template()).build();
 
     let text = client
         .get("https://tls.browserleaks.com/")
@@ -341,13 +344,13 @@ async fn test_request_with_emulation_tls() -> wreq::Result<()> {
 
 #[tokio::test]
 async fn test_request_with_emulation_http2() -> wreq::Result<()> {
-    let client = Client::builder()
+    let client = Client::builder_tokio()
         .connect_timeout(Duration::from_secs(10))
         .tls_cert_verification(false)
         .build()?;
 
     let emulation = Emulation::builder()
-        .http2_options(http2_options_template())
+        .config(http2_options_template())
         .build();
 
     let text = client

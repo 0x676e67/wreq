@@ -22,11 +22,12 @@ An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, f
 - Original Header
 - Rotating Proxies
 - Tower Middleware
+- HTTP/2 over TLS
+- HTTP/3 over QUIC
 - WebSocket Upgrade
 - HTTPS via BoringSSL
-- HTTP/2 over TLS Parity
 - Certificate Store (CAs & mTLS)
-- Multiple Runtime (Tokio, Compio)
+- Explicit runtime selection (Tokio, Compio, or custom)
 
 ## Example
 
@@ -35,20 +36,20 @@ The following example uses the [Tokio](https://tokio.rs) runtime with optional f
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-wreq = "0.16"
+wreq = { version = "0.16", features = ["tokio"] }
 wreq-util = "0.2"
 ```
 
 And then the code:
 
 ```rust
-use wreq::Client;
+use wreq::{Client, rt::tokio::TokioRuntime};
 use wreq_util::Emulation;
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
     // Build a client
-    let client = Client::builder()
+    let client = Client::builder(TokioRuntime)
         .emulation(Emulation::Safari26)
         .build()?;
 
