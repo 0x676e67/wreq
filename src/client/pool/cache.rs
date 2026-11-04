@@ -1152,7 +1152,7 @@ mod tests {
         std::future::poll_fn(|cx| cache.poll_ready(cx))
             .await
             .unwrap();
-        let mut first = Box::pin(cache.call(1));
+        let mut first = std::pin::pin!(cache.call(1));
         assert!(first.as_mut().poll(&mut cx).is_pending());
 
         std::future::poll_fn(|cx| cache.poll_ready(cx))
@@ -1164,7 +1164,7 @@ mod tests {
         std::future::poll_fn(|cx| cache.poll_ready(cx))
             .await
             .unwrap();
-        let mut third = Box::pin(cache.call(3));
+        let mut third = std::pin::pin!(cache.call(3));
         assert!(third.as_mut().poll(&mut cx).is_pending());
         drop(canceled);
 
