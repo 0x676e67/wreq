@@ -5,11 +5,14 @@
 use std::{future::Future, io, net::SocketAddr, pin::Pin, time::Duration};
 
 use compio::net::{TcpSocket, TcpStream};
-use wreq_rt::rt::compio::{future::SendFuture, io::CompioIO};
+use send_wrapper::SendWrapper;
 
 use super::BoxConnecting;
-use crate::conn::{
-    Connected, Connection, http::HttpInfo, net::io::CompioConnection, tls_info::TlsInfoFactory,
+use crate::{
+    conn::{
+        Connected, Connection, http::HttpInfo, net::io::CompioConnection, tls_info::TlsInfoFactory,
+    },
+    rt::compio::io::CompioIO,
 };
 
 /// A connector that uses `compio` for TCP connections.
@@ -37,7 +40,7 @@ impl super::TcpConnector for TcpConnector {
 
     #[inline]
     fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future {
-        Box::pin(SendFuture::new(async move {
+        Box::pin(SendWrapper::new(async move {
             let socket = TcpSocket::from_std_stream(socket)?;
             let tcp_stream = socket.connect(addr).await?;
             Ok(CompioConnection {
@@ -50,7 +53,7 @@ impl super::TcpConnector for TcpConnector {
 
     #[inline]
     fn sleep(&self, duration: Duration) -> Self::Sleep {
-        Box::pin(SendFuture::new(compio::time::sleep(duration)))
+        Box::pin(SendWrapper::new(compio::time::sleep(duration)))
     }
 }
 

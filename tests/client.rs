@@ -820,6 +820,21 @@ async fn http1_only() {
     assert_eq!(resp.version(), wreq::Version::HTTP_11);
 }
 
+#[cfg(not(feature = "http2"))]
+#[tokio::test]
+async fn http2_requires_feature() {
+    let server = server::http(move |_| async move { http::Response::default() });
+
+    let err = wreq::get(format!("http://{}", server.addr()))
+        .version(Version::HTTP_2)
+        .send()
+        .await
+        .unwrap_err();
+
+    assert!(err.is_request(), "{err:?}");
+}
+
+#[cfg(feature = "http2")]
 #[tokio::test]
 async fn http2_only() {
     let server = server::http(move |_| async move { http::Response::default() });
@@ -844,6 +859,7 @@ async fn http2_only() {
     assert_eq!(resp.version(), wreq::Version::HTTP_2);
 }
 
+#[cfg(feature = "http2")]
 #[tokio::test]
 async fn connection_pool_cache() {
     let client = Client::default();

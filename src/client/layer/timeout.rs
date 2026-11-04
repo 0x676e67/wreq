@@ -9,8 +9,8 @@ use std::{
 };
 
 use http::{Request, Response};
+use netty::rt::Timer as _;
 use tower::{BoxError, Layer, Service};
-use wreq_proto::rt::Timer as _;
 
 use self::{body::TimeoutBody, future::ResponseFuture};
 use crate::{config::RequestConfig, rt::Timer};

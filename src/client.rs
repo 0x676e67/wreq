@@ -23,12 +23,12 @@ use std::{
 };
 
 use http::header::{HeaderMap, HeaderValue, USER_AGENT};
+use netty::body::Incoming;
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, Oneshot},
 };
-use wreq_proto::body::Incoming;
 
 #[cfg(any(
     feature = "gzip",
@@ -57,6 +57,8 @@ use self::{
 use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
+#[cfg(feature = "http2")]
+use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Proxy,
     conn::{
@@ -69,7 +71,6 @@ use crate::{
     error::{self, Error},
     header::OrigHeaderMap,
     http1::Http1Options,
-    http2::Http2Options,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
@@ -163,6 +164,7 @@ pub struct ClientBuilder {
 #[repr(u8)]
 enum HttpVersionPref {
     Http1,
+    #[cfg(feature = "http2")]
     Http2,
     All,
 }
@@ -223,6 +225,7 @@ struct Config {
     tls_session_cache: Option<Arc<dyn TlsSessionCache>>,
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
+    #[cfg(feature = "http2")]
     http2_options: Option<Http2Options>,
     timer: Timer,
     executor: Executor,
@@ -297,6 +300,7 @@ impl Client {
                 http_version_pref: HttpVersionPref::All,
                 https_only: false,
                 http1_options: None,
+                #[cfg(feature = "http2")]
                 http2_options: None,
                 layers: Vec::new(),
                 connector_layers: Vec::new(),
@@ -512,9 +516,11 @@ impl ClientBuilder {
                 .verbose(config.connection_verbose)
                 .with_tls(|tls| {
                     tls.alpn_protocol(match config.http_version_pref {
-                        HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
+                        HttpVersionPref::All if cfg!(feature = "http2") => None,
+                        #[cfg(feature = "http2")]
                         HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
-                        _ => None,
+                        // Without HTTP/2 support, never let the server negotiate `h2`.
+                        _ => Some(AlpnProtocol::HTTP1),
                     })
                     .keylog(config.tls_keylog)
                     .cert_store(config.tls_cert_store)
@@ -573,11 +579,16 @@ impl ClientBuilder {
                 builder = builder.cookie_store(config.cookie_store);
             }
 
+            #[cfg(feature = "http2")]
+            {
+                builder = builder
+                    .http2_options(config.http2_options)
+                    .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
+                    .http2_timer(config.timer.clone());
+            }
+
             builder
                 .http1_options(config.http1_options)
-                .http2_options(config.http2_options)
-                .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
-                .http2_timer(config.timer.clone())
                 .pool_timer(config.timer.clone())
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
@@ -1095,6 +1106,8 @@ impl ClientBuilder {
 
     /// Only use HTTP/2.
     #[inline]
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_only(mut self) -> ClientBuilder {
         self.config.http_version_pref = HttpVersionPref::Http2;
         self
@@ -1112,6 +1125,8 @@ impl ClientBuilder {
 
     /// Sets the HTTP/2 options for the client.
     #[inline]
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_options<T>(mut self, options: T) -> ClientBuilder
     where
         T: Into<Option<Http2Options>>,
@@ -1657,10 +1672,13 @@ impl ClientBuilder {
     #[inline]
     pub fn emulation<T: IntoEmulation>(self, emulation: T) -> ClientBuilder {
         let emulation = emulation.into_emulation();
-        self.tls_options(emulation.tls_options)
+        let builder = self
+            .tls_options(emulation.tls_options)
             .http1_options(emulation.http1_options)
-            .http2_options(emulation.http2_options)
             .default_headers(emulation.headers)
-            .orig_headers(emulation.orig_headers)
+            .orig_headers(emulation.orig_headers);
+        #[cfg(feature = "http2")]
+        let builder = builder.http2_options(emulation.http2_options);
+        builder
     }
 }

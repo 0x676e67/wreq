@@ -1,5 +1,4 @@
 mod support;
-use http::Method;
 use support::server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wreq::Client;
@@ -51,6 +50,7 @@ async fn http_upgrade() {
     assert_eq!(buf, b"bar=foo");
 }
 
+#[cfg(feature = "http2")]
 #[tokio::test]
 async fn http2_upgrade() {
     let server = server::http_with_config(
@@ -81,7 +81,7 @@ async fn http2_upgrade() {
         .http2_only()
         .build()
         .unwrap()
-        .request(Method::CONNECT, format!("http://{}", server.addr()))
+        .request(http::Method::CONNECT, format!("http://{}", server.addr()))
         .send()
         .await
         .unwrap();

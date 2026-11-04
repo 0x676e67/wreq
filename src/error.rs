@@ -1,7 +1,7 @@
 use std::{error::Error as StdError, fmt, io};
 
 use http::Uri;
-use wreq_proto::ext::ReasonPhrase;
+use netty::ext::ReasonPhrase;
 
 use crate::{StatusCode, util::Escape};
 
@@ -183,7 +183,7 @@ impl Error {
                 return true;
             }
 
-            if let Some(core_err) = err.downcast_ref::<wreq_proto::Error>()
+            if let Some(core_err) = err.downcast_ref::<netty::Error>()
                 && core_err.is_timeout()
             {
                 return true;

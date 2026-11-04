@@ -1,5 +1,5 @@
+use netty::upgrade;
 pub use upgrade::Upgraded;
-use wreq_proto::upgrade;
 
 use super::response::Response;
 use crate::Error;

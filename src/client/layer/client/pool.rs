@@ -14,8 +14,8 @@ use std::{
 };
 
 use lru::LruCache;
+use netty::rt::{Executor as _, Timer as _};
 use tokio::sync::oneshot;
-use wreq_proto::rt::{Executor as _, Timer as _};
 
 use crate::{
     rt::{Executor, Timer},
@@ -63,6 +63,8 @@ pub enum Reservation<T> {
     /// This connection could be used multiple times, the first one will be
     /// reinserted into the `idle` pool, and the second will be given to
     /// the `Checkout`.
+    // Only HTTP/2 connections are shared.
+    #[cfg_attr(not(feature = "http2"), allow(dead_code))]
     Shared(T, T),
     /// This connection requires unique access. It will be returned after
     /// use is complete.
@@ -707,6 +709,7 @@ pub struct Connecting<T: Poolable, K: Key> {
 }
 
 impl<T: Poolable, K: Key> Connecting<T, K> {
+    #[cfg(feature = "http2")]
     pub fn alpn_h2(self, pool: &Pool<T, K>) -> Option<Self> {
         debug_assert!(
             self.pool.0.is_none(),

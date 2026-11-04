@@ -50,6 +50,7 @@ async fn retries_apply_in_scope() {
     assert_eq!(resp.status(), 200);
 }
 
+#[cfg(feature = "http2")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_retries_have_a_limit() {
     let _ = pretty_env_logger::try_init();
@@ -74,6 +75,7 @@ async fn default_retries_have_a_limit() {
 // fail, because the only thread would block until `panic_rx` receives a
 // notification while the client needs to be driven to get the graceful shutdown
 // done.
+#[cfg(feature = "http2")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn highly_concurrent_requests_to_http2_server_with_low_max_concurrent_streams() {
     let client = Client::builder().http2_only().no_proxy().build().unwrap();
@@ -101,6 +103,7 @@ async fn highly_concurrent_requests_to_http2_server_with_low_max_concurrent_stre
     futures_util::future::join_all(futs).await;
 }
 
+#[cfg(feature = "http2")]
 #[tokio::test]
 async fn highly_concurrent_requests_to_slow_http2_server_with_low_max_concurrent_streams() {
     use support::delay_server;
