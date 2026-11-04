@@ -19,10 +19,11 @@ use http::Uri;
 use lru::LruCache;
 pub(crate) use store::SessionStore;
 
+#[cfg(feature = "http2")]
+use crate::http2::Http2Options;
 use crate::{
     conn::{extra::Extra, request::ConnectRequest},
     http1::Http1Options,
-    http2::Http2Options,
     sync::Mutex,
     tls::TlsVersion,
 };
@@ -99,6 +100,7 @@ impl SessionKey {
     pub(crate) fn new(req: &ConnectRequest) -> Self {
         let mut extra = req.extra().clone();
         extra.remove::<Http1Options>();
+        #[cfg(feature = "http2")]
         extra.remove::<Http2Options>();
         Self {
             origin: req.uri().clone(),
@@ -229,8 +231,9 @@ mod tests {
         let mut base = Extra::default();
         base.insert_config(TlsOptions::default());
         let mut http = base.clone();
-        http.insert_config(Http1Options::builder().max_headers(8).build())
-            .insert_config(Http2Options::builder().header_table_size(1024).build());
+        http.insert_config(Http1Options::builder().max_headers(8).build());
+        #[cfg(feature = "http2")]
+        http.insert_config(Http2Options::builder().header_table_size(1024).build());
         let key = SessionKey::new(&request(None, base.clone()));
 
         assert!(key == SessionKey::new(&request(Some(HttpVersion::Http1), http)));

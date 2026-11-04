@@ -18,6 +18,7 @@ use futures_util::{Sink, SinkExt, Stream, StreamExt, stream::FusedStream};
 use http::{
     HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header, uri::Scheme,
 };
+#[cfg(feature = "http2")]
 use http2::ext::Protocol;
 use pin_project_lite::pin_project;
 use tokio_tungstenite::tungstenite::{
@@ -472,10 +473,12 @@ impl WebSocketRequestBuilder {
                 // Never reuse an idle socket or return this one to the pool. The default
                 // route may still ride an established HTTP/2 connection instead.
                 request.extensions_mut().insert(DedicatedConnection {
+                    #[cfg(feature = "http2")]
                     extended_connect: version.is_none(),
                 });
                 Some(nonce)
             }
+            #[cfg(feature = "http2")]
             Some(Version::HTTP_2) => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_2);

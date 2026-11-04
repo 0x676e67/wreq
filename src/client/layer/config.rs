@@ -107,7 +107,7 @@ where
 
         // store the original headers in request extensions
         if let Some(orig_headers) = self.config.orig_headers.take(req.extensions_mut()) {
-            wreq_proto::ext::on_preserve_header(&mut req, orig_headers);
+            netty::ext::on_preserve_header(&mut req, orig_headers);
         }
 
         Either::Left(self.inner.call(req))

@@ -129,7 +129,7 @@ impl Error {
 
     /// Converts a closed protocol sender into a client error.
     #[inline]
-    pub(super) fn closed(source: wreq_proto::Error) -> Self {
+    pub(super) fn closed(source: netty::Error) -> Self {
         Self::new(ErrorKind::ChannelClosed, source)
     }
 }

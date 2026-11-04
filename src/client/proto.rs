@@ -9,18 +9,21 @@
 //! the connection metadata needed by request preparation and pool health checks.
 
 pub(super) mod http1;
+#[cfg(feature = "http2")]
 pub(super) mod http2;
 
 use std::time::{Duration, Instant};
 
 use http::Request;
-use wreq_proto::{conn::TrySendError, rt::Timer as _};
+use netty::{conn::TrySendError, rt::Timer as _};
 
 use super::{
     error::{Error, ErrorKind},
     pool::ConnectionConfig,
 };
-use crate::{HttpVersion, conn::Connected, rt::Timer};
+#[cfg(feature = "http2")]
+use crate::HttpVersion;
+use crate::{conn::Connected, rt::Timer};
 
 /// Physical transport and request-specific protocol configuration.
 ///
@@ -31,8 +34,10 @@ use crate::{HttpVersion, conn::Connected, rt::Timer};
 pub(super) struct Established<T> {
     io: T,
     connected: Connected,
+    #[cfg(feature = "http2")]
     version: HttpVersion,
     config: ConnectionConfig,
+    #[cfg(feature = "http2")]
     idle_at: Instant,
 }
 
@@ -55,25 +60,29 @@ impl<T> Established<T> {
     pub(super) fn new(
         io: T,
         connected: Connected,
-        version: HttpVersion,
+        #[cfg(feature = "http2")] version: HttpVersion,
         config: ConnectionConfig,
-        idle_at: Instant,
+        #[cfg(feature = "http2")] idle_at: Instant,
     ) -> Self {
         Self {
             io,
             connected,
+            #[cfg(feature = "http2")]
             version,
             config,
+            #[cfg(feature = "http2")]
             idle_at,
         }
     }
 
     /// Returns when this transport became available for protocol selection.
+    #[cfg(feature = "http2")]
     pub(super) fn idle_at(&self) -> Instant {
         self.idle_at
     }
 
     /// Chooses HTTP/2 when requested explicitly or negotiated by the transport.
+    #[cfg(feature = "http2")]
     pub(super) fn should_use_http2(&self) -> bool {
         self.version == HttpVersion::Http2
             || (self.version == HttpVersion::Auto && self.connected.is_negotiated_h2())

@@ -6,8 +6,8 @@ use std::{
 };
 
 use http_body::Body;
+use netty::rt::{Sleep, Timer as _};
 use pin_project_lite::pin_project;
-use wreq_proto::rt::{Sleep, Timer as _};
 
 use crate::{
     Error,

@@ -19,13 +19,22 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "tokio-rt"]
+default = ["webpki-roots", "tokio-rt", "http2"]
+
+# Enable HTTP/2 support (default).
+http2 = ["dep:http2", "netty/http2"]
 
 # Enable tokio as the async runtime (default).
-tokio-rt = ["tokio/rt", "tokio/net", "tokio/fs", "wreq-rt/tokio-rt"]
+tokio-rt = ["tokio/rt", "tokio/time", "tokio/net", "tokio/fs"]
 
 # Enable compio as the async runtime (completion-based, io_uring/IOCP).
-compio-rt = ["dep:compio", "compio?/runtime", "compio?/net", "wreq-rt/compio-rt"]
+compio-rt = [
+    "dep:compio",
+    "compio?/runtime",
+    "compio?/time",
+    "compio?/net",
+    "dep:send_wrapper",
+]
 
 # Enable support for decoding text.
 charset = ["dep:encoding_rs", "dep:mime"]
@@ -79,10 +88,10 @@ chromium-roots = ["dep:chromium-roots"]
 system-proxy = ["dep:system-configuration", "dep:windows-registry"]
 
 # Enable tracing logging.
-tracing = ["dep:tracing", "wreq-proto/tracing"]
+tracing = ["dep:tracing", "netty/tracing"]
 
 # Enables the `parking_lot` crate for synchronization primitives.
-parking_lot = ["dep:parking_lot", "http2/parking_lot"]
+parking_lot = ["dep:parking_lot", "http2?/parking_lot"]
 
 # Prefix BoringSSL symbols in libcrypto/libssl to avoid linker conflicts
 # when multiple OpenSSL versions coexist in the same process.
@@ -93,7 +102,7 @@ educe = { version = "0.7.6", default-features = false, features = ["Default", "P
 url = "2.5.8"
 bytes = "1.11.1"
 http = "1.4.0"
-http2 = "0.5.17"
+http2 = { version = "0.5.17", optional = true }
 httparse = "1.10.1"
 http-body = "1.0.1"
 http-body-util = "0.1.4"
@@ -106,10 +115,10 @@ lru = "0.19.0"
 btls = "0.5.6"
 btls-sys = "0.5.6"
 tokio-btls = "0.5.6"
-tokio = { version = "1.52.3", default-features = false }
+tokio = { version = "1.52.3", default-features = false, features = ["io-util", "sync"] }
 compio = { version = "0.19.2", features = ["io", "io-compat"], optional = true }
-wreq-rt = { version = "0.2.2-rc.4", path = "wreq-rt", default-features = false }
-wreq-proto = { package = "netty", version = "0.2.5", default-features = false }
+send_wrapper = { version = "0.6.0", features = ["futures"], optional = true }
+netty = { version = "0.2.5", default-features = false }
 tower = { version = "0.5.3", default-features = false, features = [
     "timeout",
     "util",
@@ -176,7 +185,6 @@ system-configuration = { version = "0.8.0", optional = true }
 libc = "0.2.186"
 
 [dev-dependencies]
-wreq-rt = { version = "0.2.2-rc.4", path = "wreq-rt", features = ["tokio-rt", "compio-rt"] }
 tokio = { version = "1.0", default-features = false, features = [
     "macros",
     "rt-multi-thread",
@@ -229,49 +237,49 @@ required-features = ["tokio-rt", "stream"]
 name = "http1_current_thread"
 path = "bench/http1_current_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream"]
+required-features = ["tokio-rt", "stream", "http2"]
 
 [[bench]]
 name = "http1_multi_thread"
 path = "bench/http1_multi_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream"]
+required-features = ["tokio-rt", "stream", "http2"]
 
 [[bench]]
 name = "http2_current_thread"
 path = "bench/http2_current_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream"]
+required-features = ["tokio-rt", "stream", "http2"]
 
 [[bench]]
 name = "http2_multi_thread"
 path = "bench/http2_multi_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream"]
+required-features = ["tokio-rt", "stream", "http2"]
 
 [[bench]]
 name = "http1_over_tls_current_thread"
 path = "bench/http1_over_tls_current_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream"]
+required-features = ["tokio-rt", "stream", "http2"]
 
 [[bench]]
 name = "http1_over_tls_multi_thread"
 path = "bench/http1_over_tls_multi_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream"]
+required-features = ["tokio-rt", "stream", "http2"]
 
 [[bench]]
 name = "http2_over_tls_current_thread"
 path = "bench/http2_over_tls_current_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream"]
+required-features = ["tokio-rt", "stream", "http2"]
 
 [[bench]]
 name = "http2_over_tls_multi_thread"
 path = "bench/http2_over_tls_multi_thread.rs"
 harness = false
-required-features = ["tokio-rt", "stream"]
+required-features = ["tokio-rt", "stream", "http2"]
 
 [[test]]
 name = "cookie"
@@ -302,6 +310,11 @@ required-features = ["deflate", "stream"]
 name = "multipart"
 path = "tests/multipart.rs"
 required-features = ["multipart", "stream"]
+
+[[test]]
+name = "emulate"
+path = "tests/emulate.rs"
+required-features = ["http2"]
 
 [[test]]
 name = "retry"
@@ -335,7 +348,7 @@ required-features = ["tracing"]
 [[example]]
 name = "emulate"
 path = "examples/emulate.rs"
-required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
+required-features = ["gzip", "brotli", "zstd", "deflate", "tracing", "http2"]
 
 [[example]]
 name = "cert_store"
@@ -358,7 +371,7 @@ required-features = ["socks"]
 [[example]]
 name = "request_with_emulate"
 path = "examples/request_with_emulate.rs"
-required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
+required-features = ["gzip", "brotli", "zstd", "deflate", "tracing", "http2"]
 
 [[example]]
 name = "request_with_local_address"
@@ -376,7 +389,7 @@ required-features = ["ws", "futures-util/std"]
 [[example]]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
-required-features = ["ws", "futures-util/std"]
+required-features = ["ws", "futures-util/std", "http2"]
 
 [[example]]
 name = "keylog"
@@ -387,8 +400,8 @@ name = "unix_socket"
 path = "examples/unix_socket.rs"
 
 [patch.crates-io]
-netty = { git = "https://github.com/0x676e67/netty", rev = "3703f250846b832f222dc284e84af771c7e855a2" }
-btls = { git = "https://github.com/0x676e67/btls", rev = "0f5416d1f61eb4f64a9f2f4d8b867495305d61c1" }
-btls-sys = { git = "https://github.com/0x676e67/btls", rev = "0f5416d1f61eb4f64a9f2f4d8b867495305d61c1" }
-tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "0f5416d1f61eb4f64a9f2f4d8b867495305d61c1" }
-http2 = { git = "https://github.com/0x676e67/http2", branch = "master" }
+btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
+btls-sys = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
+tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
+http2 = { git = "https://github.com/0x676e67/http2", rev = "fb5bf8bdbf3e9d9aad7073759a6f06f47373342e" }
+netty = { git = "https://github.com/0x676e67/netty", rev = "6e53746abc632056e3a8e518e10e26f6b86a21e6" }

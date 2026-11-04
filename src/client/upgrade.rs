@@ -4,8 +4,8 @@ use std::{
     task::{self, Poll},
 };
 
+use netty::upgrade;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use wreq_proto::upgrade;
 
 use crate::Error;
 

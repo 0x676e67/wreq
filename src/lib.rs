@@ -227,6 +227,8 @@
 //! The following are a list of [Cargo features][cargo-features] that can be
 //! enabled or disabled:
 //!
+//! - **http2** *(enabled by default)*: Provides HTTP/2 support. Without it, ALPN only offers
+//!   `http/1.1`.
 //! - **cookies**: Provides cookie session support.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **brotli**: Provides response body brotli decompression.
@@ -354,9 +356,11 @@ pub use self::{
 pub mod http1 {
     //! HTTP/1 protocol implementation and utilities.
 
-    pub use wreq_proto::http1::{Http1Options, Http1OptionsBuilder};
+    pub use netty::http1::{Http1Options, Http1OptionsBuilder};
 }
 
+#[cfg(feature = "http2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
 pub mod http2 {
     //! HTTP/2 protocol implementation and utilities.
 
@@ -364,7 +368,7 @@ pub mod http2 {
         Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
         SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
     };
-    pub use wreq_proto::http2::{Http2Options, Http2OptionsBuilder};
+    pub use netty::http2::{Http2Options, Http2OptionsBuilder};
 }
 
 pub use http::{Method, StatusCode, Uri, Version};

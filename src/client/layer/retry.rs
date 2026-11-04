@@ -6,6 +6,7 @@ mod scope;
 use std::{error::Error as StdError, future::Ready, sync::Arc, time::Duration};
 
 use http::{Request, Response};
+use netty::body::Incoming;
 use tower::{
     BoxError,
     retry::{
@@ -13,7 +14,6 @@ use tower::{
         budget::{Budget, TpsBudget},
     },
 };
-use wreq_proto::body::Incoming;
 
 pub(crate) use self::{
     classify::{Action, Classifier, ClassifyFn, ReqRep},
@@ -125,6 +125,7 @@ impl Policy<Req, Res, BoxError> for RetryPolicy {
 ///
 /// Returns `true` if the error type or content indicates that the request can be retried,
 /// otherwise returns `false`.
+#[cfg(feature = "http2")]
 fn is_retryable_error(err: &(dyn StdError + 'static)) -> bool {
     let err = if let Some(err) = err.source() {
         err
@@ -147,5 +148,11 @@ fn is_retryable_error(err: &(dyn StdError + 'static)) -> bool {
             return true;
         }
     }
+    false
+}
+
+/// Without HTTP/2 there are no protocol NACKs to retry.
+#[cfg(not(feature = "http2"))]
+fn is_retryable_error(_: &(dyn StdError + 'static)) -> bool {
     false
 }

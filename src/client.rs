@@ -34,13 +34,13 @@ use http::{
     uri::{PathAndQuery, Scheme},
 };
 use http_body::Body as HttpBody;
+use netty::{body::Incoming, conn};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, Oneshot},
 };
-use wreq_proto::{body::Incoming, conn};
 
 #[cfg(any(
     feature = "gzip",
@@ -69,6 +69,8 @@ use self::{
 use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
+#[cfg(feature = "http2")]
+use crate::http2::Http2Options;
 use crate::{
     HttpVersion, IntoUri, Method, Proxy,
     conn::{
@@ -82,7 +84,6 @@ use crate::{
     error::Error,
     header::OrigHeaderMap,
     http1::Http1Options,
-    http2::Http2Options,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
@@ -235,6 +236,7 @@ struct Config {
     tls_session_store: Option<Arc<dyn TlsSessionStore>>,
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
+    #[cfg(feature = "http2")]
     http2_options: Option<Http2Options>,
     timer: Timer,
     executor: Executor,
@@ -310,6 +312,7 @@ impl Client {
                 http_version: HttpVersion::Auto,
                 https_only: false,
                 http1_options: None,
+                #[cfg(feature = "http2")]
                 http2_options: None,
                 layers: Vec::new(),
                 connector_layers: Vec::new(),
@@ -586,15 +589,18 @@ impl ClientBuilder {
                     socks_resolver,
                 ));
 
-            sealed::Builder::new(config.executor)
+            let builder = sealed::Builder::new(config.executor)
                 .cookie_store(
                     #[cfg(feature = "cookies")]
                     config.cookie_store,
                 )
                 .http1_options(config.http1_options)
+                .http_version(config.http_version);
+            #[cfg(feature = "http2")]
+            let builder = builder
                 .http2_options(config.http2_options)
-                .http_version(config.http_version)
-                .http2_timer(config.timer.clone())
+                .http2_timer(config.timer.clone());
+            builder
                 .pool_timer(config.timer.clone())
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
@@ -1142,6 +1148,8 @@ impl ClientBuilder {
     /// overrides this setting. A WebSocket handshake without an explicit version
     /// may still use a dedicated HTTP/1.1 connection.
     #[inline]
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_only(self) -> ClientBuilder {
         self.http_version(HttpVersion::Http2)
     }
@@ -1158,6 +1166,8 @@ impl ClientBuilder {
 
     /// Sets the HTTP/2 options for the client.
     #[inline]
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_options<T>(mut self, options: T) -> ClientBuilder
     where
         T: Into<Option<Http2Options>>,
@@ -1699,10 +1709,13 @@ impl ClientBuilder {
             .remove::<Http1Options>()
             .map(Arc::unwrap_or_clone)
             .or(self.config.http1_options);
-        self.config.http2_options = extra
-            .remove::<Http2Options>()
-            .map(Arc::unwrap_or_clone)
-            .or(self.config.http2_options);
+        #[cfg(feature = "http2")]
+        {
+            self.config.http2_options = extra
+                .remove::<Http2Options>()
+                .map(Arc::unwrap_or_clone)
+                .or(self.config.http2_options);
+        }
         self.default_headers(headers).orig_headers(orig_headers)
     }
 }
@@ -1750,6 +1763,7 @@ mod sealed {
         h1_builder: conn::http1::Builder,
 
         /// Base HTTP/2 handshake configuration.
+        #[cfg(feature = "http2")]
         h2_builder: conn::http2::Builder<Executor>,
 
         /// Connection-pool reuse and retention policy.
@@ -1791,7 +1805,9 @@ mod sealed {
                         error::Error::from_kind(error::ErrorKind::UserUnsupportedRequestMethod);
                     return FutureEither::Right(future_err(error.into()));
                 }
-                Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2 => {}
+                Version::HTTP_10 | Version::HTTP_11 => {}
+                #[cfg(feature = "http2")]
+                Version::HTTP_2 => {}
                 _unsupported => {
                     warn!("Request has unsupported version: {:?}", _unsupported);
                     let error = error::Error::from_kind(error::ErrorKind::UserUnsupportedVersion);
@@ -1828,6 +1844,8 @@ mod sealed {
     impl Builder {
         /// Creates a builder using `exec` for protocol drivers and pool tasks.
         pub fn new(exec: Executor) -> Self {
+            #[cfg(feature = "http2")]
+            let h2_builder = conn::http2::Builder::new(exec.clone());
             Self {
                 config: svc::Config {
                     retry_unsent: true,
@@ -1836,9 +1854,10 @@ mod sealed {
                     #[cfg(feature = "cookies")]
                     cookie_store: None,
                 },
-                exec: exec.clone(),
+                exec,
                 h1_builder: conn::http1::Builder::default(),
-                h2_builder: conn::http2::Builder::new(exec),
+                #[cfg(feature = "http2")]
+                h2_builder,
                 pool_config: pool::Config {
                     idle_timeout: Some(Duration::from_secs(90)),
                     max_idle_per_host: usize::MAX,
@@ -1899,6 +1918,7 @@ mod sealed {
 
         /// Sets the timer used by the HTTP/2 protocol driver.
         #[inline]
+        #[cfg(feature = "http2")]
         pub fn http2_timer(mut self, timer: Timer) -> Self {
             self.h2_builder = self.h2_builder.timer(timer);
             self
@@ -1923,6 +1943,7 @@ mod sealed {
         ///
         /// Request-local options may override this base for one connection attempt.
         #[inline]
+        #[cfg(feature = "http2")]
         pub fn http2_options<O>(mut self, opts: O) -> Self
         where
             O: Into<Option<Http2Options>>,
@@ -1972,6 +1993,7 @@ mod sealed {
                 inner: ServiceBuilder::new()
                     .layer(svc::layer(
                         self.h1_builder,
+                        #[cfg(feature = "http2")]
                         self.h2_builder,
                         self.config.retry_unsent,
                         self.config.version,

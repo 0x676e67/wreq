@@ -6,7 +6,7 @@
 
 use bytes::Bytes;
 pub use http::header::*;
-use wreq_proto::ext::OnPreserveHeaderCallback;
+use netty::ext::OnPreserveHeaderCallback;
 
 /// Trait for types that can be converted into an [`HeaderCaseName`] (case-preserved header).
 ///
@@ -291,7 +291,7 @@ mod sealed {
 #[cfg(test)]
 mod test {
     use http::{HeaderMap, HeaderName, HeaderValue};
-    use wreq_proto::ext::OnPreserveHeaderCallback;
+    use netty::ext::OnPreserveHeaderCallback;
 
     use super::OrigHeaderMap;
 

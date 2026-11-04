@@ -1308,7 +1308,7 @@ pub(super) mod events {
     impl<E, F> Events<F> for WithExecutor<E>
     where
         F: Started<Output = ()> + Send + 'static,
-        E: wreq_proto::rt::Executor<BoxFuture<'static, ()>>,
+        E: netty::rt::Executor<BoxFuture<'static, ()>>,
     {
         /// Spawns the maker only when it has started useful work.
         fn on_race_lost(&self, future: F) {

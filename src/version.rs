@@ -20,5 +20,6 @@ pub enum HttpVersion {
     /// Uses HTTP/2 without falling back to HTTP/1.
     /// Cleartext connections use prior knowledge; TLS connections offer only `h2`.
     /// If the peer omits ALPN, the client still attempts HTTP/2.
+    #[cfg(feature = "http2")]
     Http2,
 }

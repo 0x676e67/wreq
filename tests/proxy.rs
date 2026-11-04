@@ -84,7 +84,7 @@ async fn https_proxy_keeps_transport_and_target_alpn_separate() {
             .unwrap();
         let response = client
             .get(url)
-            .version(if tunnel {
+            .version(if tunnel && cfg!(feature = "http2") {
                 Version::HTTP_2
             } else {
                 Version::HTTP_11

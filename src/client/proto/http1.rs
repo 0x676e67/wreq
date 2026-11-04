@@ -23,12 +23,12 @@ use http::{
     header::{HOST, PROXY_AUTHORIZATION},
 };
 use http_body::Body;
+use netty::{body::Incoming, conn, rt::Executor as _};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::oneshot,
 };
 use tower::{BoxError, Layer, Service};
-use wreq_proto::{body::Incoming, conn, rt::Executor as _};
 
 use super::{Established, SendError, clock_now, is_expired};
 use crate::{
@@ -270,9 +270,8 @@ where
             ..
         } = established;
 
-        let (builder, _) = config.proto.as_ref();
-        let builder = builder.clone();
-        let builder = match config.req.extra().get::<wreq_proto::http1::Http1Options>() {
+        let builder = config.proto.http1.clone();
+        let builder = match config.req.extra().get::<netty::http1::Http1Options>() {
             Some(options) => builder.options(options.clone()),
             None => builder,
         };

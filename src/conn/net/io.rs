@@ -10,7 +10,7 @@ use std::{
 };
 
 use compio::io::{AsyncRead, AsyncWrite, util::Splittable};
-use wreq_rt::rt::compio::io::CompioIO;
+use crate::rt::compio::io::CompioIO;
 
 /// [`compio`] with peer and local socket addresses.
 #[derive(Debug)]

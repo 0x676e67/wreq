@@ -14,9 +14,9 @@ use std::{
 use futures_util::{TryFutureExt, future::BoxFuture};
 use http::{Request, Response};
 use http_body::Body;
+use netty::{body::Incoming, conn, rt::Executor as _};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service};
-use wreq_proto::{body::Incoming, conn, rt::Executor as _};
 
 use super::{Established, SendError, clock_now, is_expired};
 use crate::{
@@ -29,7 +29,7 @@ use crate::{
 /// Cloneable request-side handle for one HTTP/2 connection.
 ///
 /// The pool singleton stores one instance and gives each checkout a sender
-/// clone. Protocol stream availability remains owned by wreq-proto; the local
+/// clone. Protocol stream availability remains owned by netty; the local
 /// state records sender checkout only and is not an active-stream count.
 pub struct Connection<B> {
     tx: conn::http2::SendRequest<B>,
@@ -238,9 +238,8 @@ where
             ..
         } = established.await?;
 
-        let (_, builder) = config.proto.as_ref();
-        let builder = builder.clone();
-        let builder = match config.req.extra().get::<wreq_proto::http2::Http2Options>() {
+        let builder = config.proto.http2.clone();
+        let builder = match config.req.extra().get::<netty::http2::Http2Options>() {
             Some(options) => builder.options(options.clone()),
             None => builder,
         };
@@ -299,7 +298,7 @@ where
     /// Returns whether the shared sender is healthy and reusable.
     pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
         // TODO(task 9): Replace checkout-only idleness with a full-stream lease
-        // after wreq-proto can observe both request and response endpoints,
+        // after netty can observe both request and response endpoints,
         // including HTTP/2 extended CONNECT. Peer max-stream counts alone do
         // not expose local occupancy: https://github.com/hyperium/hyper/issues/3623
         !self.conn_info.poisoned()

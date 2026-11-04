@@ -857,6 +857,21 @@ async fn http1_only() {
     assert_eq!(resp.version(), wreq::Version::HTTP_11);
 }
 
+#[cfg(not(feature = "http2"))]
+#[tokio::test]
+async fn http2_requires_feature() {
+    let server = server::http(move |_| async move { http::Response::default() });
+
+    let err = wreq::get(format!("http://{}", server.addr()))
+        .version(Version::HTTP_2)
+        .send()
+        .await
+        .unwrap_err();
+
+    assert!(err.is_request(), "{err:?}");
+}
+
+#[cfg(feature = "http2")]
 #[tokio::test]
 async fn request_version_configuration_survives_clone_and_conversion() {
     for version in [
@@ -946,6 +961,7 @@ async fn request_version_configuration_survives_clone_and_conversion() {
     assert!(!err.is_connect());
 }
 
+#[cfg(feature = "http2")]
 #[tokio::test]
 async fn http2_only() {
     let server = server::http(move |_| async move { http::Response::default() });
@@ -974,6 +990,7 @@ async fn http2_only() {
     assert_eq!(resp.version(), wreq::Version::HTTP_2);
 }
 
+#[cfg(feature = "http2")]
 #[tokio::test]
 async fn connection_pool_respects_https_version_policy() {
     use std::{borrow::Cow, sync::Mutex};
@@ -1237,12 +1254,16 @@ async fn tls_alps_follows_alpn_offer() {
     assert_eq!(
         *hellos.lock().unwrap(),
         [
+            #[cfg(feature = "http2")]
             (Some(b"\x00\x0c\x02h2\x08http/1.1".to_vec()), true, false),
+            #[cfg(not(feature = "http2"))]
+            (Some(b"\x00\x09\x08http/1.1".to_vec()), false, false),
             (Some(b"\x00\x09\x08http/1.1".to_vec()), false, false),
         ]
     );
 }
 
+#[cfg(feature = "http2")]
 #[tokio::test]
 async fn connection_pool_http2_errors_respect_negotiation() {
     use std::error::Error as _;
@@ -1349,10 +1370,15 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
         http1.get(&url).send().await.unwrap().bytes().await.unwrap();
     }
 
+    #[cfg(feature = "http2")]
     let http2 = Client::builder().http2_only().build().unwrap();
-    let responses = futures_util::future::join_all((0..8).map(|_| http2.get(&url).send())).await;
-    for response in responses {
-        response.unwrap();
+    #[cfg(feature = "http2")]
+    {
+        let responses =
+            futures_util::future::join_all((0..8).map(|_| http2.get(&url).send())).await;
+        for response in responses {
+            response.unwrap();
+        }
     }
 
     let accepted = server
@@ -1360,9 +1386,13 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
         .iter()
         .filter(|event| matches!(event, server::Event::ConnectionAccepted))
         .count();
-    assert_eq!(accepted, 2);
+    assert_eq!(accepted, 1 + usize::from(cfg!(feature = "http2")));
 
-    for client in [&http1, &http2] {
+    for client in [
+        &http1,
+        #[cfg(feature = "http2")]
+        &http2,
+    ] {
         let response = client.get(&url).send().await.unwrap();
         response.forbid_recycle();
         response.bytes().await.unwrap();
@@ -1384,7 +1414,7 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
         .iter()
         .filter(|event| matches!(event, server::Event::ConnectionAccepted))
         .count();
-    assert_eq!(replacement_connections, 2);
+    assert_eq!(replacement_connections, accepted);
 }
 
 #[tokio::test]
@@ -1499,8 +1529,8 @@ async fn connection_pool_applies_client_http1_options() {
             assert!(
                 std::iter::successors(error.source(), |&source| source.source()).any(|source| {
                     source
-                        .downcast_ref::<wreq_proto::Error>()
-                        .is_some_and(wreq_proto::Error::is_parse)
+                        .downcast_ref::<netty::Error>()
+                        .is_some_and(netty::Error::is_parse)
                 }),
                 "{error:?}"
             );
@@ -1514,7 +1544,11 @@ async fn connection_pool_applies_client_http1_options() {
 async fn connection_pool_closes_idle_transports() {
     // Adapted from hyper-util tests/legacy_client.rs: drop_client_closes_idle_connections
     // and no_keep_alive_closes_connection.
-    for version in [Version::HTTP_11, Version::HTTP_2] {
+    for version in [
+        Version::HTTP_11,
+        #[cfg(feature = "http2")]
+        Version::HTTP_2,
+    ] {
         for keep_alive in [true, false] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("http://{}", listener.local_addr().unwrap());
@@ -1623,7 +1657,11 @@ async fn connection_pool_cancellation_closes_http1_transport() {
 async fn connection_pool_preserves_upload_after_response_headers() {
     // Adapted from hyper-util tests/legacy_client.rs:
     // client_keep_alive_when_response_before_request_body_ends.
-    for version in [Version::HTTP_11, Version::HTTP_2] {
+    for version in [
+        Version::HTTP_11,
+        #[cfg(feature = "http2")]
+        Version::HTTP_2,
+    ] {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (uploaded, mut upload_received) = tokio::sync::oneshot::channel();

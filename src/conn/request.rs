@@ -118,6 +118,7 @@ impl ConnectRequest {
 
     /// Returns the reuse identity of this origin and configuration under another
     /// protocol preference, without changing this request.
+    #[cfg(feature = "http2")]
     pub(crate) fn key_with_version(&self, version: Option<HttpVersion>) -> ConnectionKey {
         ConnectionKey(RequestData::new(
             self.inner.uri.clone(),
@@ -236,10 +237,11 @@ mod tests {
     use std::{borrow::Cow, hash::DefaultHasher};
 
     use super::*;
+    #[cfg(feature = "http2")]
+    use crate::http2::Http2Options;
     use crate::{
         group::Group,
         http1::Http1Options,
-        http2::Http2Options,
         tls::{AlpnProtocol, TlsOptions},
     };
 
@@ -313,8 +315,9 @@ mod tests {
         let mut extra = Extra::default();
         extra
             .insert_config(tls_options)
-            .insert_config(Http1Options::builder().max_headers(32).build())
-            .insert_config(Http2Options::builder().header_table_size(4096).build());
+            .insert_config(Http1Options::builder().max_headers(32).build());
+        #[cfg(feature = "http2")]
+        extra.insert_config(Http2Options::builder().header_table_size(4096).build());
         let baseline = request(extra.clone()).key();
         assert_eq!(baseline, request(extra.clone()).key());
 
@@ -329,9 +332,12 @@ mod tests {
         let mut changed = extra.clone();
         changed.insert_config(Http1Options::builder().max_headers(64).build());
         variants.push(changed);
-        let mut changed = extra.clone();
-        changed.insert_config(Http2Options::builder().header_table_size(8192).build());
-        variants.push(changed);
+        #[cfg(feature = "http2")]
+        {
+            let mut changed = extra.clone();
+            changed.insert_config(Http2Options::builder().header_table_size(8192).build());
+            variants.push(changed);
+        }
         let mut changed = extra.clone();
         changed.insert_config(Group::new("tenant"));
         variants.push(changed);

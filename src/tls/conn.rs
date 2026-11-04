@@ -15,7 +15,10 @@ use std::{
 use btls::{
     error::ErrorStack,
     ex_data::Index,
-    ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode},
+    ssl::{
+        EchGreaseParameters, EchGreaseRounding, EchGreaseSizeInfo, Ssl, SslConnector, SslMethod,
+        SslOptions, SslRef, SslSessionCacheMode,
+    },
 };
 use ext::SslConnectorBuilderExt;
 use futures_util::future::BoxFuture;
@@ -29,7 +32,7 @@ use crate::{
     conn::{Connected, Connection, request::ConnectRequest},
     ext::UriExt,
     tls::{
-        AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
+        AlpnProtocol, AlpsProtocol, EchGrease, KeyShare, TlsOptions, TlsVersion,
         keylog::KeyLog,
         session::{Key, SessionKey, SessionStore, TlsSessionStore},
         trust::{CertStore, Identity},
@@ -39,6 +42,29 @@ use crate::{
 fn key_index() -> Result<Index<Ssl, Key>, ErrorStack> {
     static IDX: LazyLock<Result<Index<Ssl, Key>, ErrorStack>> = LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
+}
+
+fn host_length_index() -> Result<Index<Ssl, usize>, ErrorStack> {
+    static IDX: LazyLock<Result<Index<Ssl, usize>, ErrorStack>> = LazyLock::new(Ssl::new_ex_index);
+    IDX.clone()
+}
+
+/// Sizes ECH GREASE using the policy and the URL host retained on this connection.
+fn ech_grease_parameters(
+    policy: EchGrease,
+    ssl: &SslRef,
+    info: EchGreaseSizeInfo<'_>,
+) -> Result<EchGreaseParameters, ErrorStack> {
+    let nss = |rounding| -> Result<EchGreaseParameters, ErrorStack> {
+        let host_length = ssl.ex_data(host_length_index()?).copied().unwrap_or(0);
+        info.nss_parameters(100, host_length, rounding)
+    };
+    match policy {
+        EchGrease::Default => info.boringssl_parameters(info.default_aead()),
+        EchGrease::Aead(aead) => info.boringssl_parameters(aead),
+        EchGrease::NssPre3127 => nss(EchGreaseRounding::NssPre3127),
+        EchGrease::Nss3127 => nss(EchGreaseRounding::Nss3127),
+    }
 }
 
 async fn perform_handshake<T>(ssl: Ssl, conn: T) -> Result<MaybeHttpsStream<T>, BoxError>
@@ -63,8 +89,7 @@ pub struct HandshakeConfig {
     tls_sni: bool,
     verify_hostname: bool,
     no_ticket: bool,
-    enable_ech_grease: Option<bool>,
-    random_aes_hw_override: bool,
+    ech_grease: Option<EchGrease>,
     server_padding: Option<u16>,
 }
 
@@ -277,9 +302,6 @@ impl TlsConnector {
         // Verify hostname
         cfg.set_verify_hostname(ctx.settings.verify_hostname);
 
-        // Leave backend defaults untouched when ECH GREASE is not configured.
-        set_option!(ctx.settings, enable_ech_grease, cfg, set_enable_ech_grease);
-
         // HTTPS ALPN after client::svc::Stack resolves the explicit request version:
         // | Client     | Request                   | TlsOptions ALPN | Offered ALPN |
         // |------------|---------------------------|-----------------|--------------|
@@ -299,10 +321,15 @@ impl TlsConnector {
                 self.inner.settings.alpn_protocols.as_deref(),
             ) {
                 (HttpVersion::Http1, _, _) => &[AlpnProtocol::HTTP1],
+                #[cfg(feature = "http2")]
                 (HttpVersion::Http2, _, _) => &[AlpnProtocol::HTTP2],
                 (HttpVersion::Auto, Some(protocols), _) if !protocols.is_empty() => protocols,
                 (HttpVersion::Auto, _, Some(protocols)) if !protocols.is_empty() => protocols,
-                (HttpVersion::Auto, _, _) => &[AlpnProtocol::HTTP2, AlpnProtocol::HTTP1],
+                (HttpVersion::Auto, _, _) => &[
+                    #[cfg(feature = "http2")]
+                    AlpnProtocol::HTTP2,
+                    AlpnProtocol::HTTP1,
+                ],
             }
         } else {
             &[]
@@ -329,12 +356,6 @@ impl TlsConnector {
             }
         }
 
-        // Set random AES hardware override
-        if ctx.settings.random_aes_hw_override {
-            let random = (crate::util::fast_random() & 1) == 0;
-            cfg.set_aes_hw_override(random);
-        }
-
         // Set TLS key shares
         if let Some(ref key_shares) = ctx.settings.key_shares {
             cfg.set_client_key_shares(key_shares.as_ref())?;
@@ -342,6 +363,11 @@ impl TlsConnector {
 
         let host = req.route_uri().host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
+
+        if ctx.settings.ech_grease.is_some() {
+            cfg.set_enable_ech_grease(true);
+            cfg.set_ex_data(host_length_index()?, host.len());
+        }
 
         if ctx.session_resumption {
             let store = &ctx.config.session;
@@ -490,16 +516,9 @@ impl TlsContext {
             // Set TLS signature algorithms list
             set_option_ref_try!(opts, sigalgs_list, connector, set_sigalgs_list);
 
-            // Preserve TLS 1.3 cipher list order
-            set_option!(
-                opts,
-                preserve_tls13_cipher_list,
-                connector,
-                set_preserve_tls13_cipher_list
-            );
-
             // Set TLS cipher list
             set_option_ref_try!(opts, cipher_list, connector, set_cipher_list);
+            set_option_ref_try!(opts, tls13_cipher_list, connector, set_tls13_ciphers);
 
             // Set certificate compression algorithms
             set_option_ref_try!(
@@ -520,9 +539,6 @@ impl TlsContext {
             // Set TLS record size limit
             set_option!(opts, record_size_limit, connector, set_record_size_limit);
 
-            // Set TLS aes hardware override
-            set_option!(opts, aes_hw_override, connector, set_aes_hw_override);
-
             // The specification distinguishes an empty requested list from omitting the extension.
             set_option_ref_try!(opts, trust_anchors, connector, set_requested_trust_anchors);
 
@@ -533,6 +549,13 @@ impl TlsContext {
                 connector,
                 set_extension_permutation
             );
+        }
+
+        if let Some(policy) = opts.and_then(|opts| opts.ech_grease)
+            && policy != EchGrease::Default
+        {
+            connector
+                .set_ech_grease_callback(move |ssl, info| ech_grease_parameters(policy, ssl, info));
         }
 
         // Set TLS keylog handler.
@@ -551,10 +574,9 @@ impl TlsContext {
             alpn_protocols: opts.and_then(|opts| opts.alpn_protocols.clone()),
             alps_protocols: opts.and_then(|opts| opts.alps_protocols.clone()),
             alps_use_new_codepoint: opts.is_some_and(|opts| opts.alps_use_new_codepoint),
-            enable_ech_grease: opts.and_then(|opts| opts.enable_ech_grease),
+            ech_grease: opts.and_then(|opts| opts.ech_grease),
             key_shares: opts.and_then(|opts| opts.key_shares.clone()),
             no_ticket: opts.is_some_and(|opts| opts.psk_skip_session_ticket),
-            random_aes_hw_override: opts.is_some_and(|opts| opts.random_aes_hw_override),
             server_padding: opts.and_then(|opts| opts.server_padding),
         };
 

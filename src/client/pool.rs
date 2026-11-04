@@ -26,7 +26,9 @@
 pub(super) mod cache;
 pub(super) mod expire;
 pub(super) mod map;
+#[cfg(feature = "http2")]
 pub(super) mod negotiate;
+#[cfg(feature = "http2")]
 pub(super) mod singleton;
 
 use std::{
@@ -39,25 +41,30 @@ use std::{
         Arc, Weak,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    task::{self, Poll, ready},
+    task::{self, Poll},
     time::{Duration, Instant},
 };
 
 use futures_util::future::BoxFuture;
 use http::{Request, Response};
 use http_body::Body;
+use netty::{body::Incoming, conn, rt::Timer as _};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service, ServiceBuilder, util::Oneshot};
-use wreq_proto::{body::Incoming, conn, rt::Timer as _};
 
 use self::{
     cache::{BackgroundConnect, Cache, Cached, Started},
     expire::{Expire, Inspect},
     map::{Map, Target},
+};
+#[cfg(feature = "http2")]
+use self::{
     negotiate::{Existing, Negotiate, Negotiated},
     singleton::{Singled, Singleton, SingletonError, SingletonFuture},
 };
-use super::proto::{Established, SendError, http1, http2};
+#[cfg(feature = "http2")]
+use super::proto::http2;
+use super::proto::{Established, SendError, http1};
 use crate::{
     HttpVersion,
     conn::{
@@ -70,7 +77,15 @@ use crate::{
 
 /// Returns whether an internal singleton batch asks the client to retry.
 pub(super) fn is_canceled(error: &(dyn std::error::Error + 'static)) -> bool {
-    SingletonError::is_canceled(error)
+    #[cfg(feature = "http2")]
+    {
+        SingletonError::is_canceled(error)
+    }
+    #[cfg(not(feature = "http2"))]
+    {
+        let _ = error;
+        false
+    }
 }
 
 /// Selects when the pool starts a new connection while reuse is unavailable.
@@ -230,9 +245,16 @@ pub(super) struct PoolTarget {
 #[derive(Clone)]
 pub(super) struct ConnectionConfig {
     pub(super) req: ConnectRequest,
-    pub(super) proto: Arc<(conn::http1::Builder, conn::http2::Builder<Executor>)>,
+    pub(super) proto: Arc<ProtocolBuilders>,
     /// Whether checkout always connects and never returns the sender to the pool.
     pub(super) dedicated: bool,
+}
+
+/// Handshake builders shared by all requests from one client.
+pub(super) struct ProtocolBuilders {
+    pub(super) http1: conn::http1::Builder,
+    #[cfg(feature = "http2")]
+    pub(super) http2: conn::http2::Builder<Executor>,
 }
 
 /// Factory that creates one protocol-specific service graph per destination group.
@@ -298,6 +320,7 @@ where
 
     /// Clones an established HTTP/2 sender without creating, joining, or draining
     /// work. HTTP/1 entries and generations still being made return `None`.
+    #[cfg(feature = "http2")]
     fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)>;
 
     /// Removes expired or closed idle connections for unlocked destruction.
@@ -333,6 +356,7 @@ struct Http1Entry<L> {
 /// Fixed HTTP/2 entry sharing one connection generation across cold checkouts.
 /// Once established, the sender is cloned for concurrent requests.
 /// Pending uses keep the entry alive; `state` identifies it during cleanup.
+#[cfg(feature = "http2")]
 struct Http2Entry<R> {
     /// Shared HTTP/2 sender singleton.
     service: R,
@@ -345,6 +369,7 @@ struct Http2Entry<R> {
 /// `service` combines the HTTP/1 cache and HTTP/2 singleton for one compatibility
 /// group. `state` counts checkout futures and carries the identity-aware cleanup
 /// operation used when the final unsuccessful checkout leaves an empty entry.
+#[cfg(feature = "http2")]
 struct NegotiatedEntry<L, R, S> {
     /// Fallback and upgraded pool composition.
     service: Negotiate<L, R, S>,
@@ -378,6 +403,7 @@ trait Http1Pool<B>:
 /// The entry needs to inspect and remove a completed sender without starting
 /// another maker. In-progress handshakes are retained because canceling them
 /// would also cancel participating checkouts.
+#[cfg(feature = "http2")]
 trait Http2Pool<B>: Clone + Send + 'static {
     /// Removes a closed or expired idle HTTP/2 sender.
     fn retain_idle(
@@ -397,12 +423,15 @@ trait Http2Pool<B>: Clone + Send + 'static {
 }
 
 /// Boxed future that establishes the singleton HTTP/2 sender.
+#[cfg(feature = "http2")]
 type H2MakeFuture<B> = BoxFuture<'static, Result<http2::Connection<B>, BoxError>>;
 
 /// Generation-aware checkout of the shared HTTP/2 sender.
+#[cfg(feature = "http2")]
 type H2Pooled<B> = Singled<H2MakeFuture<B>, http2::Connection<B>>;
 
 /// Future joining an existing HTTP/2 singleton generation.
+#[cfg(feature = "http2")]
 type H2Checkout<B> = SingletonFuture<H2MakeFuture<B>, http2::Connection<B>>;
 
 /// Defers checkout completion and resource destruction until the map is unlocked.
@@ -417,6 +446,7 @@ where
     B::Error: Into<BoxError>,
 {
     /// Existing singleton work, without another box around its future.
+    #[cfg(feature = "http2")]
     Http2 {
         /// Owns the sender clone or pending-generation participation.
         future: H2Checkout<B>,
@@ -432,7 +462,16 @@ where
 }
 
 /// HTTP sender selected for one pool checkout.
-type PooledInner<B> = Negotiated<Cached<http1::Connection<B>>, H2Pooled<B>>;
+enum PooledInner<B>
+where
+    B: Body + Send + Unpin + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+{
+    Http1(Cached<http1::Connection<B>>),
+    #[cfg(feature = "http2")]
+    Http2(H2Pooled<B>),
+}
 
 /// Type-erased connection state held until the outer map lock is released.
 ///
@@ -668,6 +707,7 @@ where
     ///
     /// Never creates entries or connections, joins pending handshakes, or touches
     /// HTTP/1 state, so a miss costs one map lookup.
+    #[cfg(feature = "http2")]
     pub(super) fn checkout_extended_connect(&self, key: &ConnectionKey) -> Option<Pooled<B>> {
         if !self.inner.enabled {
             return None;
@@ -677,7 +717,7 @@ where
         let connection = service.inner();
         let usable = connection.extended_connect() == Some(true)
             && connection.is_reusable(self.inner.now(), self.inner.idle_timeout);
-        usable.then(|| Pooled::new(Negotiated::Right(service), true, EntryUse::new(state)))
+        usable.then(|| Pooled::new(PooledInner::Http2(service), true, EntryUse::new(state)))
     }
 }
 
@@ -887,6 +927,12 @@ where
 
         // Fixed protocol modes use smaller service graphs; only Auto needs both
         // pools and negotiation: https://github.com/hyperium/hyper/issues/3948
+        #[cfg(not(feature = "http2"))]
+        {
+            let service = self.http1_layer(&state).layer(connect);
+            Box::new(Http1Entry { service, state })
+        }
+        #[cfg(feature = "http2")]
         match target.version {
             HttpVersion::Http1 => {
                 let service = self.http1_layer(&state).layer(connect);
@@ -950,11 +996,12 @@ where
         let future = Checkout::Service(Box::pin(async move {
             Oneshot::new(service, target)
                 .await
-                .map(|service| Pooled::new(Negotiated::Left(service), enabled, usage))
+                .map(|service| Pooled::new(PooledInner::Http1(service), enabled, usage))
         }));
         (future, None)
     }
 
+    #[cfg(feature = "http2")]
     fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)> {
         None
     }
@@ -997,6 +1044,7 @@ where
 
 // ===== impl Http2Entry =====
 
+#[cfg(feature = "http2")]
 impl<M, B> Entry<B> for Http2Entry<Singleton<M, PoolTarget>>
 where
     M: Service<
@@ -1036,11 +1084,12 @@ where
         let service = self.service.clone();
         let future = Checkout::Service(Box::pin(async move {
             let service = Oneshot::new(service, target).await?;
-            Ok(Pooled::new(Negotiated::Right(service), enabled, usage))
+            Ok(Pooled::new(PooledInner::Http2(service), enabled, usage))
         }));
         (future, None)
     }
 
+    #[cfg(feature = "http2")]
     fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)> {
         Some((self.service.checkout_made()?, self.state.clone()))
     }
@@ -1089,6 +1138,7 @@ where
 
 // ===== impl NegotiatedEntry =====
 
+#[cfg(feature = "http2")]
 impl<L, R, T, B> Entry<B> for NegotiatedEntry<L, R, Established<T>>
 where
     L: Http1Pool<B>,
@@ -1122,14 +1172,19 @@ where
         }
         let service = self.service.clone();
         let future = Checkout::Service(Box::pin(async move {
-            Oneshot::new(service, target)
-                .await
-                .map(|service| Pooled::new(service, enabled, usage))
+            Oneshot::new(service, target).await.map(|service| {
+                let inner = match service {
+                    Negotiated::Left(service) => PooledInner::Http1(service),
+                    Negotiated::Right(service) => PooledInner::Http2(service),
+                };
+                Pooled::new(inner, enabled, usage)
+            })
         }));
         (future, None)
     }
 
     /// Uses only the upgraded side; HTTP/1 fallback and pending transports stay untouched.
+    #[cfg(feature = "http2")]
     fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)> {
         Some((self.service.upgrade().checkout_made()?, self.state.clone()))
     }
@@ -1205,6 +1260,7 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         match self.get_mut() {
+            #[cfg(feature = "http2")]
             Self::Http2 {
                 future,
                 discarded,
@@ -1213,7 +1269,7 @@ where
                 ..
             } => {
                 drop(discarded.take());
-                let result = ready!(Pin::new(future).poll(cx));
+                let result = std::task::ready!(Pin::new(future).poll(cx));
                 let Some(usage) = usage.take() else {
                     return Poll::Pending;
                 };
@@ -1221,7 +1277,7 @@ where
                 // may run map maintenance, so it must execute outside the lock.
                 Poll::Ready(
                     result
-                        .map(|service| Pooled::new(Negotiated::Right(service), *enabled, usage))
+                        .map(|service| Pooled::new(PooledInner::Http2(service), *enabled, usage))
                         .map_err(Into::into),
                 )
             }
@@ -1276,6 +1332,7 @@ where
 
 // ===== impl Singleton =====
 
+#[cfg(feature = "http2")]
 impl<M, Dst, B> Http2Pool<B> for Singleton<M, Dst>
 where
     M: Service<Dst, Response = http2::Connection<B>> + Clone + Send + 'static,
@@ -1312,6 +1369,7 @@ where
     }
 }
 
+#[cfg(feature = "http2")]
 impl<M, S> Existing<S> for Singleton<M, S>
 where
     M: Service<S>,
@@ -1323,6 +1381,7 @@ where
         Singleton::checkout(self)
     }
 
+    #[cfg(feature = "http2")]
     fn checkout_made(&self) -> Option<Self::Response> {
         Singleton::checkout_made(self)
     }
@@ -1351,6 +1410,8 @@ where
             version,
             wait_for_reuse,
         } = target;
+        #[cfg(not(feature = "http2"))]
+        let _ = version;
         let reuse_delay = if wait_for_reuse {
             self.reuse_delay
         } else {
@@ -1378,8 +1439,10 @@ where
             Ok(Established::new(
                 io,
                 connected,
+                #[cfg(feature = "http2")]
                 version,
                 connection,
+                #[cfg(feature = "http2")]
                 clock_now(&timer),
             ))
         });
@@ -1421,7 +1484,8 @@ where
 {
     /// Wraps a negotiated sender and registers an HTTP/2 checkout when needed.
     fn new(inner: PooledInner<B>, pool_enabled: bool, usage: EntryUse) -> Self {
-        if let Negotiated::Right(service) = &inner {
+        #[cfg(feature = "http2")]
+        if let PooledInner::Http2(service) = &inner {
             service.inner().begin_checkout();
         }
         let cleanup = usage.into_cleanup();
@@ -1437,28 +1501,35 @@ where
 
     /// Returns whether this checkout uses HTTP/1.
     pub(super) fn is_http1(&self) -> bool {
-        matches!(self.inner, Negotiated::Left(_))
+        matches!(self.inner, PooledInner::Http1(_))
     }
 
     /// Returns whether this checkout uses HTTP/2.
     pub(super) fn is_http2(&self) -> bool {
-        matches!(self.inner, Negotiated::Right(_))
+        match self.inner {
+            PooledInner::Http1(_) => false,
+            #[cfg(feature = "http2")]
+            PooledInner::Http2(_) => true,
+        }
     }
 
     /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS.
     /// HTTP/1 never supports it.
+    #[cfg(feature = "http2")]
     pub(super) fn extended_connect(&self) -> Option<bool> {
         match &self.inner {
-            Negotiated::Left(_) => Some(false),
-            Negotiated::Right(service) => service.inner().extended_connect(),
+            PooledInner::Http1(_) => Some(false),
+            #[cfg(feature = "http2")]
+            PooledInner::Http2(service) => service.inner().extended_connect(),
         }
     }
 
     /// Returns whether the sender came from an existing pooled connection.
     pub(super) fn is_reused(&self) -> bool {
         match &self.inner {
-            Negotiated::Left(service) => service.is_reused(),
-            Negotiated::Right(service) => service.is_reused(),
+            PooledInner::Http1(service) => service.is_reused(),
+            #[cfg(feature = "http2")]
+            PooledInner::Http2(service) => service.is_reused(),
         }
     }
 
@@ -1470,16 +1541,18 @@ where
     /// Returns whether the protocol sender can accept a request immediately.
     pub(super) fn is_ready(&self) -> bool {
         match &self.inner {
-            Negotiated::Left(service) => service.inner().is_ready(),
-            Negotiated::Right(service) => service.inner().is_ready(),
+            PooledInner::Http1(service) => service.inner().is_ready(),
+            #[cfg(feature = "http2")]
+            PooledInner::Http2(service) => service.inner().is_ready(),
         }
     }
 
     /// Returns metadata for the underlying physical connection.
     pub(super) fn conn_info(&self) -> &Connected {
         match &self.inner {
-            Negotiated::Left(service) => service.inner().conn_info(),
-            Negotiated::Right(service) => service.inner().conn_info(),
+            PooledInner::Http1(service) => service.inner().conn_info(),
+            #[cfg(feature = "http2")]
+            PooledInner::Http2(service) => service.inner().conn_info(),
         }
     }
 }
@@ -1492,17 +1565,33 @@ where
 {
     type Response = Response<Incoming>;
     type Error = SendError<B>;
-    type Future = tower::util::future::EitherResponseFuture<
+    #[cfg(feature = "http2")]
+    type Future = futures_util::future::Either<
         <http1::Connection<B> as Service<Request<B>>>::Future,
         <http2::Connection<B> as Service<Request<B>>>::Future,
     >;
+    #[cfg(not(feature = "http2"))]
+    type Future = <http1::Connection<B> as Service<Request<B>>>::Future;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
+        match &mut self.inner {
+            PooledInner::Http1(service) => service.poll_ready(cx),
+            #[cfg(feature = "http2")]
+            PooledInner::Http2(service) => service.poll_ready(cx),
+        }
     }
 
     fn call(&mut self, req: Request<B>) -> Self::Future {
-        self.inner.call(req)
+        match &mut self.inner {
+            PooledInner::Http1(service) => {
+                let future = service.call(req);
+                #[cfg(feature = "http2")]
+                let future = futures_util::future::Either::Left(future);
+                future
+            }
+            #[cfg(feature = "http2")]
+            PooledInner::Http2(service) => futures_util::future::Either::Right(service.call(req)),
+        }
     }
 }
 
@@ -1514,7 +1603,7 @@ where
 {
     fn drop(&mut self) {
         match &mut self.inner {
-            Negotiated::Left(service) => {
+            PooledInner::Http1(service) => {
                 service.inner_mut().mark_idle();
                 if !service.inner().is_open() {
                     service.discard_on_drop();
@@ -1528,7 +1617,8 @@ where
                     }
                 }
             }
-            Negotiated::Right(service) => {
+            #[cfg(feature = "http2")]
+            PooledInner::Http2(service) => {
                 let discard = {
                     let connection = service.inner();
                     connection.finish_checkout();
@@ -1636,11 +1726,13 @@ impl Drop for EntryCleanupGuard {
 }
 
 /// Returns whether an idle timestamp exceeds the configured timeout.
+#[cfg(feature = "http2")]
 fn is_expired(idle_at: Instant, now: Instant, timeout: Option<Duration>) -> bool {
     timeout.is_some_and(|timeout| now.saturating_duration_since(idle_at) > timeout)
 }
 
 /// Reads the configured runtime clock, falling back to the system clock.
+#[cfg(feature = "http2")]
 fn clock_now(timer: &Timer) -> Instant {
     if timer.is_empty() {
         Instant::now()
@@ -1653,7 +1745,9 @@ fn clock_now(timer: &Timer) -> Instant {
 mod tests {
     use std::io;
 
+    #[cfg(feature = "http2")]
     use bytes::Bytes;
+    #[cfg(feature = "http2")]
     use http_body_util::Empty;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1674,6 +1768,7 @@ mod tests {
         /// Accepts a request without producing response headers.
         StallsAfterRequest(Arc<tokio::sync::Notify>),
         /// Counts HTTP/2 connection attempts and gates transport creation.
+        #[cfg(feature = "http2")]
         Http2(Arc<AtomicUsize>, Arc<tokio::sync::Semaphore>),
     }
 
@@ -1693,6 +1788,7 @@ mod tests {
                 )
                 .into()))),
                 Self::Pending => Box::pin(std::future::pending()),
+                #[cfg(feature = "http2")]
                 Self::Http2(calls, gate) => {
                     calls.fetch_add(1, Ordering::Relaxed);
                     let gate = gate.clone();
@@ -1771,10 +1867,11 @@ mod tests {
     fn connection(req: ConnectRequest) -> ConnectionConfig {
         ConnectionConfig {
             req,
-            proto: Arc::new((
-                conn::http1::Builder::default(),
-                conn::http2::Builder::new(Executor::default()),
-            )),
+            proto: Arc::new(ProtocolBuilders {
+                http1: conn::http1::Builder::default(),
+                #[cfg(feature = "http2")]
+                http2: conn::http2::Builder::new(Executor::default()),
+            }),
             dedicated: false,
         }
     }
@@ -1834,9 +1931,14 @@ mod tests {
         );
         assert_eq!(clones.load(Ordering::Relaxed), 0);
 
-        for (index, version) in [HttpVersion::Http1, HttpVersion::Http2, HttpVersion::Auto]
-            .into_iter()
-            .enumerate()
+        for (index, version) in [
+            HttpVersion::Http1,
+            #[cfg(feature = "http2")]
+            HttpVersion::Http2,
+            HttpVersion::Auto,
+        ]
+        .into_iter()
+        .enumerate()
         {
             let target = PoolTarget {
                 connection: connection(connect_request()),
@@ -1845,12 +1947,17 @@ mod tests {
             };
             let entry = pool.inner.targeter.service(&target);
 
-            assert_eq!(entry.protocol(), version);
+            #[cfg(feature = "http2")]
+            let expected = version;
+            #[cfg(not(feature = "http2"))]
+            let expected = HttpVersion::Http1;
+            assert_eq!(entry.protocol(), expected);
             assert_eq!(clones.load(Ordering::Relaxed), index + 1);
         }
     }
 
     #[tokio::test]
+    #[cfg(feature = "http2")]
     async fn http2_checkouts_preserve_generation_and_cancellation() {
         /// Records when one checkout's metadata is finally released.
         /// Each attempt gets a fresh flag independent of pool identity.
@@ -1884,7 +1991,11 @@ mod tests {
                     &pool.inner.targeter,
                     target,
                     |entry, mut target| {
-                        assert_eq!(entry.protocol(), version);
+                        #[cfg(feature = "http2")]
+                        let expected = version;
+                        #[cfg(not(feature = "http2"))]
+                        let expected = HttpVersion::Http1;
+                        assert_eq!(entry.protocol(), expected);
                         // Exercise the Auto graph without TLS by selecting H2 at
                         // the transport stage, where ALPN would normally choose it.
                         target.version = HttpVersion::Http2;
@@ -2044,6 +2155,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "http2")]
     async fn extended_connect_checkout_only_clones_established_senders() {
         for version in [HttpVersion::Http2, HttpVersion::Auto] {
             let calls = Arc::new(AtomicUsize::new(0));
@@ -2105,7 +2217,12 @@ mod tests {
 
     #[tokio::test]
     async fn checkouts_remove_empty_map_entries() {
-        for version in [HttpVersion::Http1, HttpVersion::Http2, HttpVersion::Auto] {
+        for version in [
+            HttpVersion::Http1,
+            #[cfg(feature = "http2")]
+            HttpVersion::Http2,
+            HttpVersion::Auto,
+        ] {
             let pool = test_pool(TestConnector::Fails);
             let result = pool.checkout(connection(connect_request()), version).await;
             assert!(result.is_err());

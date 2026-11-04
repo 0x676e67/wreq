@@ -21,8 +21,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use netty::rt::{Executor as _, Sleep, Timer as _};
 use tokio::sync::watch;
-use wreq_proto::rt::{Executor as _, Sleep, Timer as _};
 
 use crate::rt::{Executor, Timer};
 

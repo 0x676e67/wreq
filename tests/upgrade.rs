@@ -1,5 +1,4 @@
 mod support;
-use http::Method;
 use support::server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wreq::Client;
@@ -51,6 +50,7 @@ async fn http_upgrade() {
     assert_eq!(buf, b"bar=foo");
 }
 
+#[cfg(feature = "http2")]
 #[tokio::test]
 async fn http2_upgrade() {
     let server = server::http_with_config(
@@ -81,7 +81,7 @@ async fn http2_upgrade() {
         .http2_only()
         .build()
         .unwrap()
-        .request(Method::CONNECT, format!("http://{}", server.addr()))
+        .request(http::Method::CONNECT, format!("http://{}", server.addr()))
         .send()
         .await
         .unwrap();
@@ -173,13 +173,16 @@ async fn websocket_uses_dedicated_http1_connection() {
     assert_eq!(accepted.load(Ordering::SeqCst), 2);
 }
 
-#[cfg(feature = "ws")]
+#[cfg(all(feature = "ws", feature = "http2"))]
 #[tokio::test]
 async fn websocket_reuses_established_http2_with_extended_connect() {
     use std::{convert::Infallible, error::Error as _};
 
     use futures_util::{SinkExt, StreamExt};
-    use http::header::{CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE};
+    use http::{
+        Method,
+        header::{CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE},
+    };
     use support::server::Event;
     use tokio_tungstenite::{
         WebSocketStream,

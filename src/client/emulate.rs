@@ -1,5 +1,7 @@
 use http::HeaderMap;
-use wreq_proto::{http1::Http1Options, http2::Http2Options};
+use netty::http1::Http1Options;
+#[cfg(feature = "http2")]
+use netty::http2::Http2Options;
 
 use crate::{conn::extra::Extra, header::OrigHeaderMap, tls::TlsOptions};
 
@@ -41,6 +43,8 @@ impl EmulationBuilder {
 
     /// Sets the HTTP/2 options configuration.
     #[inline]
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_options(mut self, opts: Http2Options) -> Self {
         self.emulation.2.insert_config(opts);
         self
@@ -104,6 +108,7 @@ mod tests {
             .min_tls_version(crate::tls::TlsVersion::TLS_1_2)
             .build();
         let http1 = Http1Options::builder().max_headers(32).build();
+        #[cfg(feature = "http2")]
         let http2 = Http2Options::builder().header_table_size(4096).build();
         let headers =
             HeaderMap::from_iter([("x-profile".parse().unwrap(), "first".parse().unwrap())]);
@@ -113,12 +118,14 @@ mod tests {
             .headers(headers.clone())
             .orig_headers(orig_headers.clone())
             .tls_options(tls.clone())
-            .http1_options(http1.clone())
-            .http2_options(http2.clone())
-            .build();
+            .http1_options(http1.clone());
+        #[cfg(feature = "http2")]
+        let profile = profile.http2_options(http2.clone());
+        let profile = profile.build();
         let client = Client::builder().emulation(profile.clone());
         assert_eq!(client.config.tls_options.as_ref(), Some(&tls));
         assert_eq!(client.config.http1_options.as_ref(), Some(&http1));
+        #[cfg(feature = "http2")]
         assert_eq!(client.config.http2_options.as_ref(), Some(&http2));
         assert_eq!(client.config.headers["x-profile"], "first");
         assert_eq!(client.config.orig_headers, orig_headers);
@@ -126,6 +133,7 @@ mod tests {
         let client = client.emulation(Emulation::builder().build());
         assert_eq!(client.config.tls_options.as_ref(), Some(&tls));
         assert_eq!(client.config.http1_options.as_ref(), Some(&http1));
+        #[cfg(feature = "http2")]
         assert_eq!(client.config.http2_options.as_ref(), Some(&http2));
         assert_eq!(client.config.orig_headers, orig_headers);
         let client = client.build().unwrap();
@@ -141,6 +149,7 @@ mod tests {
         let extra = request.extensions().get::<Extra>().unwrap();
         assert_eq!(extra.get::<TlsOptions>(), Some(&tls));
         assert_eq!(extra.get::<Http1Options>(), Some(&http1));
+        #[cfg(feature = "http2")]
         assert_eq!(extra.get::<Http2Options>(), Some(&http2));
         assert!(extra.get::<OrigHeaderMap>().is_none());
         assert_eq!(
@@ -160,6 +169,7 @@ mod tests {
             .unwrap();
         let replaced_extra = replaced.extensions().get::<Extra>().unwrap();
         assert_eq!(replaced_extra.get::<TlsOptions>(), Some(&tls));
+        #[cfg(feature = "http2")]
         assert_eq!(replaced_extra.get::<Http2Options>(), Some(&http2));
         assert_eq!(replaced_extra.get::<Http1Options>(), Some(&replacement));
         assert_eq!(replaced_extra.get::<Group>(), Some(&group));
@@ -182,11 +192,10 @@ mod tests {
         assert_eq!(profile.2.get::<TlsOptions>(), Some(&tls));
 
         // Header values and spelling cannot partition protocol configuration identity.
-        let same_options = Emulation::builder()
-            .tls_options(tls)
-            .http1_options(http1)
-            .http2_options(http2)
-            .build();
+        let same_options = Emulation::builder().tls_options(tls).http1_options(http1);
+        #[cfg(feature = "http2")]
+        let same_options = same_options.http2_options(http2);
+        let same_options = same_options.build();
         assert_eq!(profile.2, same_options.2);
     }
 }

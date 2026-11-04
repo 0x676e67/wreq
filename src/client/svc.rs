@@ -14,18 +14,20 @@ use std::{
 };
 
 use futures_util::future::{self, BoxFuture, Either, Ready};
+#[cfg(feature = "http2")]
 use http::{
-    HeaderMap, Method, Request, Response, Uri, Version,
+    HeaderMap, Method,
     header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
 };
+use http::{Request, Response, Uri, Version};
 use http_body::Body;
+use netty::{body::Incoming, conn, rt::Executor as _};
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     util::{MapErr, Oneshot},
 };
-use wreq_proto::{body::Incoming, conn, rt::Executor as _};
 #[cfg(feature = "cookies")]
 use {
     crate::{
@@ -37,15 +39,11 @@ use {
 
 use super::{
     error::{Error, ErrorKind},
-    pool::{self, ConnectionConfig},
+    pool::{self, ConnectionConfig, ProtocolBuilders},
 };
 use crate::{
     HttpVersion,
-    conn::{
-        Connection,
-        extra::Extra,
-        request::{ConnectRequest, ConnectionKey},
-    },
+    conn::{Connection, extra::Extra, request::ConnectRequest},
     ext::UriExt,
     rt::{Executor, Timer},
 };
@@ -71,7 +69,8 @@ pub struct Stack<S, B> {
         reason = "Keep the concrete Tower stack local without another alias"
     )]
     inner: MapErr<RetryUnsent<S>, fn(DispatchError<B>) -> BoxError>,
-    proto: Arc<(conn::http1::Builder, conn::http2::Builder<Executor>)>,
+    proto: Arc<ProtocolBuilders>,
+    #[cfg(feature = "http2")]
     version: HttpVersion,
 }
 
@@ -88,11 +87,13 @@ pub struct Stack<S, B> {
     )
 )]
 pub(super) struct DedicatedConnection {
+    #[cfg(feature = "http2")]
     pub(super) extended_connect: bool,
 }
 
 /// Original RFC 6455 header fields of a WebSocket handshake riding extended CONNECT.
 /// They are restored in order if the request returns unsent, so a retry can use HTTP/1.1.
+#[cfg(feature = "http2")]
 struct Http1Upgrade {
     headers: HeaderMap,
 }
@@ -104,7 +105,8 @@ pub struct PoolRequest<B> {
     request: Request<B>,
     connection: ConnectionConfig,
     /// Default-group key whose established sender may carry this WebSocket.
-    extended_connect: Option<ConnectionKey>,
+    #[cfg(feature = "http2")]
+    extended_connect: Option<crate::conn::request::ConnectionKey>,
 }
 
 /// Retries canceled checkouts and unsent requests on reused connections.
@@ -179,18 +181,25 @@ pub enum DispatchError<B> {
 /// preserving ownership of any request returned before encoding.
 pub fn layer<S, B>(
     h1_builder: conn::http1::Builder,
-    h2_builder: conn::http2::Builder<Executor>,
+    #[cfg(feature = "http2")] h2_builder: conn::http2::Builder<Executor>,
     retry_unsent: bool,
     version: HttpVersion,
 ) -> impl Layer<S, Service = Stack<S, B>> + Clone {
+    #[cfg(not(feature = "http2"))]
+    let _ = version;
     // Both builders share one lifetime. One Arc avoids a second allocation and
     // separate reference-count updates on stack clones and pooled requests.
-    let proto = Arc::new((h1_builder, h2_builder));
+    let proto = Arc::new(ProtocolBuilders {
+        http1: h1_builder,
+        #[cfg(feature = "http2")]
+        http2: h2_builder,
+    });
 
     ServiceBuilder::new()
         .layer_fn(move |inner| Stack {
             inner,
             proto: proto.clone(),
+            #[cfg(feature = "http2")]
             version,
         })
         .map_err(DispatchError::into_error as fn(DispatchError<B>) -> BoxError)
@@ -208,6 +217,7 @@ impl<S: Clone, B> Clone for Stack<S, B> {
         Self {
             inner: self.inner.clone(),
             proto: self.proto.clone(),
+            #[cfg(feature = "http2")]
             version: self.version,
         }
     }
@@ -246,9 +256,11 @@ where
         // remains explicit: https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html
         let version = match version {
             Some(Version::HTTP_10 | Version::HTTP_11) => Some(HttpVersion::Http1),
+            #[cfg(feature = "http2")]
             Some(Version::HTTP_2) if uri.is_https() && self.version != HttpVersion::Http2 => {
                 Some(HttpVersion::Auto)
             }
+            #[cfg(feature = "http2")]
             Some(Version::HTTP_2) => Some(HttpVersion::Http2),
             Some(_) => {
                 return Either::Right(future::err(
@@ -261,6 +273,7 @@ where
         match ConnectRequest::new(uri, version, extra) {
             Ok(req) => {
                 // Only clients that may negotiate HTTP/2 have a default group to probe.
+                #[cfg(feature = "http2")]
                 let extended_connect = (dedicated.is_some_and(|d| d.extended_connect)
                     && self.version != HttpVersion::Http1)
                     .then(|| req.key_with_version(None));
@@ -271,6 +284,7 @@ where
                         proto: self.proto.clone(),
                         dedicated: dedicated.is_some(),
                     },
+                    #[cfg(feature = "http2")]
                     extended_connect,
                 }))
             }
@@ -379,6 +393,7 @@ impl<B> DispatchError<B> {
 
 // ===== impl Http1Upgrade =====
 
+#[cfg(feature = "http2")]
 impl Http1Upgrade {
     /// Rewrites the GET upgrade as extended CONNECT, keeping the other WebSocket fields
     /// ([RFC 8441 §5](https://www.rfc-editor.org/rfc/rfc8441#section-5)).
@@ -423,6 +438,7 @@ fn with_h2_alpn_context(error: Error, unnegotiated_h2: bool) -> Error {
 }
 
 /// Rejects extended CONNECT on a connection whose peer did not enable it (RFC 8441 §3).
+#[cfg(feature = "http2")]
 fn extended_connect_disabled<B>(pooled: &pool::Pooled<B>) -> Error
 where
     B: Body + Send + Unpin + 'static,
@@ -510,14 +526,19 @@ where
             let PoolRequest {
                 mut request,
                 connection,
+                #[cfg(feature = "http2")]
                 extended_connect,
             } = request;
 
             // RFC 8441 §3: extended CONNECT only after the peer enabled it. A miss keeps
             // the dedicated HTTP/1.1 upgrade, so no HTTP/2 connection is opened for it.
+            #[cfg(feature = "http2")]
             let reused = extended_connect
                 .as_ref()
                 .and_then(|key| this.pool.checkout_extended_connect(key));
+            #[cfg(not(feature = "http2"))]
+            let reused: Option<pool::Pooled<B>> = None;
+            #[cfg(feature = "http2")]
             let upgrade = reused
                 .is_some()
                 .then(|| Http1Upgrade::into_extended_connect(&mut request));
@@ -534,6 +555,7 @@ where
                                 request: Box::new(PoolRequest {
                                     request,
                                     connection,
+                                    #[cfg(feature = "http2")]
                                     extended_connect,
                                 }),
                             });
@@ -548,7 +570,9 @@ where
                 }
             };
 
+            #[cfg(feature = "http2")]
             let extended = request.extensions().get::<http2::ext::Protocol>().is_some();
+            #[cfg(feature = "http2")]
             if extended {
                 // RFC 8441 extended CONNECT exists only in HTTP/2. Over HTTP/1 it would be an
                 // ordinary tunnel request (RFC 9110 section 9.3.6), so it is never sent there:
@@ -620,9 +644,12 @@ where
                         && !connect_info.is_negotiated_h2();
                     // A returned request was not sent; only protocol rejections are final,
                     // since they repeat on the same connection.
-                    if let Some(mut request) =
+                    if let Some(request) =
                         (!error.is_user()).then(|| error.take_message()).flatten()
                     {
+                        #[cfg(feature = "http2")]
+                        let mut request = request;
+                        #[cfg(feature = "http2")]
                         if let Some(upgrade) = upgrade {
                             upgrade.restore(&mut request);
                         }
@@ -633,11 +660,13 @@ where
                             request: Box::new(PoolRequest {
                                 request,
                                 connection,
+                                #[cfg(feature = "http2")]
                                 extended_connect,
                             }),
                             connection_reused,
                         });
                     }
+                    #[cfg(feature = "http2")]
                     if extended && pooled.extended_connect() == Some(false) {
                         return Err(DispatchError::Terminal(extended_connect_disabled(&pooled)));
                     }
@@ -688,7 +717,15 @@ mod tests {
         use bytes::Bytes;
         use http_body_util::{BodyExt, Full};
 
-        for version in [HttpVersion::Http1, HttpVersion::Http2] {
+        for version in [
+            HttpVersion::Http1,
+            #[cfg(feature = "http2")]
+            HttpVersion::Http2,
+        ] {
+            #[cfg(feature = "http2")]
+            let h2 = version == HttpVersion::Http2;
+            #[cfg(not(feature = "http2"))]
+            let h2 = false;
             let calls = Arc::new(AtomicUsize::new(0));
             let accepted = calls.clone();
             let connector = tower::service_fn(move |conn_req: ConnectRequest| {
@@ -700,6 +737,7 @@ mod tests {
                         .get::<crate::http1::Http1Options>()
                         .is_some()
                 );
+                #[cfg(feature = "http2")]
                 assert!(
                     conn_req
                         .extra()
@@ -734,6 +772,7 @@ mod tests {
             });
             let mut stack = layer(
                 conn::http1::Builder::default(),
+                #[cfg(feature = "http2")]
                 conn::http2::Builder::new(Executor::default()),
                 true,
                 version,
@@ -763,7 +802,7 @@ mod tests {
             {
                 let limits = attempt == 4 && version == HttpVersion::Http1;
                 let mut request = Request::builder()
-                    .version(if version == HttpVersion::Http2 {
+                    .version(if h2 {
                         Version::HTTP_2
                     } else {
                         Version::HTTP_11
@@ -785,13 +824,10 @@ mod tests {
                         })
                         .build(),
                 );
+                #[cfg(feature = "http2")]
                 extra.insert_config(
                     crate::http2::Http2Options::builder()
-                        .header_table_size(if strict && version == HttpVersion::Http2 {
-                            8192
-                        } else {
-                            4096
-                        })
+                        .header_table_size(if strict && h2 { 8192 } else { 4096 })
                         .build(),
                 );
                 request.extensions_mut().insert(extra);
@@ -859,6 +895,7 @@ mod tests {
             ServiceBuilder::new()
                 .layer(layer(
                     conn::http1::Builder::default(),
+                    #[cfg(feature = "http2")]
                     conn::http2::Builder::new(Executor::default()),
                     true,
                     HttpVersion::Auto,
@@ -872,6 +909,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "http2")]
     async fn protocol_selection_preserves_wire_versions_and_pool_groups() {
         let mut keys = Vec::new();
         for (wire, client, extended, expected) in [
@@ -944,6 +982,7 @@ mod tests {
             let request = ServiceBuilder::new()
                 .layer(layer(
                     conn::http1::Builder::default(),
+                    #[cfg(feature = "http2")]
                     conn::http2::Builder::new(Executor::default()),
                     true,
                     client,
@@ -987,6 +1026,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "http2")]
     async fn websocket_route_probes_default_group_and_restores_upgrade() {
         let request = |websocket: Option<bool>| {
             let mut request = Request::builder()
@@ -1012,6 +1052,7 @@ mod tests {
             let stack = ServiceBuilder::new()
                 .layer(layer(
                     conn::http1::Builder::default(),
+                    #[cfg(feature = "http2")]
                     conn::http2::Builder::new(Executor::default()),
                     true,
                     client,
@@ -1100,6 +1141,7 @@ mod tests {
             let result = ServiceBuilder::new()
                 .layer(layer(
                     conn::http1::Builder::default(),
+                    #[cfg(feature = "http2")]
                     conn::http2::Builder::new(Executor::default()),
                     enabled,
                     HttpVersion::Auto,
@@ -1150,6 +1192,7 @@ mod tests {
             ServiceBuilder::new()
                 .layer(layer(
                     conn::http1::Builder::default(),
+                    #[cfg(feature = "http2")]
                     conn::http2::Builder::new(Executor::default()),
                     true,
                     HttpVersion::Auto,
@@ -1182,6 +1225,7 @@ mod tests {
             ServiceBuilder::new()
                 .layer(layer(
                     conn::http1::Builder::default(),
+                    #[cfg(feature = "http2")]
                     conn::http2::Builder::new(Executor::default()),
                     true,
                     HttpVersion::Auto,
