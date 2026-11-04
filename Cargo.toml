@@ -325,17 +325,17 @@ required-features = ["ws"]
 [[example]]
 name = "json_dynamic"
 path = "examples/json_dynamic.rs"
-required-features = ["json"]
+required-features = ["json", "tokio-rt"]
 
 [[example]]
 name = "json_typed"
 path = "examples/json_typed.rs"
-required-features = ["json"]
+required-features = ["json", "tokio-rt"]
 
 [[example]]
 name = "form"
 path = "examples/form.rs"
-required-features = ["form"]
+required-features = ["form", "tokio-rt"]
 
 [[example]]
 name = "connect_via_lower_priority_tokio_runtime"
@@ -345,35 +345,37 @@ required-features = ["http3", "tokio-rt", "tracing"]
 [[example]]
 name = "emulate"
 path = "examples/emulate.rs"
-required-features = ["http2", "gzip", "brotli", "zstd", "deflate", "tracing"]
+required-features = ["http2", "gzip", "brotli", "zstd", "deflate", "tracing", "tokio-rt"]
 
 [[example]]
 name = "cert_store"
 path = "examples/cert_store.rs"
-required-features = ["webpki-roots"]
+required-features = ["webpki-roots", "tokio-rt"]
 
 [[example]]
 name = "request"
 path = "examples/request.rs"
-required-features = ["tokio-rt"]
+required-features = ["http2", "tokio-rt"]
 
 [[example]]
 name = "http1_websocket"
 path = "examples/http1_websocket.rs"
-required-features = ["http2", "ws", "futures-util/std"]
+required-features = ["ws", "futures-util/std", "tokio-rt"]
 
 [[example]]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
-required-features = ["http2", "ws", "futures-util/std"]
+required-features = ["http2", "ws", "futures-util/std", "tokio-rt"]
 
 [[example]]
 name = "keylog"
 path = "examples/keylog.rs"
+required-features = ["tokio-rt"]
 
 [[example]]
 name = "unix_socket"
 path = "examples/unix_socket.rs"
+required-features = ["tokio-rt"]
 
 [[example]]
 name = "http3"

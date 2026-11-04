@@ -22,6 +22,10 @@ pub enum Event {
 }
 
 impl Server {
+    #[allow(
+        dead_code,
+        reason = "Unix socket tests serve their own listeners and never read the address"
+    )]
     pub fn addr(&self) -> net::SocketAddr {
         self.addr
     }
