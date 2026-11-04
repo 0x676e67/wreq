@@ -17,6 +17,9 @@ pin_project! {
     pub enum Pending {
         Request {
             uri: Option<Uri>,
+            // Keep the composed Tower state machine out of the public future.
+            // An outer box bounds its size, not every inner poll frame:
+            // https://github.com/seanmonstar/reqwest/issues/2718
             fut: Pin<Box<Oneshot<Either<ClientService, BoxedClientService>, Request<Body>>>>,
         },
         Error {

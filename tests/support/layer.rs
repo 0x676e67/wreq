@@ -17,7 +17,10 @@ pub struct DelayLayer {
 }
 
 impl DelayLayer {
-    #[allow(unused)]
+    #[allow(
+        dead_code,
+        reason = "Only timeout and middleware tests inject connection delays"
+    )]
     pub const fn new(delay: Duration) -> Self {
         DelayLayer { delay }
     }
@@ -129,7 +132,10 @@ pub struct SharedConcurrencyLimitLayer {
 }
 
 impl SharedConcurrencyLimitLayer {
-    #[allow(unused)]
+    #[allow(
+        dead_code,
+        reason = "Only middleware tests use the shared concurrency limit"
+    )]
     pub fn new(limit: usize) -> Self {
         Self {
             semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(limit)),

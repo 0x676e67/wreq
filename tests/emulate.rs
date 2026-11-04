@@ -255,7 +255,7 @@ fn emulation_template() -> Emulation {
         .tls_options(tls_options_template())
         .http1_options(http1_options_template())
         .http2_options(http2_options_template())
-        .build(Default::default())
+        .build()
 }
 
 #[tokio::test]
@@ -321,7 +321,7 @@ async fn test_request_with_emulation_tls() -> wreq::Result<()> {
 
     let emulation = Emulation::builder()
         .tls_options(tls_options_template())
-        .build(Default::default());
+        .build();
 
     let text = client
         .get("https://tls.browserleaks.com/")
@@ -348,7 +348,7 @@ async fn test_request_with_emulation_http2() -> wreq::Result<()> {
 
     let emulation = Emulation::builder()
         .http2_options(http2_options_template())
-        .build(Default::default());
+        .build();
 
     let text = client
         .get("https://tls.browserleaks.com/")

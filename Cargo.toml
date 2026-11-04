@@ -98,6 +98,7 @@ parking_lot = ["dep:parking_lot", "http2?/parking_lot"]
 prefix-symbols = ["btls/prefix-symbols"]
 
 [dependencies]
+educe = { version = "0.7.6", default-features = false, features = ["Default", "PartialEq", "Eq", "Hash"] }
 url = "2.5.8"
 bytes = "1.11.1"
 http = "1.4.0"
@@ -225,6 +226,12 @@ incremental = false
 [profile.bench]
 codegen-units = 1
 incremental = false
+
+[[bench]]
+name = "pool"
+path = "bench/pool.rs"
+harness = false
+required-features = ["tokio-rt", "stream"]
 
 [[bench]]
 name = "http1_current_thread"

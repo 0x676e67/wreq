@@ -4,7 +4,7 @@ mod cyper;
 mod reqwest;
 mod wreq;
 
-use std::{convert::Infallible, fmt::Debug, future::Future, net::SocketAddr};
+use std::{convert::Infallible, fmt::Debug, future::Future, net::SocketAddr, time::Duration};
 
 use bytes::Bytes;
 use criterion::{BenchmarkGroup, async_executor::AsyncExecutor, measurement::WallTime};
@@ -147,6 +147,50 @@ pub(super) fn bench_clients(
     Ok(())
 }
 
+/// Registers the fixed-worker wreq workload for each connection-pool strategy.
+///
+/// Returns an error if the client or its Tokio runtime cannot be created.
+#[allow(dead_code)]
+pub(crate) fn bench_wreq_pool_strategies(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    addr: SocketAddr,
+    target: BenchTarget,
+    num_requests: usize,
+    concurrent_limit: usize,
+    body: BodyCase,
+    reuse_first_timeout: Duration,
+) -> Result<(), BoxError> {
+    let url = format!("{}://{addr}", target.tls);
+    let executor = <wreq::Adapter as ClientAdapter>::create_executor(target)?;
+    let case = ClientCase {
+        url: &url,
+        target,
+        num_requests,
+        concurrent_limit,
+        body,
+        body_kind: BodyKind::Full,
+    };
+    let reuse_first_label = format!("reuse_first_{reuse_first_timeout:?}");
+    let strategies = [
+        ("race", ::wreq::PoolStrategy::Race),
+        (
+            reuse_first_label.as_str(),
+            ::wreq::PoolStrategy::ReuseFirst(reuse_first_timeout),
+        ),
+    ];
+
+    for (label, strategy) in strategies {
+        let client = wreq::create_client(target, strategy)?;
+        group.bench_function(label, |bencher| {
+            bencher
+                .to_async(&executor)
+                .iter(|| requests::<wreq::Adapter>(&client, case));
+        });
+    }
+
+    Ok(())
+}
+
 /// Streams a static payload in fixed chunks without copying its bytes.
 ///
 /// # Panics
@@ -232,7 +276,8 @@ fn worker_request_counts(
     let requests_per_worker = num_requests.checked_div(worker_count).unwrap_or(0);
     let remainder = num_requests.checked_rem(worker_count).unwrap_or(0);
 
-    // Pre-splitting the work keeps shared counters out of the measured path.
+    // Keep the quotient and remainder split identical across clients and pool
+    // strategies. Dropping the remainder changes measured work and biases results.
     (0..worker_count).map(move |worker| requests_per_worker + usize::from(worker < remainder))
 }
 

@@ -148,7 +148,7 @@ impl Policy {
     /// let custom = redirect::Policy::custom(|attempt| {
     ///     if attempt.previous.len() > 5 {
     ///         attempt.error("too many redirects")
-    ///     } else if attempt.uri() == "example.domain" {
+    ///     } else if attempt.uri.host() == Some("example.domain") {
     ///         // prevent redirects to 'example.domain'
     ///         attempt.stop()
     ///     } else {
@@ -183,7 +183,7 @@ impl Policy {
     /// #
     /// # fn run() -> Result<(), Error> {
     /// let custom = redirect::Policy::custom(|attempt| {
-    ///     eprintln!("{}, Location: {:?}", attempt.status(), attempt.uri());
+    ///     eprintln!("{}, Location: {:?}", attempt.status, attempt.uri);
     ///     redirect::Policy::default().redirect(attempt)
     /// });
     /// # Ok(())
@@ -273,7 +273,7 @@ impl Attempt<'_, true> {
     /// let policy = redirect::Policy::custom(|attempt| {
     ///     attempt.pending(|attempt| async move {
     ///         // Perform some async operation
-    ///         if attempt.uri().host() == Some("trusted.domain") {
+    ///         if attempt.uri.host() == Some("trusted.domain") {
     ///             attempt.follow()
     ///         } else {
     ///             attempt.stop()
@@ -503,7 +503,7 @@ mod referrer {
         /// Captures the caller-provided referrer without changing the initial request.
         ///
         /// Redirect processing updates the policy before computing the next referrer:
-        /// https://w3c.github.io/webappsec-referrer-policy/#integration-with-fetch
+        /// <https://w3c.github.io/webappsec-referrer-policy/#integration-with-fetch>
         pub(super) fn new(headers: &HeaderMap) -> Self {
             Self {
                 source: headers.get(REFERER).and_then(parse_referrer),
@@ -513,7 +513,7 @@ mod referrer {
 
         /// Applies the last recognized policy from a redirect response.
         ///
-        /// https://w3c.github.io/webappsec-referrer-policy/#set-requests-referrer-policy-on-redirect
+        /// <https://w3c.github.io/webappsec-referrer-policy/#set-requests-referrer-policy-on-redirect>
         pub(super) fn on_redirect(&mut self, headers: &HeaderMap) {
             match ReferrerPolicy::from(headers) {
                 ReferrerPolicy::None => {}
@@ -523,7 +523,7 @@ mod referrer {
 
         /// Computes the referrer for the next request in the redirect chain.
         ///
-        /// https://w3c.github.io/webappsec-referrer-policy/#determine-requests-referrer
+        /// <https://w3c.github.io/webappsec-referrer-policy/#determine-requests-referrer>
         pub(super) fn apply<B>(&mut self, req: &mut http::Request<B>) {
             let Some(mut source) = self.source.take() else {
                 req.headers_mut().remove(REFERER);
@@ -610,7 +610,7 @@ mod referrer {
 
     /// Parses all policy tokens and keeps the last recognized value.
     ///
-    /// https://w3c.github.io/webappsec-referrer-policy/#parse-referrer-policy-from-header
+    /// <https://w3c.github.io/webappsec-referrer-policy/#parse-referrer-policy-from-header>
     impl From<&HeaderMap> for ReferrerPolicy {
         fn from(headers: &HeaderMap) -> Self {
             let mut policy = Self::None;
@@ -667,10 +667,10 @@ mod referrer {
     /// Parses an HTTP(S) referrer and strips credentials and fragments.
     ///
     /// `Referer` field syntax:
-    /// https://www.rfc-editor.org/rfc/rfc9110.html#section-10.1.3
+    /// <https://www.rfc-editor.org/rfc/rfc9110.html#section-10.1.3>
     ///
     /// Referrer Policy URL stripping:
-    /// https://w3c.github.io/webappsec-referrer-policy/#strip-url
+    /// <https://w3c.github.io/webappsec-referrer-policy/#strip-url>
     fn parse_referrer(value: &HeaderValue) -> Option<Url> {
         let mut source = Url::parse(value.to_str().ok()?).ok()?;
         let scheme = source.scheme().parse::<Scheme>().ok()?;
