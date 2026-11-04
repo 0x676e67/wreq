@@ -497,6 +497,10 @@ mod tests {
             ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
             ..Default::default()
         })));
+        #[allow(
+            clippy::single_element_loop,
+            reason = "Transports depend on enabled features"
+        )]
         for transport in [
             SessionTransport::Stream,
             #[cfg(feature = "http3")]

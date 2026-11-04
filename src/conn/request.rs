@@ -320,6 +320,10 @@ mod tests {
         assert_eq!(rerouted.key(), changed.key());
 
         // Inherited and explicit choices keep their meaning through proxy routing.
+        #[allow(
+            clippy::single_element_loop,
+            reason = "Protocol cases depend on enabled features"
+        )]
         for (client, protocol, resolved) in [
             (Protocol::Http1, None, Protocol::Http1),
             #[cfg(feature = "http2")]
