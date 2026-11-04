@@ -27,8 +27,8 @@
 //! - [Repository Examples](https://github.com/0x676e67/wreq/tree/main/examples)
 //!
 //! Construct a client with an explicit runtime, using `Client::builder(runtime)`
-//! or `Client::builder_tokio()` / `Client::builder_compio()`. The `http3` feature
-//! requires a runtime with QUIC support; Compio currently supports HTTP/1 and HTTP/2.
+//! or `Client::builder_tokio()` / `Client::builder_compio()`. HTTP/3 needs a runtime
+//! with UDP socket support: Tokio provides it, while Compio supports HTTP/1 and HTTP/2.
 //!
 //! ## Making a GET request
 //!

@@ -29,17 +29,14 @@ use crate::dns::Resolve;
 
 /// Runtime facilities selected when constructing a client.
 ///
-/// Supplies background execution, timers, socket I/O and a default DNS resolver.
-/// Blocking DNS lookups should be offloaded by the resolver implementation.
+/// Supplies background execution, timers through [`Timer`], socket I/O and a default
+/// DNS resolver. Blocking DNS lookups should be offloaded by the resolver implementation.
 /// Callers can replace the resolver with
 /// [`ClientBuilder::dns_resolver`](crate::ClientBuilder::dns_resolver).
-pub trait Runtime: Send + Sync + Debug + 'static {
+pub trait Runtime: Timer + Send + Sync + Debug + 'static {
     /// Schedules a task to run in the background.
+    #[track_caller]
     fn execute(&self, fut: BoxFuture<'static, ()>);
-
-    /// Returns the timer provider used by this runtime.
-    /// Implementations may return a shared provider for reuse across timer contexts.
-    fn new_timer(&self) -> Arc<dyn Timer>;
 
     /// Returns the resolver used unless the client builder overrides DNS.
     fn resolver(&self) -> Arc<dyn Resolve>;
@@ -52,9 +49,19 @@ pub trait Runtime: Send + Sync + Debug + 'static {
     #[cfg(unix)]
     fn connect_unix(&self, path: Arc<std::path::Path>) -> Connecting;
 
-    /// Returns the QUIC runtime required when HTTP/3 is enabled.
+    /// Registers a bound, nonblocking UDP socket for HTTP/3 over QUIC.
+    /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error, which fails
+    /// HTTP/3 connections without affecting HTTP/1 or HTTP/2.
     #[cfg(feature = "http3")]
-    fn quic(&self) -> Arc<dyn quic::Runtime>;
+    fn udp_socket(
+        &self,
+        _socket: std::net::UdpSocket,
+    ) -> io::Result<Box<dyn ::quic::AsyncUdpSocket>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "runtime does not support UDP sockets",
+        ))
+    }
 }
 
 impl_into_shared!(
@@ -168,6 +175,25 @@ impl Future for BoxSleep {
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         self.get_mut().inner.as_mut().poll(cx)
+    }
+}
+
+#[cfg(feature = "http3")]
+impl ::quic::AsyncTimer for BoxSleep {
+    #[inline]
+    fn reset(self: Pin<&mut Self>, deadline: Instant) {
+        self.get_mut().reset(deadline);
+    }
+
+    #[inline]
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        Future::poll(self, cx)
+    }
+}
+
+impl Debug for BoxSleep {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BoxSleep").finish_non_exhaustive()
     }
 }
 

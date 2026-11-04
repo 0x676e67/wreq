@@ -149,10 +149,6 @@ mod tests {
     }
 
     impl crate::rt::Runtime for ReadyRuntime {
-        fn new_timer(&self) -> Arc<dyn Timer> {
-            Arc::new(self.clone())
-        }
-
         fn execute(&self, _future: BoxFuture<'static, ()>) {
             panic!("a connection timeout must not spawn a task");
         }
@@ -172,11 +168,6 @@ mod tests {
         #[cfg(unix)]
         fn connect_unix(&self, path: std::sync::Arc<std::path::Path>) -> crate::rt::Connecting {
             crate::rt::tokio::TokioRuntime.connect_unix(path)
-        }
-
-        #[cfg(feature = "http3")]
-        fn quic(&self) -> std::sync::Arc<dyn quic::Runtime> {
-            crate::rt::tokio::TokioRuntime.quic()
         }
     }
 

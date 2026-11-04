@@ -1,48 +1,35 @@
 //! Compio runtime adapter for wreq.
 
-#[cfg(not(feature = "http3"))]
 mod future;
-#[cfg(not(feature = "http3"))]
 mod gai;
-#[cfg(not(feature = "http3"))]
 mod io;
 
-#[cfg(all(unix, not(feature = "http3")))]
+#[cfg(unix)]
 use std::path::Path;
 use std::{
     fmt::{self, Debug, Formatter},
     future::Future,
+    net::{SocketAddr, TcpStream},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant},
 };
-#[cfg(not(feature = "http3"))]
-use std::{
-    net::{SocketAddr, TcpStream},
-    sync::Arc,
-};
 
-#[cfg(all(unix, not(feature = "http3")))]
+#[cfg(unix)]
 use ::compio::net::UnixStream;
-use ::compio::time;
-#[cfg(not(feature = "http3"))]
-use ::compio::{net::TcpSocket, runtime};
-#[cfg(not(feature = "http3"))]
-use futures_util::future::BoxFuture;
-use futures_util::future::LocalBoxFuture;
+use ::compio::{net::TcpSocket, runtime, time};
+use futures_util::future::{BoxFuture, LocalBoxFuture};
 use send_wrapper::SendWrapper;
 
-#[cfg(not(feature = "http3"))]
 use self::{future::SendFuture, gai::GaiResolver, io::Compat};
-use crate::rt::{BoxSleep, Sleep, Timer};
-#[cfg(not(feature = "http3"))]
 use crate::{
     dns::Resolve,
-    rt::{BoxConnection, Connecting, Runtime},
+    rt::{BoxConnection, BoxSleep, Connecting, Runtime, Sleep, Timer},
 };
 
 /// Runtime that uses Compio for task execution, timers, system DNS and socket I/O.
-/// Implements [`super::Runtime`] when HTTP/3 is disabled; its QUIC backend is not yet available.
+/// UDP sockets are not supported yet, so HTTP/3 connections fail with an unsupported error.
 /// Poll and drop its futures and streams on the Compio thread that created them.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CompioRuntime;
@@ -67,13 +54,7 @@ impl Timer for CompioRuntime {
     }
 }
 
-#[cfg(not(feature = "http3"))]
 impl Runtime for CompioRuntime {
-    #[inline]
-    fn new_timer(&self) -> Arc<dyn Timer> {
-        Arc::new(*self)
-    }
-
     #[inline]
     fn execute(&self, task: BoxFuture<'static, ()>) {
         runtime::spawn(task).detach();
