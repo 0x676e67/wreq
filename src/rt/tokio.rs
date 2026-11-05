@@ -1,5 +1,10 @@
 //! Tokio runtime adapter for wreq.
 
+#[cfg(not(all(
+    feature = "hickory-dns",
+    feature = "tokio-rt",
+    not(feature = "compio-rt")
+)))]
 mod gai;
 
 use std::{
@@ -14,13 +19,13 @@ use std::{
 use futures_util::future::BoxFuture;
 use pin_project_lite::pin_project;
 
-use self::gai::GaiResolver;
 use crate::{
     dns::Resolve,
     rt::{BoxConnection, BoxSleep, Connecting, Connection, Sleep, Timer},
 };
 
-/// Runtime that uses Tokio for task execution, timers, system DNS and socket I/O.
+/// Runtime that uses Tokio for task execution, timers, DNS and socket I/O.
+/// DNS uses Hickory with `hickory-dns` (unless `compio-rt` is enabled), else the system resolver.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TokioRuntime;
 
@@ -65,7 +70,19 @@ impl super::Runtime for TokioRuntime {
 
     #[inline]
     fn resolver(&self) -> Arc<dyn Resolve> {
-        Arc::new(GaiResolver::new())
+        #[cfg(all(
+            feature = "hickory-dns",
+            feature = "tokio-rt",
+            not(feature = "compio-rt")
+        ))]
+        let resolver = crate::dns::hickory::HickoryDnsResolver::new();
+        #[cfg(not(all(
+            feature = "hickory-dns",
+            feature = "tokio-rt",
+            not(feature = "compio-rt")
+        )))]
+        let resolver = gai::GaiResolver::new();
+        Arc::new(resolver)
     }
 
     #[inline]

@@ -237,8 +237,7 @@ impl Client {
     ///
     /// # Panics
     ///
-    /// This method panics if a TLS backend cannot be initialized, or the resolver
-    /// cannot load the system configuration.
+    /// This method panics if a TLS backend cannot be initialized.
     ///
     /// Use [`Client::builder`] if you wish to handle the failure as a [`crate::Error`]
     /// instead of panicking.
@@ -485,7 +484,7 @@ impl ClientBuilder {
     ///
     /// # Errors
     ///
-    /// This method fails if a TLS backend or the Hickory DNS resolver cannot be initialized.
+    /// This method fails if a TLS backend cannot be initialized.
     pub fn build(mut self) -> crate::Result<Client> {
         if let Some(err) = self.config.error {
             return Err(err);
@@ -501,17 +500,6 @@ impl ClientBuilder {
             let resolver = {
                 let mut resolver: Arc<dyn Resolve> = match self.config.dns_resolver {
                     Some(dns_resolver) => dns_resolver,
-                    #[cfg(all(
-                        feature = "hickory-dns",
-                        feature = "tokio-rt",
-                        not(feature = "compio-rt")
-                    ))]
-                    None => Arc::new(crate::dns::hickory::HickoryDnsResolver::new()?),
-                    #[cfg(not(all(
-                        feature = "hickory-dns",
-                        feature = "tokio-rt",
-                        not(feature = "compio-rt")
-                    )))]
                     None => self.runtime.resolver(),
                 };
 
@@ -1563,17 +1551,6 @@ impl ClientBuilder {
     }
 
     // DNS options
-
-    /// Uses the runtime's resolver instead of the Hickory DNS resolver, which needs a Tokio
-    /// runtime context. Exists without `hickory-dns`, so calls compile under any feature set.
-    /// A resolver set with [`Self::dns_resolver`] still takes precedence.
-    #[inline]
-    pub fn no_hickory_dns(mut self) -> ClientBuilder {
-        self.config
-            .dns_resolver
-            .get_or_insert_with(|| self.runtime.resolver());
-        self
-    }
 
     /// Override DNS resolution for specific domains to a particular IP address.
     ///

@@ -12,7 +12,6 @@ use hickory_resolver::{
 };
 
 use super::{Addrs, Name, Resolve, Resolving};
-use crate::Error;
 
 /// Resolver shared by all clients, built once from the system configuration.
 /// Falls back to Google DNS when the system configuration cannot be read.
@@ -35,19 +34,19 @@ static RESOLVER: LazyLock<Result<TokioResolver, Arc<NetError>>> = LazyLock::new(
     builder.build().map_err(Arc::new)
 });
 
-/// Hickory DNS resolver selected by Tokio clients unless disabled on the builder.
+/// Hickory DNS resolver used by the Tokio runtime.
+/// A failure to build the shared resolver is returned by every lookup.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HickoryDnsResolver {
-    resolver: &'static TokioResolver,
+    resolver: &'static Result<TokioResolver, Arc<NetError>>,
 }
 
 impl HickoryDnsResolver {
-    /// Returns the shared resolver, or the error from building it.
-    pub(crate) fn new() -> crate::Result<Self> {
-        RESOLVER
-            .as_ref()
-            .map(|resolver| Self { resolver })
-            .map_err(|error| Error::builder(error.clone()))
+    /// Returns a handle to the shared resolver, building it on first use.
+    pub(crate) fn new() -> Self {
+        Self {
+            resolver: LazyLock::force(&RESOLVER),
+        }
     }
 }
 
@@ -55,6 +54,7 @@ impl Resolve for HickoryDnsResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let resolver = self.resolver;
         Box::pin(async move {
+            let resolver = resolver.as_ref().map_err(|error| error.clone())?;
             let lookup = resolver.lookup_ip(name.as_str()).await?;
             let addrs: Addrs = Box::new(
                 lookup
