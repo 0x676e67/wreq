@@ -1798,7 +1798,9 @@ mod sealed {
                         error::Error::from_kind(error::ErrorKind::UserUnsupportedRequestMethod);
                     return FutureEither::Right(future_err(error.into()));
                 }
-                Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2 => {}
+                Version::HTTP_10 | Version::HTTP_11 => {}
+                #[cfg(feature = "http2")]
+                Version::HTTP_2 => {}
                 #[cfg(feature = "http3")]
                 Version::HTTP_3 => {}
                 _unsupported => {

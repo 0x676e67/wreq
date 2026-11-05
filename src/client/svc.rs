@@ -619,8 +619,13 @@ where
                 } else {
                     Version::HTTP_11
                 };
-            } else if pooled.is_http1() && request.version() == Version::HTTP_2 {
-                warn!("Connection is HTTP/1, but request requires HTTP/2");
+            } else if pooled.is_http1()
+                && !matches!(request.version(), Version::HTTP_10 | Version::HTTP_11)
+            {
+                warn!(
+                    "Connection is HTTP/1, but request requires {:?}",
+                    request.version()
+                );
                 return Err(DispatchError::Terminal(
                     Error::from_kind(ErrorKind::UserUnsupportedVersion)
                         .with_connect_info(pooled.conn_info().clone()),
