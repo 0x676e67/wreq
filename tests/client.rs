@@ -996,7 +996,7 @@ async fn http2_only() {
 async fn connection_pool_respects_https_version_policy() {
     use std::{borrow::Cow, sync::Mutex};
 
-    use wreq::tls::{AlpnProtocol, TlsOptions};
+    use wreq::tls::{AlpnProtocol, TlsInfo, TlsOptions};
 
     /// Reports the cookie serialization version so the server can check protocol selection.
     #[cfg(feature = "cookies")]
@@ -1138,6 +1138,7 @@ async fn connection_pool_respects_https_version_policy() {
             .tls_options(tls)
             .no_proxy()
             .tls_cert_verification(false)
+            .tls_info(true)
             .pool_idle_timeout(None)
             .timeout(Duration::from_secs(5))
             .build()
@@ -1167,6 +1168,8 @@ async fn connection_pool_respects_https_version_policy() {
             }
             let response = request.send().await.unwrap();
             assert_eq!(response.status(), StatusCode::OK);
+            // HTTP/1 and HTTP/2 keep separate copies of the connection info.
+            assert!(response.extensions().get::<TlsInfo>().is_some());
             let expected = match btls::ssl::select_next_proto(alpn, offer) {
                 Some(b"h2") => Version::HTTP_2,
                 _ => Version::HTTP_11,

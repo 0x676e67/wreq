@@ -141,13 +141,20 @@ async fn self_signed_certificate_requires_explicit_trust() {
         .unwrap();
     assert!(response.extensions().get::<TlsInfo>().is_none());
 
-    // A store trusting the certificate still checks the URI host, 127.0.0.1.
+    // A store trusting the certificate verifies the requested DNS name against its SAN.
     let store = CertStore::builder().add_der_cert(&der).build().unwrap();
-    assert!(is_untrusted(
-        send(Client::builder_tokio().tls_cert_store(store.clone()), &url).await
-    ));
-    let builder = Client::builder_tokio()
-        .tls_cert_store(store)
-        .tls_verify_hostname(false);
-    assert!(send(builder, &url).await.unwrap().status().is_success());
+    let named = |host: &'static str| {
+        Client::builder_tokio()
+            .resolve(host, addr)
+            .tls_cert_store(store.clone())
+    };
+    let port = addr.port();
+    let response = send(named("wreq.test"), &format!("https://wreq.test:{port}/"))
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let other = format!("https://other.test:{port}/");
+    assert!(is_untrusted(send(named("other.test"), &other).await));
+    let builder = named("other.test").tls_verify_hostname(false);
+    assert!(send(builder, &other).await.unwrap().status().is_success());
 }
