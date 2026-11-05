@@ -123,11 +123,9 @@ jobs:
       - uses: taiki-e/install-action@v2.87.24
         with:
           tool: cargo-nextest
+      # The emulation tests reach tls.browserleaks.com.
       - name: Run tests (${{ matrix.feature-set }})
-        env:
-          # Tests that reach badssl.com and tls.browserleaks.com.
-          PUBLIC_HOST_TESTS: binary_id(wreq::badssl) | binary_id(wreq::emulate)
-        run: cargo nextest run --workspace ${{ matrix.feature-set }} ${{ !matrix.public-network && '-E "not ($PUBLIC_HOST_TESTS)"' || '' }}
+        run: cargo nextest run --workspace ${{ matrix.feature-set }} ${{ !matrix.public-network && '-E "not binary_id(wreq::emulate)"' || '' }}
 
   build:
     name: Build (${{ matrix.env }})
