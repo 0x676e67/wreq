@@ -109,6 +109,14 @@ jobs:
           - "--features multipart"
           - "--features stream"
           - "--features hickory-dns"
+        # Only these rows run the tests that reach public hosts.
+        include:
+          - feature-set: ""
+            public-network: true
+          - feature-set: "--all-features"
+            public-network: true
+          - feature-set: "--features hickory-dns"
+            public-network: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rs/toolchain@v1
@@ -124,8 +132,9 @@ jobs:
       - uses: taiki-e/install-action@v2.87.24
         with:
           tool: cargo-nextest
+      # The emulation tests reach tls.browserleaks.com.
       - name: Run tests (${{ matrix.feature-set }})
-        run: cargo nextest run --workspace ${{ matrix.feature-set }}
+        run: cargo nextest run --workspace ${{ matrix.feature-set }} ${{ !matrix.public-network && '-E "not binary_id(wreq::emulate)"' || '' }}
       # nextest does not run doctests.
       - name: Run doctests (${{ matrix.feature-set }})
         if: matrix.feature-set == '' || matrix.feature-set == '--all-features'
