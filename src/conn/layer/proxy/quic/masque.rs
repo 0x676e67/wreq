@@ -24,6 +24,7 @@ use futures_util::{
     stream::{self, BoxStream},
     task::AtomicWaker,
 };
+use http::Uri;
 use netty::{
     conn::http3,
     proxy::masque::{ConnectUdp, SendError, Template, UdpTunnel},
@@ -37,8 +38,13 @@ use tower::{BoxError, ServiceExt, service_fn};
 
 use crate::{
     Body,
-    conn::{Conn, request::ConnectRequest, transport::QuicConnector},
+    conn::{
+        Conn,
+        request::ConnectRequest,
+        transport::{QuicConnector, TUNNEL_MTU},
+    },
     error::ProxyConnect,
+    ext::UriExt,
     proxy::matcher::Intercept,
     rt::RuntimeHandle,
     sync::Mutex,
@@ -128,7 +134,9 @@ pub(super) async fn connect(
         }
 
         // The proxy resolves the target; the original request retains its pool identity.
-        let tunnel = connect_udp.oneshot(request.route_uri().clone()).await?;
+        let tunnel = connect_udp
+            .oneshot(udp_target(request.route_uri())?)
+            .await?;
 
         // The inner endpoint's socket owns the tunnel and its outer connection resources.
         let socket = Socket::new(tunnel, driver, endpoint, remote)?;
@@ -137,6 +145,17 @@ pub(super) async fn connect(
 
     let (socket, remote) = connect_proxy.await.map_err(ProxyConnect::Source)?;
     inner.finish_tunnel(&request, socket, remote).await
+}
+
+/// Names the UDP port a CONNECT-UDP target requires; an origin without one uses 443.
+fn udp_target(uri: &Uri) -> Result<Uri, BoxError> {
+    if uri.port().is_some() {
+        return Ok(uri.clone());
+    }
+    let host = uri.host().ok_or("MASQUE target has no host")?;
+    let mut parts = uri.clone().into_parts();
+    parts.authority = Some(format!("{host}:{}", uri.port_or_default()).parse()?);
+    Ok(Uri::from_parts(parts)?)
 }
 
 // ===== impl Socket =====
@@ -148,7 +167,7 @@ impl Socket {
         endpoint: Endpoint,
         remote: SocketAddr,
     ) -> io::Result<Self> {
-        if tunnel.max_payload_size() < 1200 {
+        if tunnel.max_payload_size() < usize::from(TUNNEL_MTU) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "MASQUE tunnel cannot carry a 1200-byte QUIC datagram",

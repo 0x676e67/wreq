@@ -15,7 +15,7 @@ mod socket;
 mod tcp;
 
 #[cfg(feature = "http3")]
-pub(crate) use quic::QuicConnector;
+pub(crate) use quic::{QuicConnector, TUNNEL_MTU};
 pub(crate) use socket::{SocketConnector, SocketRequest};
 pub(crate) use tcp::TcpConnector;
 #[cfg(unix)]

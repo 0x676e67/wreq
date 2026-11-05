@@ -79,6 +79,10 @@ struct ScopedTokens {
     key: ConnectionKey,
 }
 
+/// UDP payload a tunnel must carry for QUIC, which pads client Initial datagrams to 1200 bytes
+/// ([RFC 9000 Section 14.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-14.1)).
+pub(crate) const TUNNEL_MTU: u16 = 1200;
+
 const TOKEN_KEYS: NonZeroUsize =
     NonZeroUsize::new(256).expect("token key capacity must be non-zero");
 const TOKENS_PER_KEY: usize = 2;
@@ -298,8 +302,7 @@ impl QuicConnector {
         let mut tls = self
             .tls
             .config(&request.clone().with_route_uri(uri.clone()), None)?;
-        // Proxy Datagram support is independent of the target's transport configuration.
-        tls.transport_config(Arc::default());
+        tls.transport_config(self.tls.proxy_transport());
         let options = self.bind_options(request);
         self.dial(uri, &options, &tls, timer, false).await
     }
@@ -312,7 +315,7 @@ impl QuicConnector {
         socket: impl AsyncUdpSocket,
         remote: SocketAddr,
     ) -> Result<Conn, BoxError> {
-        let tls = self.config(request, Some(1200))?;
+        let tls = self.config(request, Some(TUNNEL_MTU))?;
         let endpoint = Endpoint::new_with_abstract_socket(
             EndpointConfig::default(),
             None,
