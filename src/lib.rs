@@ -266,7 +266,7 @@
 //! - **socks**: Provides SOCKS5 and SOCKS4 proxy support.
 //! - **ws**: Provides websocket support.
 //! - **hickory-dns**: Uses the Hickory DNS resolver for the Tokio runtime. Requires `tokio-rt` and
-//!   is not compiled with `compio-rt`.
+//!   has no effect with `compio-rt`.
 //! - **chromium-roots**: Loads static Chromium Root Store certificates.
 //! - **webpki-roots** *(enabled by default)*: Loads static Mozilla root certificates.
 //! - **system-proxy**: Enable system proxy support.

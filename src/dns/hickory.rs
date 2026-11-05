@@ -35,26 +35,13 @@ static RESOLVER: LazyLock<Result<TokioResolver, Arc<NetError>>> = LazyLock::new(
 });
 
 /// Hickory DNS resolver used by the Tokio runtime.
-/// A failure to build the shared resolver is returned by every lookup.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct HickoryDnsResolver {
-    resolver: &'static Result<TokioResolver, Arc<NetError>>,
-}
-
-impl HickoryDnsResolver {
-    /// Returns a handle to the shared resolver, building it on first use.
-    pub(crate) fn new() -> Self {
-        Self {
-            resolver: LazyLock::force(&RESOLVER),
-        }
-    }
-}
+/// The shared resolver is built on the first lookup; a build failure is returned by every lookup.
+pub(crate) struct HickoryDnsResolver;
 
 impl Resolve for HickoryDnsResolver {
     fn resolve(&self, name: Name) -> Resolving {
-        let resolver = self.resolver;
         Box::pin(async move {
-            let resolver = resolver.as_ref().map_err(|error| error.clone())?;
+            let resolver = RESOLVER.as_ref().map_err(|error| error.clone())?;
             let lookup = resolver.lookup_ip(name.as_str()).await?;
             let addrs: Addrs = Box::new(
                 lookup

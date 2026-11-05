@@ -75,7 +75,7 @@ impl super::Runtime for TokioRuntime {
             feature = "tokio-rt",
             not(feature = "compio-rt")
         ))]
-        let resolver = crate::dns::hickory::HickoryDnsResolver::new();
+        let resolver = crate::dns::hickory::HickoryDnsResolver;
         #[cfg(not(all(
             feature = "hickory-dns",
             feature = "tokio-rt",

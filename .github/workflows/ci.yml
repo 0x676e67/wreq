@@ -39,6 +39,9 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Clippy check (default features)
         run: cargo clippy --all-targets -- -D warnings
+      # `--all-features` enables compio-rt, which leaves out the Hickory resolver.
+      - name: Clippy check (hickory-dns)
+        run: cargo clippy --all-targets --features hickory-dns -- -D warnings
 
   docs:
     name: Docs
