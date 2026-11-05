@@ -1,8 +1,6 @@
 //! A wrapper around `compio::io::compat::AsyncStream` that implements
 //! `tokio::io::AsyncRead` + `tokio::io::AsyncWrite`.
 
-#![allow(unsafe_code)]
-
 use std::{
     io,
     net::SocketAddr,
@@ -63,6 +61,7 @@ where
     S::WriteHalf: AsyncWrite + Unpin,
 {
     #[inline]
+    #[allow(unsafe_code)]
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -71,8 +70,11 @@ where
         // Send buffered request data before waiting for a response, even when
         // the caller did not explicitly flush after writing.
         ready!(self.as_mut().poll_flush(cx))?;
+        // SAFETY: `poll_read_uninit` only writes into the unfilled region and never
+        // de-initializes it, so handing out the uninitialized slice is sound.
         let unfilled = unsafe { buf.unfilled_mut() };
         let len = ready!(self.0.as_mut().poll_read_uninit(cx, unfilled))?;
+        // SAFETY: `poll_read_uninit` initialized the first `len` bytes of `unfilled`.
         unsafe { buf.assume_init(len) };
         buf.advance(len);
         Poll::Ready(Ok(()))

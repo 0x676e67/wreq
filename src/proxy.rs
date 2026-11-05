@@ -106,10 +106,6 @@ pub(crate) struct Matcher {
     inner: Box<matcher::Matcher>,
 }
 
-impl crate::conn::config::ConnectConfig for Matcher {
-    const SCOPE: crate::conn::config::ConfigScope = crate::conn::config::ConfigScope::ROUTE;
-}
-
 #[derive(Clone, Debug)]
 enum ProxyScheme {
     All(Uri),
@@ -457,6 +453,10 @@ impl Matcher {
     pub(crate) fn intercept(&self, dst: &Uri) -> Option<Intercepted> {
         self.inner.intercept(dst)
     }
+}
+
+impl crate::conn::config::ConnectConfig for Matcher {
+    const SCOPE: crate::conn::config::ConfigScope = crate::conn::config::ConfigScope::ROUTE;
 }
 
 // ===== impl Extra =====

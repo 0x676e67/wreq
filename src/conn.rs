@@ -566,7 +566,7 @@ impl TlsInfoFactory for quic::Connection {
 
 impl fmt::Debug for PoisonPill {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // print the address of the pill鈥攖his makes debugging issues much easier
+        // print the address of the pill, which makes debugging issues much easier
         write!(
             f,
             "PoisonPill@{:p} {{ poisoned: {} }}",

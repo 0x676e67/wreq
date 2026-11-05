@@ -38,6 +38,8 @@ pub struct Connect<C, B> {
     _body: PhantomData<fn(B)>,
 }
 
+// ===== impl Connect =====
+
 impl<C, B> Connect<C, B> {
     pub fn new(connector: C, runtime: RuntimeHandle) -> Self {
         Self {
@@ -119,6 +121,8 @@ where
         })
     }
 }
+
+// ===== impl Connection =====
 
 impl<B> Clone for Connection<B> {
     fn clone(&self) -> Self {
