@@ -1,4 +1,0 @@
-# Tests that reach public hosts (badssl.com, tls.browserleaks.com).
-# CI runs them only in the matrix rows marked `public-network`.
-[profile.offline]
-default-filter = "not (binary_id(wreq::badssl) | binary_id(wreq::emulate))"

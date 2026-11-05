@@ -124,7 +124,10 @@ jobs:
         with:
           tool: cargo-nextest
       - name: Run tests (${{ matrix.feature-set }})
-        run: cargo nextest run --workspace ${{ matrix.feature-set }} ${{ !matrix.public-network && '--profile offline' || '' }}
+        env:
+          # Tests that reach badssl.com and tls.browserleaks.com.
+          PUBLIC_HOST_TESTS: binary_id(wreq::badssl) | binary_id(wreq::emulate)
+        run: cargo nextest run --workspace ${{ matrix.feature-set }} ${{ !matrix.public-network && '-E "not ($PUBLIC_HOST_TESTS)"' || '' }}
 
   build:
     name: Build (${{ matrix.env }})
