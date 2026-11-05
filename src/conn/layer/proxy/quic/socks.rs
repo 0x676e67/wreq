@@ -29,7 +29,10 @@ use crate::{
     conn::{
         Conn,
         request::ConnectRequest,
-        transport::{self, BindOptions, ConnectError, ConnectOptions, QuicConnector, TcpConnector},
+        transport::{
+            self, BindOptions, ConnectError, ConnectOptions, QuicConnector, TUNNEL_MTU,
+            TcpConnector,
+        },
     },
     dns::DynResolver,
     error::ProxyConnect,
@@ -246,7 +249,7 @@ impl Socket {
 
 impl AsyncUdpSocket for Socket {
     fn create_sender(&self) -> Pin<Box<dyn UdpSender>> {
-        let mut packet = Vec::with_capacity(self.shared.header.len() + 1200);
+        let mut packet = Vec::with_capacity(self.shared.header.len() + usize::from(TUNNEL_MTU));
         packet.extend_from_slice(&self.shared.header);
         Box::pin(SocketSender {
             inner: self.inner.create_sender(),
@@ -270,7 +273,7 @@ impl AsyncUdpSocket for Socket {
             )));
         };
 
-        // Size for the endpoint's receive limit, which can exceed its 1200-byte send MTU.
+        // Size for the endpoint's receive limit, which can exceed its tunnel send MTU.
         // Include the longest SOCKS header per GRO segment without reducing inner capacity.
         let capacity = buf
             .len()
@@ -390,7 +393,7 @@ impl UdpSender for SocketSender {
         }
         if transmit.destination != *this.relay
             || transmit.contents.is_empty()
-            || transmit.contents.len() > 1200
+            || transmit.contents.len() > usize::from(TUNNEL_MTU)
             || transmit
                 .segment_size
                 .is_some_and(|size| size < transmit.contents.len())

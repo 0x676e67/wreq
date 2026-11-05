@@ -9,6 +9,8 @@ use tokio::{net::UdpSocket, sync::mpsc, task::JoinHandle};
 use wreq::{Client, ClientBuilder, Proxy, dns, tls::trust::CertStore};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
+/// Has no port: CONNECT-UDP must name 443, and the relay ignores the requested target.
+const ORIGIN_URL: &str = "https://origin.test/";
 
 struct Server {
     endpoint: quic::Endpoint,
@@ -291,10 +293,6 @@ impl Server {
             )
             .timeout(TIMEOUT)
     }
-
-    fn url(&self) -> String {
-        format!("https://origin.test:{}/", self.addr().port())
-    }
 }
 
 impl Drop for Server {
@@ -325,7 +323,7 @@ async fn masque_authentication_remote_dns_and_pool_reuse() {
         let (mut proxy, mut closed) = Server::proxy(Mode::Relay(origin.addr(), datagrams));
         let client = proxy.client(&origin, "pass").build().unwrap();
         for _ in 0..2 {
-            let response = client.get(origin.url()).send().await.unwrap();
+            let response = client.get(ORIGIN_URL).send().await.unwrap();
             assert_eq!(response.version(), Version::HTTP_3);
             assert_eq!(response.text().await.unwrap(), "origin");
             let request = next(&mut origin.requests).await;
@@ -343,16 +341,13 @@ async fn masque_authentication_remote_dns_and_pool_reuse() {
         assert_eq!(request.uri().host(), Some("proxy.test"));
         assert_eq!(
             request.uri().path(),
-            format!(
-                "/.well-known/masque/udp/origin.test/{}/",
-                origin.addr().port()
-            )
+            "/.well-known/masque/udp/origin.test/443/"
         );
         assert_eq!(request.headers()[PROXY_AUTHORIZATION], "Basic dXNlcjpwYXNz");
         assert_eq!(request.headers()["x-proxy-only"], "secret");
         assert!(proxy.requests.try_recv().is_err());
 
-        let mut request = tokio::spawn(client.post(format!("{}stall", origin.url())).send());
+        let mut request = tokio::spawn(client.post(format!("{ORIGIN_URL}stall")).send());
         let received = tokio::select! {
             received = next(&mut origin.requests) => received,
             result = &mut request => panic!("stalled request completed early (datagrams={datagrams}): {result:?}"),
@@ -375,7 +370,7 @@ async fn masque_rejects_authentication_and_missing_extended_connect() {
             .client(&origin, "wrong")
             .build()
             .unwrap()
-            .get(origin.url())
+            .get(ORIGIN_URL)
             .send()
             .await
             .unwrap_err();
@@ -403,7 +398,7 @@ async fn masque_connect_timeout_and_cancellation_close_the_proxy_connection() {
             builder = builder.connect_timeout(Duration::from_secs(1));
         }
         let client = builder.build().unwrap();
-        let request = tokio::spawn(client.get(origin.url()).send());
+        let request = tokio::spawn(client.get(ORIGIN_URL).send());
         next(&mut proxy.requests).await;
         if timeout {
             let error = request.await.unwrap().unwrap_err();

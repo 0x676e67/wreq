@@ -23,6 +23,7 @@ use crate::{
     conn::{
         config::{ConfigSet, Overrides},
         request::ConnectRequest,
+        transport::TUNNEL_MTU,
     },
     quic::QuicOptions,
 };
@@ -39,6 +40,7 @@ struct Inner {
     options: Option<Arc<QuicOptions>>,
     context: QuicClientConfig,
     transport: Arc<TransportConfig>,
+    proxy_transport: Arc<TransportConfig>,
 }
 
 /// Adapts one connection's session key to the QUIC stack's hostname-keyed cache.
@@ -62,13 +64,21 @@ impl TlsConfig {
             Some(options) => Arc::new(options.transport()?),
             None => Arc::new(TransportConfig::default()),
         };
+        let proxy_transport = Arc::new(proxy_transport(options.as_deref())?);
         Ok(Self(Arc::new(Inner {
             config,
             config_set,
             options,
             context,
             transport,
+            proxy_transport,
         })))
+    }
+
+    /// Returns the transport of a MASQUE proxy connection, built from client options.
+    #[inline]
+    pub(crate) fn proxy_transport(&self) -> Arc<TransportConfig> {
+        self.0.proxy_transport.clone()
     }
 
     /// Returns the QUIC configuration of one connection for `request`.
@@ -157,6 +167,25 @@ impl TlsConfig {
         client.transport_config(transport);
         Ok(client)
     }
+}
+
+/// Outer MTU fitting a tunneled 1200-byte datagram: QUIC short header (1 + 20-byte CID + 4),
+/// AEAD tag (16), DATAGRAM frame (9), Quarter Stream ID (8) and Context ID (1), at most.
+const PROXY_MTU: u16 = TUNNEL_MTU + 59;
+
+/// Builds a MASQUE proxy transport from client options. Its Datagrams carry the tunnel and
+/// cannot be fragmented, so a frame limit or initial MTU too small for one is raised
+/// ([RFC 9298 Section 6.1](https://www.rfc-editor.org/rfc/rfc9298.html#section-6.1)).
+fn proxy_transport(options: Option<&QuicOptions>) -> Result<TransportConfig> {
+    let mut options = options.cloned().unwrap_or_default();
+    if options
+        .max_datagram_frame_size
+        .is_some_and(|size| size < u64::from(PROXY_MTU))
+    {
+        options.max_datagram_frame_size = None;
+    }
+    options.initial_mtu = Some(options.initial_mtu.unwrap_or_default().max(PROXY_MTU));
+    options.transport()
 }
 
 /// Compiles a QUIC context from the client policy and the context options of `options`.
