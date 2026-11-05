@@ -100,6 +100,14 @@ jobs:
           - "--features multipart"
           - "--features stream"
           - "--features hickory-dns"
+        # Only these rows run the tests that reach public hosts.
+        include:
+          - feature-set: ""
+            public-network: true
+          - feature-set: "--all-features"
+            public-network: true
+          - feature-set: "--features hickory-dns"
+            public-network: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rs/toolchain@v1
@@ -116,7 +124,7 @@ jobs:
         with:
           tool: cargo-nextest
       - name: Run tests (${{ matrix.feature-set }})
-        run: cargo nextest run --workspace ${{ matrix.feature-set }}
+        run: cargo nextest run --workspace ${{ matrix.feature-set }} ${{ !matrix.public-network && '--profile offline' || '' }}
 
   build:
     name: Build (${{ matrix.env }})
