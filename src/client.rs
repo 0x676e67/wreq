@@ -66,8 +66,6 @@ use self::{
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
-#[cfg(feature = "hickory-dns")]
-use crate::dns::hickory::HickoryDnsResolver;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
@@ -213,8 +211,6 @@ struct Config {
     timeout_options: TimeoutOptions,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    #[cfg(feature = "hickory-dns")]
-    hickory_dns: bool,
     dns_overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
     protocol: Protocol,
@@ -297,8 +293,6 @@ impl Client {
                 redirect_policy: redirect::Policy::none(),
                 referer: true,
                 timeout_options: TimeoutOptions::default(),
-                #[cfg(feature = "hickory-dns")]
-                hickory_dns: false,
                 #[cfg(feature = "cookies")]
                 cookie_store: None,
                 dns_overrides: HashMap::new(),
@@ -491,8 +485,7 @@ impl ClientBuilder {
     ///
     /// # Errors
     ///
-    /// This method fails if a TLS backend cannot be initialized, or the resolver
-    /// cannot load the system configuration.
+    /// This method fails if a TLS backend or the Hickory DNS resolver cannot be initialized.
     pub fn build(mut self) -> crate::Result<Client> {
         if let Some(err) = self.config.error {
             return Err(err);
@@ -508,8 +501,17 @@ impl ClientBuilder {
             let resolver = {
                 let mut resolver: Arc<dyn Resolve> = match self.config.dns_resolver {
                     Some(dns_resolver) => dns_resolver,
-                    #[cfg(feature = "hickory-dns")]
-                    None if self.config.hickory_dns => Arc::new(HickoryDnsResolver::new()),
+                    #[cfg(all(
+                        feature = "hickory-dns",
+                        feature = "tokio-rt",
+                        not(feature = "compio-rt")
+                    ))]
+                    None => Arc::new(crate::dns::hickory::HickoryDnsResolver::new()?),
+                    #[cfg(not(all(
+                        feature = "hickory-dns",
+                        feature = "tokio-rt",
+                        not(feature = "compio-rt")
+                    )))]
                     None => self.runtime.resolver(),
                 };
 
@@ -1562,13 +1564,14 @@ impl ClientBuilder {
 
     // DNS options
 
-    /// Disables automatic selection of the built-in Hickory DNS resolver.
-    /// Does not replace a resolver supplied by the runtime or [`Self::dns_resolver`].
+    /// Uses the runtime's resolver instead of the Hickory DNS resolver, which needs a Tokio
+    /// runtime context. Exists without `hickory-dns`, so calls compile under any feature set.
+    /// A resolver set with [`Self::dns_resolver`] still takes precedence.
     #[inline]
-    #[cfg(feature = "hickory-dns")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
     pub fn no_hickory_dns(mut self) -> ClientBuilder {
-        self.config.hickory_dns = false;
+        self.config
+            .dns_resolver
+            .get_or_insert_with(|| self.runtime.resolver());
         self
     }
 

@@ -63,7 +63,7 @@ json = ["dep:serde", "dep:serde_json"]
 # Enable multipart/form-data support.
 multipart = ["dep:mime_guess", "dep:sync_wrapper", "sync_wrapper?/futures"]
 
-# Enable hickory DNS resolver.
+# Enable hickory DNS resolver; requires `tokio-rt` and is ignored with `compio-rt`.
 hickory-dns = ["dep:hickory-resolver"]
 
 # Enable streaming support.

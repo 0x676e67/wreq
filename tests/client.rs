@@ -543,7 +543,7 @@ async fn overridden_dns_resolution_with_gai_multiple() {
     assert_eq!("Hello", text);
 }
 
-#[cfg(feature = "hickory-dns")]
+#[cfg(all(feature = "hickory-dns", not(feature = "compio-rt")))]
 #[tokio::test]
 async fn overridden_dns_resolution_with_hickory_dns() {
     let _ = env_logger::builder().is_test(true).try_init();
@@ -567,7 +567,7 @@ async fn overridden_dns_resolution_with_hickory_dns() {
     assert_eq!("Hello", text);
 }
 
-#[cfg(feature = "hickory-dns")]
+#[cfg(all(feature = "hickory-dns", not(feature = "compio-rt")))]
 #[tokio::test]
 async fn overridden_dns_resolution_with_hickory_dns_multiple() {
     let _ = env_logger::builder().is_test(true).try_init();

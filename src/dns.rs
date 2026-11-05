@@ -7,7 +7,11 @@ use std::{
 
 mod resolve;
 
-#[cfg(feature = "hickory-dns")]
+#[cfg(all(
+    feature = "hickory-dns",
+    feature = "tokio-rt",
+    not(feature = "compio-rt")
+))]
 pub(crate) mod hickory;
 
 pub use self::resolve::{Addrs, IntoResolve, Name, Resolve, Resolving};

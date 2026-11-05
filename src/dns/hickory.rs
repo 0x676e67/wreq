@@ -1,63 +1,61 @@
-//! DNS resolution via the [hickory-resolver](https://github.com/hickory-dns/hickory-dns) crate
+//! DNS resolution via the [hickory-resolver](https://github.com/hickory-dns/hickory-dns) crate.
 
-use std::{net::SocketAddr, sync::LazyLock};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, LazyLock},
+};
 
 use hickory_resolver::{
     TokioResolver,
     config::{self, LookupIpStrategy, ResolverConfig},
-    net::runtime::TokioRuntimeProvider,
+    net::{NetError, runtime::TokioRuntimeProvider},
 };
 
 use super::{Addrs, Name, Resolve, Resolving};
+use crate::Error;
 
-/// Wrapper around an [`TokioResolver`], which implements the `Resolve` trait.
-#[derive(Debug, Clone)]
-pub struct HickoryDnsResolver {
-    /// Shared, lazily-initialized Tokio-based DNS resolver.
-    ///
-    /// Backed by [`LazyLock`] to guarantee thread-safe, one-time creation.
-    /// On initialization, it attempts to load the system's DNS configuration;
-    /// if unavailable, it falls back to sensible default settings.
-    resolver: &'static LazyLock<TokioResolver>,
+/// Resolver shared by all clients, built once from the system configuration.
+/// Falls back to Google DNS when the system configuration cannot be read.
+static RESOLVER: LazyLock<Result<TokioResolver, Arc<NetError>>> = LazyLock::new(|| {
+    let mut builder = match TokioResolver::builder_tokio() {
+        Ok(builder) => {
+            debug!("using system DNS configuration");
+            builder
+        }
+        Err(_err) => {
+            debug!("error reading DNS system conf: {}, using defaults", _err);
+            TokioResolver::builder_with_config(
+                ResolverConfig::udp_and_tcp(&config::GOOGLE),
+                TokioRuntimeProvider::default(),
+            )
+        }
+    };
+    // Look up both families so connection attempts can use Happy Eyeballs.
+    builder.options_mut().ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+    builder.build().map_err(Arc::new)
+});
+
+/// Hickory DNS resolver selected by Tokio clients unless disabled on the builder.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HickoryDnsResolver {
+    resolver: &'static TokioResolver,
 }
 
 impl HickoryDnsResolver {
-    /// Create a new resolver with the default configuration,
-    /// which reads from `/etc/resolve.conf`. The options are
-    /// overridden to look up both IPv4 and IPv6 addresses
-    /// to support the "happy eyeballs" algorithm.
-    ///
-    /// SAFETY: `build` only fails if DNS-over-TLS is enabled and default TLS config creation fails.
-    pub fn new() -> HickoryDnsResolver {
-        static RESOLVER: LazyLock<TokioResolver> = LazyLock::new(|| {
-            let mut builder = match TokioResolver::builder_tokio() {
-                Ok(resolver) => {
-                    debug!("using system DNS configuration");
-                    resolver
-                }
-                Err(_err) => {
-                    debug!("error reading DNS system conf: {}, using defaults", _err);
-                    TokioResolver::builder_with_config(
-                        ResolverConfig::udp_and_tcp(&config::GOOGLE),
-                        TokioRuntimeProvider::default(),
-                    )
-                }
-            };
-            builder.options_mut().ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
-            builder.build().expect("failed to create DNS resolver")
-        });
-
-        HickoryDnsResolver {
-            resolver: &RESOLVER,
-        }
+    /// Returns the shared resolver, or the error from building it.
+    pub(crate) fn new() -> crate::Result<Self> {
+        RESOLVER
+            .as_ref()
+            .map(|resolver| Self { resolver })
+            .map_err(|error| Error::builder(error.clone()))
     }
 }
 
 impl Resolve for HickoryDnsResolver {
     fn resolve(&self, name: Name) -> Resolving {
-        let resolver = self.clone();
+        let resolver = self.resolver;
         Box::pin(async move {
-            let lookup = resolver.resolver.lookup_ip(name.as_str()).await?;
+            let lookup = resolver.lookup_ip(name.as_str()).await?;
             let addrs: Addrs = Box::new(
                 lookup
                     .iter()
