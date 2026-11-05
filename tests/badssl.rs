@@ -1,3 +1,5 @@
+#![cfg(feature = "tokio-rt")]
+
 use std::{error::Error as StdError, io};
 
 use wreq::{

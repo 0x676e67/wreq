@@ -1,3 +1,5 @@
+#![cfg(feature = "tokio-rt")]
+
 mod support;
 use std::{env, sync::LazyLock};
 

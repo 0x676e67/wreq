@@ -33,7 +33,7 @@ fn compio_client_uses_its_own_dns_io_and_timer() {
             .unwrap();
         let url = format!("http://localhost:{}/echo", server.addr().port());
         let payload = vec![b'x'; 4096];
-        for version in [Version::HTTP_11, Version::HTTP_2] {
+        let echo = async |version| {
             let response = client
                 .post(&url)
                 .version(version)
@@ -43,6 +43,9 @@ fn compio_client_uses_its_own_dns_io_and_timer() {
                 .unwrap();
             assert_eq!(response.version(), version);
             assert_eq!(response.bytes().await.unwrap(), payload);
-        }
+        };
+        echo(Version::HTTP_11).await;
+        #[cfg(feature = "http2")]
+        echo(Version::HTTP_2).await;
     });
 }

@@ -1,3 +1,5 @@
+#![cfg(feature = "tokio-rt")]
+
 use std::{
     convert::Infallible,
     net::SocketAddr,

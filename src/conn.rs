@@ -755,6 +755,7 @@ mod tests {
     use super::*;
 
     impl Conn {
+        #[cfg(feature = "tokio-rt")]
         pub(crate) fn test(stream: tokio::io::DuplexStream) -> Self {
             Self {
                 #[cfg(feature = "http3")]

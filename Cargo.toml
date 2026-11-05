@@ -286,41 +286,42 @@ required-features = ["http2", "tokio-rt", "stream"]
 [[test]]
 name = "cookie"
 path = "tests/cookie.rs"
-required-features = ["cookies"]
+required-features = ["cookies", "tokio-rt"]
 
 [[test]]
 name = "gzip"
 path = "tests/gzip.rs"
-required-features = ["gzip", "stream"]
+required-features = ["gzip", "stream", "tokio-rt"]
 
 [[test]]
 name = "brotli"
 path = "tests/brotli.rs"
-required-features = ["brotli", "stream"]
+required-features = ["brotli", "stream", "tokio-rt"]
 
 [[test]]
 name = "zstd"
 path = "tests/zstd.rs"
-required-features = ["zstd", "stream"]
+required-features = ["zstd", "stream", "tokio-rt"]
 
 [[test]]
 name = "deflate"
 path = "tests/deflate.rs"
-required-features = ["deflate", "stream"]
+required-features = ["deflate", "stream", "tokio-rt"]
 
 [[test]]
 name = "multipart"
 path = "tests/multipart.rs"
-required-features = ["multipart", "stream"]
+required-features = ["multipart", "stream", "tokio-rt"]
 
 [[test]]
 name = "retry"
 path = "tests/retry.rs"
+required-features = ["tokio-rt"]
 
 [[test]]
 name = "websocket"
 path = "tests/websocket.rs"
-required-features = ["ws"]
+required-features = ["ws", "tokio-rt"]
 
 [[example]]
 name = "json_dynamic"
@@ -385,7 +386,7 @@ required-features = ["http3", "tokio-rt"]
 [[test]]
 name = "emulate"
 path = "tests/emulate.rs"
-required-features = ["http2"]
+required-features = ["http2", "tokio-rt"]
 
 [patch.crates-io]
 # Remove once an http3 release includes the connection-wide pseudo-header order and

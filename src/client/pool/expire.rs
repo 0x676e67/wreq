@@ -76,7 +76,7 @@ impl<T> Expire<T> {
     }
 
     /// Returns whether the expiration watcher is active.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "tokio-rt"))]
     pub(super) fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
     }
@@ -202,7 +202,7 @@ async fn wait_for_tick(sleep: &mut BoxSleep, shutdown: &mut watch::Receiver<()>)
     .await
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "tokio-rt"))]
 mod tests {
     use std::sync::atomic::AtomicUsize;
 

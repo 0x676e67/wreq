@@ -1,4 +1,4 @@
-#![cfg(unix)]
+#![cfg(all(unix, feature = "tokio-rt"))]
 
 mod support;
 
