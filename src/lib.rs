@@ -250,6 +250,7 @@
 //!
 //! - **tokio-rt** *(enabled by default)*: Provides the Tokio runtime adapter.
 //! - **compio-rt**: Provides the Compio runtime adapter for HTTP/1 and HTTP/2.
+//! - **http2** *(enabled by default)*: Enables HTTP/2.
 //! - **http3**: Enables HTTP/3 over QUIC with a runtime that supports it.
 //! - **cookies**: Provides cookie session support.
 //! - **gzip**: Provides response body gzip decompression.
@@ -270,6 +271,7 @@
 //! - **webpki-roots** *(enabled by default)*: Loads static Mozilla root certificates.
 //! - **system-proxy**: Enable system proxy support.
 //! - **tracing**: Enable tracing logging support.
+//! - **parking_lot**: Uses `parking_lot` for internal locks.
 //! - **prefix-symbols**: Prefix BoringSSL symbols to avoid OpenSSL conflicts.
 //!
 //! [client]: ./struct.Client.html

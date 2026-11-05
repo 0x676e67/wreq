@@ -325,12 +325,14 @@ impl Client {
 
     /// Creates a client builder using Tokio for tasks, timers and DNS.
     #[cfg(feature = "tokio-rt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-rt")))]
     pub fn builder_tokio() -> ClientBuilder {
         Self::builder(crate::rt::tokio::TokioRuntime)
     }
 
     /// Creates a client builder using Compio for tasks, timers and DNS.
     #[cfg(feature = "compio-rt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "compio-rt")))]
     pub fn builder_compio() -> ClientBuilder {
         Self::builder(crate::rt::compio::CompioRuntime)
     }
@@ -1118,9 +1120,16 @@ impl ClientBuilder {
     }
 
     /// Uses HTTP/3 over QUIC without falling back to TCP.
-    /// Enabling the `http3` feature alone does not select HTTP/3.
-    /// An explicit request [`version`](RequestBuilder::version) overrides this setting.
+    ///
+    /// Enabling the `http3` feature alone does not select HTTP/3. HTTP/3 needs `https` URIs
+    /// ([RFC 9114 Section 3.1](https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1)), and a
+    /// request routed to an `http://` or `https://` proxy, including one from the environment,
+    /// fails; use a `quic://` proxy, a SOCKS5 proxy with the `socks` feature, or
+    /// [`no_proxy`](Self::no_proxy). An explicit HTTP/1 or HTTP/2 request
+    /// [`version`](RequestBuilder::version) overrides this setting. A WebSocket handshake without
+    /// an explicit version may still use a dedicated HTTP/1.1 connection.
     #[cfg(feature = "http3")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
     pub fn http3_only(mut self) -> ClientBuilder {
         self.config.protocol = Protocol::Http3;
         self
@@ -1150,6 +1159,7 @@ impl ClientBuilder {
 
     /// Sets the HTTP/3 options for the client.
     #[cfg(feature = "http3")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
     pub fn http3_options<T>(mut self, options: T) -> ClientBuilder
     where
         T: Into<Option<netty::http3::Http3Options>>,
@@ -1161,6 +1171,7 @@ impl ClientBuilder {
     /// Sets the QUIC transport and TLS options of HTTP/3 connections.
     /// TCP connections use [`tls_options`](Self::tls_options) instead.
     #[cfg(feature = "http3")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
     pub fn quic_options<T>(mut self, options: T) -> ClientBuilder
     where
         T: Into<Option<crate::quic::QuicOptions>>,

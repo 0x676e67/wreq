@@ -31,12 +31,12 @@ An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, f
 
 ## Example
 
-The following example uses the [Tokio](https://tokio.rs) runtime with optional features enabled by adding this to your `Cargo.toml`:
+The following example uses the [Tokio](https://tokio.rs) runtime, which the default `tokio-rt` feature provides. Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-wreq = { version = "0.16", features = ["tokio"] }
+wreq = "0.17"
 wreq-util = "0.2"
 ```
 
