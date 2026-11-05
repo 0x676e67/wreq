@@ -1,11 +1,19 @@
 //! Tokio runtime adapter for wreq.
 
-#[cfg(not(all(
-    feature = "hickory-dns",
-    feature = "tokio-rt",
-    not(feature = "compio-rt")
-)))]
-mod gai;
+// Hickory replaces the system resolver when it is compiled in.
+cfg_select! {
+    all(
+        feature = "hickory-dns",
+        feature = "tokio-rt",
+        not(feature = "compio-rt")
+    ) => {
+        use crate::dns::hickory::HickoryDnsResolver as Resolver;
+    }
+    _ => {
+        mod gai;
+        use self::gai::GaiResolver as Resolver;
+    }
+}
 
 use std::{
     future::Future,
@@ -70,19 +78,7 @@ impl super::Runtime for TokioRuntime {
 
     #[inline]
     fn resolver(&self) -> Arc<dyn Resolve> {
-        #[cfg(all(
-            feature = "hickory-dns",
-            feature = "tokio-rt",
-            not(feature = "compio-rt")
-        ))]
-        let resolver = crate::dns::hickory::HickoryDnsResolver;
-        #[cfg(not(all(
-            feature = "hickory-dns",
-            feature = "tokio-rt",
-            not(feature = "compio-rt")
-        )))]
-        let resolver = gai::GaiResolver::new();
-        Arc::new(resolver)
+        Arc::new(Resolver)
     }
 
     #[inline]

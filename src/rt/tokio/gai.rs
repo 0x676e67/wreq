@@ -16,21 +16,12 @@ use crate::dns::{Addrs, Name, Resolve, Resolving};
 
 /// A system resolver that offloads lookups to the Tokio thread pool.
 #[derive(Clone, Default)]
-pub(super) struct GaiResolver {
-    _priv: (),
-}
+pub(super) struct GaiResolver;
 
 /// A future to resolve a name returned by `GaiResolver`.
 pub(super) struct GaiFuture(JoinHandle<io::Result<IntoIter<SocketAddr>>>);
 
 // ===== impl GaiResolver =====
-
-impl GaiResolver {
-    /// Creates a new [`GaiResolver`].
-    pub(super) fn new() -> Self {
-        GaiResolver { _priv: () }
-    }
-}
 
 impl Service<Name> for GaiResolver {
     type Response = IntoIter<SocketAddr>;
