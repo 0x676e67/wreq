@@ -963,6 +963,30 @@ async fn request_version_configuration_survives_clone_and_conversion() {
         .unwrap_err();
     assert!(err.is_request());
     assert!(!err.is_connect());
+
+    // HTTP/1 connections reject a non-HTTP/1 wire version instead of encoding it.
+    #[cfg(feature = "http3")]
+    {
+        let layered_client = Client::builder_tokio()
+            .no_proxy()
+            .layer(tower::util::MapRequestLayer::new(
+                |mut request: http::Request<wreq::Body>| {
+                    *request.version_mut() = Version::HTTP_3;
+                    request
+                },
+            ))
+            .build()
+            .unwrap();
+        let err = layered_client
+            .get(format!("http://{}", server.addr()))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{err:?}").contains("UserUnsupportedVersion"),
+            "{err:?}"
+        );
+    }
 }
 
 #[cfg(feature = "http2")]
