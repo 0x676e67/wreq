@@ -389,10 +389,12 @@ required-features = ["http2"]
 
 [patch.crates-io]
 # Remove once an http3 release includes the connection-wide pseudo-header order and
-# SETTINGS value checks.
-http3 = { git = "https://github.com/0x676e67/http3", branch = "main" }
-quic = { git = "https://github.com/0x676e67/quic", branch = "main" }
-netty = { git = "https://github.com/0x676e67/netty", rev = "6e53746abc632056e3a8e518e10e26f6b86a21e6" }
+# SETTINGS value checks. Its QUIC adapter and Datagram crates must match its revision.
+http3 = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
+http3-datagram = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
+http3-quic = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
+quic = { git = "https://github.com/0x676e67/quic", rev = "b3d74044e874c5e785f462e3032faaf021cb6958" }
+netty = { git = "https://github.com/0x676e67/netty", rev = "29076b55c1568537898e33ff2b9a3c3dd4f4ff80" }
 # Match netty until it adopts http2's new headers_priority API.
 http2 = { git = "https://github.com/0x676e67/http2", rev = "fb5bf8bdbf3e9d9aad7073759a6f06f47373342e" }
 btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
