@@ -22,7 +22,7 @@ use http_body_util::{BodyExt, Full};
 use pretty_env_logger::env_logger;
 use support::server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use wreq::{Client, PoolStrategy, header::OrigHeaderMap, http1::Http1Options, tls::TlsInfo};
+use wreq::{Client, PoolStrategy, header::OrigHeaderMap, http1::Http1Options};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -704,33 +704,6 @@ fn update_json_content_type_if_set_manually() {
         .expect("request is not valid");
 
     assert_eq!("application/json", req.headers().get(CONTENT_TYPE).unwrap());
-}
-
-#[tokio::test]
-async fn test_tls_info() {
-    let resp = Client::builder_tokio()
-        .tls_info(true)
-        .build()
-        .expect("client builder")
-        .get("https://google.com")
-        .send()
-        .await
-        .expect("response");
-    let tls_info = resp.extensions().get::<TlsInfo>().unwrap();
-    let peer_certificate = tls_info.peer_certificate();
-    assert!(peer_certificate.is_some());
-    let der = peer_certificate.unwrap();
-    assert_eq!(der[0], 0x30); // ASN.1 SEQUENCE
-
-    let resp = Client::builder_tokio()
-        .build()
-        .expect("client builder")
-        .get("https://google.com")
-        .send()
-        .await
-        .expect("response");
-    let tls_info = resp.extensions().get::<TlsInfo>();
-    assert!(tls_info.is_none());
 }
 
 #[tokio::test]
@@ -1783,26 +1756,37 @@ async fn connection_pool_preserves_upload_after_response_headers() {
 
 #[tokio::test]
 async fn http1_send_case_sensitive_headers() {
-    // Create a request with a case-sensitive header
+    let server = server::low_level_with_response(|request, stream| {
+        let request = String::from_utf8_lossy(request);
+        assert!(
+            request.contains("\r\nX-custom-header: value\r\n"),
+            "{request}"
+        );
+        assert!(request.contains("\r\nHost: "), "{request}");
+        Box::new(async move {
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+        })
+    });
+
     let mut orig_headers = OrigHeaderMap::new();
     orig_headers.insert("X-custom-header");
     orig_headers.insert("Host");
 
-    let resp = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
-        .get("https://tls.browserleaks.com")
-        .timeout(Duration::from_secs(30))
+    let response = Client::builder_tokio()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .get(format!("http://{}/", server.addr()))
         .header("X-Custom-Header", "value")
         .orig_headers(orig_headers)
         .version(Version::HTTP_11)
         .send()
         .await
-        .unwrap()
-        .text()
-        .await
         .unwrap();
-
-    assert!(resp.contains("X-custom-header"));
-    assert!(resp.contains("Host"));
+    assert!(response.status().is_success());
 }
 
 #[tokio::test]

@@ -9,7 +9,10 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
 };
-use wreq::{Client, tls::trust::CertStore};
+use wreq::{
+    Client, ClientBuilder, Response,
+    tls::{TlsInfo, trust::CertStore},
+};
 
 async fn serve() -> (SocketAddr, Vec<u8>) {
     let cert =
@@ -68,4 +71,52 @@ async fn verify_host_overrides_uri_host() {
     assert!(get("wreq.test").await.unwrap().status().is_success());
     assert!(get("192.0.2.1").await.unwrap().status().is_success());
     assert!(get("other.test").await.is_err());
+}
+
+/// Returns whether the request failed certificate verification.
+fn is_untrusted(result: wreq::Result<Response>) -> bool {
+    result.is_err_and(|err| format!("{err:?}").contains("CERTIFICATE_VERIFY_FAILED"))
+}
+
+#[tokio::test]
+async fn self_signed_certificate_requires_explicit_trust() {
+    let (addr, der) = serve().await;
+    let url = format!("https://{addr}/");
+    let send =
+        async |builder: ClientBuilder| builder.no_proxy().build().unwrap().get(&url).send().await;
+
+    // Default trust rejects it, and skipping the hostname check does not trust it.
+    assert!(is_untrusted(send(Client::builder_tokio()).await));
+    assert!(is_untrusted(
+        send(Client::builder_tokio().tls_verify_hostname(false)).await
+    ));
+
+    // Without verification the handshake succeeds; TLS info is attached only when enabled.
+    let response = send(
+        Client::builder_tokio()
+            .tls_cert_verification(false)
+            .tls_info(true),
+    )
+    .await
+    .unwrap();
+    let info = response.extensions().get::<TlsInfo>().unwrap();
+    assert_eq!(info.peer_certificate(), Some(der.as_slice()));
+    let response = send(Client::builder_tokio().tls_cert_verification(false))
+        .await
+        .unwrap();
+    assert!(response.extensions().get::<TlsInfo>().is_none());
+
+    // A store trusting the certificate still checks the URI host, 127.0.0.1.
+    let store = CertStore::builder().add_der_cert(&der).build().unwrap();
+    assert!(is_untrusted(
+        send(Client::builder_tokio().tls_cert_store(store.clone())).await
+    ));
+    let response = send(
+        Client::builder_tokio()
+            .tls_cert_store(store)
+            .tls_verify_hostname(false),
+    )
+    .await
+    .unwrap();
+    assert!(response.status().is_success());
 }
