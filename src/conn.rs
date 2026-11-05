@@ -757,10 +757,10 @@ mod tests {
     impl Conn {
         pub(crate) fn test(stream: tokio::io::DuplexStream) -> Self {
             Self {
-                #[cfg(feature = "http3")]
-                inner: Either::Left(Box::new(stream)),
-                #[cfg(not(feature = "http3"))]
-                inner: Box::new(stream),
+                inner: cfg_select! {
+                    feature = "http3" => Either::Left(Box::new(stream)),
+                    _ => Box::new(stream),
+                },
                 connected: Connected::new(),
             }
         }

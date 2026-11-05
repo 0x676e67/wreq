@@ -93,37 +93,21 @@ use crate::{
     },
 };
 
-#[cfg(not(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-)))]
-type MaybeDecompression<T> = T;
-
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-))]
-type MaybeDecompression<T> = self::layer::decoder::Decompression<T>;
-
-#[cfg(not(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-)))]
-type MaybeDecompressionBody<T> = T;
-
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-))]
-type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>;
+cfg_select! {
+    any(
+        feature = "gzip",
+        feature = "zstd",
+        feature = "brotli",
+        feature = "deflate"
+    ) => {
+        type MaybeDecompression<T> = self::layer::decoder::Decompression<T>;
+        type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>;
+    }
+    _ => {
+        type MaybeDecompression<T> = T;
+        type MaybeDecompressionBody<T> = T;
+    }
+}
 
 type ClientService = Timeout<
     ConfigService<
@@ -851,14 +835,9 @@ impl ClientBuilder {
     /// even if another dependency were to enable the optional `zstd` feature.
     #[inline]
     pub fn no_zstd(self) -> ClientBuilder {
-        #[cfg(feature = "zstd")]
-        {
-            self.zstd(false)
-        }
-
-        #[cfg(not(feature = "zstd"))]
-        {
-            self
+        cfg_select! {
+            feature = "zstd" => self.zstd(false),
+            _ => self,
         }
     }
 
@@ -869,14 +848,9 @@ impl ClientBuilder {
     /// even if another dependency were to enable the optional `gzip` feature.
     #[inline]
     pub fn no_gzip(self) -> ClientBuilder {
-        #[cfg(feature = "gzip")]
-        {
-            self.gzip(false)
-        }
-
-        #[cfg(not(feature = "gzip"))]
-        {
-            self
+        cfg_select! {
+            feature = "gzip" => self.gzip(false),
+            _ => self,
         }
     }
 
@@ -887,14 +861,9 @@ impl ClientBuilder {
     /// even if another dependency were to enable the optional `brotli` feature.
     #[inline]
     pub fn no_brotli(self) -> ClientBuilder {
-        #[cfg(feature = "brotli")]
-        {
-            self.brotli(false)
-        }
-
-        #[cfg(not(feature = "brotli"))]
-        {
-            self
+        cfg_select! {
+            feature = "brotli" => self.brotli(false),
+            _ => self,
         }
     }
 
@@ -905,14 +874,9 @@ impl ClientBuilder {
     /// even if another dependency were to enable the optional `deflate` feature.
     #[inline]
     pub fn no_deflate(self) -> ClientBuilder {
-        #[cfg(feature = "deflate")]
-        {
-            self.deflate(false)
-        }
-
-        #[cfg(not(feature = "deflate"))]
-        {
-            self
+        cfg_select! {
+            feature = "deflate" => self.deflate(false),
+            _ => self,
         }
     }
 

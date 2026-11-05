@@ -80,14 +80,12 @@ use crate::{
 
 /// Returns whether an internal singleton batch asks the client to retry.
 pub(super) fn is_canceled(error: &(dyn std::error::Error + 'static)) -> bool {
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    {
-        SingletonError::is_canceled(error)
-    }
-    #[cfg(not(any(feature = "http2", feature = "http3")))]
-    {
-        let _ = error;
-        false
+    cfg_select! {
+        any(feature = "http2", feature = "http3") => SingletonError::is_canceled(error),
+        _ => {
+            let _ = error;
+            false
+        }
     }
 }
 
@@ -1694,26 +1692,32 @@ where
 {
     type Response = Response<Incoming>;
     type Error = SendError<B>;
-    #[cfg(all(feature = "http2", feature = "http3"))]
-    type Future = futures_util::future::Either<
-        futures_util::future::Either<
-            <http1::Connection<B> as Service<Request<B>>>::Future,
-            <http2::Connection<B> as Service<Request<B>>>::Future,
-        >,
-        <http3::Connection<B> as Service<Request<B>>>::Future,
-    >;
-    #[cfg(all(feature = "http2", not(feature = "http3")))]
-    type Future = futures_util::future::Either<
-        <http1::Connection<B> as Service<Request<B>>>::Future,
-        <http2::Connection<B> as Service<Request<B>>>::Future,
-    >;
-    #[cfg(all(not(feature = "http2"), feature = "http3"))]
-    type Future = futures_util::future::Either<
-        <http1::Connection<B> as Service<Request<B>>>::Future,
-        <http3::Connection<B> as Service<Request<B>>>::Future,
-    >;
-    #[cfg(not(any(feature = "http2", feature = "http3")))]
-    type Future = <http1::Connection<B> as Service<Request<B>>>::Future;
+    cfg_select! {
+        all(feature = "http2", feature = "http3") => {
+            type Future = futures_util::future::Either<
+                futures_util::future::Either<
+                    <http1::Connection<B> as Service<Request<B>>>::Future,
+                    <http2::Connection<B> as Service<Request<B>>>::Future,
+                >,
+                <http3::Connection<B> as Service<Request<B>>>::Future,
+            >;
+        }
+        feature = "http2" => {
+            type Future = futures_util::future::Either<
+                <http1::Connection<B> as Service<Request<B>>>::Future,
+                <http2::Connection<B> as Service<Request<B>>>::Future,
+            >;
+        }
+        feature = "http3" => {
+            type Future = futures_util::future::Either<
+                <http1::Connection<B> as Service<Request<B>>>::Future,
+                <http3::Connection<B> as Service<Request<B>>>::Future,
+            >;
+        }
+        _ => {
+            type Future = <http1::Connection<B> as Service<Request<B>>>::Future;
+        }
+    }
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         match &mut self.inner {

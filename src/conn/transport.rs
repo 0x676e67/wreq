@@ -435,30 +435,23 @@ pub(super) fn bind_interface(
     address: std::net::SocketAddr,
     interface: &str,
 ) -> std::io::Result<()> {
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    {
-        let _ = address;
-        socket.bind_device(Some(interface.as_bytes()))
-    }
-    #[cfg(any(
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    {
-        let interface = std::ffi::CString::new(interface)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-        // SAFETY: the owned CString remains a valid NUL-terminated name for the call.
-        #[allow(unsafe_code)]
-        let index = unsafe { libc::if_nametoindex(interface.as_ptr()) };
-        let index = std::num::NonZeroU32::new(index).ok_or_else(std::io::Error::last_os_error)?;
-        match address {
-            std::net::SocketAddr::V4(_) => socket.bind_device_by_index_v4(Some(index)),
-            std::net::SocketAddr::V6(_) => socket.bind_device_by_index_v6(Some(index)),
+    cfg_select! {
+        any(target_os = "android", target_os = "fuchsia", target_os = "linux") => {
+            let _ = address;
+            socket.bind_device(Some(interface.as_bytes()))
+        }
+        _ => {
+            let interface = std::ffi::CString::new(interface)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+            // SAFETY: the owned CString remains a valid NUL-terminated name for the call.
+            #[allow(unsafe_code)]
+            let index = unsafe { libc::if_nametoindex(interface.as_ptr()) };
+            let index =
+                std::num::NonZeroU32::new(index).ok_or_else(std::io::Error::last_os_error)?;
+            match address {
+                std::net::SocketAddr::V4(_) => socket.bind_device_by_index_v4(Some(index)),
+                std::net::SocketAddr::V6(_) => socket.bind_device_by_index_v6(Some(index)),
+            }
         }
     }
 }
