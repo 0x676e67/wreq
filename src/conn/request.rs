@@ -233,7 +233,6 @@ mod tests {
 
     impl ConnectRequest {
         /// Freezes `config_set` for a client without options in automatic mode.
-        #[cfg(feature = "tokio-rt")]
         pub(crate) fn test(uri: Uri, protocol: Option<Protocol>, config_set: ConfigSet) -> Self {
             Self::new(
                 &uri,

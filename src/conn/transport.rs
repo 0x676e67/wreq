@@ -579,7 +579,7 @@ mod bind_tests {
     }
 }
 
-#[cfg(all(test, feature = "tokio-rt"))]
+#[cfg(test)]
 mod tests {
     use std::{
         future::{pending, ready},

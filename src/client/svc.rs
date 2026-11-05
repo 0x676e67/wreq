@@ -757,7 +757,7 @@ fn store_response_cookies(
     }
 }
 
-#[cfg(all(test, feature = "tokio-rt"))]
+#[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 

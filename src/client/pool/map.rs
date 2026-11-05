@@ -194,7 +194,7 @@ where
     }
 
     /// Returns whether the map contains no service entries.
-    #[cfg(all(test, feature = "tokio-rt"))]
+    #[cfg(test)]
     pub(super) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

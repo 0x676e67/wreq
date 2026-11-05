@@ -63,7 +63,7 @@ impl Future for Pending {
     }
 }
 
-#[cfg(all(test, feature = "tokio-rt"))]
+#[cfg(test)]
 mod test {
 
     #[test]

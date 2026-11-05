@@ -264,7 +264,7 @@ where
     }
 }
 
-#[cfg(all(test, feature = "tokio-rt"))]
+#[cfg(test)]
 mod tests {
     use std::{
         future::pending,

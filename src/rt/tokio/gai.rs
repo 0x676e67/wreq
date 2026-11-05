@@ -72,7 +72,6 @@ impl Future for GaiFuture {
             Ok(Ok(addrs)) => Ok(addrs),
             Ok(Err(err)) => Err(err),
             Err(join_err) => {
-                #[cfg(feature = "tokio-rt")]
                 if join_err.is_cancelled() {
                     return Err(io::Error::new(io::ErrorKind::Interrupted, join_err));
                 }

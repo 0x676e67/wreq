@@ -472,7 +472,7 @@ impl TokenStore for ScopedTokens {
     }
 }
 
-#[cfg(all(test, feature = "tokio-rt"))]
+#[cfg(test)]
 mod tests {
     use std::{
         net::{IpAddr, UdpSocket},

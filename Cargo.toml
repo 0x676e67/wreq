@@ -188,6 +188,7 @@ rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", 
 tokio = { version = "1.0", default-features = false, features = [
     "macros",
     "rt-multi-thread",
+    "net",
     "time",
     "sync",
 ] }

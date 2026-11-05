@@ -333,7 +333,7 @@ where
     fn is_empty(&self) -> bool;
 
     /// Returns the protocol topology constructed for this entry.
-    #[cfg(all(test, feature = "tokio-rt"))]
+    #[cfg(test)]
     fn protocol(&self) -> Protocol;
 }
 
@@ -1038,7 +1038,7 @@ where
     }
 
     /// Identifies the fixed HTTP/1 topology in tests.
-    #[cfg(all(test, feature = "tokio-rt"))]
+    #[cfg(test)]
     fn protocol(&self) -> Protocol {
         Protocol::Http1
     }
@@ -1132,7 +1132,7 @@ where
     }
 
     /// Identifies the fixed HTTP/2 topology in tests.
-    #[cfg(all(test, feature = "tokio-rt"))]
+    #[cfg(test)]
     fn protocol(&self) -> Protocol {
         Protocol::Http2
     }
@@ -1208,7 +1208,7 @@ where
         self.state.uses.load(Ordering::Acquire) == 0 && self.service.is_empty()
     }
 
-    #[cfg(all(test, feature = "tokio-rt"))]
+    #[cfg(test)]
     fn protocol(&self) -> Protocol {
         Protocol::Http3
     }
@@ -1319,7 +1319,7 @@ where
     }
 
     /// Identifies the negotiated HTTP/1-or-HTTP/2 topology in tests.
-    #[cfg(all(test, feature = "tokio-rt"))]
+    #[cfg(test)]
     fn protocol(&self) -> Protocol {
         Protocol::Auto
     }
@@ -1905,7 +1905,7 @@ fn is_expired(idle_at: Instant, now: Instant, timeout: Option<Duration>) -> bool
     timeout.is_some_and(|timeout| now.saturating_duration_since(idle_at) > timeout)
 }
 
-#[cfg(all(test, feature = "tokio-rt"))]
+#[cfg(test)]
 mod tests {
     #[cfg(feature = "http2")]
     use std::hash::{Hash, Hasher};
