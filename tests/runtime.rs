@@ -49,3 +49,31 @@ fn compio_client_uses_its_own_dns_io_and_timer() {
         echo(Version::HTTP_2).await;
     });
 }
+
+#[test]
+fn oversized_timeouts_do_not_overflow() {
+    let server = support::server::http(|_| async { http::Response::new(Body::from("ok")) });
+    let url = format!("http://{}/", server.addr());
+    let get = async |builder: wreq::ClientBuilder| {
+        let client = builder
+            .no_proxy()
+            .timeout(Duration::MAX)
+            .read_timeout(Duration::MAX)
+            .connect_timeout(Duration::MAX)
+            .pool_idle_timeout(Duration::MAX)
+            .build()
+            .unwrap();
+        let response = client.get(&url).send().await.unwrap();
+        assert_eq!(response.text().await.unwrap(), "ok");
+    };
+
+    compio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(get(Client::builder_compio()));
+    #[cfg(feature = "tokio-rt")]
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(get(Client::builder_tokio()));
+}

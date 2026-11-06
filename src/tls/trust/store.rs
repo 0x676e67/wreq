@@ -125,7 +125,8 @@ impl CertStoreBuilder {
     ///
     /// Use it with [`ClientBuilder::tls_verify_hostname(false)`]. Otherwise the URI host is checked
     /// as well: a host of the same kind replaces this requirement, and one of the other kind must
-    /// match too. The requirement applies to every client built with this store.
+    /// match too. The requirement applies to every client built with this store, including its
+    /// `https://` and `quic://` proxy hops.
     ///
     /// [`ClientBuilder::tls_verify_hostname(false)`]: crate::ClientBuilder::tls_verify_hostname
     pub fn verify_host<H>(mut self, host: H) -> Self

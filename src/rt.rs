@@ -102,6 +102,7 @@ pub type Connecting = BoxFuture<'static, io::Result<BoxConnection>>;
 /// Deadlines and [`Timer::now`] must use the same clock.
 pub trait Timer: Send + Sync {
     /// Returns a future that completes after `duration`.
+    /// Oversized durations must not panic; Tokio caps them at about 30 years.
     fn sleep(&self, duration: Duration) -> BoxSleep;
 
     /// Returns a future that completes at `deadline`.

@@ -302,7 +302,7 @@ impl QuicConnector {
         let mut tls = self
             .tls
             .config(&request.clone().with_route_uri(uri.clone()), None)?;
-        tls.transport_config(self.tls.proxy_transport());
+        tls.transport_config(self.tls.proxy_transport(request)?);
         let options = self.bind_options(request);
         self.dial(uri, &options, &tls, timer, false).await
     }

@@ -48,6 +48,9 @@ use crate::{IntoUri, ext::UriExt};
 /// at `https://secure.example`. A request to `http://hyper.rs` will talk
 /// to your proxy. A request to `https://hyper.rs` will not.
 ///
+/// TLS to an `https://` or `quic://` proxy follows the client's TLS settings and is verified
+/// against the proxy host rather than the request host.
+///
 /// Multiple `Proxy` rules can be configured for a `Client`. The `Client` will
 /// check each `Proxy` in the order it was added. This could mean that a
 /// `Proxy` added first with eager intercept rules, such as `Proxy::all`,
@@ -76,7 +79,7 @@ use crate::{IntoUri, ext::UriExt};
 /// `https://host:port/.well-known/masque/udp/{target_host}/{target_port}/`.
 /// Proxy credentials and custom headers are sent in the CONNECT-UDP request.
 /// HTTP/1 and HTTP/2 requests through this proxy return an error.
-/// The outer connection uses the client's QUIC options with Datagrams enabled, starting at an
+/// The outer connection uses the request's QUIC options with Datagrams enabled, starting at an
 /// MTU that fits 1200-byte UDP payloads; a tunnel that cannot carry them fails the connection.
 #[derive(Clone, Debug)]
 pub struct Proxy {

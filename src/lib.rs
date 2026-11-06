@@ -225,12 +225,14 @@
 //! * `socks4a://` is the scheme for socks4a proxy
 //! * `socks5://` is the scheme for socks5 proxy
 //! * `socks5h://` is the scheme for socks5h proxy
+//! * `quic://` is the scheme for an HTTP/3 MASQUE proxy (requires `http3`)
 //!  
 //! ## TLS
 //!
 //! By default, clients will utilize BoringSSL transport layer security to connect to HTTPS targets.
 //!
 //! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
+//! - These settings also apply to `https://` and `quic://` proxies.
 //!
 //! ## Certificate Store
 //!
