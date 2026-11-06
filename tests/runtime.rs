@@ -55,16 +55,29 @@ fn oversized_timeouts_do_not_overflow() {
     let server = support::server::http(|_| async { http::Response::new(Body::from("ok")) });
     let url = format!("http://{}/", server.addr());
     let get = async |builder: wreq::ClientBuilder| {
-        let client = builder
+        let builder = builder
             .no_proxy()
             .timeout(Duration::MAX)
             .read_timeout(Duration::MAX)
             .connect_timeout(Duration::MAX)
-            .pool_idle_timeout(Duration::MAX)
-            .build()
-            .unwrap();
-        let response = client.get(&url).send().await.unwrap();
-        assert_eq!(response.text().await.unwrap(), "ok");
+            .pool_idle_timeout(Duration::MAX);
+        #[cfg(feature = "http2")]
+        let builder = builder.http2_options(
+            wreq::http2::Http2Options::builder()
+                .keep_alive_interval(Duration::MAX)
+                .keep_alive_timeout(Duration::MAX)
+                .keep_alive_while_idle(true)
+                .build(),
+        );
+        let client = builder.build().unwrap();
+        let send = async |version| {
+            let response = client.get(&url).version(version).send().await.unwrap();
+            assert_eq!(response.version(), version);
+            assert_eq!(response.text().await.unwrap(), "ok");
+        };
+        send(Version::HTTP_11).await;
+        #[cfg(feature = "http2")]
+        send(Version::HTTP_2).await;
     };
 
     compio::runtime::Runtime::new()
