@@ -816,3 +816,96 @@ async fn socks_preserves_dns_auth_and_connection_reuse() {
         }
     }
 }
+
+#[tokio::test]
+async fn https_proxy_tunnel_follows_client_hostname_verification() {
+    use std::{pin::Pin, time::Duration};
+
+    use btls::{
+        pkey::PKey,
+        ssl::{Ssl, SslAcceptor, SslMethod},
+        x509::X509,
+    };
+    use http::Version;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use wreq::{Proxy, tls::trust::CertStore};
+
+    // Issued by localhost-ca for localhost and 127.0.0.1: trusted, but not for either host.
+    let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+    acceptor
+        .set_certificate(&X509::from_der(include_bytes!("support/localhost.cert")).unwrap())
+        .unwrap();
+    acceptor
+        .set_private_key(
+            &PKey::private_key_from_der(include_bytes!("support/localhost.key")).unwrap(),
+        )
+        .unwrap();
+    let acceptor = acceptor.build();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            let ssl = Ssl::new(acceptor.context()).unwrap();
+            let mut stream = tokio_btls::SslStream::new(ssl, socket).unwrap();
+            // A client verifying the proxy host aborts this handshake.
+            if Pin::new(&mut stream).accept().await.is_err() {
+                continue;
+            }
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(stream.read_u8().await.unwrap());
+            }
+            assert!(head.starts_with(b"CONNECT target.test:443 HTTP/1.1\r\n"));
+            stream
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await
+                .unwrap();
+            let stream = server::tls_accept(&acceptor, stream).await;
+            server::serve_connection(stream, Version::HTTP_11, |_| async {
+                http::Response::builder()
+                    .header(http::header::CONNECTION, "close")
+                    .body(wreq::Body::from("ok"))
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+            break;
+        }
+    });
+
+    let client = |verify_hostname| {
+        let ca = include_bytes!("support/localhost-ca.cert").as_slice();
+        Client::builder_tokio()
+            .resolve("proxy.test", addr)
+            .proxy(Proxy::all(format!("https://proxy.test:{}", addr.port())).unwrap())
+            .tls_cert_store(CertStore::from_der_certs([ca]).unwrap())
+            .tls_verify_hostname(verify_hostname)
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap()
+    };
+
+    // The proxy certificate is checked against the proxy host.
+    let error = client(true)
+        .get("https://target.test/")
+        .send()
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("CERTIFICATE_VERIFY_FAILED"),
+        "{error:?}"
+    );
+
+    // Disabling hostname verification covers the proxy hop as well as the target.
+    let response = client(false)
+        .get("https://target.test/")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.text().await.unwrap(), "ok");
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap();
+}
