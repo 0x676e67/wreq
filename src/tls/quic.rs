@@ -75,10 +75,20 @@ impl TlsConfig {
         })))
     }
 
-    /// Returns the transport of a MASQUE proxy connection, built from client options.
-    #[inline]
-    pub(crate) fn proxy_transport(&self) -> Arc<TransportConfig> {
-        self.0.proxy_transport.clone()
+    /// Returns the MASQUE proxy transport for `request`, built from the same QUIC options as
+    /// its TLS; the client's is reused unless the request changes transport fields.
+    pub(crate) fn proxy_transport(&self, request: &ConnectRequest) -> Result<Arc<TransportConfig>> {
+        let inner = &*self.0;
+        match (
+            request.config_override::<QuicOptions>(),
+            inner.options.as_deref(),
+        ) {
+            (Some(requested), Some(client)) if requested.same_transport(client) => {
+                Ok(inner.proxy_transport.clone())
+            }
+            (Some(requested), _) => proxy_transport(Some(requested)).map(Arc::new),
+            (None, _) => Ok(inner.proxy_transport.clone()),
+        }
     }
 
     /// Returns the QUIC configuration of one connection for `request`.
