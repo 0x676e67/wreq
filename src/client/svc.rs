@@ -534,12 +534,12 @@ where
 
             // RFC 8441 §3: extended CONNECT only after the peer enabled it. A miss keeps
             // the dedicated HTTP/1.1 upgrade, so no HTTP/2 connection is opened for it.
-            #[cfg(feature = "http2")]
-            let reused = extended_connect
-                .as_ref()
-                .and_then(|key| this.pool.checkout_extended_connect(key));
-            #[cfg(not(feature = "http2"))]
-            let reused: Option<pool::Pooled<B>> = None;
+            let reused: Option<pool::Pooled<B>> = cfg_select! {
+                feature = "http2" => extended_connect
+                    .as_ref()
+                    .and_then(|key| this.pool.checkout_extended_connect(key)),
+                _ => None,
+            };
             #[cfg(feature = "http2")]
             let upgrade = reused
                 .is_some()
@@ -773,10 +773,10 @@ mod tests {
             #[cfg(feature = "http2")]
             Protocol::Http2,
         ] {
-            #[cfg(feature = "http2")]
-            let h2 = protocol == Protocol::Http2;
-            #[cfg(not(feature = "http2"))]
-            let h2 = false;
+            let h2 = cfg_select! {
+                feature = "http2" => protocol == Protocol::Http2,
+                _ => false,
+            };
             let calls = Arc::new(AtomicUsize::new(0));
             let accepted = calls.clone();
             let connector = tower::service_fn(move |conn_req: ConnectRequest| {

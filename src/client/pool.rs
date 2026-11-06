@@ -80,14 +80,12 @@ use crate::{
 
 /// Returns whether an internal singleton batch asks the client to retry.
 pub(super) fn is_canceled(error: &(dyn std::error::Error + 'static)) -> bool {
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    {
-        SingletonError::is_canceled(error)
-    }
-    #[cfg(not(any(feature = "http2", feature = "http3")))]
-    {
-        let _ = error;
-        false
+    cfg_select! {
+        any(feature = "http2", feature = "http3") => SingletonError::is_canceled(error),
+        _ => {
+            let _ = error;
+            false
+        }
     }
 }
 
@@ -1138,6 +1136,8 @@ where
     }
 }
 
+// ===== impl Http3Entry =====
+
 #[cfg(feature = "http3")]
 impl<M, B> Entry<B> for Http3Entry<M>
 where
@@ -1501,8 +1501,6 @@ where
         } = target;
         #[cfg(not(feature = "http2"))]
         let _ = protocol;
-        #[cfg(not(feature = "http2"))]
-        let _ = protocol;
         let reuse_delay = if wait_for_reuse {
             self.reuse_delay
         } else {
@@ -1579,7 +1577,7 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    /// Wraps a negotiated sender and registers an HTTP/2 checkout when needed.
+    /// Wraps a negotiated sender and registers an HTTP/2 or HTTP/3 checkout when needed.
     fn new(inner: PooledInner<B>, pool_enabled: bool, usage: EntryUse) -> Self {
         match &inner {
             PooledInner::Http1(_) => {}
@@ -1694,26 +1692,32 @@ where
 {
     type Response = Response<Incoming>;
     type Error = SendError<B>;
-    #[cfg(all(feature = "http2", feature = "http3"))]
-    type Future = futures_util::future::Either<
-        futures_util::future::Either<
-            <http1::Connection<B> as Service<Request<B>>>::Future,
-            <http2::Connection<B> as Service<Request<B>>>::Future,
-        >,
-        <http3::Connection<B> as Service<Request<B>>>::Future,
-    >;
-    #[cfg(all(feature = "http2", not(feature = "http3")))]
-    type Future = futures_util::future::Either<
-        <http1::Connection<B> as Service<Request<B>>>::Future,
-        <http2::Connection<B> as Service<Request<B>>>::Future,
-    >;
-    #[cfg(all(not(feature = "http2"), feature = "http3"))]
-    type Future = futures_util::future::Either<
-        <http1::Connection<B> as Service<Request<B>>>::Future,
-        <http3::Connection<B> as Service<Request<B>>>::Future,
-    >;
-    #[cfg(not(any(feature = "http2", feature = "http3")))]
-    type Future = <http1::Connection<B> as Service<Request<B>>>::Future;
+    cfg_select! {
+        all(feature = "http2", feature = "http3") => {
+            type Future = futures_util::future::Either<
+                futures_util::future::Either<
+                    <http1::Connection<B> as Service<Request<B>>>::Future,
+                    <http2::Connection<B> as Service<Request<B>>>::Future,
+                >,
+                <http3::Connection<B> as Service<Request<B>>>::Future,
+            >;
+        }
+        feature = "http2" => {
+            type Future = futures_util::future::Either<
+                <http1::Connection<B> as Service<Request<B>>>::Future,
+                <http2::Connection<B> as Service<Request<B>>>::Future,
+            >;
+        }
+        feature = "http3" => {
+            type Future = futures_util::future::Either<
+                <http1::Connection<B> as Service<Request<B>>>::Future,
+                <http3::Connection<B> as Service<Request<B>>>::Future,
+            >;
+        }
+        _ => {
+            type Future = <http1::Connection<B> as Service<Request<B>>>::Future;
+        }
+    }
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         match &mut self.inner {
@@ -1809,8 +1813,15 @@ where
     B::Error: Into<BoxError>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let version = match self.inner {
+            PooledInner::Http1(_) => http::Version::HTTP_11,
+            #[cfg(feature = "http2")]
+            PooledInner::Http2(_) => http::Version::HTTP_2,
+            #[cfg(feature = "http3")]
+            PooledInner::Http3(_) => http::Version::HTTP_3,
+        };
         f.debug_struct("Pooled")
-            .field("http2", &self.is_http2())
+            .field("version", &version)
             .field("reused", &self.is_reused())
             .finish()
     }

@@ -1,3 +1,5 @@
+#![cfg(feature = "tokio-rt")]
+
 use std::{
     convert::Infallible,
     net::SocketAddr,
@@ -34,6 +36,17 @@ use wreq::{
 #[derive(Default)]
 struct UnscopedSessionStore(Mutex<Option<TlsSession>>);
 
+/// Fails while receiving a new session from the native handshake callback.
+/// Exercises the boundary that prevents Rust unwind from entering BoringSSL.
+/// Stores no ticket, so requests must complete without resumption.
+struct PanickingSessionStore;
+
+/// Resolves every name to the address the test selects next.
+#[cfg(target_os = "linux")]
+struct SwitchingResolver(Mutex<SocketAddr>);
+
+// ===== impl UnscopedSessionStore =====
+
 impl TlsSessionStore for UnscopedSessionStore {
     fn put(&self, _key: Key, session: TlsSession) {
         *self.0.lock().unwrap() = Some(session);
@@ -44,10 +57,7 @@ impl TlsSessionStore for UnscopedSessionStore {
     }
 }
 
-/// Fails while receiving a new session from the native handshake callback.
-/// Exercises the boundary that prevents Rust unwind from entering BoringSSL.
-/// Stores no ticket, so requests must complete without resumption.
-struct PanickingSessionStore;
+// ===== impl PanickingSessionStore =====
 
 impl TlsSessionStore for PanickingSessionStore {
     fn put(&self, _key: Key, _session: TlsSession) {
@@ -56,6 +66,16 @@ impl TlsSessionStore for PanickingSessionStore {
 
     fn pop(&self, _key: &Key) -> Option<TlsSession> {
         None
+    }
+}
+
+// ===== impl SwitchingResolver =====
+
+#[cfg(target_os = "linux")]
+impl Resolve for SwitchingResolver {
+    fn resolve(&self, _: Name) -> Resolving {
+        let addr = *self.0.lock().unwrap();
+        Box::pin(async move { Ok(Box::new(std::iter::once(addr)) as Addrs) })
     }
 }
 
@@ -371,18 +391,6 @@ async fn tls13_tickets_resume_with_certificate_verification() {
         .map(|(resumed, _)| resumed)
         .collect();
     assert_eq!(resumed, [false, true]);
-}
-
-/// Resolves every name to the address the test selects next.
-#[cfg(target_os = "linux")]
-struct SwitchingResolver(Mutex<SocketAddr>);
-
-#[cfg(target_os = "linux")]
-impl Resolve for SwitchingResolver {
-    fn resolve(&self, _: Name) -> Resolving {
-        let addr = *self.0.lock().unwrap();
-        Box::pin(async move { Ok(Box::new(std::iter::once(addr)) as Addrs) })
-    }
 }
 
 // 127.0.0.2 reaches the loopback interface without configuration only on Linux.

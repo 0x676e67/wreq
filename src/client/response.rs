@@ -165,16 +165,13 @@ impl Response {
     /// # }
     /// ```
     pub async fn text(self) -> crate::Result<String> {
-        #[cfg(feature = "charset")]
-        {
-            self.text_with_charset("utf-8").await
-        }
-
-        #[cfg(not(feature = "charset"))]
-        {
-            let full = self.bytes().await?;
-            let text = String::from_utf8_lossy(&full);
-            Ok(text.into_owned())
+        cfg_select! {
+            feature = "charset" => self.text_with_charset("utf-8").await,
+            _ => {
+                let full = self.bytes().await?;
+                let text = String::from_utf8_lossy(&full);
+                Ok(text.into_owned())
+            }
         }
     }
 

@@ -1,3 +1,5 @@
+#![cfg(feature = "tokio-rt")]
+
 mod support;
 use http::StatusCode;
 use http_body_util::BodyExt;

@@ -29,6 +29,16 @@ struct Tickets {
     received: tokio::sync::Notify,
 }
 
+/// Serves `first` until rotated, then `second`.
+#[derive(Debug)]
+struct Certificates {
+    rotated: AtomicBool,
+    first: Arc<CertifiedKey>,
+    second: Arc<CertifiedKey>,
+}
+
+// ===== impl Tickets =====
+
 impl TlsSessionStore for Tickets {
     fn put(&self, _key: Key, session: TlsSession) {
         assert!(session.should_be_single_use());
@@ -41,13 +51,7 @@ impl TlsSessionStore for Tickets {
     }
 }
 
-/// Serves `first` until rotated, then `second`.
-#[derive(Debug)]
-struct Certificates {
-    rotated: AtomicBool,
-    first: Arc<CertifiedKey>,
-    second: Arc<CertifiedKey>,
-}
+// ===== impl Certificates =====
 
 impl ResolvesServerCert for Certificates {
     fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {

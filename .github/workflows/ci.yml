@@ -37,6 +37,11 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy check
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Clippy check (default features)
+        run: cargo clippy --all-targets -- -D warnings
+      # `--all-features` enables compio-rt, which leaves out the Hickory resolver.
+      - name: Clippy check (hickory-dns)
+        run: cargo clippy --all-targets --features hickory-dns -- -D warnings
 
   docs:
     name: Docs
@@ -88,6 +93,10 @@ jobs:
           - "" # default (tokio-rt)
           - "--no-default-features --features tokio-rt,webpki-roots" # HTTP/1 only
           - "--features compio-rt"
+          - "--no-default-features --features compio-rt,webpki-roots" # Compio only
+          - "--features compio-rt,http3"
+          - "--features http3"
+          - "--no-default-features --features tokio-rt,webpki-roots,http3" # HTTP/3 without HTTP/2
           - "--all-features"
           - "--features form"
           - "--features query"
@@ -126,6 +135,10 @@ jobs:
       # The emulation tests reach tls.browserleaks.com.
       - name: Run tests (${{ matrix.feature-set }})
         run: cargo nextest run --workspace ${{ matrix.feature-set }} ${{ !matrix.public-network && '-E "not binary_id(wreq::emulate)"' || '' }}
+      # nextest does not run doctests.
+      - name: Run doctests (${{ matrix.feature-set }})
+        if: matrix.feature-set == '' || matrix.feature-set == '--all-features'
+        run: cargo test --doc ${{ matrix.feature-set }}
 
   build:
     name: Build (${{ matrix.env }})

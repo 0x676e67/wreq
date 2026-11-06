@@ -133,16 +133,13 @@ impl Error {
 fn is_proxy_connect_error(error: &(dyn StdError + 'static)) -> bool {
     let mut current = Some(error);
     while let Some(error) = current {
-        if error.is::<proxy::tunnel::TunnelError>() || error.is::<ProxyConnect>() || {
-            #[cfg(feature = "socks")]
-            {
-                error.is::<proxy::socks::SocksError>()
+        if error.is::<proxy::tunnel::TunnelError>()
+            || error.is::<ProxyConnect>()
+            || cfg_select! {
+                feature = "socks" => error.is::<proxy::socks::SocksError>(),
+                _ => false,
             }
-            #[cfg(not(feature = "socks"))]
-            {
-                false
-            }
-        } {
+        {
             return true;
         }
         current = error.source();

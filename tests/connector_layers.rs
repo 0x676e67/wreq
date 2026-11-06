@@ -1,3 +1,5 @@
+#![cfg(feature = "tokio-rt")]
+
 mod support;
 
 #[cfg(all(feature = "http3", feature = "tokio-rt"))]

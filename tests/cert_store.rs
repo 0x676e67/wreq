@@ -1,3 +1,5 @@
+#![cfg(feature = "tokio-rt")]
+
 use std::{net::SocketAddr, pin::Pin};
 
 use btls::{

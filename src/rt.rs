@@ -6,7 +6,7 @@ mod handle;
 
 #[cfg(feature = "compio-rt")]
 pub mod compio;
-#[cfg(feature = "tokio-rt")]
+#[cfg(any(test, feature = "tokio-rt"))]
 pub mod tokio;
 
 use std::{

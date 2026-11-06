@@ -66,8 +66,6 @@ use self::{
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
-#[cfg(feature = "hickory-dns")]
-use crate::dns::hickory::HickoryDnsResolver;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
@@ -95,37 +93,21 @@ use crate::{
     },
 };
 
-#[cfg(not(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-)))]
-type MaybeDecompression<T> = T;
-
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-))]
-type MaybeDecompression<T> = self::layer::decoder::Decompression<T>;
-
-#[cfg(not(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-)))]
-type MaybeDecompressionBody<T> = T;
-
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-))]
-type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>;
+cfg_select! {
+    any(
+        feature = "gzip",
+        feature = "zstd",
+        feature = "brotli",
+        feature = "deflate"
+    ) => {
+        type MaybeDecompression<T> = self::layer::decoder::Decompression<T>;
+        type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>;
+    }
+    _ => {
+        type MaybeDecompression<T> = T;
+        type MaybeDecompressionBody<T> = T;
+    }
+}
 
 type ClientService = Timeout<
     ConfigService<
@@ -213,8 +195,6 @@ struct Config {
     timeout_options: TimeoutOptions,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    #[cfg(feature = "hickory-dns")]
-    hickory_dns: bool,
     dns_overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
     protocol: Protocol,
@@ -241,8 +221,7 @@ impl Client {
     ///
     /// # Panics
     ///
-    /// This method panics if a TLS backend cannot be initialized, or the resolver
-    /// cannot load the system configuration.
+    /// This method panics if a TLS backend cannot be initialized.
     ///
     /// Use [`Client::builder`] if you wish to handle the failure as a [`crate::Error`]
     /// instead of panicking.
@@ -297,8 +276,6 @@ impl Client {
                 redirect_policy: redirect::Policy::none(),
                 referer: true,
                 timeout_options: TimeoutOptions::default(),
-                #[cfg(feature = "hickory-dns")]
-                hickory_dns: false,
                 #[cfg(feature = "cookies")]
                 cookie_store: None,
                 dns_overrides: HashMap::new(),
@@ -325,12 +302,14 @@ impl Client {
 
     /// Creates a client builder using Tokio for tasks, timers and DNS.
     #[cfg(feature = "tokio-rt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio-rt")))]
     pub fn builder_tokio() -> ClientBuilder {
         Self::builder(crate::rt::tokio::TokioRuntime)
     }
 
     /// Creates a client builder using Compio for tasks, timers and DNS.
     #[cfg(feature = "compio-rt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "compio-rt")))]
     pub fn builder_compio() -> ClientBuilder {
         Self::builder(crate::rt::compio::CompioRuntime)
     }
@@ -489,8 +468,7 @@ impl ClientBuilder {
     ///
     /// # Errors
     ///
-    /// This method fails if a TLS backend cannot be initialized, or the resolver
-    /// cannot load the system configuration.
+    /// This method fails if a TLS backend cannot be initialized.
     pub fn build(mut self) -> crate::Result<Client> {
         if let Some(err) = self.config.error {
             return Err(err);
@@ -506,8 +484,6 @@ impl ClientBuilder {
             let resolver = {
                 let mut resolver: Arc<dyn Resolve> = match self.config.dns_resolver {
                     Some(dns_resolver) => dns_resolver,
-                    #[cfg(feature = "hickory-dns")]
-                    None if self.config.hickory_dns => Arc::new(HickoryDnsResolver::new()),
                     None => self.runtime.resolver(),
                 };
 
@@ -859,14 +835,9 @@ impl ClientBuilder {
     /// even if another dependency were to enable the optional `zstd` feature.
     #[inline]
     pub fn no_zstd(self) -> ClientBuilder {
-        #[cfg(feature = "zstd")]
-        {
-            self.zstd(false)
-        }
-
-        #[cfg(not(feature = "zstd"))]
-        {
-            self
+        cfg_select! {
+            feature = "zstd" => self.zstd(false),
+            _ => self,
         }
     }
 
@@ -877,14 +848,9 @@ impl ClientBuilder {
     /// even if another dependency were to enable the optional `gzip` feature.
     #[inline]
     pub fn no_gzip(self) -> ClientBuilder {
-        #[cfg(feature = "gzip")]
-        {
-            self.gzip(false)
-        }
-
-        #[cfg(not(feature = "gzip"))]
-        {
-            self
+        cfg_select! {
+            feature = "gzip" => self.gzip(false),
+            _ => self,
         }
     }
 
@@ -895,14 +861,9 @@ impl ClientBuilder {
     /// even if another dependency were to enable the optional `brotli` feature.
     #[inline]
     pub fn no_brotli(self) -> ClientBuilder {
-        #[cfg(feature = "brotli")]
-        {
-            self.brotli(false)
-        }
-
-        #[cfg(not(feature = "brotli"))]
-        {
-            self
+        cfg_select! {
+            feature = "brotli" => self.brotli(false),
+            _ => self,
         }
     }
 
@@ -913,14 +874,9 @@ impl ClientBuilder {
     /// even if another dependency were to enable the optional `deflate` feature.
     #[inline]
     pub fn no_deflate(self) -> ClientBuilder {
-        #[cfg(feature = "deflate")]
-        {
-            self.deflate(false)
-        }
-
-        #[cfg(not(feature = "deflate"))]
-        {
-            self
+        cfg_select! {
+            feature = "deflate" => self.deflate(false),
+            _ => self,
         }
     }
 
@@ -1118,9 +1074,16 @@ impl ClientBuilder {
     }
 
     /// Uses HTTP/3 over QUIC without falling back to TCP.
-    /// Enabling the `http3` feature alone does not select HTTP/3.
-    /// An explicit request [`version`](RequestBuilder::version) overrides this setting.
+    ///
+    /// Enabling the `http3` feature alone does not select HTTP/3. HTTP/3 needs `https` URIs
+    /// ([RFC 9114 Section 3.1](https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1)), and a
+    /// request routed to an `http://` or `https://` proxy, including one from the environment,
+    /// fails; use a `quic://` proxy, a SOCKS5 proxy with the `socks` feature, or
+    /// [`no_proxy`](Self::no_proxy). An explicit HTTP/1 or HTTP/2 request
+    /// [`version`](RequestBuilder::version) overrides this setting. A WebSocket handshake without
+    /// an explicit version may still use a dedicated HTTP/1.1 connection.
     #[cfg(feature = "http3")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
     pub fn http3_only(mut self) -> ClientBuilder {
         self.config.protocol = Protocol::Http3;
         self
@@ -1150,6 +1113,7 @@ impl ClientBuilder {
 
     /// Sets the HTTP/3 options for the client.
     #[cfg(feature = "http3")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
     pub fn http3_options<T>(mut self, options: T) -> ClientBuilder
     where
         T: Into<Option<netty::http3::Http3Options>>,
@@ -1161,6 +1125,7 @@ impl ClientBuilder {
     /// Sets the QUIC transport and TLS options of HTTP/3 connections.
     /// TCP connections use [`tls_options`](Self::tls_options) instead.
     #[cfg(feature = "http3")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
     pub fn quic_options<T>(mut self, options: T) -> ClientBuilder
     where
         T: Into<Option<crate::quic::QuicOptions>>,
@@ -1550,16 +1515,6 @@ impl ClientBuilder {
     }
 
     // DNS options
-
-    /// Disables automatic selection of the built-in Hickory DNS resolver.
-    /// Does not replace a resolver supplied by the runtime or [`Self::dns_resolver`].
-    #[inline]
-    #[cfg(feature = "hickory-dns")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
-    pub fn no_hickory_dns(mut self) -> ClientBuilder {
-        self.config.hickory_dns = false;
-        self
-    }
 
     /// Override DNS resolution for specific domains to a particular IP address.
     ///

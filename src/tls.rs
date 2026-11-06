@@ -159,6 +159,8 @@ pub enum EchGrease {
     Nss3127,
 }
 
+// ===== impl EchGrease =====
+
 impl Hash for EchGrease {
     fn hash<H: Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);

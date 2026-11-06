@@ -1,3 +1,5 @@
+#![cfg(feature = "tokio-rt")]
+
 mod support;
 use support::server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

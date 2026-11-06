@@ -50,27 +50,28 @@ fn set_ech_grease_policy(builder: &mut SslContextBuilder, policy: Option<EchGrea
 }
 
 #[cfg(any(feature = "chromium-roots", feature = "webpki-roots"))]
-static BUNDLED_CERT_STORE: std::sync::LazyLock<CertStore> = std::sync::LazyLock::new(|| {
-    let sources = &[
-        #[cfg(feature = "chromium-roots")]
-        chromium_roots::TLS_SERVER_ROOT_CERTS,
-        #[cfg(feature = "webpki-roots")]
-        webpki_root_certs::TLS_SERVER_ROOT_CERTS,
-    ];
+static BUNDLED_CERT_STORE: std::sync::LazyLock<Result<CertStore, std::sync::Arc<Error>>> =
+    std::sync::LazyLock::new(|| {
+        let sources = &[
+            #[cfg(feature = "chromium-roots")]
+            chromium_roots::TLS_SERVER_ROOT_CERTS,
+            #[cfg(feature = "webpki-roots")]
+            webpki_root_certs::TLS_SERVER_ROOT_CERTS,
+        ];
 
-    let certs = sources
-        .iter()
-        .enumerate()
-        .flat_map(|(source_index, source)| {
-            let previous_sources = &sources[..source_index];
-            source
-                .iter()
-                .filter(move |cert| !previous_sources.iter().any(|source| source.contains(*cert)))
-        })
-        .map(AsRef::as_ref);
+        let certs = sources
+            .iter()
+            .enumerate()
+            .flat_map(|(source_index, source)| {
+                let previous_sources = &sources[..source_index];
+                source.iter().filter(move |cert| {
+                    !previous_sources.iter().any(|source| source.contains(*cert))
+                })
+            })
+            .map(AsRef::as_ref);
 
-    CertStore::from_der_certs(certs).expect("failed to load bundled root certificates")
-});
+        CertStore::from_der_certs(certs).map_err(std::sync::Arc::new)
+    });
 
 /// Applies client policy and TLS options to BoringSSL contexts.
 pub(super) trait SslContextBuilderExt {
@@ -204,14 +205,16 @@ impl SslContextBuilderExt for SslContextBuilder {
         if let Some(store) = store {
             self.set_cert_store_ref(&store.0)
         } else {
-            #[cfg(any(feature = "chromium-roots", feature = "webpki-roots"))]
-            {
-                self.set_cert_store_ref(&BUNDLED_CERT_STORE.0);
-            }
-
-            #[cfg(not(any(feature = "chromium-roots", feature = "webpki-roots")))]
-            {
-                self.set_default_verify_paths().map_err(Error::tls)?;
+            cfg_select! {
+                any(feature = "chromium-roots", feature = "webpki-roots") => {
+                    let store = BUNDLED_CERT_STORE
+                        .as_ref()
+                        .map_err(|error| Error::tls(error.clone()))?;
+                    self.set_cert_store_ref(&store.0);
+                }
+                _ => {
+                    self.set_default_verify_paths().map_err(Error::tls)?;
+                }
             }
         }
 

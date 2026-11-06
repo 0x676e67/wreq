@@ -101,10 +101,10 @@ impl TlsLayer {
             connected = connected.extra(tls_info);
         }
         Conn {
-            #[cfg(feature = "http3")]
-            inner: Either::Left(stream),
-            #[cfg(not(feature = "http3"))]
-            inner: stream,
+            inner: cfg_select! {
+                feature = "http3" => Either::Left(stream),
+                _ => stream,
+            },
             connected,
         }
     }

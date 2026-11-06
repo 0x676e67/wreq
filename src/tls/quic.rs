@@ -267,7 +267,7 @@ impl SessionCache for Resumption {
     }
 }
 
-#[cfg(all(test, feature = "tokio-rt"))]
+#[cfg(test)]
 mod tests {
     #[tokio::test]
     async fn client_hello_extensions_follow_quic_options() {
@@ -355,7 +355,7 @@ mod tests {
 
         for (options, new, old) in cases {
             let grease = options.ech_grease;
-            let client = crate::Client::builder_tokio()
+            let client = crate::Client::builder(crate::rt::tokio::TokioRuntime)
                 .no_proxy()
                 .http3_only()
                 .tls_sni(false)

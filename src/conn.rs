@@ -566,7 +566,7 @@ impl TlsInfoFactory for quic::Connection {
 
 impl fmt::Debug for PoisonPill {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // print the address of the pill鈥攖his makes debugging issues much easier
+        // print the address of the pill, which makes debugging issues much easier
         write!(
             f,
             "PoisonPill@{:p} {{ poisoned: {} }}",
@@ -757,10 +757,10 @@ mod tests {
     impl Conn {
         pub(crate) fn test(stream: tokio::io::DuplexStream) -> Self {
             Self {
-                #[cfg(feature = "http3")]
-                inner: Either::Left(Box::new(stream)),
-                #[cfg(not(feature = "http3"))]
-                inner: Box::new(stream),
+                inner: cfg_select! {
+                    feature = "http3" => Either::Left(Box::new(stream)),
+                    _ => Box::new(stream),
+                },
                 connected: Connected::new(),
             }
         }

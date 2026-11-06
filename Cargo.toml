@@ -63,7 +63,7 @@ json = ["dep:serde", "dep:serde_json"]
 # Enable multipart/form-data support.
 multipart = ["dep:mime_guess", "dep:sync_wrapper", "sync_wrapper?/futures"]
 
-# Enable hickory DNS resolver.
+# Use the hickory DNS resolver for the Tokio runtime; requires `tokio-rt`, ignored with `compio-rt`.
 hickory-dns = ["dep:hickory-resolver"]
 
 # Enable streaming support.
@@ -188,6 +188,7 @@ rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", 
 tokio = { version = "1.0", default-features = false, features = [
     "macros",
     "rt-multi-thread",
+    "net",
     "time",
     "sync",
 ] }
@@ -286,41 +287,42 @@ required-features = ["http2", "tokio-rt", "stream"]
 [[test]]
 name = "cookie"
 path = "tests/cookie.rs"
-required-features = ["cookies"]
+required-features = ["cookies", "tokio-rt"]
 
 [[test]]
 name = "gzip"
 path = "tests/gzip.rs"
-required-features = ["gzip", "stream"]
+required-features = ["gzip", "stream", "tokio-rt"]
 
 [[test]]
 name = "brotli"
 path = "tests/brotli.rs"
-required-features = ["brotli", "stream"]
+required-features = ["brotli", "stream", "tokio-rt"]
 
 [[test]]
 name = "zstd"
 path = "tests/zstd.rs"
-required-features = ["zstd", "stream"]
+required-features = ["zstd", "stream", "tokio-rt"]
 
 [[test]]
 name = "deflate"
 path = "tests/deflate.rs"
-required-features = ["deflate", "stream"]
+required-features = ["deflate", "stream", "tokio-rt"]
 
 [[test]]
 name = "multipart"
 path = "tests/multipart.rs"
-required-features = ["multipart", "stream"]
+required-features = ["multipart", "stream", "tokio-rt"]
 
 [[test]]
 name = "retry"
 path = "tests/retry.rs"
+required-features = ["tokio-rt"]
 
 [[test]]
 name = "websocket"
 path = "tests/websocket.rs"
-required-features = ["ws"]
+required-features = ["ws", "tokio-rt"]
 
 [[example]]
 name = "json_dynamic"
@@ -385,14 +387,16 @@ required-features = ["http3", "tokio-rt"]
 [[test]]
 name = "emulate"
 path = "tests/emulate.rs"
-required-features = ["http2"]
+required-features = ["http2", "tokio-rt"]
 
 [patch.crates-io]
 # Remove once an http3 release includes the connection-wide pseudo-header order and
-# SETTINGS value checks.
-http3 = { git = "https://github.com/0x676e67/http3", branch = "main" }
-quic = { git = "https://github.com/0x676e67/quic", branch = "main" }
-netty = { git = "https://github.com/0x676e67/netty", rev = "6e53746abc632056e3a8e518e10e26f6b86a21e6" }
+# SETTINGS value checks. Its QUIC adapter and Datagram crates must match its revision.
+http3 = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
+http3-datagram = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
+http3-quic = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
+quic = { git = "https://github.com/0x676e67/quic", rev = "b3d74044e874c5e785f462e3032faaf021cb6958" }
+netty = { git = "https://github.com/0x676e67/netty", rev = "29076b55c1568537898e33ff2b9a3c3dd4f4ff80" }
 # Match netty until it adopts http2's new headers_priority API.
 http2 = { git = "https://github.com/0x676e67/http2", rev = "fb5bf8bdbf3e9d9aad7073759a6f06f47373342e" }
 btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
