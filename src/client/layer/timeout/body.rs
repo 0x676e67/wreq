@@ -213,7 +213,7 @@ where
 
         // Arm the deadline when a new frame poll begins, reusing the sleep after the first read.
         if !*this.armed {
-            let deadline = crate::rt::deadline_after(this.timer.now(), *this.timeout);
+            let deadline = crate::util::deadline_after(this.timer.now(), *this.timeout);
             match this.sleep.as_mut().as_pin_mut() {
                 Some(sleep) => sleep.get_mut().reset(deadline),
                 None => this.sleep.set(Some(this.timer.sleep_until(deadline))),

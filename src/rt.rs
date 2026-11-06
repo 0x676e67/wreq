@@ -136,13 +136,6 @@ pin_project! {
     }
 }
 
-/// Returns `now + duration`, capped like Tokio's `sleep` so oversized timeouts cannot overflow.
-#[inline]
-pub(crate) fn deadline_after(now: Instant, duration: Duration) -> Instant {
-    const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
-    now.checked_add(duration.min(MAX_DELAY)).unwrap_or(now)
-}
-
 // ===== impl Connection =====
 
 impl Debug for dyn Connection {

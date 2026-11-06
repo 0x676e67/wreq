@@ -45,7 +45,7 @@ struct CompioSleep {
 impl Timer for CompioRuntime {
     #[inline]
     fn sleep(&self, duration: Duration) -> BoxSleep {
-        self.sleep_until(super::deadline_after(self.now(), duration))
+        self.sleep_until(crate::util::deadline_after(self.now(), duration))
     }
 
     #[inline]
