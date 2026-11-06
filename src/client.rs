@@ -1122,8 +1122,8 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the QUIC transport and TLS options of HTTP/3 connections.
-    /// TCP connections use [`tls_options`](Self::tls_options) instead.
+    /// Sets the QUIC transport and TLS options of HTTP/3 connections, `quic://` proxy hops
+    /// included. TCP connections use [`tls_options`](Self::tls_options) instead.
     #[cfg(feature = "http3")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
     pub fn quic_options<T>(mut self, options: T) -> ClientBuilder
@@ -1403,6 +1403,8 @@ impl ClientBuilder {
     // TLS options
 
     /// Sets the identity to be used for client certificate authentication.
+    ///
+    /// The identity is also offered to `https://` and `quic://` proxies that request one.
     #[inline]
     pub fn tls_identity(mut self, identity: Identity) -> ClientBuilder {
         self.config.tls_identity = Some(identity);
@@ -1411,7 +1413,8 @@ impl ClientBuilder {
 
     /// Sets a custom certificate store for TLS server verification.
     ///
-    /// This replaces bundled roots and BoringSSL's default verification paths.
+    /// This replaces bundled roots and BoringSSL's default verification paths, and also verifies
+    /// `https://` and `quic://` proxies.
     #[inline]
     pub fn tls_cert_store(mut self, store: CertStore) -> ClientBuilder {
         self.config.tls_cert_store = Some(store);
@@ -1420,7 +1423,7 @@ impl ClientBuilder {
 
     /// Controls the use of certificate validation.
     ///
-    /// Defaults to `true`.
+    /// Applies to targets and to `https://` and `quic://` proxies. Defaults to `true`.
     ///
     /// # Warning
     ///
@@ -1437,7 +1440,9 @@ impl ClientBuilder {
 
     /// Configures the use of hostname verification when connecting.
     ///
-    /// Defaults to `true`.
+    /// Each hop is checked against its own host: an `https://` or `quic://` proxy against the
+    /// proxy host, the target against the request host. Defaults to `true`.
+    ///
     /// # Warning
     ///
     /// You should think very carefully before you use this method. If hostname verification is not
@@ -1451,7 +1456,8 @@ impl ClientBuilder {
 
     /// Configures the use of Server Name Indication (SNI) when connecting.
     ///
-    /// Defaults to `true`.
+    /// Also applies to `https://` and `quic://` proxies, which receive the proxy host; IP literals
+    /// are never sent. Defaults to `true`.
     #[inline]
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
         self.config.tls_sni = tls_sni;
@@ -1503,8 +1509,8 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the TLS options of TCP connections.
-    /// HTTP/3 connections use `quic_options` instead.
+    /// Sets the TLS options of TCP connections, `https://` proxy hops included; proxy hops offer
+    /// no ALPN. HTTP/3 connections use `quic_options` instead.
     #[inline]
     pub fn tls_options<T>(mut self, options: T) -> ClientBuilder
     where

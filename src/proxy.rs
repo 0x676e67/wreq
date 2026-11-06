@@ -48,6 +48,9 @@ use crate::{IntoUri, ext::UriExt};
 /// at `https://secure.example`. A request to `http://hyper.rs` will talk
 /// to your proxy. A request to `https://hyper.rs` will not.
 ///
+/// TLS to an `https://` or `quic://` proxy follows the client's TLS settings and is verified
+/// against the proxy host rather than the request host.
+///
 /// Multiple `Proxy` rules can be configured for a `Client`. The `Client` will
 /// check each `Proxy` in the order it was added. This could mean that a
 /// `Proxy` added first with eager intercept rules, such as `Proxy::all`,
