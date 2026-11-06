@@ -830,7 +830,7 @@ async fn https_proxy_tunnel_follows_client_hostname_verification() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use wreq::{Proxy, tls::trust::CertStore};
 
-    // Issued by localhost-ca for localhost and 127.0.0.1: trusted, but not for either host.
+    // Issued by localhost-ca for localhost and 127.0.0.1: valid for the target, not the proxy.
     let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
     acceptor
         .set_certificate(&X509::from_der(include_bytes!("support/localhost.cert")).unwrap())
@@ -856,7 +856,7 @@ async fn https_proxy_tunnel_follows_client_hostname_verification() {
             while !head.ends_with(b"\r\n\r\n") {
                 head.push(stream.read_u8().await.unwrap());
             }
-            assert!(head.starts_with(b"CONNECT target.test:443 HTTP/1.1\r\n"));
+            assert!(head.starts_with(b"CONNECT localhost:443 HTTP/1.1\r\n"));
             stream
                 .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 .await
@@ -886,12 +886,13 @@ async fn https_proxy_tunnel_follows_client_hostname_verification() {
             .unwrap()
     };
 
-    // The proxy certificate is checked against the proxy host.
+    // Only the proxy hop can fail: its certificate does not cover proxy.test.
     let error = client(true)
-        .get("https://target.test/")
+        .get("https://localhost/")
         .send()
         .await
         .unwrap_err();
+    assert!(error.is_proxy_connect(), "{error:?}");
     assert!(
         format!("{error:?}").contains("CERTIFICATE_VERIFY_FAILED"),
         "{error:?}"
@@ -899,7 +900,7 @@ async fn https_proxy_tunnel_follows_client_hostname_verification() {
 
     // Disabling hostname verification covers the proxy hop as well as the target.
     let response = client(false)
-        .get("https://target.test/")
+        .get("https://localhost/")
         .send()
         .await
         .unwrap();
