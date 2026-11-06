@@ -102,6 +102,7 @@ pub type Connecting = BoxFuture<'static, io::Result<BoxConnection>>;
 /// Deadlines and [`Timer::now`] must use the same clock.
 pub trait Timer: Send + Sync {
     /// Returns a future that completes after `duration`.
+    /// Oversized durations must not panic; Tokio caps them at about 30 years.
     fn sleep(&self, duration: Duration) -> BoxSleep;
 
     /// Returns a future that completes at `deadline`.
@@ -133,6 +134,13 @@ pin_project! {
         #[pin]
         inner: S,
     }
+}
+
+/// Returns `now + duration`, capped like Tokio's `sleep` so oversized timeouts cannot overflow.
+#[inline]
+pub(crate) fn deadline_after(now: Instant, duration: Duration) -> Instant {
+    const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
+    now.checked_add(duration.min(MAX_DELAY)).unwrap_or(now)
 }
 
 // ===== impl Connection =====
