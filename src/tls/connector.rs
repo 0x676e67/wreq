@@ -14,7 +14,7 @@ use btls::{
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode, SslVersion},
 };
 use futures_util::future::BoxFuture;
-use http::{Uri, uri::Scheme};
+use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::{BoxError, Layer, Service};
@@ -97,20 +97,6 @@ impl TlsConnector {
                 context,
             }),
         })
-    }
-
-    /// Prepares TLS for a proxy hop from its URI, using the client's SNI and hostname policy.
-    /// Connection-specific ALPN and session selection stay in `ssl_for_connection`.
-    fn ssl_for_uri(&self, uri: Uri, context: &SslConnector) -> Result<Ssl, BoxError> {
-        let config = &self.inner.config;
-        let mut cfg = context.configure()?;
-        cfg.set_use_server_name_indication(config.tls_sni);
-        cfg.set_verify_hostname(config.verify_hostname);
-        let host = uri
-            .host()
-            .ok_or(URI_MISSING_HOST)
-            .map(Self::normalize_host)?;
-        Ok(cfg.into_ssl(host)?)
     }
 
     /// Prepares a connection using its request-specific or shared TLS context.
@@ -297,40 +283,6 @@ impl<S> HttpsConnector<S> {
     pub fn no_alpn(&mut self) -> &mut Self {
         self.alpn_enabled = false;
         self
-    }
-}
-
-impl<T, S> Service<Uri> for HttpsConnector<S>
-where
-    S: Service<Uri, Response = T> + Send,
-    S::Error: Into<BoxError>,
-    S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Connection + Unpin + fmt::Debug + Sync + Send + 'static,
-{
-    type Response = MaybeHttpsStream<T>;
-    type Error = BoxError;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    #[inline]
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(Into::into)
-    }
-
-    fn call(&mut self, uri: Uri) -> Self::Future {
-        let tls = self.tls.clone();
-        let context = self.context.clone();
-        let connect = self.inner.call(uri.clone());
-
-        Box::pin(async move {
-            let conn = connect.await.map_err(Into::into)?;
-
-            if uri.scheme() != Some(&Scheme::HTTPS) {
-                return Ok(MaybeHttpsStream::Http(conn));
-            }
-
-            let ssl = tls.ssl_for_uri(uri, &context)?;
-            perform_handshake(ssl, conn).await
-        })
     }
 }
 

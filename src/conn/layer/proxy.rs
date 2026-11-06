@@ -17,7 +17,7 @@ use netty::proxy::socks;
 use netty::proxy::tunnel;
 #[cfg(feature = "http3")]
 pub(crate) use quic::{QuicProxyConnector, QuicProxyLayer};
-use tower::{BoxError, Layer, Service, ServiceExt};
+use tower::{BoxError, Layer, Service, ServiceExt, util::MapRequest};
 
 use crate::{
     conn::{request::ConnectRequest, transport::SocketRequest},
@@ -87,6 +87,19 @@ fn intercept(request: &ConnectRequest, proxies: &[Matcher]) -> Option<Intercepte
                 .iter()
                 .find_map(|proxy| proxy.intercept(request.uri()))
         })
+}
+
+/// Builds the TLS connector for a CONNECT proxy hop.
+/// The hop uses the same per-connection TLS setup as the target, without ALPN.
+fn proxy_hop<S>(
+    tls: &HttpsConnector<()>,
+    inner: S,
+    req: &ConnectRequest,
+) -> MapRequest<HttpsConnector<S>, impl Fn(Uri) -> ConnectRequest + Clone + Send + Sync + 'static> {
+    let mut connector = tls.clone().with_inner(inner);
+    connector.no_alpn();
+    let route = req.clone();
+    MapRequest::new(connector, move |uri| route.clone().with_route_uri(uri))
 }
 
 // ===== impl ProxyLayer =====
@@ -203,8 +216,8 @@ where
 
                     if secure {
                         let tls = tls.with_request(&req)?;
-                        let connector = tls.clone().with_inner(inner);
-                        let mut tunnel = tunnel::TunnelConnector::new(proxy_uri, connector);
+                        let mut tunnel =
+                            tunnel::TunnelConnector::new(proxy_uri, proxy_hop(&tls, inner, &req));
 
                         if let Some(auth) = proxy.basic_auth() {
                             tunnel = tunnel.with_auth(auth.clone());
@@ -242,10 +255,9 @@ where
                 Some(Intercepted::Unix(_)) => {
                     let tls = tls.with_request(&req)?;
                     if secure {
-                        let connector = tls.clone().with_inner(inner);
                         let tunnel = tunnel::TunnelConnector::new(
                             Uri::from_static("http://localhost"),
-                            connector,
+                            proxy_hop(&tls, inner, &req),
                         );
                         let io = tunnel.oneshot(uri).await?;
                         Ok(ProxyConnection::Tunnel {
