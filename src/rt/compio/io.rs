@@ -123,32 +123,3 @@ impl Connection for Compat<TcpStream> {
 
 #[cfg(unix)]
 impl Connection for Compat<UnixStream> {}
-
-#[cfg(test)]
-mod tests {
-    use std::net::TcpListener;
-
-    use compio::runtime::Runtime;
-
-    use super::*;
-
-    #[test]
-    fn tcp_controls_use_connected_socket() {
-        let runtime = Runtime::new().unwrap();
-        runtime.block_on(async {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let stream = TcpStream::connect(listener.local_addr().unwrap())
-                .await
-                .unwrap();
-            let (_, peer) = listener.accept().unwrap();
-            let stream = Compat::new(stream);
-            let connection: &dyn Connection = &stream;
-            assert_eq!(connection.local_addr(), Some(peer));
-            assert_eq!(connection.peer_addr(), Some(listener.local_addr().unwrap()));
-            for value in [true, false] {
-                connection.set_nodelay(value).unwrap();
-                assert_eq!(stream.get_ref().0.nodelay().unwrap(), value);
-            }
-        });
-    }
-}

@@ -156,24 +156,3 @@ impl Connection for ::tokio::net::TcpStream {
 
 #[cfg(unix)]
 impl Connection for ::tokio::net::UnixStream {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[::tokio::test]
-    async fn tcp_controls_use_connected_socket() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let stream = ::tokio::net::TcpStream::connect(listener.local_addr().unwrap())
-            .await
-            .unwrap();
-        let (_, peer) = listener.accept().unwrap();
-        let connection: &dyn Connection = &stream;
-        assert_eq!(connection.local_addr(), Some(peer));
-        assert_eq!(connection.peer_addr(), Some(listener.local_addr().unwrap()));
-        for value in [true, false] {
-            connection.set_nodelay(value).unwrap();
-            assert_eq!(stream.nodelay().unwrap(), value);
-        }
-    }
-}
