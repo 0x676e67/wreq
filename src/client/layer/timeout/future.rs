@@ -1,7 +1,6 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll, ready},
     time::Duration,
 };
@@ -12,7 +11,7 @@ use pin_project_lite::pin_project;
 use super::body::TimeoutBody;
 use crate::{
     error::{BoxError, Error, TimedOut},
-    rt::{BoxSleep, Timer},
+    rt::{BoxSleep, DynRuntime},
 };
 
 pin_project! {
@@ -20,7 +19,7 @@ pin_project! {
     pub struct ResponseFuture<Fut> {
         #[pin]
         pub(super) fut: Fut,
-        pub(super) timer: Arc<dyn Timer>,
+        pub(super) runtime: DynRuntime,
         pub(super) read_timeout: Option<Duration>,
         pub(super) read_timeout_fut: Option<BoxSleep>,
         pub(super) total_timeout_fut: Option<BoxSleep>,
@@ -61,7 +60,7 @@ where
         Poll::Ready(Ok(response.map(|body| {
             TimeoutBody::new(
                 body,
-                this.timer.clone(),
+                this.runtime.clone(),
                 *this.read_timeout,
                 this.total_timeout_fut.take(),
             )

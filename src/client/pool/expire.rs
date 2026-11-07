@@ -107,7 +107,7 @@ where
             flag: self.running.clone(),
             owned: false,
         };
-        let timer = self.runtime.timer();
+        let runtime = self.runtime.clone();
         let mut shutdown = self.shutdown.subscribe();
 
         // Off a runtime thread, as when a pooled value drops there, the task comes back
@@ -119,7 +119,7 @@ where
             if !running.claim() {
                 return;
             }
-            let mut sleep = timer.sleep_until(deadline);
+            let mut sleep = runtime.sleep_until(deadline);
 
             loop {
                 if !wait_for_tick(&mut sleep, &mut shutdown).await {
@@ -129,11 +129,11 @@ where
                     return;
                 };
 
-                let now = timer.now();
+                let now = runtime.now();
                 if let Some(deadline) = target
                     .retain(now)
                     .filter(|next| *next != Duration::ZERO)
-                    .and_then(|next| timer.now().checked_add(next))
+                    .and_then(|next| runtime.now().checked_add(next))
                 {
                     sleep.reset(deadline);
                     continue;
@@ -143,7 +143,7 @@ where
                 if let Some(deadline) = target
                     .next()
                     .filter(|next| *next != Duration::ZERO)
-                    .and_then(|next| timer.now().checked_add(next))
+                    .and_then(|next| runtime.now().checked_add(next))
                     && running.claim()
                 {
                     sleep.reset(deadline);

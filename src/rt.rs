@@ -20,6 +20,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "http3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
+pub use ::quic::{
+    AsyncUdpSocket, UdpSender,
+    udp::{RecvMeta, Transmit},
+};
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::future::BoxFuture;
 use pin_project_lite::pin_project;
@@ -27,12 +33,18 @@ use pin_project_lite::pin_project;
 pub(crate) use self::handle::DynRuntime;
 use crate::dns::Resolve;
 
+/// Longest delay [`deadline_after`] adds: about 30 years, Tokio's far-future deadline.
+const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
+
 /// Runtime facilities selected when constructing a client.
 ///
 /// Supplies background execution, timers through [`Timer`], socket I/O and a default
 /// DNS resolver. Blocking DNS lookups should be offloaded by the resolver implementation.
 /// Callers can replace the resolver with
 /// [`ClientBuilder::dns_resolver`](crate::ClientBuilder::dns_resolver).
+///
+/// A runtime that wraps another must also forward [`try_execute`](Self::try_execute),
+/// `connect_unix` and `udp_socket`, whose defaults ignore the wrapped runtime.
 pub trait Runtime: Timer + Send + Sync + Debug + 'static {
     /// Schedules a task to run in the background.
     #[track_caller]
@@ -55,8 +67,14 @@ pub trait Runtime: Timer + Send + Sync + Debug + 'static {
     fn connect_tcp(&self, socket: TcpStream, address: SocketAddr) -> Connecting;
 
     /// Connects a Unix domain socket.
+    /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error.
     #[cfg(unix)]
-    fn connect_unix(&self, path: Arc<std::path::Path>) -> Connecting;
+    fn connect_unix(&self, _path: Arc<std::path::Path>) -> Connecting {
+        Box::pin(std::future::ready(Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "runtime does not support Unix domain sockets",
+        ))))
+    }
 
     /// Registers a bound, nonblocking UDP socket for HTTP/3 over QUIC.
     /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error, which fails
@@ -66,10 +84,7 @@ pub trait Runtime: Timer + Send + Sync + Debug + 'static {
     /// [`execute`](Self::execute) to receive on the socket must keep running while the client
     /// opens them.
     #[cfg(feature = "http3")]
-    fn udp_socket(
-        &self,
-        _socket: std::net::UdpSocket,
-    ) -> io::Result<Box<dyn ::quic::AsyncUdpSocket>> {
+    fn udp_socket(&self, _socket: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "runtime does not support UDP sockets",
@@ -115,8 +130,10 @@ pub type Connecting = BoxFuture<'static, io::Result<BoxConnection>>;
 /// Deadlines and [`Timer::now`] must use the same clock.
 pub trait Timer: Send + Sync {
     /// Returns a future that completes after `duration`.
-    /// Oversized durations must not panic; Tokio caps them at about 30 years.
-    fn sleep(&self, duration: Duration) -> BoxSleep;
+    /// The default sleeps until [`now`](Self::now) plus `duration`, capped at about 30 years.
+    fn sleep(&self, duration: Duration) -> BoxSleep {
+        self.sleep_until(deadline_after(self.now(), duration))
+    }
 
     /// Returns a future that completes at `deadline`.
     fn sleep_until(&self, deadline: Instant) -> BoxSleep;
@@ -192,19 +209,6 @@ impl Future for BoxSleep {
     }
 }
 
-#[cfg(feature = "http3")]
-impl ::quic::AsyncTimer for BoxSleep {
-    #[inline]
-    fn reset(self: Pin<&mut Self>, deadline: Instant) {
-        self.get_mut().reset(deadline);
-    }
-
-    #[inline]
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        Future::poll(self, cx)
-    }
-}
-
 impl Debug for BoxSleep {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("BoxSleep").finish_non_exhaustive()
@@ -226,5 +230,40 @@ impl<S: Sleep> netty::rt::Sleep for SleepAdapter<S> {
     #[inline]
     fn reset(self: Pin<&mut Self>, deadline: Instant) {
         self.project().inner.reset(deadline);
+    }
+}
+
+/// Returns `now + duration`, capped at [`MAX_DELAY`].
+/// Near the clock's limit, the delay halves until the deadline fits instead of overflowing.
+#[inline]
+pub(crate) fn deadline_after(now: Instant, duration: Duration) -> Instant {
+    let mut duration = duration.min(MAX_DELAY);
+    loop {
+        match now.checked_add(duration) {
+            Some(deadline) => return deadline,
+            None => duration /= 2,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::{MAX_DELAY, deadline_after};
+
+    #[test]
+    fn deadline_after_caps_oversized_delays() {
+        let now = Instant::now();
+        assert_eq!(deadline_after(now, Duration::MAX), now + MAX_DELAY);
+
+        // A minute before the clock's limit, the capped delay still overflows.
+        let limit = (0..64).rev().fold(now, |at, shift| {
+            at.checked_add(Duration::from_secs(1 << shift))
+                .unwrap_or(at)
+        });
+        let late = limit - Duration::from_secs(60);
+        assert!(late.checked_add(MAX_DELAY).is_none());
+        assert!(deadline_after(late, Duration::MAX) >= late + Duration::from_secs(30));
     }
 }

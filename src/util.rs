@@ -1,18 +1,8 @@
-use std::{
-    fmt::{self, Write},
-    time::{Duration, Instant},
-};
+use std::fmt::{self, Write};
 
 use bytes::Bytes;
 
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
-
-/// Returns `now + duration`, capped like Tokio's `sleep` so oversized timeouts cannot overflow.
-#[inline]
-pub(crate) fn deadline_after(now: Instant, duration: Duration) -> Instant {
-    const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
-    now.checked_add(duration.min(MAX_DELAY)).unwrap_or(now)
-}
 
 /// Removes the square brackets around an IPv6 host literal as required by
 /// [RFC 3986, Section 3.2.2](https://www.rfc-editor.org/rfc/rfc3986.html#section-3.2.2).

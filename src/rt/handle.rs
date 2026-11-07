@@ -28,17 +28,18 @@ use super::{BoxSleep, IntoRuntime, Runtime, Timer};
 #[derive(Clone, Debug)]
 pub(crate) struct DynRuntime(Arc<dyn Runtime>);
 
+/// Adapts a [`BoxSleep`] to the QUIC timer interface, keeping that impl off the public type.
+#[cfg(feature = "http3")]
+#[derive(Debug)]
+struct QuicSleep(BoxSleep);
+
+// ===== impl DynRuntime =====
+
 impl DynRuntime {
     /// Shares a runtime value or reuses an existing `Arc` through [`IntoRuntime`].
     #[inline]
     pub(crate) fn new(runtime: impl IntoRuntime) -> Self {
         Self(runtime.into_shared())
-    }
-
-    /// Shares the runtime as a timer provider by cloning the existing `Arc`.
-    #[inline]
-    pub(crate) fn timer(&self) -> Arc<dyn Timer> {
-        self.0.clone()
     }
 
     /// Submits an already boxed task to the selected runtime.
@@ -88,6 +89,7 @@ where
     F: Future<Output = ()> + Send + 'static,
 {
     #[inline]
+    #[track_caller]
     fn execute(&self, fut: F) {
         self.execute(Box::pin(fut));
     }
@@ -119,7 +121,7 @@ impl rt::Timer for DynRuntime {
 impl ::quic::Runtime for DynRuntime {
     #[inline]
     fn new_timer(&self, deadline: Instant) -> Pin<Box<dyn ::quic::AsyncTimer>> {
-        Box::pin(Timer::sleep_until(self, deadline))
+        Box::pin(QuicSleep(Timer::sleep_until(self, deadline)))
     }
 
     #[inline]
@@ -138,5 +140,20 @@ impl ::quic::Runtime for DynRuntime {
     #[inline]
     fn now(&self) -> Instant {
         Timer::now(self)
+    }
+}
+
+// ===== impl QuicSleep =====
+
+#[cfg(feature = "http3")]
+impl ::quic::AsyncTimer for QuicSleep {
+    #[inline]
+    fn reset(self: Pin<&mut Self>, deadline: Instant) {
+        self.get_mut().0.reset(deadline);
+    }
+
+    #[inline]
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        Pin::new(&mut self.get_mut().0).poll(cx)
     }
 }

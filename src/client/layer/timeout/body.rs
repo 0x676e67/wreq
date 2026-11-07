@@ -1,7 +1,6 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll, ready},
     time::Duration,
 };
@@ -12,7 +11,7 @@ use pin_project_lite::pin_project;
 use crate::{
     Error,
     error::{BoxError, TimedOut},
-    rt::{BoxSleep, Timer},
+    rt::{BoxSleep, DynRuntime, Timer as _},
 };
 
 pin_project! {
@@ -63,7 +62,7 @@ pin_project! {
         sleep: Option<BoxSleep>,
         armed: bool,
         timeout: Duration,
-        timer: Arc<dyn Timer>,
+        runtime: DynRuntime,
     }
 }
 
@@ -73,7 +72,7 @@ impl<B> TimeoutBody<B> {
     /// Wraps a body with the active total timeout and an optional read timeout.
     pub(crate) fn new(
         body: B,
-        timer: Arc<dyn Timer>,
+        runtime: DynRuntime,
         read_timeout: Option<Duration>,
         total_timeout: Option<BoxSleep>,
     ) -> Self {
@@ -86,7 +85,7 @@ impl<B> TimeoutBody<B> {
                         sleep: None,
                         armed: false,
                         timeout: read_timeout,
-                        timer,
+                        runtime,
                     },
                 },
             },
@@ -99,7 +98,7 @@ impl<B> TimeoutBody<B> {
                     sleep: None,
                     armed: false,
                     body,
-                    timer,
+                    runtime,
                 },
             },
             (None, None) => TimeoutBody::Plain { body },
@@ -213,10 +212,10 @@ where
 
         // Arm the deadline when a new frame poll begins, reusing the sleep after the first read.
         if !*this.armed {
-            let deadline = crate::util::deadline_after(this.timer.now(), *this.timeout);
+            let deadline = crate::rt::deadline_after(this.runtime.now(), *this.timeout);
             match this.sleep.as_mut().as_pin_mut() {
                 Some(sleep) => sleep.get_mut().reset(deadline),
-                None => this.sleep.set(Some(this.timer.sleep_until(deadline))),
+                None => this.sleep.set(Some(this.runtime.sleep_until(deadline))),
             }
             *this.armed = true;
         }

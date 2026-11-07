@@ -13,7 +13,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, ready},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 #[cfg(unix)]
@@ -51,11 +51,6 @@ struct CompioSleep {
 // ===== impl CompioRuntime =====
 
 impl Timer for CompioRuntime {
-    #[inline]
-    fn sleep(&self, duration: Duration) -> BoxSleep {
-        self.sleep_until(crate::util::deadline_after(self.now(), duration))
-    }
-
     #[inline]
     fn sleep_until(&self, deadline: Instant) -> BoxSleep {
         BoxSleep::new(CompioSleep::new(time::sleep_until(deadline)))

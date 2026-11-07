@@ -2130,11 +2130,8 @@ async fn runtime_resolver_is_used_without_dns_configuration() {
         lookups: Arc<AtomicUsize>,
     }
 
+    // The default `sleep` serves the client timeout below.
     impl Timer for SelectedRuntime {
-        fn sleep(&self, duration: Duration) -> BoxSleep {
-            TokioRuntime.sleep(duration)
-        }
-
         fn sleep_until(&self, deadline: Instant) -> BoxSleep {
             TokioRuntime.sleep_until(deadline)
         }
@@ -2149,6 +2146,13 @@ async fn runtime_resolver_is_used_without_dns_configuration() {
             TokioRuntime.execute(future);
         }
 
+        fn try_execute(
+            &self,
+            future: BoxFuture<'static, ()>,
+        ) -> Result<(), BoxFuture<'static, ()>> {
+            TokioRuntime.try_execute(future)
+        }
+
         fn connect_tcp(&self, socket: std::net::TcpStream, address: SocketAddr) -> Connecting {
             Runtime::connect_tcp(&TokioRuntime, socket, address)
         }
@@ -2156,6 +2160,14 @@ async fn runtime_resolver_is_used_without_dns_configuration() {
         #[cfg(unix)]
         fn connect_unix(&self, path: Arc<std::path::Path>) -> Connecting {
             Runtime::connect_unix(&TokioRuntime, path)
+        }
+
+        #[cfg(feature = "http3")]
+        fn udp_socket(
+            &self,
+            socket: std::net::UdpSocket,
+        ) -> std::io::Result<Box<dyn wreq::rt::AsyncUdpSocket>> {
+            TokioRuntime.udp_socket(socket)
         }
 
         fn resolver(&self) -> Arc<dyn Resolve> {
@@ -2178,7 +2190,11 @@ async fn runtime_resolver_is_used_without_dns_configuration() {
         address: server.addr(),
         lookups: lookups.clone(),
     };
-    let client = Client::builder(runtime).no_proxy().build().unwrap();
+    let client = Client::builder(runtime)
+        .no_proxy()
+        .timeout(Duration::MAX)
+        .build()
+        .unwrap();
     let response = client
         .get(format!("http://runtime.example:{}/", server.addr().port()))
         .send()

@@ -21,7 +21,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use futures_util::future::BoxFuture;
@@ -55,13 +55,6 @@ pin_project! {
 // ===== impl TokioRuntime =====
 
 impl Timer for TokioRuntime {
-    #[inline]
-    fn sleep(&self, duration: Duration) -> BoxSleep {
-        BoxSleep::new(TokioSleep {
-            inner: ::tokio::time::sleep(duration),
-        })
-    }
-
     #[inline]
     fn sleep_until(&self, deadline: Instant) -> BoxSleep {
         BoxSleep::new(TokioSleep {
@@ -123,7 +116,7 @@ impl super::Runtime for TokioRuntime {
     fn udp_socket(
         &self,
         socket: std::net::UdpSocket,
-    ) -> io::Result<Box<dyn ::quic::AsyncUdpSocket>> {
+    ) -> io::Result<Box<dyn super::AsyncUdpSocket>> {
         use ::quic::Runtime as _;
         ::quic::TokioRuntime.wrap_udp_socket(socket)
     }
