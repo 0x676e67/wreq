@@ -29,10 +29,7 @@ use crate::{
     conn::{
         Conn,
         request::ConnectRequest,
-        transport::{
-            self, BindOptions, ConnectError, ConnectOptions, QuicConnector, TUNNEL_MTU,
-            TcpConnector,
-        },
+        transport::{self, BindOptions, ConnectError, QuicConnector, TUNNEL_MTU, TcpConnector},
     },
     dns::DynResolver,
     error::ProxyConnect,
@@ -125,7 +122,8 @@ pub(crate) async fn connect(
     .await?;
 
     // Target families are independent of the physical proxy's bindings.
-    Ok(ConnectOptions::default()
+    Ok(quic
+        .connect_options()
         .connect(
             addresses,
             &BindOptions::default(),

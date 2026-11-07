@@ -260,6 +260,7 @@ impl ConnectorBuilder {
             let tls = self.tls.clone().build_quic(config_set.clone())?;
             QuicConnector::builder(self.runtime.clone(), tls, self.config.tls_info)
                 .bind_options(self.bind_options)
+                .connect_options(tcp.connect_options())
                 .build(resolver.clone())
         };
 
@@ -878,6 +879,40 @@ mod tests {
         assert_eq!(clones.load(Ordering::Relaxed), 2);
         changed.poison();
         assert!(original.poisoned());
+    }
+
+    /// The client's Happy Eyeballs delay also paces QUIC address races.
+    #[cfg(feature = "http3")]
+    #[tokio::test]
+    async fn quic_dials_follow_the_happy_eyeballs_delay() {
+        struct NoDns;
+
+        impl crate::dns::Resolve for NoDns {
+            fn resolve(&self, name: crate::dns::Name) -> crate::dns::Resolving {
+                panic!("building a connector resolved {name}")
+            }
+        }
+
+        let runtime = DynRuntime::new(crate::rt::tokio::TokioRuntime);
+        for delay in [None, Some(std::time::Duration::from_millis(20))] {
+            let config = Config {
+                proxies: Arc::new(Vec::new()),
+                verbose: false,
+                nodelay: false,
+                tls_info: false,
+            };
+            let connector = Connector::builder(runtime.clone(), TlsBuilder::new(), config)
+                .build(
+                    transport::TcpConnector::new(runtime.clone()).set_happy_eyeballs_timeout(delay),
+                    DynResolver::new(Arc::new(NoDns)),
+                    ConfigSet::default(),
+                )
+                .unwrap();
+            let Stack::Direct(direct) = &connector.stack else {
+                panic!("a connector without layers dials directly");
+            };
+            assert_eq!(direct.quic.connect_options().happy_eyeballs_timeout, delay);
+        }
     }
 
     /// Client rules and request overrides that QUIC cannot use fail before any DNS lookup.

@@ -101,6 +101,12 @@ impl<R> TcpConnector<R> {
         self.options.nodelay
     }
 
+    /// Returns the address-race policy that QUIC dials share.
+    #[cfg(feature = "http3")]
+    pub(crate) fn connect_options(&self) -> ConnectOptions {
+        self.options.connect_options
+    }
+
     /// Requires the `http` URI scheme when enabled, as it is by default.
     #[inline]
     pub(crate) fn enforce_http(mut self, is_enforced: bool) -> Self {

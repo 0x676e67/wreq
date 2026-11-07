@@ -117,6 +117,13 @@ impl QuicConnector {
         &self.resolver
     }
 
+    /// Returns the address-race policy, shared with SOCKS5 target races.
+    #[cfg(any(test, feature = "socks"))]
+    #[inline]
+    pub(crate) fn connect_options(&self) -> ConnectOptions {
+        self.connect_options
+    }
+
     /// Opens a UDP endpoint for the address family of `remote`.
     fn open(
         &self,
@@ -485,6 +492,13 @@ impl QuicConnectorBuilder {
     #[inline]
     pub(crate) fn bind_options(mut self, bind_options: BindOptions) -> Self {
         self.bind_options = bind_options;
+        self
+    }
+
+    /// Uses the client's address-race policy instead of the default.
+    #[inline]
+    pub(crate) fn connect_options(mut self, connect_options: ConnectOptions) -> Self {
+        self.connect_options = connect_options;
         self
     }
 

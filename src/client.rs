@@ -1287,6 +1287,8 @@ impl ClientBuilder {
     ///
     /// If `None`, parallel connection attempts are disabled.
     ///
+    /// HTTP/3 QUIC dials and SOCKS5 UDP target races use the same delay.
+    ///
     /// Default is 300 milliseconds.
     ///
     /// [RFC 8305]: https://www.rfc-editor.org/rfc/rfc8305.html#section-5
