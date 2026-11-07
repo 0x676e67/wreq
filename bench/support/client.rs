@@ -1,6 +1,5 @@
 //! Statically dispatched client adapters and closed-loop worker scheduling.
 
-mod cyper;
 mod reqwest;
 mod wreq;
 
@@ -10,7 +9,7 @@ use bytes::Bytes;
 use criterion::{BenchmarkGroup, async_executor::AsyncExecutor, measurement::WallTime};
 use futures_util::{Stream, StreamExt};
 
-use super::{BenchTarget, BodyCase, BodyKind, BoxError, ThreadMode};
+use super::{BenchTarget, BodyCase, BodyKind, BoxError};
 
 /// Carries one server and matrix case from the runner into client registration.
 #[derive(Clone, Copy)]
@@ -139,9 +138,6 @@ pub(super) fn bench_clients(
 
         register::<wreq::Adapter>(group, client_case)?;
         register::<reqwest::Adapter>(group, client_case)?;
-        if matches!(bench_case.target.thread_mode, ThreadMode::Current) {
-            register::<cyper::Adapter>(group, client_case)?;
-        }
     }
 
     Ok(())
