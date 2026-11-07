@@ -31,6 +31,7 @@ pub struct Connect<C> {
 // ===== impl Connect =====
 
 impl<C> Connect<C> {
+    /// Creates the HTTP/3 connection service; `timeout` bounds the QUIC connection and handshake.
     pub fn new(connector: C, runtime: DynRuntime, timeout: Option<Duration>) -> Self {
         Self {
             connector,
@@ -66,13 +67,14 @@ where
             // A peer that withholds stream credit stalls the handshake after the QUIC connection
             // is up, so the deadline also covers opening the control and QPACK streams.
             let handshake = async {
-                let Conn { inner, connected } = connector.call(target.config.req).await?;
-                let Either::Right((quic, endpoint)) = inner else {
-                    return Err::<_, BoxError>("QUIC connection returned a stream".into());
-                };
-                let transport = Compat::new(http3_quic::Connection::new(quic));
-                let (tx, connection) = builder.handshake::<_, Body>(transport).await?;
-                Ok((tx, connection, endpoint, connected))
+                let Conn {
+                    transport,
+                    connected,
+                } = connector.call(target.config.req).await?;
+                let (quic, endpoint) = transport.into_quic()?;
+                let quic = Compat::new(http3_quic::Connection::new(quic));
+                let (tx, connection) = builder.handshake::<_, Body>(quic).await?;
+                Ok::<_, BoxError>((tx, connection, endpoint, connected))
             };
 
             let (mut tx, connection, endpoint, connected) =

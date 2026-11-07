@@ -23,7 +23,7 @@ use tower::{BoxError, Service};
 use super::{BindOptions, ConnectError, ConnectOptions, resolve};
 use crate::{
     conn::{
-        Conn, Connected, HttpInfo, TlsInfoFactory,
+        Conn, Connected, HttpInfo, TlsInfoFactory, Transport,
         request::{ConnectRequest, ConnectionKey},
     },
     dns::{DynResolver, SocketAddrs},
@@ -437,7 +437,10 @@ impl QuicConnector {
             connected = connected.extra(tls_info);
         }
         Ok(Conn {
-            inner: Either::Right((connection, endpoint)),
+            transport: Transport::Quic {
+                connection,
+                endpoint,
+            },
             connected,
         })
     }
@@ -631,10 +634,7 @@ mod tests {
         .await
         .unwrap_or_else(|error| panic!("connection to {uri} timed out: {error}"))
         .unwrap_or_else(|error| panic!("connection to {uri} failed: {error:?}"));
-        let Conn { inner, .. } = connection;
-        let Either::Right((connection, endpoint)) = inner else {
-            panic!("QUIC connector returned a stream");
-        };
+        let (connection, endpoint) = connection.transport.into_quic().unwrap();
         (connection, endpoint, peer)
     }
 
@@ -887,12 +887,12 @@ mod tests {
             let runtime = runtime();
             let mut connector = connector.clone();
             let request = request(Uri::from_static("https://localhost/"), None);
-            let Conn { inner, .. } = runtime
+            let (connection, endpoint) = runtime
                 .block_on(async { connector.call(request).await })
+                .unwrap()
+                .transport
+                .into_quic()
                 .unwrap();
-            let Either::Right((connection, endpoint)) = inner else {
-                panic!("QUIC connector returned a stream");
-            };
             connection.close(0u32.into(), b"done");
             endpoint.local_addr().unwrap()
         };

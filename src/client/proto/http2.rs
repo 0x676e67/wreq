@@ -6,7 +6,6 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service};
 
 use super::{
@@ -58,11 +57,10 @@ impl<S> Layer<S> for ConnectLayer {
 
 // ===== impl Connect =====
 
-impl<S, T, Dst> Service<Dst> for Connect<S>
+impl<S, Dst> Service<Dst> for Connect<S>
 where
-    S: Service<Dst, Response = Established<T>, Error = BoxError> + Clone + Send + 'static,
+    S: Service<Dst, Response = Established, Error = BoxError> + Clone + Send + 'static,
     S::Future: Send + 'static,
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     type Response = Connection;
     type Error = BoxError;
@@ -81,10 +79,9 @@ where
 
 /// Awaits a transport and returns a handshaken HTTP/2 sender.
 /// Starts the connection driver before waiting for sender readiness.
-async fn handshake<F, T>(established: F, runtime: DynRuntime) -> Result<Connection, BoxError>
+async fn handshake<F>(established: F, runtime: DynRuntime) -> Result<Connection, BoxError>
 where
-    F: Future<Output = Result<Established<T>, BoxError>>,
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: Future<Output = Result<Established, BoxError>>,
 {
     let Established {
         io,

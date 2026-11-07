@@ -7,7 +7,6 @@
 
 use std::{
     future::Future,
-    marker::PhantomData,
     pin::Pin,
     task::{self, Poll, ready},
     time::{Duration, Instant},
@@ -22,10 +21,7 @@ use http::{
     header::{HOST, PROXY_AUTHORIZATION},
 };
 use netty::{body::Incoming, conn};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::oneshot,
-};
+use tokio::sync::oneshot;
 use tower::{BoxError, Layer, Service};
 
 use super::{Established, SendError, is_expired};
@@ -78,11 +74,10 @@ pub struct Connect<S> {
 /// The explicit state machine keeps the connector's [`Started`] signal visible
 /// to the cache while the operation moves from transport creation to the boxed
 /// protocol handshake future.
-pub struct ConnectFuture<F, T> {
+pub struct ConnectFuture<F> {
     state: ConnectState<F>,
     set_host: bool,
     runtime: DynRuntime,
-    _io: PhantomData<fn(T)>,
 }
 
 /// Phases of an HTTP/1 connection service call.
@@ -118,15 +113,14 @@ impl<S> Layer<S> for ConnectLayer {
 
 // ===== impl Connect =====
 
-impl<S, T, Dst> Service<Dst> for Connect<S>
+impl<S, Dst> Service<Dst> for Connect<S>
 where
-    S: Service<Dst, Response = Established<T>, Error = BoxError> + Clone,
+    S: Service<Dst, Response = Established, Error = BoxError> + Clone,
     S::Future: Started + Unpin,
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     type Response = Connection;
     type Error = BoxError;
-    type Future = ConnectFuture<S::Future, T>;
+    type Future = ConnectFuture<S::Future>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx)
@@ -137,17 +131,15 @@ where
             state: ConnectState::Connecting(self.service.call(target)),
             runtime: self.runtime.clone(),
             set_host: self.set_host,
-            _io: PhantomData,
         }
     }
 }
 
 // ===== impl ConnectFuture =====
 
-impl<F, T> Future for ConnectFuture<F, T>
+impl<F> Future for ConnectFuture<F>
 where
-    F: Future<Output = Result<Established<T>, BoxError>> + Started + Unpin,
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: Future<Output = Result<Established, BoxError>> + Started + Unpin,
 {
     type Output = Result<Connection, BoxError>;
 
@@ -179,10 +171,9 @@ where
     }
 }
 
-impl<F, T> Started for ConnectFuture<F, T>
+impl<F> Started for ConnectFuture<F>
 where
-    F: Future<Output = Result<Established<T>, BoxError>> + Started + Unpin,
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: Future<Output = Result<Established, BoxError>> + Started + Unpin,
 {
     fn started(&self) -> bool {
         match &self.state {
@@ -198,14 +189,11 @@ impl Connection {
     /// Handshakes a transport and returns a ready HTTP/1 sender.
     /// Starts the driver before waiting for readiness, preserving its error if
     /// the sender closes during setup.
-    async fn handshake<T>(
-        established: Established<T>,
+    async fn handshake(
+        established: Established,
         runtime: DynRuntime,
         set_host: bool,
-    ) -> Result<Self, BoxError>
-    where
-        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    {
+    ) -> Result<Self, BoxError> {
         let Established {
             io,
             connected,

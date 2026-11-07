@@ -29,17 +29,17 @@ use super::{
 use crate::rt::DynRuntime;
 use crate::{
     Body,
-    conn::{Connected, request::ConnectRequest},
+    conn::{AsyncConn, Connected, request::ConnectRequest},
 };
 
-/// Physical transport and request-specific protocol configuration.
+/// Physical byte stream and request-specific protocol configuration.
 ///
 /// Connection making creates this value before protocol negotiation. The
-/// selected handshake consumes it exactly once and transfers the transport to
+/// selected handshake consumes it exactly once and transfers the stream to
 /// the resulting protocol driver. Configuration stays shared until that
 /// handshake applies the selected protocol's overrides.
-pub(super) struct Established<T> {
-    io: T,
+pub(super) struct Established {
+    io: Box<dyn AsyncConn>,
     connected: Connected,
     config: ConnectionConfig,
     #[cfg(feature = "http2")]
@@ -70,10 +70,10 @@ pub enum SendError {
 
 // ===== impl Established =====
 
-impl<T> Established<T> {
+impl Established {
     /// Creates the protocol-neutral output of a physical connector.
     pub(super) fn new(
-        io: T,
+        io: Box<dyn AsyncConn>,
         connected: Connected,
         config: ConnectionConfig,
         #[cfg(feature = "http2")] idle_at: Instant,

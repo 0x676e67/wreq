@@ -27,6 +27,7 @@ use std::{
 };
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
+use btls::x509::X509Ref;
 use bytes::Bytes;
 use config::ConfigSet;
 use futures_util::future::BoxFuture;
@@ -46,8 +47,9 @@ use transport::{BindOptions, SocketConnector};
 #[cfg(feature = "http3")]
 use {
     crate::protocol::TransportKind,
-    futures_util::future::Either,
+    btls::x509::X509,
     layer::proxy::{QuicProxyConnector, QuicProxyLayer},
+    std::ops::Deref,
 };
 
 use crate::{
@@ -322,14 +324,31 @@ impl<T> AsyncConn for T where T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 
 impl<T> AsyncConnWithInfo for T where T: AsyncConn + Connection + TlsInfoFactory {}
 
 /// Established connection and metadata returned through connector middleware.
-/// Protocol handshakes take the stream or QUIC resources together with their metadata.
-/// A QUIC endpoint remains owned until it can move into the HTTP/3 driver.
+/// Protocol handshakes take the transport through `into_stream` or `into_quic`,
+/// together with its metadata.
 pub struct Conn {
-    #[cfg(feature = "http3")]
-    pub(crate) inner: Either<Box<dyn AsyncConn>, (::quic::Connection, ::quic::Endpoint)>,
-    #[cfg(not(feature = "http3"))]
-    pub(crate) inner: Box<dyn AsyncConn>,
+    pub(crate) transport: Transport,
     pub(crate) connected: Connected,
+}
+
+/// Transport carried by a [`Conn`]: a byte stream for HTTP/1 and HTTP/2, or QUIC for HTTP/3.
+/// A QUIC endpoint remains owned until it can move into the HTTP/3 driver.
+pub(crate) enum Transport {
+    /// A TCP or Unix stream after any proxy handshake and TLS.
+    Stream(Box<dyn AsyncConn>),
+    /// A QUIC connection and the endpoint that drives it.
+    #[cfg(feature = "http3")]
+    Quic {
+        connection: ::quic::Connection,
+        endpoint: ::quic::Endpoint,
+    },
+}
+
+/// A connector returned a transport other than the one the selected protocol runs over.
+#[cfg(feature = "http3")]
+#[derive(Debug)]
+pub(crate) struct TransportMismatch {
+    expected: TransportKind,
 }
 
 pin_project! {
@@ -404,9 +423,7 @@ pub trait Connection {
     fn connected(&self) -> Connected;
 
     /// Returns the socket's remote address; a proxied stream reports the proxy.
-    fn remote_addr(&self) -> Option<SocketAddr> {
-        None
-    }
+    fn remote_addr(&self) -> Option<SocketAddr>;
 }
 
 /// A trait for extracting TLS information from a connection.
@@ -435,6 +452,11 @@ where
         } else {
             connected
         }
+    }
+
+    #[inline]
+    fn remote_addr(&self) -> Option<SocketAddr> {
+        self.stream.get_ref().remote_addr()
     }
 }
 
@@ -499,24 +521,11 @@ where
 impl<T> TlsInfoFactory for SslStream<T> {
     #[inline]
     fn tls_info(&self) -> Option<TlsInfo> {
-        Some(extract_tls_info(self))
-    }
-}
-
-fn extract_tls_info<S>(ssl_stream: &SslStream<S>) -> TlsInfo {
-    let ssl = ssl_stream.ssl();
-    TlsInfo {
-        peer_certificate: ssl
-            .peer_certificate()
-            .and_then(|cert| cert.to_der().ok())
-            .map(Bytes::from),
-        peer_certificate_chain: ssl.peer_cert_chain().map(|chain| {
-            chain
-                .iter()
-                .filter_map(|cert| cert.to_der().ok())
-                .map(Bytes::from)
-                .collect()
-        }),
+        let ssl = self.ssl();
+        Some(tls_info(
+            ssl.peer_certificate().as_deref(),
+            ssl.peer_cert_chain(),
+        ))
     }
 }
 
@@ -536,22 +545,68 @@ impl<T: TlsInfoFactory> TlsInfoFactory for MaybeHttpsStream<T> {
 #[cfg(feature = "http3")]
 impl TlsInfoFactory for quic::Connection {
     fn tls_info(&self) -> Option<TlsInfo> {
-        let chain = self
-            .peer_identity()?
-            .downcast::<Vec<btls::x509::X509>>()
-            .ok()?;
-        Some(TlsInfo {
-            peer_certificate: chain
-                .first()
-                .and_then(|cert| cert.to_der().ok())
-                .map(Bytes::from),
-            peer_certificate_chain: Some(
-                chain
-                    .iter()
-                    .filter_map(|cert| cert.to_der().ok())
-                    .map(Bytes::from)
-                    .collect(),
-            ),
+        let chain = self.peer_identity()?.downcast::<Vec<X509>>().ok()?;
+        Some(tls_info(
+            chain.first().map(Deref::deref),
+            Some(chain.iter().map(Deref::deref)),
+        ))
+    }
+}
+
+/// Converts the peer's leaf certificate and chain to DER, skipping certificates that fail.
+fn tls_info<'a>(
+    leaf: Option<&X509Ref>,
+    chain: Option<impl IntoIterator<Item = &'a X509Ref>>,
+) -> TlsInfo {
+    let der = |cert: &X509Ref| cert.to_der().ok().map(Bytes::from);
+    TlsInfo {
+        peer_certificate: leaf.and_then(der),
+        peer_certificate_chain: chain.map(|chain| chain.into_iter().filter_map(der).collect()),
+    }
+}
+
+// ===== impl Transport =====
+
+impl Transport {
+    /// Takes the byte stream for an HTTP/1 or HTTP/2 handshake.
+    pub(crate) fn into_stream(self) -> Result<Box<dyn AsyncConn>, BoxError> {
+        match self {
+            Self::Stream(io) => Ok(io),
+            #[cfg(feature = "http3")]
+            Self::Quic { .. } => Err(TransportMismatch {
+                expected: TransportKind::Stream,
+            }
+            .into()),
+        }
+    }
+
+    /// Takes the QUIC connection and its endpoint for an HTTP/3 handshake.
+    #[cfg(feature = "http3")]
+    pub(crate) fn into_quic(self) -> Result<(::quic::Connection, ::quic::Endpoint), BoxError> {
+        match self {
+            Self::Quic {
+                connection,
+                endpoint,
+            } => Ok((connection, endpoint)),
+            Self::Stream(_) => Err(TransportMismatch {
+                expected: TransportKind::Quic,
+            }
+            .into()),
+        }
+    }
+}
+
+// ===== impl TransportMismatch =====
+
+#[cfg(feature = "http3")]
+impl std::error::Error for TransportMismatch {}
+
+#[cfg(feature = "http3")]
+impl fmt::Display for TransportMismatch {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self.expected {
+            TransportKind::Stream => "stream connection returned QUIC",
+            TransportKind::Quic => "QUIC connection returned a stream",
         })
     }
 }
@@ -751,10 +806,7 @@ mod tests {
     impl Conn {
         pub(crate) fn test(stream: tokio::io::DuplexStream) -> Self {
             Self {
-                inner: cfg_select! {
-                    feature = "http3" => Either::Left(Box::new(stream)),
-                    _ => Box::new(stream),
-                },
+                transport: Transport::Stream(Box::new(stream)),
                 connected: Connected::new(),
             }
         }
@@ -764,6 +816,10 @@ mod tests {
     impl Connection for tokio::io::DuplexStream {
         fn connected(&self) -> Connected {
             Connected::new()
+        }
+
+        fn remote_addr(&self) -> Option<SocketAddr> {
+            None
         }
     }
 

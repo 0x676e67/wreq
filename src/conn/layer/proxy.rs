@@ -11,8 +11,6 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-#[cfg(feature = "http3")]
-use futures_util::future::Either;
 use http::Uri;
 #[cfg(feature = "socks")]
 use netty::proxy::socks;
@@ -23,7 +21,7 @@ use tower::{BoxError, Layer, Service, ServiceExt, util::MapRequest};
 
 use crate::{
     conn::{
-        AsyncConnWithInfo, Config, Conn, TlsConn, request::ConnectRequest,
+        AsyncConnWithInfo, Config, Conn, TlsConn, Transport, request::ConnectRequest,
         transport::SocketRequest, verbose::Verbose,
     },
     dns::DynResolver,
@@ -121,10 +119,7 @@ where
         connected = connected.extra(tls_info);
     }
     Ok(Conn {
-        inner: cfg_select! {
-            feature = "http3" => Either::Left(stream),
-            _ => stream,
-        },
+        transport: Transport::Stream(stream),
         connected,
     })
 }

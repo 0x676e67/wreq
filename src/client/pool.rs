@@ -45,11 +45,8 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-#[cfg(feature = "http3")]
-use futures_util::future::Either;
 use http::{Request, Response, Version};
 use netty::body::Incoming;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service, ServiceBuilder, util::Oneshot};
 
 #[cfg(feature = "http2")]
@@ -71,7 +68,7 @@ use super::proto::{http2, is_expired};
 use crate::{
     Body, Protocol,
     conn::{
-        AsyncConn, Conn, Connected,
+        Conn, Connected,
         request::{ConnectRequest, ConnectionKey},
     },
     rt::{DynRuntime, Timer as _},
@@ -762,14 +759,13 @@ where
 impl<C> PoolTargeter<C> {
     /// Composes an HTTP/1 cache around protocol handshaking.
     /// Only the cache's background-completion callback owns an entry-state clone.
-    fn http1_layer<S, T>(
+    fn http1_layer<S>(
         &self,
         state: &Arc<EntryState>,
     ) -> impl Layer<S, Service = Cache<http1::Connect<S>, PoolTarget, cache::events::WithRuntime>>
     where
-        S: Service<PoolTarget, Response = Established<T>, Error = BoxError> + Clone,
+        S: Service<PoolTarget, Response = Established, Error = BoxError> + Clone,
         S::Future: Started + Unpin,
-        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         ServiceBuilder::new()
             .layer_fn(move |service| {
@@ -855,7 +851,7 @@ where
             }
             #[cfg(feature = "http2")]
             Protocol::Auto => {
-                let inspect: fn(&Established<Box<dyn AsyncConn>>) -> bool =
+                let inspect: fn(&Established) -> bool =
                     |established| established.connected().is_negotiated_h2();
                 let upgrade = ServiceBuilder::new()
                     .layer_fn(Singleton::new)
@@ -1030,15 +1026,14 @@ where
 // ===== impl NegotiatedEntry =====
 
 #[cfg(feature = "http2")]
-impl<L, M, T> Entry for NegotiatedEntry<L, Singleton<M, Established<T>>, Established<T>>
+impl<L, M> Entry for NegotiatedEntry<L, Singleton<M, Established>, Established>
 where
     L: Http1Pool,
     L::Future: Send,
-    M: Service<Established<T>, Response = mux::Connection, Error = BoxError, Future = MuxMake>
+    M: Service<Established, Response = mux::Connection, Error = BoxError, Future = MuxMake>
         + Clone
         + Send
         + 'static,
-    T: Send + 'static,
 {
     /// Joins existing upgraded work or checks out through the composed service.
     fn checkout(
@@ -1206,7 +1201,7 @@ impl<C> Service<PoolTarget> for ConnectionMaker<C>
 where
     C: TransportConnector,
 {
-    type Response = Established<Box<dyn AsyncConn>>;
+    type Response = Established;
     type Error = BoxError;
     type Future = ConnectFuture<Self::Response>;
 
@@ -1241,16 +1236,12 @@ where
             }
 
             let Conn {
-                inner: io,
+                transport,
                 connected,
             } = Oneshot::new(connector, config.req.clone()).await?;
-            #[cfg(feature = "http3")]
-            let Either::Left(io) = io else {
-                return Err("stream connection returned QUIC".into());
-            };
 
             Ok(Established::new(
-                io,
+                transport.into_stream()?,
                 connected,
                 config,
                 #[cfg(feature = "http2")]
@@ -1534,7 +1525,7 @@ mod tests {
     #[cfg(feature = "http2")]
     use crate::conn::config::{ConfigScope, ConnectConfig};
     #[cfg(feature = "http3")]
-    use crate::conn::transport::test_server_config;
+    use crate::conn::{Transport, TransportMismatch, transport::test_server_config};
     use crate::{conn::config::ConfigSet, group::Group};
 
     /// Connector behavior used to exercise unsuccessful checkout cleanup.
@@ -1583,7 +1574,10 @@ mod tests {
                         let connection =
                             endpoint.connect_with(config, server, "localhost")?.await?;
                         Ok(Conn {
-                            inner: Either::Right((connection, endpoint)),
+                            transport: Transport::Quic {
+                                connection,
+                                endpoint,
+                            },
                             connected: Connected::new(),
                         })
                     })
@@ -2326,6 +2320,30 @@ mod tests {
             let mut services = pool.inner.services.lock();
             assert!(services.get_mut(&dead_key).is_none());
             assert_eq!(services.iter_mut().count(), 2);
+        }
+    }
+
+    /// A connector returning the other transport fails the stream handshake and the
+    /// HTTP/3 connect alike.
+    #[tokio::test]
+    #[cfg(feature = "http3")]
+    async fn mismatched_transport_fails_checkout() {
+        for (protocol, connector) in [
+            (Protocol::Http1, http3_connector()),
+            (Protocol::Http3, TestConnector::KeepsAlive),
+        ] {
+            let Err(error) = test_pool(connector)
+                .checkout(connection_config(connect_request(protocol)))
+                .await
+            else {
+                panic!("{protocol:?}: checkout accepted a mismatched transport");
+            };
+            let source: &(dyn std::error::Error + 'static) = &*error;
+            assert!(
+                std::iter::successors(Some(source), |error| error.source())
+                    .any(|error| error.is::<TransportMismatch>()),
+                "{protocol:?}: {error}"
+            );
         }
     }
 }
