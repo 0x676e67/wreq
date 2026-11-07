@@ -20,7 +20,7 @@ impl Verbose {
     #[cfg_attr(not(feature = "tracing"), inline(always))]
     pub(super) fn wrap<T>(&self, conn: T) -> Box<dyn AsyncConnWithInfo>
     where
-        T: AsyncConnWithInfo + 'static,
+        T: AsyncConnWithInfo,
     {
         #[cfg(feature = "tracing")]
         if self.0 {

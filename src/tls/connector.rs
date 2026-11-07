@@ -17,7 +17,7 @@ use futures_util::future::BoxFuture;
 use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
-use tower::{BoxError, Layer, Service};
+use tower::{BoxError, Service};
 
 use super::{
     config::Config,
@@ -53,9 +53,9 @@ struct Inner {
     context: SslConnector,
 }
 
-/// Connects an inner transport and applies TLS when the destination requires it.
+/// Applies TLS to a route unless it is plain HTTP.
 /// Holds the client's TLS state and the context selected for this request's options.
-/// Proxy ALPN policy stays local to this service, leaving shared contexts unchanged.
+/// As a service it dials through `T`; proxy ALPN policy stays local to this connector.
 #[derive(Clone)]
 pub struct HttpsConnector<T> {
     inner: T,
@@ -72,14 +72,6 @@ pub enum MaybeHttpsStream<T> {
     Https(SslStream<T>),
 }
 
-/// An established transport paired with its connection request.
-/// Bypasses physical dialing when the TLS service upgrades a proxy tunnel.
-/// Owns the stream until the handshake completes or the connection attempt is dropped.
-pub struct EstablishedConn<IO> {
-    io: IO,
-    req: ConnectRequest,
-}
-
 // ===== impl HttpsLayer =====
 
 impl HttpsLayer {
@@ -94,6 +86,28 @@ impl HttpsLayer {
                 options,
                 context,
             }),
+        })
+    }
+
+    /// Selects the context for the request's TLS options before dialing.
+    /// Requests without different context options keep the client's context.
+    pub(crate) fn for_request(self, req: &ConnectRequest) -> crate::Result<HttpsConnector<()>> {
+        let inner = &*self.inner;
+        let overrides = Overrides::for_context(
+            req.config_set().clone(),
+            &inner.config_set,
+            TransportKind::Stream,
+        );
+        let context = if overrides.is_empty() {
+            inner.context.clone()
+        } else {
+            compile(&inner.config, overrides.get::<TlsOptions>())?
+        };
+        Ok(HttpsConnector {
+            inner: (),
+            tls: self,
+            context,
+            alpn_enabled: true,
         })
     }
 
@@ -226,19 +240,6 @@ impl HttpsLayer {
     }
 }
 
-impl<S> Layer<S> for HttpsLayer {
-    type Service = HttpsConnector<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        HttpsConnector {
-            inner,
-            tls: self.clone(),
-            context: self.inner.context.clone(),
-            alpn_enabled: true,
-        }
-    }
-}
-
 // ===== impl HttpsConnector =====
 
 impl<S> HttpsConnector<S> {
@@ -253,28 +254,31 @@ impl<S> HttpsConnector<S> {
         }
     }
 
-    /// Selects the context for the request's TLS options before dialing.
-    /// Requests without different context options keep the client's context.
-    pub fn with_request(mut self, req: &ConnectRequest) -> crate::Result<Self> {
-        let inner = &*self.tls.inner;
-        let overrides = Overrides::for_context(
-            req.config_set().clone(),
-            &inner.config_set,
-            TransportKind::Stream,
-        );
-        self.context = if overrides.is_empty() {
-            inner.context.clone()
-        } else {
-            compile(&inner.config, overrides.get::<TlsOptions>())?
-        };
-        Ok(self)
-    }
-
     /// Disables ALPN negotiation.
     #[inline]
     pub fn no_alpn(&mut self) -> &mut Self {
         self.alpn_enabled = false;
         self
+    }
+
+    /// Runs the TLS handshake over an established transport, or returns it unchanged for
+    /// an `http` route. The transport may already carry a proxy's TLS.
+    pub(crate) async fn handshake<IO>(
+        &self,
+        io: IO,
+        req: ConnectRequest,
+    ) -> Result<MaybeHttpsStream<IO>, BoxError>
+    where
+        IO: AsyncRead + AsyncWrite + Connection + Unpin,
+    {
+        if req.route_uri().is_http() {
+            return Ok(MaybeHttpsStream::Http(io));
+        }
+
+        let ssl = self
+            .tls
+            .ssl_for_connection(req, &io, &self.context, self.alpn_enabled)?;
+        perform_handshake(ssl, io).await
     }
 }
 
@@ -295,60 +299,18 @@ where
     }
 
     fn call(&mut self, req: ConnectRequest) -> Self::Future {
-        let alpn_enabled = self.alpn_enabled;
-        let tls = self.tls.clone();
-        let context = self.context.clone();
         let connect = self.inner.call(req.route_uri().clone());
+        let tls = HttpsConnector {
+            inner: (),
+            tls: self.tls.clone(),
+            context: self.context.clone(),
+            alpn_enabled: self.alpn_enabled,
+        };
 
         Box::pin(async move {
             let conn = connect.await.map_err(Into::into)?;
-
-            if req.route_uri().is_http() {
-                return Ok(MaybeHttpsStream::Http(conn));
-            }
-
-            let ssl = tls.ssl_for_connection(req, &conn, &context, alpn_enabled)?;
-            perform_handshake(ssl, conn).await
+            tls.handshake(conn, req).await
         })
-    }
-}
-
-impl<S, IO> Service<EstablishedConn<IO>> for HttpsConnector<S>
-where
-    IO: AsyncRead + AsyncWrite + Connection + Unpin + Send + Sync + fmt::Debug + 'static,
-{
-    type Response = MaybeHttpsStream<IO>;
-    type Error = BoxError;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    #[inline]
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, conn: EstablishedConn<IO>) -> Self::Future {
-        let alpn_enabled = self.alpn_enabled;
-        let tls = self.tls.clone();
-        let context = self.context.clone();
-
-        Box::pin(async move {
-            if conn.req.route_uri().is_http() {
-                return Ok(MaybeHttpsStream::Http(conn.io));
-            }
-
-            let ssl = tls.ssl_for_connection(conn.req, &conn.io, &context, alpn_enabled)?;
-            perform_handshake(ssl, conn.io).await
-        })
-    }
-}
-
-// ===== impl EstablishedConn =====
-
-impl<IO> EstablishedConn<IO> {
-    /// Pairs an open transport with the request whose TLS handshake it will carry.
-    #[inline]
-    pub fn new(io: IO, req: ConnectRequest) -> Self {
-        Self { io, req }
     }
 }
 

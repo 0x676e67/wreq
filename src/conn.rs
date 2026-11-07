@@ -33,7 +33,6 @@ use futures_util::future::BoxFuture;
 use layer::{
     proxy::{ProxyConnector, ProxyLayer},
     timeout::{Timeout, TimeoutLayer},
-    tls::{TlsConnector, TlsLayer},
 };
 use pin_project_lite::pin_project;
 use request::ConnectRequest;
@@ -60,7 +59,7 @@ use crate::{
 };
 
 /// Concrete stream path; [`Connector`] wraps both transports in any user layers.
-type Stack = Timeout<TlsConnector<ProxyConnector<SocketConnector>>>;
+type Stack = Timeout<ProxyConnector<SocketConnector>>;
 
 /// Type-erased transport service retained after custom connector layers are composed.
 pub type BoxedTransportConnector = BoxCloneSyncService<Unnameable, Conn, BoxError>;
@@ -271,12 +270,7 @@ impl ConnectorBuilder {
             let tls = self.tls.build(config_set)?;
             ServiceBuilder::new()
                 .layer(TimeoutLayer::new(self.runtime.clone(), transport_timeout))
-                .layer(TlsLayer::new(
-                    self.config.verbose,
-                    self.config.nodelay,
-                    self.config.tls_info,
-                ))
-                .layer(ProxyLayer::new(self.config.proxies, tls, resolver))
+                .layer(ProxyLayer::new(self.config, tls, resolver))
                 .service(SocketConnector::new(
                     #[cfg(unix)]
                     self.runtime.clone(),

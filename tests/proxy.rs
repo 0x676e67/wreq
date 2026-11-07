@@ -659,6 +659,46 @@ async fn proxy_tunnel_connect_error() {
     }
 }
 
+#[tokio::test]
+async fn dropped_tunnel_connect_closes_proxy_connection() {
+    use std::time::Duration;
+
+    use tokio::{io::AsyncReadExt, runtime::Handle};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
+    let client = Client::builder_tokio()
+        .proxy(wreq::Proxy::all(proxy).unwrap())
+        .build()
+        .unwrap();
+    let tasks = Handle::current().metrics().num_alive_tasks();
+
+    // The proxy reads the CONNECT request and never answers it.
+    let accept = async {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            head.push(socket.read_u8().await.unwrap());
+        }
+        assert!(head.starts_with(b"CONNECT target.invalid:443 HTTP/1.1\r\n"));
+        socket
+    };
+    // `select!` drops the pending request, and with it the connect future.
+    let mut socket = tokio::select! {
+        socket = accept => socket,
+        result = client.get("https://target.invalid/").send() => {
+            panic!("connect finished before the proxy answered: {result:?}")
+        }
+    };
+
+    let read = tokio::time::timeout(Duration::from_secs(5), socket.read(&mut [0; 1]))
+        .await
+        .expect("the dropped connect future left the proxy connection open")
+        .unwrap();
+    assert_eq!(read, 0);
+    assert_eq!(Handle::current().metrics().num_alive_tasks(), tasks);
+}
+
 #[cfg(feature = "socks")]
 #[tokio::test]
 async fn socks_preserves_dns_auth_and_connection_reuse() {
