@@ -22,7 +22,6 @@ use http::{
     HeaderValue, Method, Request, Response, Uri,
     header::{HOST, PROXY_AUTHORIZATION},
 };
-use http_body::Body;
 use netty::{body::Incoming, conn};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -32,6 +31,7 @@ use tower::{BoxError, Layer, Service};
 
 use super::{Established, SendError, is_expired};
 use crate::{
+    Body,
     client::{
         error::{Error, ErrorKind},
         pool::cache::Started,
@@ -44,8 +44,8 @@ use crate::{
 ///
 /// HTTP/1 permits one active checkout. Dispatch returns this sender only after
 /// it becomes ready again; a busy sender is held by a readiness task.
-pub struct Connection<B> {
-    tx: conn::http1::SendRequest<B>,
+pub struct Connection {
+    tx: conn::http1::SendRequest<Body>,
     connected: Connected,
     set_host: bool,
     idle_at: Instant,
@@ -57,10 +57,9 @@ pub struct Connection<B> {
 /// The resulting service waits for the physical connector, performs the
 /// handshake, and returns a cacheable [`Connection`].
 #[derive(Clone)]
-pub struct ConnectLayer<B> {
+pub struct ConnectLayer {
     set_host: bool,
     runtime: DynRuntime,
-    _body: PhantomData<fn(B)>,
 }
 
 /// Connects a transport and performs an HTTP/1 handshake.
@@ -68,11 +67,11 @@ pub struct ConnectLayer<B> {
 /// The inner service may include a reuse delay before connecting. Its
 /// [`Started`] state is preserved so the HTTP/1 cache can decide whether a lost
 /// reuse race should finish in the background.
-pub struct Connect<S, B> {
+#[derive(Clone)]
+pub struct Connect<S> {
     service: S,
     set_host: bool,
     runtime: DynRuntime,
-    _body: PhantomData<fn(B)>,
 }
 
 /// Connects a transport and then advances the HTTP/1 handshake.
@@ -80,19 +79,19 @@ pub struct Connect<S, B> {
 /// The explicit state machine keeps the connector's [`Started`] signal visible
 /// to the cache while the operation moves from transport creation to the boxed
 /// protocol handshake future.
-pub struct ConnectFuture<F, T, B> {
-    state: ConnectState<F, B>,
+pub struct ConnectFuture<F, T> {
+    state: ConnectState<F>,
     set_host: bool,
     runtime: Option<DynRuntime>,
     _io: PhantomData<fn(T)>,
 }
 
 /// Phases of an HTTP/1 connection service call.
-enum ConnectState<F, B> {
+enum ConnectState<F> {
     /// Waiting for the physical transport.
     Connecting(F),
     /// Performing the protocol handshake.
-    Handshaking(BoxFuture<'static, Result<Connection<B>, BoxError>>),
+    Handshaking(BoxFuture<'static, Result<Connection, BoxError>>),
     /// Future has completed and owns no reusable state.
     Done,
 }
@@ -105,55 +104,36 @@ struct HandshakeStateError;
 
 // ===== impl ConnectLayer =====
 
-impl<B> ConnectLayer<B> {
+impl ConnectLayer {
     /// Creates an HTTP/1 handshake layer for pooled connections.
     pub fn new(runtime: DynRuntime, set_host: bool) -> Self {
-        Self {
-            runtime,
-            set_host,
-            _body: PhantomData,
-        }
+        Self { runtime, set_host }
     }
 }
 
-impl<S, B> Layer<S> for ConnectLayer<B> {
-    type Service = Connect<S, B>;
+impl<S> Layer<S> for ConnectLayer {
+    type Service = Connect<S>;
 
     fn layer(&self, service: S) -> Self::Service {
         Connect {
             service,
             runtime: self.runtime.clone(),
             set_host: self.set_host,
-            _body: PhantomData,
         }
     }
 }
 
 // ===== impl Connect =====
 
-impl<S: Clone, B> Clone for Connect<S, B> {
-    fn clone(&self) -> Self {
-        Self {
-            service: self.service.clone(),
-            runtime: self.runtime.clone(),
-            set_host: self.set_host,
-            _body: PhantomData,
-        }
-    }
-}
-
-impl<S, T, B, Dst> Service<Dst> for Connect<S, B>
+impl<S, T, Dst> Service<Dst> for Connect<S>
 where
     S: Service<Dst, Response = Established<T>, Error = BoxError> + Clone,
     S::Future: Started + Unpin,
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
 {
-    type Response = Connection<B>;
+    type Response = Connection;
     type Error = BoxError;
-    type Future = ConnectFuture<S::Future, T, B>;
+    type Future = ConnectFuture<S::Future, T>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx)
@@ -171,15 +151,12 @@ where
 
 // ===== impl ConnectFuture =====
 
-impl<F, T, B> Future for ConnectFuture<F, T, B>
+impl<F, T> Future for ConnectFuture<F, T>
 where
     F: Future<Output = Result<Established<T>, BoxError>> + Started + Unpin,
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
 {
-    type Output = Result<Connection<B>, BoxError>;
+    type Output = Result<Connection, BoxError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         loop {
@@ -214,13 +191,10 @@ where
     }
 }
 
-impl<F, T, B> Started for ConnectFuture<F, T, B>
+impl<F, T> Started for ConnectFuture<F, T>
 where
     F: Future<Output = Result<Established<T>, BoxError>> + Started + Unpin,
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
 {
     fn started(&self) -> bool {
         match &self.state {
@@ -232,12 +206,7 @@ where
 
 // ===== impl Connection =====
 
-impl<B> Connection<B>
-where
-    B: Body + Send + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+impl Connection {
     /// Handshakes a transport and returns a ready HTTP/1 sender.
     /// Starts the driver before waiting for readiness, preserving its error if
     /// the sender closes during setup.
@@ -248,7 +217,6 @@ where
     ) -> Result<Self, BoxError>
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-        B: Unpin,
     {
         let Established {
             io,
@@ -319,14 +287,9 @@ where
     }
 }
 
-impl<B> Service<Request<B>> for Connection<B>
-where
-    B: Body + Send + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+impl Service<Request<Body>> for Connection {
     type Response = Response<Incoming>;
-    type Error = SendError<B>;
+    type Error = SendError;
     type Future = Either<
         BoxFuture<'static, Result<Self::Response, Self::Error>>,
         Ready<Result<Self::Response, Self::Error>>,
@@ -338,7 +301,7 @@ where
             .map_err(|error| SendError::Request(Error::closed(error)))
     }
 
-    fn call(&mut self, mut req: Request<B>) -> Self::Future {
+    fn call(&mut self, mut req: Request<Body>) -> Self::Future {
         // Host must be derived before the absolute URI becomes a wire target.
         if self.set_host
             && !req.headers().contains_key(HOST)

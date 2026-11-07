@@ -2,7 +2,6 @@
 
 use std::{
     future::Future,
-    marker::PhantomData,
     sync::Arc,
     task::{self, Poll},
     time::{Duration, Instant},
@@ -10,13 +9,13 @@ use std::{
 
 use futures_util::{TryFutureExt, future::BoxFuture};
 use http::{Request, Response};
-use http_body::Body;
 use netty::{body::Incoming, conn};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service};
 
 use super::{ConnectionState, Established, SendError, is_expired};
 use crate::{
+    Body,
     client::error::Error,
     conn::Connected,
     rt::{DynRuntime, Timer as _},
@@ -27,8 +26,9 @@ use crate::{
 /// The pool singleton stores one instance and gives each checkout a sender
 /// clone. Protocol stream availability remains owned by netty; the local
 /// state records sender checkout only and is not an active-stream count.
-pub struct Connection<B> {
-    tx: conn::http2::SendRequest<B>,
+#[derive(Clone)]
+pub struct Connection {
+    tx: conn::http2::SendRequest<Body>,
     state: Arc<ConnectionState>,
     connected: Connected,
     runtime: DynRuntime,
@@ -40,9 +40,8 @@ pub struct Connection<B> {
 /// transport selected by negotiation. Both return a cloneable sender for the
 /// pool's singleton service.
 #[derive(Clone)]
-pub struct ConnectLayer<B> {
+pub struct ConnectLayer {
     runtime: DynRuntime,
-    _body: PhantomData<fn(B)>,
 }
 
 /// Performs an HTTP/2 handshake for a transport-producing service.
@@ -50,58 +49,41 @@ pub struct ConnectLayer<B> {
 /// The inner service either connects directly or yields a negotiated transport.
 /// This service consumes it once, starts the protocol driver, and returns the
 /// shared sender stored by the singleton pool.
-pub struct Connect<S, B> {
+#[derive(Clone)]
+pub struct Connect<S> {
     service: S,
     runtime: DynRuntime,
-    _body: PhantomData<fn(B)>,
 }
 
 // ===== impl ConnectLayer =====
 
-impl<B> ConnectLayer<B> {
+impl ConnectLayer {
     /// Creates an HTTP/2 handshake layer for pooled connections.
     pub fn new(runtime: DynRuntime) -> Self {
-        Self {
-            runtime,
-            _body: PhantomData,
-        }
+        Self { runtime }
     }
 }
 
-impl<S, B> Layer<S> for ConnectLayer<B> {
-    type Service = Connect<S, B>;
+impl<S> Layer<S> for ConnectLayer {
+    type Service = Connect<S>;
 
     fn layer(&self, service: S) -> Self::Service {
         Connect {
             service,
             runtime: self.runtime.clone(),
-            _body: self._body,
         }
     }
 }
 
 // ===== impl Connect =====
 
-impl<S: Clone, B> Clone for Connect<S, B> {
-    fn clone(&self) -> Self {
-        Self {
-            service: self.service.clone(),
-            runtime: self.runtime.clone(),
-            _body: self._body,
-        }
-    }
-}
-
-impl<S, T, B, Dst> Service<Dst> for Connect<S, B>
+impl<S, T, Dst> Service<Dst> for Connect<S>
 where
     S: Service<Dst, Response = Established<T>, Error = BoxError> + Clone + Send + 'static,
     S::Future: Send + 'static,
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
 {
-    type Response = Connection<B>;
+    type Response = Connection;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -118,30 +100,13 @@ where
 
 // ===== impl Connection =====
 
-impl<B> Clone for Connection<B> {
-    fn clone(&self) -> Self {
-        Self {
-            tx: self.tx.clone(),
-            connected: self.connected.clone(),
-            state: self.state.clone(),
-            runtime: self.runtime.clone(),
-        }
-    }
-}
-
-impl<B> Connection<B>
-where
-    B: Body + 'static,
-{
+impl Connection {
     /// Awaits a transport and returns a handshaken HTTP/2 sender.
     /// Starts the connection driver before waiting for sender readiness.
     async fn handshake<F, T>(established: F, runtime: DynRuntime) -> Result<Self, BoxError>
     where
         F: Future<Output = Result<Established<T>, BoxError>>,
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-        B: Send + Unpin,
-        B::Data: Send,
-        B::Error: Into<BoxError>,
     {
         let Established {
             io,
@@ -222,12 +187,9 @@ where
     }
 }
 
-impl<B> Service<Request<B>> for Connection<B>
-where
-    B: Body + Send + 'static,
-{
+impl Service<Request<Body>> for Connection {
     type Response = Response<Incoming>;
-    type Error = SendError<B>;
+    type Error = SendError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -241,7 +203,7 @@ where
         ready
     }
 
-    fn call(&mut self, req: Request<B>) -> Self::Future {
+    fn call(&mut self, req: Request<Body>) -> Self::Future {
         Box::pin(self.tx.try_send_request(req).map_err(SendError::protocol))
     }
 }

@@ -9,7 +9,7 @@
 //! The pool coordinator performs lookup while holding its map lock, then drops
 //! any evicted service after releasing that lock.
 
-use std::{collections::HashMap, hash::Hash, marker::PhantomData, num::NonZeroUsize};
+use std::{collections::HashMap, hash::Hash, num::NonZeroUsize};
 
 use lru::LruCache;
 
@@ -24,18 +24,12 @@ use lru::LruCache;
 /// lookups refresh the optional idle-group LRU only when that key is already
 /// tracked. The pool coordinator decides when a service gains or loses reusable
 /// state and performs any resulting eviction outside this type.
-pub(super) struct Map<T, Dst>
-where
-    T: Target<Dst>,
-{
+pub(super) struct Map<K, S> {
     /// Services indexed by connection compatibility key.
-    entries: HashMap<T::Key, T::Service>,
+    entries: HashMap<K, S>,
 
     /// Retained-group LRU; stale markers are reconciled before capacity eviction.
-    retained: Option<LruCache<T::Key, ()>>,
-
-    /// Names the borrowed factory and destination without owning either.
-    _target: PhantomData<fn(T, Dst)>,
+    retained: Option<LruCache<K, ()>>,
 }
 
 /// Defines how destinations are grouped and how each group service is created.
@@ -57,26 +51,24 @@ pub(super) trait Target<Dst> {
     fn service(&self, dst: &Dst) -> Self::Service;
 }
 
-impl<T, Dst> Map<T, Dst>
+impl<K, S> Map<K, S>
 where
-    T: Target<Dst>,
-    T::Key: Eq + Hash,
+    K: Eq + Hash,
 {
     /// Creates a lazy map with an optional retained-group LRU limit.
     pub(super) fn new(max_retained: Option<NonZeroUsize>) -> Self {
         Self {
             entries: HashMap::new(),
             retained: max_retained.map(LruCache::new),
-            _target: PhantomData,
         }
     }
 
     /// Applies `operation` to the service for `dst`, creating it on a miss.
     /// The coordinator supplies its factory without copying it into the map.
-    pub(super) fn with_service<R, F>(&mut self, targeter: &T, dst: Dst, operation: F) -> R
+    pub(super) fn with_service<T, Dst, R, F>(&mut self, targeter: &T, dst: Dst, operation: F) -> R
     where
-        T::Key: Clone,
-        F: FnOnce(&mut T::Service, Dst) -> R,
+        T: Target<Dst, Key = K, Service = S>,
+        F: FnOnce(&mut S, Dst) -> R,
     {
         let key = targeter.key(&dst);
         if let Some(retained) = &mut self.retained {
@@ -91,17 +83,17 @@ where
     }
 
     /// Returns the service stored for `key` without changing idle LRU order.
-    pub(super) fn get_mut(&mut self, key: &T::Key) -> Option<&mut T::Service> {
+    pub(super) fn get_mut(&mut self, key: &K) -> Option<&mut S> {
         self.entries.get_mut(key)
     }
 
     /// Removes idle markers whose services no longer satisfy `predicate`.
     ///
     /// Returns the pruned keys so the caller can reconcile entries that remain.
-    pub(super) fn prune_retained<F>(&mut self, mut predicate: F) -> Vec<T::Key>
+    pub(super) fn prune_retained<F>(&mut self, mut predicate: F) -> Vec<K>
     where
-        T::Key: Clone,
-        F: FnMut(&T::Service) -> bool,
+        K: Clone,
+        F: FnMut(&S) -> bool,
     {
         let Some(retained) = &mut self.retained else {
             return Vec::new();
@@ -128,14 +120,10 @@ where
     /// A full LRU first removes markers rejected by `predicate` and returns their
     /// keys, then the remaining least recently used group displaced by the limit.
     /// An unbounded map returns neither.
-    pub(super) fn mark_retained<F>(
-        &mut self,
-        key: &T::Key,
-        predicate: F,
-    ) -> (Vec<T::Key>, Option<T::Key>)
+    pub(super) fn mark_retained<F>(&mut self, key: &K, predicate: F) -> (Vec<K>, Option<K>)
     where
-        T::Key: Clone,
-        F: FnMut(&T::Service) -> bool,
+        K: Clone,
+        F: FnMut(&S) -> bool,
     {
         let Some(retained) = &mut self.retained else {
             return (Vec::new(), None);
@@ -162,16 +150,16 @@ where
     }
 
     /// Stops counting `key` as a retained idle group.
-    pub(super) fn unmark_retained(&mut self, key: &T::Key) {
+    pub(super) fn unmark_retained(&mut self, key: &K) {
         if let Some(retained) = &mut self.retained {
             let _ = retained.pop(key);
         }
     }
 
     /// Retains entries selected by `predicate` and returns removed services.
-    pub(super) fn retain<F>(&mut self, mut predicate: F) -> Vec<T::Service>
+    pub(super) fn retain<F>(&mut self, mut predicate: F) -> Vec<S>
     where
-        F: FnMut(&T::Key, &mut T::Service) -> bool,
+        F: FnMut(&K, &mut S) -> bool,
     {
         let retained = &mut self.retained;
         self.entries
@@ -187,14 +175,14 @@ where
     }
 
     /// Iterates over mapped services without changing idle LRU order.
-    pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = (&T::Key, &mut T::Service)> {
+    pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &mut S)> {
         self.entries.iter_mut()
     }
 
     /// Removes `key` when its current service satisfies `predicate`.
-    pub(super) fn remove_if<F>(&mut self, key: &T::Key, predicate: F) -> Option<T::Service>
+    pub(super) fn remove_if<F>(&mut self, key: &K, predicate: F) -> Option<S>
     where
-        F: FnOnce(&T::Service) -> bool,
+        F: FnOnce(&S) -> bool,
     {
         let remove = self.entries.get(key).is_some_and(predicate);
         if remove {

@@ -26,9 +26,9 @@ use super::{
 };
 #[cfg(feature = "http2")]
 use crate::Protocol;
-use crate::conn::Connected;
 #[cfg(any(feature = "http2", feature = "http3"))]
 use crate::sync::Mutex;
+use crate::{Body, conn::Connected};
 
 /// Physical transport and request-specific protocol configuration.
 ///
@@ -53,9 +53,9 @@ pub(super) struct Established<T> {
 /// unsent request so the outer client can retry only when encoding did not
 /// begin.
 #[derive(Debug)]
-pub enum SendError<B> {
+pub enum SendError {
     Request(Error),
-    Protocol(Box<TrySendError<Request<B>>>),
+    Protocol(Box<TrySendError<Request<Body>>>),
 }
 
 /// Shared checkout state for one HTTP/2 or HTTP/3 connection.
@@ -176,15 +176,15 @@ impl<T> Established<T> {
 
 // ===== impl SendError =====
 
-impl<B> From<Error> for SendError<B> {
+impl From<Error> for SendError {
     fn from(error: Error) -> Self {
         Self::Request(error)
     }
 }
 
-impl<B> SendError<B> {
+impl SendError {
     /// Boxes a protocol failure that may carry the complete unsent request.
-    pub(super) fn protocol(error: TrySendError<Request<B>>) -> Self {
+    pub(super) fn protocol(error: TrySendError<Request<Body>>) -> Self {
         Self::Protocol(Box::new(error))
     }
 
@@ -195,7 +195,7 @@ impl<B> SendError<B> {
     }
 
     /// Takes a request recovered before protocol encoding began.
-    pub fn take_message(&mut self) -> Option<Request<B>> {
+    pub fn take_message(&mut self) -> Option<Request<Body>> {
         match self {
             Self::Request(_) => None,
             Self::Protocol(error) => error.take_message(),
@@ -212,6 +212,6 @@ impl<B> SendError<B> {
 }
 
 /// Returns whether an idle timestamp exceeds the configured timeout.
-fn is_expired(idle_at: Instant, now: Instant, timeout: Option<Duration>) -> bool {
+pub(super) fn is_expired(idle_at: Instant, now: Instant, timeout: Option<Duration>) -> bool {
     timeout.is_some_and(|timeout| now.saturating_duration_since(idle_at) > timeout)
 }

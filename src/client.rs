@@ -32,7 +32,6 @@ use http::{
     Request as HttpRequest, Response as HttpResponse, Version,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
-use http_body::Body as HttpBody;
 use netty::{body::Incoming, conn};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
@@ -72,7 +71,6 @@ use crate::{
     conn::{
         BoxedConnectorLayer, BoxedTransportConnector, Conn, Connector, Unnameable,
         config::ConfigSet,
-        request::ConnectRequest,
         transport::{self, BindOptions},
     },
     dns::{DnsResolverWithOverrides, DynResolver, IntoResolve, Resolve},
@@ -110,7 +108,7 @@ cfg_select! {
 
 type ClientService = Timeout<
     ConfigService<
-        MaybeDecompression<FollowRedirect<Retry<RetryPolicy, sealed::Client<Connector, Body>>>>,
+        MaybeDecompression<FollowRedirect<Retry<RetryPolicy, sealed::Client<Connector>>>>,
     >,
 >;
 
@@ -1709,27 +1707,16 @@ impl ClientBuilder {
 
 /// Low-level Tower client and builder used by the public client.
 mod sealed {
-    use super::*;
+    use super::{pool::TransportConnector, *};
     use crate::ext::UriExt;
 
     /// Tower service beneath [`crate::Client`] that validates and sends HTTP requests.
     /// Applies request configuration, cancellation retries, pool checkout and protocol dispatch.
     /// Clones share the pool without cloning request bodies.
     #[must_use]
-    pub struct Client<C, B>
-    where
-        C: Service<ConnectRequest, Response = Conn, Error = BoxError>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
-        C::Future: Send + 'static,
-        B: HttpBody + Send + Unpin + 'static,
-        B::Data: Send,
-        B::Error: Into<BoxError>,
-    {
+    pub struct Client<C> {
         /// Composed service stack shared by client clones.
-        inner: svc::Stack<svc::Dispatch<C, B>, B>,
+        inner: svc::Stack<svc::Dispatch<C>, Body>,
     }
 
     /// Assembles the protocol, runtime, and pool services used by [`Client`].
@@ -1765,22 +1752,14 @@ mod sealed {
 
     // ===== impl Client =====
 
-    impl<C, B> Service<HttpRequest<B>> for Client<C, B>
+    impl<C> Service<HttpRequest<Body>> for Client<C>
     where
-        C: Service<ConnectRequest, Response = Conn, Error = BoxError>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
-        C::Future: Send + 'static,
-        B: HttpBody + Send + Unpin + 'static,
-        B::Data: Send,
-        B::Error: Into<BoxError>,
+        C: TransportConnector,
     {
         type Response = HttpResponse<Incoming>;
         type Error = BoxError;
         type Future = FutureEither<
-            <svc::Stack<svc::Dispatch<C, B>, B> as Service<HttpRequest<B>>>::Future,
+            <svc::Stack<svc::Dispatch<C>, Body> as Service<HttpRequest<Body>>>::Future,
             Ready<Result<Self::Response, Self::Error>>,
         >;
 
@@ -1788,7 +1767,7 @@ mod sealed {
             self.inner.poll_ready(cx)
         }
 
-        fn call(&mut self, mut req: HttpRequest<B>) -> Self::Future {
+        fn call(&mut self, mut req: HttpRequest<Body>) -> Self::Future {
             match req.version() {
                 Version::HTTP_10 if req.method() == Method::CONNECT => {
                     warn!("CONNECT is not allowed for HTTP/1.0");
@@ -1815,18 +1794,7 @@ mod sealed {
         }
     }
 
-    impl<C, B> Clone for Client<C, B>
-    where
-        C: Service<ConnectRequest, Response = Conn, Error = BoxError>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
-        C::Future: Send + 'static,
-        B: HttpBody + Send + Unpin + 'static,
-        B::Data: Send,
-        B::Error: Into<BoxError>,
-    {
+    impl<C> Clone for Client<C> {
         fn clone(&self) -> Self {
             Self {
                 inner: self.inner.clone(),
@@ -1967,17 +1935,9 @@ mod sealed {
         }
 
         /// Consumes the builder and wraps both transports in the complete client stack.
-        pub fn build<C, B>(self, (connector, bind_options): (C, BindOptions)) -> Client<C, B>
+        pub fn build<C>(self, (connector, bind_options): (C, BindOptions)) -> Client<C>
         where
-            C: Service<ConnectRequest, Response = Conn, Error = BoxError>
-                + Clone
-                + Send
-                + Sync
-                + 'static,
-            C::Future: Send + 'static,
-            B: HttpBody + Send + Unpin + 'static,
-            B::Data: Send,
-            B::Error: Into<BoxError>,
+            C: TransportConnector,
         {
             Client {
                 inner: ServiceBuilder::new()

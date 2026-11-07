@@ -1,7 +1,6 @@
 //! HTTP/3 handshake, sender, and pooled connection lifecycle.
 
 use std::{
-    marker::PhantomData,
     pin::pin,
     sync::Arc,
     task::{self, Poll},
@@ -13,21 +12,25 @@ use futures_util::{
     future::{self, BoxFuture, Either},
 };
 use http::{Request, Response};
-use http_body::Body;
 use netty::{body::Incoming, conn, rt::quic::Compat};
 use tower::{BoxError, Service, ServiceExt};
 
 use super::{ConnectionState, SendError, is_expired};
 use crate::{
-    client::{error::Error, pool::PoolTarget},
-    conn::{Conn, Connected, request::ConnectRequest},
+    Body,
+    client::{
+        error::Error,
+        pool::{PoolTarget, TransportConnector},
+    },
+    conn::{Conn, Connected},
     error::TimedOut,
     rt::{DynRuntime, Timer as _},
 };
 
 /// Shared request sender for one HTTP/3 connection.
-pub struct Connection<B> {
-    tx: conn::http3::SendRequest<B>,
+#[derive(Clone)]
+pub struct Connection {
+    tx: conn::http3::SendRequest<Body>,
     state: Arc<ConnectionState>,
     connected: Connected,
     runtime: DynRuntime,
@@ -35,46 +38,30 @@ pub struct Connection<B> {
 
 /// Establishes HTTP/3 connections for the pool's shared singleton.
 /// One connect timeout covers the QUIC connection and the HTTP/3 handshake.
-pub struct Connect<C, B> {
+#[derive(Clone)]
+pub struct Connect<C> {
     connector: C,
     runtime: DynRuntime,
     timeout: Option<Duration>,
-    _body: PhantomData<fn(B)>,
 }
 
 // ===== impl Connect =====
 
-impl<C, B> Connect<C, B> {
+impl<C> Connect<C> {
     pub fn new(connector: C, runtime: DynRuntime, timeout: Option<Duration>) -> Self {
         Self {
             connector,
             runtime,
             timeout,
-            _body: PhantomData,
         }
     }
 }
 
-impl<C: Clone, B> Clone for Connect<C, B> {
-    fn clone(&self) -> Self {
-        Self {
-            connector: self.connector.clone(),
-            runtime: self.runtime.clone(),
-            timeout: self.timeout,
-            _body: PhantomData,
-        }
-    }
-}
-
-impl<C, B> Service<PoolTarget> for Connect<C, B>
+impl<C> Service<PoolTarget> for Connect<C>
 where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
+    C: TransportConnector,
 {
-    type Response = Connection<B>;
+    type Response = Connection;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -108,7 +95,7 @@ where
                     return Err::<_, BoxError>("QUIC connection returned a stream".into());
                 };
                 let transport = Compat::new(http3_quic::Connection::new(quic));
-                let (tx, connection) = builder.handshake::<_, B>(transport).await?;
+                let (tx, connection) = builder.handshake::<_, Body>(transport).await?;
                 Ok((tx, connection, endpoint, connected))
             };
 
@@ -141,18 +128,7 @@ where
 
 // ===== impl Connection =====
 
-impl<B> Clone for Connection<B> {
-    fn clone(&self) -> Self {
-        Self {
-            tx: self.tx.clone(),
-            state: self.state.clone(),
-            connected: self.connected.clone(),
-            runtime: self.runtime.clone(),
-        }
-    }
-}
-
-impl<B> Connection<B> {
+impl Connection {
     pub fn connected(&self) -> &Connected {
         &self.connected
     }
@@ -185,12 +161,9 @@ impl<B> Connection<B> {
     }
 }
 
-impl<B> Service<Request<B>> for Connection<B>
-where
-    B: Body + Send + 'static,
-{
+impl Service<Request<Body>> for Connection {
     type Response = Response<Incoming>;
-    type Error = SendError<B>;
+    type Error = SendError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -204,7 +177,7 @@ where
         ready
     }
 
-    fn call(&mut self, request: Request<B>) -> Self::Future {
+    fn call(&mut self, request: Request<Body>) -> Self::Future {
         Box::pin(
             self.tx
                 .try_send_request(request)

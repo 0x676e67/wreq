@@ -34,7 +34,6 @@ pub(super) mod singleton;
 use std::{
     fmt,
     future::Future,
-    marker::PhantomData,
     num::NonZeroUsize,
     pin::Pin,
     sync::{
@@ -49,7 +48,6 @@ use futures_util::future::BoxFuture;
 #[cfg(feature = "http3")]
 use futures_util::future::Either;
 use http::{Request, Response};
-use http_body::Body;
 use netty::{body::Incoming, conn};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service, ServiceBuilder, util::Oneshot};
@@ -63,13 +61,13 @@ use self::{
     expire::{Expire, Inspect},
     map::{Map, Target},
 };
-#[cfg(feature = "http2")]
-use super::proto::http2;
 #[cfg(feature = "http3")]
 use super::proto::http3;
 use super::proto::{Established, SendError, http1};
+#[cfg(feature = "http2")]
+use super::proto::{http2, is_expired};
 use crate::{
-    Protocol,
+    Body, Protocol,
     conn::{
         AsyncConn, Conn, Connected,
         request::{ConnectRequest, ConnectionKey},
@@ -172,6 +170,28 @@ impl Default for Config {
     }
 }
 
+/// Transport connector cloned into each pool connection attempt.
+///
+/// Names the bounds shared by the client stack, the pool and the HTTP/3 connect
+/// service; every connector service with these bounds implements it.
+pub trait TransportConnector:
+    Service<ConnectRequest, Response = Conn, Error = BoxError, Future: Send + 'static>
+    + Clone
+    + Send
+    + Sync
+    + 'static
+{
+}
+
+impl<C> TransportConnector for C where
+    C: Service<ConnectRequest, Response = Conn, Error = BoxError, Future: Send + 'static>
+        + Clone
+        + Send
+        + Sync
+        + 'static
+{
+}
+
 /// Cloneable connection-pool handle used by the HTTP client.
 ///
 /// Cloning this type shares every mapped entry and cleanup task. A checkout
@@ -182,15 +202,8 @@ impl Default for Config {
 /// The final handle drop closes the idle-cleanup signal. Checked-out protocol
 /// senders can outlive the handle, but their weak pool references prevent them
 /// from keeping the routing map alive.
-pub(super) struct Pool<C, B>
-where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    inner: Arc<PoolInner<C, B>>,
+pub(super) struct Pool<C> {
+    inner: Arc<PoolInner<C>>,
 }
 
 /// Shared coordinator for mapped pool services and idle maintenance.
@@ -202,14 +215,7 @@ where
 ///
 /// Its [`Expire`] component owns the single weakly referenced maintenance task,
 /// allowing long idle timers to stop immediately when this coordinator drops.
-struct PoolInner<C, B>
-where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+struct PoolInner<C> {
     /// Whether completed connections may return to pool entries.
     enabled: bool,
 
@@ -220,10 +226,10 @@ where
     expire: Expire<Self>,
 
     /// Factory used when pooling is disabled or a map entry is missing.
-    targeter: PoolTargeter<C, B>,
+    targeter: PoolTargeter<C>,
 
     /// Services keyed by complete connection compatibility.
-    services: Mutex<Map<PoolTargeter<C, B>, PoolTarget>>,
+    services: Mutex<Map<ConnectionKey, Box<dyn Entry>>>,
 }
 
 /// Destination and protocol configuration for one pool checkout.
@@ -270,14 +276,7 @@ pub(super) struct ProtocolBuilders {
 /// [`Map`] calls this factory on a key miss. Fixed protocol targets receive their
 /// matching pool; Auto combines HTTP/1 and HTTP/2 through [`Negotiate`]. Unpooled
 /// checkouts create a temporary entry. Entries hold only a weak reference to [`PoolInner`].
-struct PoolTargeter<C, B>
-where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+struct PoolTargeter<C> {
     /// Physical connection service.
     connector: C,
 
@@ -288,7 +287,7 @@ where
     reuse_delay: Option<Duration>,
 
     /// Pool coordinator used for identity-aware entry cleanup.
-    pool: Weak<PoolInner<C, B>>,
+    pool: Weak<PoolInner<C>>,
 
     /// Runtime used by cache races and protocol drivers.
     runtime: DynRuntime,
@@ -299,9 +298,6 @@ where
     /// Deadline of each HTTP/3 connect and handshake.
     #[cfg(feature = "http3")]
     http3_connect_timeout: Option<Duration>,
-
-    /// Carries the request-body type without owning a body.
-    _body: PhantomData<fn(B)>,
 }
 
 /// Type-erased operations required from one mapped pool entry.
@@ -309,24 +305,19 @@ where
 /// The outer map stores different protocol pools through this trait object,
 /// preserving static dispatch inside each entry. Maintenance methods return
 /// removed connection state for destruction after the map lock is released.
-trait Entry<B>: Send
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+trait Entry: Send {
     /// Selects a checkout without polling service code under the map lock.
     /// Poll or drop the checkout and unused configuration only after unlocking.
     fn checkout(
         &mut self,
         target: PoolTarget,
         pool_enabled: bool,
-    ) -> (Checkout<B>, Option<ConnectionConfig>);
+    ) -> (Checkout, Option<ConnectionConfig>);
 
     /// Clones an established HTTP/2 sender without creating, joining, or draining
     /// work. Other protocols and generations still being made return `None`.
     #[cfg(feature = "http2")]
-    fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)>;
+    fn checkout_made(&self) -> Option<(H2Pooled, Arc<EntryState>)>;
 
     /// Removes expired or closed idle connections for unlocked destruction.
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop>;
@@ -393,18 +384,14 @@ struct NegotiatedEntry<L, R, S> {
 }
 
 /// HTTP/1 cache maintenance used by entries without naming the maker type.
-trait Http1Pool<B>:
-    Service<PoolTarget, Response = Cached<http1::Connection<B>>, Error = BoxError>
-    + Clone
-    + Send
-    + 'static
+trait Http1Pool:
+    Service<PoolTarget, Response = Cached<http1::Connection>, Error = BoxError> + Clone + Send + 'static
 {
     /// Removes closed or expired idle HTTP/1 senders.
-    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>)
-    -> Vec<http1::Connection<B>>;
+    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Vec<http1::Connection>;
 
     /// Removes all unreserved idle HTTP/1 senders.
-    fn drain_idle(&mut self) -> Vec<http1::Connection<B>>;
+    fn drain_idle(&mut self) -> Vec<http1::Connection>;
 
     /// Returns whether at least one unreserved idle HTTP/1 sender exists.
     fn has_idle(&self) -> bool;
@@ -419,16 +406,13 @@ trait Http1Pool<B>:
 /// another maker. In-progress handshakes are retained because canceling them
 /// would also cancel participating checkouts.
 #[cfg(feature = "http2")]
-trait Http2Pool<B>: Clone + Send + 'static {
+trait Http2Pool: Clone + Send + 'static {
     /// Removes a closed or expired idle HTTP/2 sender.
-    fn retain_idle(
-        &mut self,
-        now: Instant,
-        timeout: Option<Duration>,
-    ) -> Option<http2::Connection<B>>;
+    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>)
+    -> Option<http2::Connection>;
 
     /// Removes the completed shared HTTP/2 sender without canceling its maker.
-    fn take_idle(&mut self) -> Option<http2::Connection<B>>;
+    fn take_idle(&mut self) -> Option<http2::Connection>;
 
     /// Returns whether the HTTP/2 singleton is empty.
     fn is_empty(&self) -> bool;
@@ -438,35 +422,30 @@ trait Http2Pool<B>: Clone + Send + 'static {
 }
 
 #[cfg(feature = "http2")]
-type H2MakeFuture<B> = BoxFuture<'static, Result<http2::Connection<B>, BoxError>>;
+type H2MakeFuture = BoxFuture<'static, Result<http2::Connection, BoxError>>;
 #[cfg(feature = "http2")]
-type H2Pooled<B> = Singled<H2MakeFuture<B>, http2::Connection<B>>;
+type H2Pooled = Singled<H2MakeFuture, http2::Connection>;
 #[cfg(feature = "http2")]
-type H2Checkout<B> = SingletonFuture<H2MakeFuture<B>, http2::Connection<B>>;
+type H2Checkout = SingletonFuture<H2MakeFuture, http2::Connection>;
 
 #[cfg(feature = "http3")]
-type H3MakeFuture<B> = BoxFuture<'static, Result<http3::Connection<B>, BoxError>>;
+type H3MakeFuture = BoxFuture<'static, Result<http3::Connection, BoxError>>;
 #[cfg(feature = "http3")]
-type H3Pooled<B> = Singled<H3MakeFuture<B>, http3::Connection<B>>;
+type H3Pooled = Singled<H3MakeFuture, http3::Connection>;
 #[cfg(feature = "http3")]
-type H3Checkout<B> = SingletonFuture<H3MakeFuture<B>, http3::Connection<B>>;
+type H3Checkout = SingletonFuture<H3MakeFuture, http3::Connection>;
 
 /// Defers checkout completion and resource destruction until the map is unlocked.
 ///
 /// Existing HTTP/2 and HTTP/3 generations retain their concrete singleton future. Cold
 /// creation and HTTP/1 races keep the composed service future boxed. In either
 /// case, the entry remains active until it is transferred to the sender.
-enum Checkout<B>
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+enum Checkout {
     /// Existing singleton work, without another box around its future.
     #[cfg(feature = "http2")]
     Http2 {
         /// Owns the sender clone or pending-generation participation.
-        future: H2Checkout<B>,
+        future: H2Checkout,
         /// Redundant negotiated transports released on the first poll or drop.
         discarded: Option<DeferredDrop>,
         /// Drops after the singleton participant so cleanup sees its final state.
@@ -476,26 +455,21 @@ where
     },
     #[cfg(feature = "http3")]
     Http3 {
-        future: H3Checkout<B>,
+        future: H3Checkout,
         usage: Option<EntryUse>,
         pool_enabled: bool,
     },
     /// Composed cache or negotiation work, retaining its own scheduling state.
-    Service(BoxFuture<'static, Result<Pooled<B>, BoxError>>),
+    Service(BoxFuture<'static, Result<Pooled, BoxError>>),
 }
 
 /// HTTP sender selected for one pool checkout.
-enum PooledInner<B>
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    Http1(Cached<http1::Connection<B>>),
+enum PooledInner {
+    Http1(Cached<http1::Connection>),
     #[cfg(feature = "http2")]
-    Http2(H2Pooled<B>),
+    Http2(H2Pooled),
     #[cfg(feature = "http3")]
-    Http3(H3Pooled<B>),
+    Http3(H3Pooled),
 }
 
 /// Type-erased connection state held until the outer map lock is released.
@@ -516,14 +490,9 @@ type EntryMaintenance = Box<dyn Fn(&Arc<EntryState>) + Send + Sync>;
 ///
 /// Dropping this value marks HTTP/1 idle or ends the HTTP/2 or HTTP/3 checkout.
 /// Poisoned or closed senders are removed instead of being reused.
-pub(super) struct Pooled<B>
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+pub(super) struct Pooled {
     /// HTTP/1 cache checkout or HTTP/2 or HTTP/3 singleton checkout.
-    inner: PooledInner<B>,
+    inner: PooledInner,
 
     /// Whether healthy senders should return to their pool.
     pool_enabled: bool,
@@ -538,11 +507,7 @@ where
 /// for a reuse-first window, then runs a cloned connector through `Oneshot` so
 /// readiness and `call` use the same service instance.
 #[derive(Clone)]
-struct ConnectionMaker<C>
-where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-{
+struct ConnectionMaker<C> {
     /// Physical transport connector.
     connector: C,
 
@@ -627,13 +592,9 @@ where
 
 // ===== impl Pool =====
 
-impl<C, B> Pool<C, B>
+impl<C> Pool<C>
 where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
+    C: TransportConnector,
 {
     /// Builds the shared map and protocol-specific entry factory.
     ///
@@ -658,7 +619,6 @@ where
                 set_host,
                 #[cfg(feature = "http3")]
                 http3_connect_timeout: config.http3_connect_timeout,
-                _body: PhantomData,
             };
 
             PoolInner {
@@ -682,7 +642,7 @@ where
         &self,
         config: ConnectionConfig,
         protocol: Protocol,
-    ) -> Result<Pooled<B>, BoxError> {
+    ) -> Result<Pooled, BoxError> {
         let target = PoolTarget {
             config,
             protocol,
@@ -724,7 +684,7 @@ where
     /// Never creates entries or connections, joins pending handshakes, or touches
     /// HTTP/1 state, so a miss costs one map lookup.
     #[cfg(feature = "http2")]
-    pub(super) fn checkout_extended_connect(&self, key: &ConnectionKey) -> Option<Pooled<B>> {
+    pub(super) fn checkout_extended_connect(&self, key: &ConnectionKey) -> Option<Pooled> {
         if !self.inner.enabled {
             return None;
         }
@@ -737,14 +697,7 @@ where
     }
 }
 
-impl<C, B> Clone for Pool<C, B>
-where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+impl<C> Clone for Pool<C> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -754,13 +707,9 @@ where
 
 // ===== impl PoolInner =====
 
-impl<C, B> PoolInner<C, B>
+impl<C> PoolInner<C>
 where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
+    C: TransportConnector,
 {
     /// Reads the configured runtime clock.
     fn now(&self) -> Instant {
@@ -831,13 +780,9 @@ where
     }
 }
 
-impl<C, B> Inspect for PoolInner<C, B>
+impl<C> Inspect for PoolInner<C>
 where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
+    C: TransportConnector,
 {
     fn retain(&self, now: Instant) -> Option<Duration> {
         let mut services = self.services.lock();
@@ -869,20 +814,13 @@ where
 
 // ===== impl PoolTargeter =====
 
-impl<C, B> PoolTargeter<C, B>
-where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+impl<C> PoolTargeter<C> {
     /// Composes an HTTP/1 cache around protocol handshaking.
     /// Only the cache's background-completion callback owns an entry-state clone.
     fn http1_layer<S, T>(
         &self,
         state: &Arc<EntryState>,
-    ) -> impl Layer<S, Service = Cache<http1::Connect<S, B>, PoolTarget, cache::events::WithRuntime>>
+    ) -> impl Layer<S, Service = Cache<http1::Connect<S>, PoolTarget, cache::events::WithRuntime>>
     where
         S: Service<PoolTarget, Response = Established<T>, Error = BoxError> + Clone,
         S::Future: Started + Unpin,
@@ -905,16 +843,12 @@ where
     }
 }
 
-impl<C, B> Target<PoolTarget> for PoolTargeter<C, B>
+impl<C> Target<PoolTarget> for PoolTargeter<C>
 where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
+    C: TransportConnector,
 {
     type Key = ConnectionKey;
-    type Service = Box<dyn Entry<B>>;
+    type Service = Box<dyn Entry>;
 
     fn key(&self, target: &PoolTarget) -> Self::Key {
         target.config.req.key()
@@ -992,13 +926,10 @@ where
 
 // ===== impl Http1Entry =====
 
-impl<L, B> Entry<B> for Http1Entry<L>
+impl<L> Entry for Http1Entry<L>
 where
-    L: Http1Pool<B>,
+    L: Http1Pool,
     L::Future: Send,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
 {
     /// Checks out one exclusive HTTP/1 sender from this entry.
     ///
@@ -1009,7 +940,7 @@ where
         &mut self,
         mut target: PoolTarget,
         pool_enabled: bool,
-    ) -> (Checkout<B>, Option<ConnectionConfig>) {
+    ) -> (Checkout, Option<ConnectionConfig>) {
         target.wait_for_reuse = pool_enabled && !self.is_empty();
         let service = self.service.clone();
         let usage = EntryUse::new(self.state.clone());
@@ -1022,7 +953,7 @@ where
     }
 
     #[cfg(feature = "http2")]
-    fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)> {
+    fn checkout_made(&self) -> Option<(H2Pooled, Arc<EntryState>)> {
         None
     }
 
@@ -1065,19 +996,12 @@ where
 // ===== impl Http2Entry =====
 
 #[cfg(feature = "http2")]
-impl<M, B> Entry<B> for Http2Entry<Singleton<M, PoolTarget>>
+impl<M> Entry for Http2Entry<Singleton<M, PoolTarget>>
 where
-    M: Service<
-            PoolTarget,
-            Response = http2::Connection<B>,
-            Error = BoxError,
-            Future = H2MakeFuture<B>,
-        > + Clone
+    M: Service<PoolTarget, Response = http2::Connection, Error = BoxError, Future = H2MakeFuture>
+        + Clone
         + Send
         + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
 {
     /// Joins the current HTTP/2 generation or starts one when the entry is empty.
     ///
@@ -1087,7 +1011,7 @@ where
         &mut self,
         mut target: PoolTarget,
         pool_enabled: bool,
-    ) -> (Checkout<B>, Option<ConnectionConfig>) {
+    ) -> (Checkout, Option<ConnectionConfig>) {
         target.wait_for_reuse = false;
         let usage = EntryUse::new(self.state.clone());
         if let Some(future) = self.service.checkout() {
@@ -1109,8 +1033,7 @@ where
         (future, None)
     }
 
-    #[cfg(feature = "http2")]
-    fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)> {
+    fn checkout_made(&self) -> Option<(H2Pooled, Arc<EntryState>)> {
         Some((self.service.checkout_made()?, self.state.clone()))
     }
 
@@ -1159,25 +1082,18 @@ where
 // ===== impl Http3Entry =====
 
 #[cfg(feature = "http3")]
-impl<M, B> Entry<B> for Http3Entry<M>
+impl<M> Entry for Http3Entry<M>
 where
-    M: Service<
-            PoolTarget,
-            Response = http3::Connection<B>,
-            Error = BoxError,
-            Future = H3MakeFuture<B>,
-        > + Clone
+    M: Service<PoolTarget, Response = http3::Connection, Error = BoxError, Future = H3MakeFuture>
+        + Clone
         + Send
         + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
 {
     fn checkout(
         &mut self,
         mut target: PoolTarget,
         pool_enabled: bool,
-    ) -> (Checkout<B>, Option<ConnectionConfig>) {
+    ) -> (Checkout, Option<ConnectionConfig>) {
         target.wait_for_reuse = false;
         let usage = EntryUse::new(self.state.clone());
         if let Some(future) = self.service.checkout() {
@@ -1199,7 +1115,7 @@ where
     }
 
     #[cfg(feature = "http2")]
-    fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)> {
+    fn checkout_made(&self) -> Option<(H2Pooled, Arc<EntryState>)> {
         None
     }
 
@@ -1241,24 +1157,21 @@ where
 // ===== impl NegotiatedEntry =====
 
 #[cfg(feature = "http2")]
-impl<L, R, T, B> Entry<B> for NegotiatedEntry<L, R, Established<T>>
+impl<L, R, T> Entry for NegotiatedEntry<L, R, Established<T>>
 where
-    L: Http1Pool<B>,
+    L: Http1Pool,
     L::Future: Send,
-    R: Http2Pool<B> + Existing<Established<T>, Response = H2Pooled<B>, Future = H2Checkout<B>>,
+    R: Http2Pool + Existing<Established<T>, Response = H2Pooled, Future = H2Checkout>,
     R::Error: Into<BoxError>,
     R::Future: Send,
     T: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
 {
     /// Joins existing upgraded work or checks out through the composed service.
     fn checkout(
         &mut self,
         mut target: PoolTarget,
         pool_enabled: bool,
-    ) -> (Checkout<B>, Option<ConnectionConfig>) {
+    ) -> (Checkout, Option<ConnectionConfig>) {
         target.wait_for_reuse = pool_enabled && !self.is_empty();
         let usage = EntryUse::new(self.state.clone());
         if let Some((future, discarded)) = self.service.checkout_existing() {
@@ -1285,8 +1198,7 @@ where
     }
 
     /// Uses only the upgraded side; HTTP/1 fallback and pending transports stay untouched.
-    #[cfg(feature = "http2")]
-    fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)> {
+    fn checkout_made(&self) -> Option<(H2Pooled, Arc<EntryState>)> {
         Some((self.service.upgrade().checkout_made()?, self.state.clone()))
     }
 
@@ -1351,13 +1263,8 @@ where
 
 // ===== impl Checkout =====
 
-impl<B> Future for Checkout<B>
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    type Output = Result<Pooled<B>, BoxError>;
+impl Future for Checkout {
+    type Output = Result<Pooled, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         match self.get_mut() {
@@ -1405,12 +1312,9 @@ where
 
 // ===== impl Cache =====
 
-impl<M, Ev, B> Http1Pool<B> for Cache<M, PoolTarget, Ev>
+impl<M, Ev> Http1Pool for Cache<M, PoolTarget, Ev>
 where
-    M: Service<PoolTarget, Response = http1::Connection<B>, Error = BoxError>
-        + Clone
-        + Send
-        + 'static,
+    M: Service<PoolTarget, Response = http1::Connection, Error = BoxError> + Clone + Send + 'static,
     M::Future: Unpin + Send,
     M::Response: Unpin,
     Ev: cache::events::Events<BackgroundConnect<M::Future, M::Response>>
@@ -1418,21 +1322,14 @@ where
         + Send
         + Unpin
         + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
 {
     /// Retains reusable HTTP/1 senders.
-    fn retain_idle(
-        &mut self,
-        now: Instant,
-        timeout: Option<Duration>,
-    ) -> Vec<http1::Connection<B>> {
+    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Vec<http1::Connection> {
         self.retain(|connection| connection.is_reusable(now, timeout))
     }
 
     /// Drains unreserved idle HTTP/1 senders.
-    fn drain_idle(&mut self) -> Vec<http1::Connection<B>> {
+    fn drain_idle(&mut self) -> Vec<http1::Connection> {
         Cache::drain_idle(self)
     }
 
@@ -1450,14 +1347,11 @@ where
 // ===== impl Singleton =====
 
 #[cfg(feature = "http2")]
-impl<M, Dst, B> Http2Pool<B> for Singleton<M, Dst>
+impl<M, Dst> Http2Pool for Singleton<M, Dst>
 where
-    M: Service<Dst, Response = http2::Connection<B>> + Clone + Send + 'static,
+    M: Service<Dst, Response = http2::Connection> + Clone + Send + 'static,
     M::Future: Send + 'static,
     Dst: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
 {
     /// Removes a completed sender only when the pool's health policy rejects it.
     ///
@@ -1466,12 +1360,12 @@ where
         &mut self,
         now: Instant,
         timeout: Option<Duration>,
-    ) -> Option<http2::Connection<B>> {
+    ) -> Option<http2::Connection> {
         self.retain(|connection| connection.is_reusable(now, timeout))
     }
 
     /// Detaches the completed sender without interrupting an active maker.
-    fn take_idle(&mut self) -> Option<http2::Connection<B>> {
+    fn take_idle(&mut self) -> Option<http2::Connection> {
         self.take()
     }
 
@@ -1498,7 +1392,6 @@ where
         Singleton::checkout(self)
     }
 
-    #[cfg(feature = "http2")]
     fn checkout_made(&self) -> Option<Self::Response> {
         Singleton::checkout_made(self)
     }
@@ -1508,8 +1401,7 @@ where
 
 impl<C> Service<PoolTarget> for ConnectionMaker<C>
 where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
+    C: TransportConnector,
 {
     type Response = Established<Box<dyn AsyncConn>>;
     type Error = BoxError;
@@ -1597,14 +1489,9 @@ impl<T> Started for ConnectFuture<T> {
 
 // ===== impl Pooled =====
 
-impl<B> Pooled<B>
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+impl Pooled {
     /// Wraps a negotiated sender and registers an HTTP/2 or HTTP/3 checkout when needed.
-    fn new(inner: PooledInner<B>, pool_enabled: bool, usage: EntryUse) -> Self {
+    fn new(inner: PooledInner, pool_enabled: bool, usage: EntryUse) -> Self {
         match &inner {
             PooledInner::Http1(_) => {}
             #[cfg(feature = "http2")]
@@ -1623,17 +1510,17 @@ where
         }
     }
 
-    fn new_h1(service: Cached<http1::Connection<B>>, pool_enabled: bool, usage: EntryUse) -> Self {
+    fn new_h1(service: Cached<http1::Connection>, pool_enabled: bool, usage: EntryUse) -> Self {
         Self::new(PooledInner::Http1(service), pool_enabled, usage)
     }
 
     #[cfg(feature = "http2")]
-    fn new_h2(service: H2Pooled<B>, pool_enabled: bool, usage: EntryUse) -> Self {
+    fn new_h2(service: H2Pooled, pool_enabled: bool, usage: EntryUse) -> Self {
         Self::new(PooledInner::Http2(service), pool_enabled, usage)
     }
 
     #[cfg(feature = "http3")]
-    fn new_h3(service: H3Pooled<B>, pool_enabled: bool, usage: EntryUse) -> Self {
+    fn new_h3(service: H3Pooled, pool_enabled: bool, usage: EntryUse) -> Self {
         Self::new(PooledInner::Http3(service), pool_enabled, usage)
     }
 
@@ -1710,38 +1597,33 @@ where
     }
 }
 
-impl<B> Service<Request<B>> for Pooled<B>
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+impl Service<Request<Body>> for Pooled {
     type Response = Response<Incoming>;
-    type Error = SendError<B>;
+    type Error = SendError;
     cfg_select! {
         all(feature = "http2", feature = "http3") => {
             type Future = futures_util::future::Either<
                 futures_util::future::Either<
-                    <http1::Connection<B> as Service<Request<B>>>::Future,
-                    <http2::Connection<B> as Service<Request<B>>>::Future,
+                    <http1::Connection as Service<Request<Body>>>::Future,
+                    <http2::Connection as Service<Request<Body>>>::Future,
                 >,
-                <http3::Connection<B> as Service<Request<B>>>::Future,
+                <http3::Connection as Service<Request<Body>>>::Future,
             >;
         }
         feature = "http2" => {
             type Future = futures_util::future::Either<
-                <http1::Connection<B> as Service<Request<B>>>::Future,
-                <http2::Connection<B> as Service<Request<B>>>::Future,
+                <http1::Connection as Service<Request<Body>>>::Future,
+                <http2::Connection as Service<Request<Body>>>::Future,
             >;
         }
         feature = "http3" => {
             type Future = futures_util::future::Either<
-                <http1::Connection<B> as Service<Request<B>>>::Future,
-                <http3::Connection<B> as Service<Request<B>>>::Future,
+                <http1::Connection as Service<Request<Body>>>::Future,
+                <http3::Connection as Service<Request<Body>>>::Future,
             >;
         }
         _ => {
-            type Future = <http1::Connection<B> as Service<Request<B>>>::Future;
+            type Future = <http1::Connection as Service<Request<Body>>>::Future;
         }
     }
 
@@ -1755,7 +1637,7 @@ where
         }
     }
 
-    fn call(&mut self, req: Request<B>) -> Self::Future {
+    fn call(&mut self, req: Request<Body>) -> Self::Future {
         match &mut self.inner {
             PooledInner::Http1(service) => {
                 let future = service.call(req);
@@ -1778,12 +1660,7 @@ where
     }
 }
 
-impl<B> Drop for Pooled<B>
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+impl Drop for Pooled {
     fn drop(&mut self) {
         match &mut self.inner {
             PooledInner::Http1(service) => {
@@ -1832,12 +1709,7 @@ where
     }
 }
 
-impl<B> fmt::Debug for Pooled<B>
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+impl fmt::Debug for Pooled {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let version = match self.inner {
             PooledInner::Http1(_) => http::Version::HTTP_11,
@@ -1927,12 +1799,6 @@ impl Drop for EntryCleanupGuard {
             (state.maintain)(state);
         }
     }
-}
-
-/// Returns whether an idle timestamp exceeds the configured timeout.
-#[cfg(feature = "http2")]
-fn is_expired(idle_at: Instant, now: Instant, timeout: Option<Duration>) -> bool {
-    timeout.is_some_and(|timeout| now.saturating_duration_since(idle_at) > timeout)
 }
 
 #[cfg(test)]
@@ -2110,7 +1976,7 @@ mod tests {
     }
 
     /// Creates a pool without periodic cleanup so empty-entry removal is explicit.
-    fn test_pool(connector: TestConnector) -> Pool<TestConnector, crate::Body> {
+    fn test_pool(connector: TestConnector) -> Pool<TestConnector> {
         Pool::new(
             Config {
                 idle_timeout: None,
@@ -2172,7 +2038,7 @@ mod tests {
             let _counter = &counter;
             std::future::pending::<Result<Conn, BoxError>>()
         });
-        let pool = Pool::<_, crate::Body>::new(
+        let pool = Pool::new(
             Config::default(),
             connector,
             DynRuntime::new(crate::rt::tokio::TokioRuntime),
@@ -2262,14 +2128,7 @@ mod tests {
                     &pool.inner.targeter,
                     target,
                     |entry, mut target| {
-                        assert_eq!(
-                            entry.protocol(),
-                            if cfg!(feature = "http2") {
-                                protocol
-                            } else {
-                                Protocol::Http1
-                            }
-                        );
+                        assert_eq!(entry.protocol(), protocol);
                         // Exercise the Auto graph without TLS by selecting H2 at
                         // the transport stage, where ALPN would normally choose it.
                         target.protocol = Protocol::Http2;
@@ -2379,7 +2238,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn idle_task_tracks_reusable_state() {
-        let pool = Pool::<_, crate::Body>::new(
+        let pool = Pool::new(
             Config {
                 idle_timeout: Some(Duration::from_millis(10)),
                 ..Config::default()
@@ -2404,7 +2263,7 @@ mod tests {
         assert!(pool.inner.services.lock().is_empty());
         assert!(!pool.inner.expire.is_running());
 
-        let pool = Pool::<_, crate::Body>::new(
+        let pool = Pool::new(
             Config {
                 idle_timeout: Some(Duration::ZERO),
                 ..Config::default()
@@ -2428,7 +2287,7 @@ mod tests {
 
     #[tokio::test]
     async fn idle_task_waits_for_a_runtime_after_off_runtime_drop() {
-        let pool = Pool::<_, crate::Body>::new(
+        let pool = Pool::new(
             Config {
                 idle_timeout: Some(Duration::from_secs(60)),
                 ..Config::default()
@@ -2658,7 +2517,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_max_size_evicts_only_idle_groups() {
-        async fn send(client: &mut Pooled<crate::Body>) {
+        async fn send(client: &mut Pooled) {
             std::future::poll_fn(|cx| client.poll_ready(cx))
                 .await
                 .expect("ready sender");
@@ -2712,7 +2571,7 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "http3")]
     async fn pool_max_size_skips_dead_http3_groups() {
-        let pool = Pool::<_, crate::Body>::new(
+        let pool = Pool::new(
             Config {
                 idle_timeout: None,
                 max_size: NonZeroUsize::new(2),

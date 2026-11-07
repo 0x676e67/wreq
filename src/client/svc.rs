@@ -20,7 +20,6 @@ use http::{
     header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
 };
 use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST, uri::Authority};
-use http_body::Body;
 use netty::{body::Incoming, conn};
 use pin_project_lite::pin_project;
 use tower::{
@@ -35,13 +34,13 @@ use {
 
 use super::{
     error::{Error, ErrorKind},
-    pool::{self, ConnectionConfig},
+    pool::{self, ConnectionConfig, TransportConnector},
     request::RequestVersion,
 };
 use crate::{
-    Protocol,
+    Body, Protocol,
     config::RequestConfig,
-    conn::{Conn, config::ConfigSet, request::ConnectRequest, transport::BindOptions},
+    conn::{config::ConfigSet, request::ConnectRequest, transport::BindOptions},
     ext::UriExt,
     rt::DynRuntime,
 };
@@ -127,10 +126,18 @@ pin_project! {
         #[pin]
         future: Either<S::Future, Oneshot<S, PoolRequest<B>>>,
         service: S,
-        original_uri: Uri,
-        had_cookie: bool,
+        original: Original,
         enabled: bool,
     }
+}
+
+/// Request state restored before each unsent retry.
+/// Kept outside `pin_project!`, whose fields cannot carry `cfg` attributes.
+struct Original {
+    uri: Uri,
+    /// Whether the caller set `Cookie`; otherwise each attempt regenerates it.
+    #[cfg(feature = "cookies")]
+    had_cookie: bool,
 }
 
 /// Performs one connection-pool checkout and protocol send attempt.
@@ -141,15 +148,8 @@ pin_project! {
 /// its sender is ready again; otherwise a pool-owned task waits before returning
 /// it. Errors preserve an unsent request when the protocol dispatcher can prove
 /// encoding never began.
-pub struct Dispatch<C, B>
-where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    pool: pool::Pool<C, B>,
+pub struct Dispatch<C> {
+    pool: pool::Pool<C>,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
     runtime: DynRuntime,
@@ -331,9 +331,11 @@ where
     }
 
     fn call(&mut self, request: PoolRequest<B>) -> Self::Future {
-        let original_uri = request.request.uri().clone();
-        let had_cookie = cfg!(feature = "cookies")
-            && request.request.headers().contains_key(http::header::COOKIE);
+        let original = Original {
+            uri: request.request.uri().clone(),
+            #[cfg(feature = "cookies")]
+            had_cookie: request.request.headers().contains_key(COOKIE),
+        };
         let replacement = self.inner.clone();
         let mut service = mem::replace(&mut self.inner, replacement);
         let future = service.call(request);
@@ -341,8 +343,7 @@ where
         RetryUnsentFuture {
             future: Either::Left(future),
             service,
-            original_uri,
-            had_cookie,
+            original,
             enabled: self.enabled,
         }
     }
@@ -384,10 +385,10 @@ where
                 Err(error) => return Poll::Ready(Err(error)),
             };
 
-            *request.request.uri_mut() = this.original_uri.clone();
+            *request.request.uri_mut() = this.original.uri.clone();
             // Regenerate automatic cookies for the next protocol; retain user headers.
             #[cfg(feature = "cookies")]
-            if !*this.had_cookie {
+            if !this.original.had_cookie {
                 request.request.headers_mut().remove(COOKIE);
             }
             this.future
@@ -466,15 +467,7 @@ fn with_h2_alpn_context(error: Error, unnegotiated_h2: bool) -> Error {
 /// [RFC 8441 §4]: https://www.rfc-editor.org/rfc/rfc8441#section-4
 /// [RFC 9220 §3]: https://www.rfc-editor.org/rfc/rfc9220#section-3
 #[cfg(any(feature = "http2", feature = "http3"))]
-fn matched_extended_connect<B>(
-    request: &Request<B>,
-    pooled: &pool::Pooled<B>,
-) -> Result<bool, Error>
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+fn matched_extended_connect<B>(request: &Request<B>, pooled: &pool::Pooled) -> Result<bool, Error> {
     let extensions = request.extensions();
     let http2 = cfg_select! {
         feature = "http2" => extensions.get::<http2::ext::Protocol>().is_some(),
@@ -499,12 +492,7 @@ where
 
 /// Rejects extended CONNECT unless the peer enabled it (RFC 8441 §3, RFC 9220 §3).
 #[cfg(any(feature = "http2", feature = "http3"))]
-fn extended_connect_disabled<B>(pooled: &pool::Pooled<B>) -> Error
-where
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+fn extended_connect_disabled(pooled: &pool::Pooled) -> Error {
     warn!("peer did not enable extended CONNECT");
     Error::from_kind(ErrorKind::UserUnsupportedVersion)
         .with_context("peer did not enable extended CONNECT")
@@ -555,13 +543,9 @@ fn connect_target_port<B>(request: &mut Request<B>, multiplexed: bool) -> Result
 
 // ===== impl Dispatch =====
 
-impl<C, B> Dispatch<C, B>
+impl<C> Dispatch<C>
 where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
+    C: TransportConnector,
 {
     /// Creates the terminal request service and its shared connection pool.
     pub(crate) fn new(
@@ -579,14 +563,7 @@ where
     }
 }
 
-impl<C, B> Clone for Dispatch<C, B>
-where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
+impl<C> Clone for Dispatch<C> {
     fn clone(&self) -> Self {
         Self {
             pool: self.pool.clone(),
@@ -597,23 +574,19 @@ where
     }
 }
 
-impl<C, B> Service<PoolRequest<B>> for Dispatch<C, B>
+impl<C> Service<PoolRequest<Body>> for Dispatch<C>
 where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-    C::Future: Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
+    C: TransportConnector,
 {
     type Response = Response<Incoming>;
-    type Error = DispatchError<B>;
+    type Error = DispatchError<Body>;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: PoolRequest<B>) -> Self::Future {
+    fn call(&mut self, request: PoolRequest<Body>) -> Self::Future {
         let this = self.clone();
         Box::pin(async move {
             let PoolRequest {
@@ -625,7 +598,7 @@ where
 
             // RFC 8441 §3: extended CONNECT only after the peer enabled it. A miss keeps
             // the dedicated HTTP/1.1 upgrade, so no HTTP/2 connection is opened for it.
-            let reused: Option<pool::Pooled<B>> = cfg_select! {
+            let reused: Option<pool::Pooled> = cfg_select! {
                 feature = "http2" => extended_connect_key
                     .as_ref()
                     .and_then(|key| this.pool.checkout_extended_connect(key)),
@@ -838,7 +811,10 @@ fn store_response_cookies(
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use http_body::Body as _;
+
     use super::*;
+    use crate::conn::Conn;
 
     #[tokio::test]
     async fn protocol_options_partition_connections_and_preserve_reuse() {
@@ -996,7 +972,7 @@ mod tests {
         for explicit in [false, true] {
             let calls = Arc::new(AtomicUsize::new(0));
             let attempts = calls.clone();
-            let service = tower::service_fn(move |mut request: PoolRequest<Vec<u8>>| {
+            let service = tower::service_fn(move |mut request: PoolRequest<crate::Body>| {
                 let headers = request.request.headers_mut();
                 let values: Vec<_> = headers.get_all(COOKIE).iter().collect();
                 if explicit {
@@ -1036,7 +1012,7 @@ mod tests {
                     BindOptions::default(),
                 ))
                 .service(service)
-                .oneshot(request.body(Vec::new()).unwrap())
+                .oneshot(request.body(crate::Body::default()).unwrap())
                 .await
                 .unwrap();
             assert_eq!(calls.load(Ordering::Relaxed), 2);
@@ -1065,7 +1041,6 @@ mod tests {
                 Some(Protocol::Http1),
             ),
             (
-                #[cfg(feature = "http2")]
                 Some(Version::HTTP_2),
                 Protocol::Auto,
                 false,
@@ -1073,14 +1048,12 @@ mod tests {
             ),
             (None, Protocol::Auto, false, None),
             (
-                #[cfg(feature = "http2")]
                 Some(Version::HTTP_2),
                 Protocol::Http2,
                 false,
                 Some(Protocol::Http2),
             ),
             (
-                #[cfg(feature = "http2")]
                 Some(Version::HTTP_2),
                 Protocol::Auto,
                 true,
@@ -1093,7 +1066,6 @@ mod tests {
                 Some(Protocol::Http1),
             ),
             (
-                #[cfg(feature = "http2")]
                 Some(Version::HTTP_2),
                 Protocol::Http1,
                 false,
@@ -1127,7 +1099,6 @@ mod tests {
                 .extensions_mut()
                 .get_or_insert_default::<ConfigSet>()
                 .insert(crate::Group::new("seven"));
-            #[cfg(any(feature = "http2", feature = "http3"))]
             if extended {
                 *request.method_mut() = http::Method::CONNECT;
                 request
@@ -1140,7 +1111,6 @@ mod tests {
             let request = ServiceBuilder::new()
                 .layer(layer(
                     conn::http1::Builder::default(),
-                    #[cfg(feature = "http2")]
                     conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     #[cfg(feature = "http3")]
                     conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
@@ -1292,9 +1262,12 @@ mod tests {
             let calls = Arc::new(AtomicUsize::new(0));
             let attempts = calls.clone();
             let mut config = None;
-            let service = tower::service_fn(move |mut request: PoolRequest<Vec<u8>>| {
+            let service = tower::service_fn(move |mut request: PoolRequest<crate::Body>| {
                 assert_eq!(request.request.uri(), "http://localhost/upload?part=1");
-                assert_eq!(request.request.body(), b"payload");
+                assert_eq!(
+                    request.request.body().size_hint().exact(),
+                    Some("payload".len() as u64)
+                );
                 assert_eq!(request.config.req.uri(), "http://localhost/");
 
                 let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 && unsent {
@@ -1331,7 +1304,7 @@ mod tests {
                 .oneshot(
                     Request::builder()
                         .uri("http://localhost/upload?part=1")
-                        .body(b"payload".to_vec())
+                        .body(crate::Body::from("payload"))
                         .unwrap(),
                 );
             let mut task = tokio_test::task::spawn(result);
@@ -1354,7 +1327,7 @@ mod tests {
         let attempts = calls.clone();
         let gate = Arc::new(tokio::sync::Notify::new());
         let ready = gate.clone();
-        let service = tower::service_fn(move |request: PoolRequest<Vec<u8>>| {
+        let service = tower::service_fn(move |request: PoolRequest<crate::Body>| {
             let first = attempts.fetch_add(1, Ordering::Relaxed) == 0;
             let ready = ready.clone();
             async move {
@@ -1386,7 +1359,7 @@ mod tests {
                 .oneshot(
                     Request::builder()
                         .uri("http://localhost/")
-                        .body(Vec::new())
+                        .body(crate::Body::default())
                         .unwrap(),
                 ),
         );
@@ -1399,7 +1372,7 @@ mod tests {
 
         let calls = Arc::new(AtomicUsize::new(0));
         let attempts = calls.clone();
-        let service = tower::service_fn(move |request: PoolRequest<Vec<u8>>| {
+        let service = tower::service_fn(move |request: PoolRequest<crate::Body>| {
             attempts.fetch_add(1, Ordering::Relaxed);
             future::ready(Err::<(), _>(DispatchError::CheckoutCanceled {
                 error: Error::from_kind(ErrorKind::Canceled),
@@ -1423,7 +1396,7 @@ mod tests {
                 .oneshot(
                     Request::builder()
                         .uri("http://localhost/")
-                        .body(Vec::new())
+                        .body(crate::Body::default())
                         .unwrap(),
                 ),
         );
