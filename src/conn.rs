@@ -225,13 +225,12 @@ impl ConnectorBuilder {
 
     /// Attaches DNS and compiles client TLS contexts, then assembles both transport paths.
     /// QUIC endpoints remain lazy until a connection future is polled.
-    /// Returns the socket bindings used to normalize request pool identities.
     pub(crate) fn build(
         self,
         tcp: transport::TcpConnector<()>,
         resolver: DynResolver,
         config_set: ConfigSet,
-    ) -> Result<(Connector, BindOptions), crate::Error> {
+    ) -> Result<Connector, crate::Error> {
         // With user layers, one outer timeout covers the complete middleware call.
         let transport_timeout = self
             .layers
@@ -263,7 +262,7 @@ impl ConnectorBuilder {
                         tls,
                         self.config.tls_info,
                     )
-                    .bind_options(self.bind_options.clone())
+                    .bind_options(self.bind_options)
                     .build(resolver.clone()),
                 )
         };
@@ -292,7 +291,7 @@ impl ConnectorBuilder {
         };
 
         if self.layers.is_empty() {
-            return Ok((connector, self.bind_options));
+            return Ok(connector);
         }
 
         let service = self.layers.iter().fold(
@@ -310,10 +309,7 @@ impl ConnectorBuilder {
             .layer(service)
             .map_err(map_timeout_to_connector_error);
 
-        Ok((
-            Connector::Layered(BoxCloneSyncService::new(service)),
-            self.bind_options,
-        ))
+        Ok(Connector::Layered(BoxCloneSyncService::new(service)))
     }
 }
 

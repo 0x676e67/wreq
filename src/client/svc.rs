@@ -20,7 +20,7 @@ use http::{
     header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
 };
 use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST, uri::Authority};
-use netty::{body::Incoming, conn};
+use netty::body::Incoming;
 use pin_project_lite::pin_project;
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
@@ -45,18 +45,16 @@ use crate::{
     rt::DynRuntime,
 };
 
-/// Request and dispatch options distributed across the service stack at construction.
-#[derive(Clone)]
-pub struct Config {
-    pub retry_unsent: bool,
-    pub set_host: bool,
+/// Connection settings a request inherits unless it overrides them.
+/// Connection keys count only request values that differ from these.
+pub struct ClientDefaults {
     pub protocol: Protocol,
-    #[cfg(feature = "cookies")]
-    pub cookie_store: Option<Arc<dyn CookieStore>>,
+    pub config_set: ConfigSet,
+    pub bind_options: BindOptions,
 }
 
-/// Configures requests and wraps dispatch with unsent retries and error mapping.
-/// Client protocol builders are shared; request-local options are captured once
+/// Checks and configures requests, then wraps dispatch with unsent retries and error mapping.
+/// Client builders and defaults are shared; request-local options are captured once
 /// before any attempt, without cloning the body.
 pub struct Stack<S, B> {
     #[allow(
@@ -65,10 +63,7 @@ pub struct Stack<S, B> {
     )]
     inner: MapErr<RetryUnsent<S>, fn(DispatchError<B>) -> BoxError>,
     proto: Arc<pool::ProtocolBuilders>,
-    protocol: Protocol,
-    /// Client options; connection keys count only request options that differ.
-    config_set: ConfigSet,
-    bind_options: Arc<BindOptions>,
+    defaults: Arc<ClientDefaults>,
 }
 
 /// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
@@ -171,35 +166,19 @@ pub enum DispatchError<B> {
 
 /// Creates the configuration and unsent-retry layers for a dispatch service.
 ///
-/// Configuration runs once and shares its protocol builders across service
+/// Configuration runs once and shares the client builders and defaults across service
 /// clones. Tower maps terminal dispatch errors only after retry classification,
 /// preserving ownership of any request returned before encoding.
 pub fn layer<S, B>(
-    h1_builder: conn::http1::Builder,
-    #[cfg(feature = "http2")] h2_builder: conn::http2::Builder<DynRuntime>,
-    #[cfg(feature = "http3")] h3_builder: conn::http3::Builder<DynRuntime>,
+    proto: Arc<pool::ProtocolBuilders>,
+    defaults: Arc<ClientDefaults>,
     retry_unsent: bool,
-    protocol: Protocol,
-    config_set: ConfigSet,
-    bind_options: BindOptions,
 ) -> impl Layer<S, Service = Stack<S, B>> + Clone {
-    // Client builders share one allocation across stack clones and pooled requests.
-    let proto = Arc::new(pool::ProtocolBuilders {
-        http1: h1_builder,
-        #[cfg(feature = "http2")]
-        http2: h2_builder,
-        #[cfg(feature = "http3")]
-        http3: h3_builder,
-    });
-    let bind_options = Arc::new(bind_options);
-
     ServiceBuilder::new()
         .layer_fn(move |inner| Stack {
             inner,
             proto: proto.clone(),
-            protocol,
-            config_set: config_set.clone(),
-            bind_options: bind_options.clone(),
+            defaults: defaults.clone(),
         })
         .map_err(DispatchError::into_error as fn(DispatchError<B>) -> BoxError)
         .layer_fn(move |inner| RetryUnsent {
@@ -212,8 +191,36 @@ pub fn layer<S, B>(
 // ===== impl Stack =====
 
 impl<S, B> Stack<S, B> {
-    /// Freezes connection settings before checkout and unsent retries.
-    fn prepare(&self, mut request: Request<B>) -> Result<PoolRequest<B>, BoxError> {
+    /// Checks the request, then freezes connection settings before checkout and unsent
+    /// retries. Every redirect hop and public retry passes here again.
+    fn prepare(&self, mut request: Request<B>) -> Result<PoolRequest<B>, Error> {
+        match request.version() {
+            Version::HTTP_10 if request.method() == Method::CONNECT => {
+                warn!("CONNECT is not allowed for HTTP/1.0");
+                return Err(Error::from_kind(ErrorKind::UserUnsupportedRequestMethod));
+            }
+            Version::HTTP_10 | Version::HTTP_11 => {}
+            #[cfg(feature = "http2")]
+            Version::HTTP_2 => {}
+            #[cfg(feature = "http3")]
+            Version::HTTP_3 => {}
+            _unsupported => {
+                warn!("Request has unsupported version: {:?}", _unsupported);
+                return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion));
+            }
+        }
+
+        // Senders must not generate userinfo (RFC 9110 section 4.2.4), and the
+        // connection origin is taken from this authority:
+        // <https://www.rfc-editor.org/rfc/rfc9110.html#section-4.2.4>
+        if request
+            .uri()
+            .authority()
+            .is_some_and(|authority| authority.as_str().contains('@'))
+        {
+            request.uri_mut().set_userinfo("", None);
+        }
+
         let extensions = request.extensions_mut();
         let config_set = extensions.remove::<ConfigSet>().unwrap_or_default();
         let bind_options = extensions.remove::<Arc<BindOptions>>();
@@ -222,13 +229,14 @@ impl<S, B> Stack<S, B> {
         // Normalize wire versions to protocol choices; HTTP/1.0 and HTTP/1.1 share a pool.
         let version = RequestConfig::<RequestVersion>::remove(extensions);
         let uri = request.uri();
+        let defaults = &*self.defaults;
 
         // curl's ordinary H2 mode allows HTTPS negotiation; prior knowledge
         // remains explicit: https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html
         let protocol = match version {
             Some(Version::HTTP_10 | Version::HTTP_11) => Some(Protocol::Http1),
             #[cfg(feature = "http2")]
-            Some(Version::HTTP_2) if uri.is_https() && self.protocol != Protocol::Http2 => {
+            Some(Version::HTTP_2) if uri.is_https() && defaults.protocol != Protocol::Http2 => {
                 Some(Protocol::Auto)
             }
             #[cfg(feature = "http2")]
@@ -236,37 +244,39 @@ impl<S, B> Stack<S, B> {
             #[cfg(feature = "http3")]
             Some(Version::HTTP_3) => Some(Protocol::Http3),
             Some(_) => {
-                return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion).into());
+                return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion));
             }
             None => None,
         };
 
-        // HTTP/3 has no cleartext form; an https-to-http redirect also ends here:
-        // https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1
-        #[cfg(feature = "http3")]
-        if protocol.unwrap_or(self.protocol) == Protocol::Http3 && !uri.is_https() {
-            warn!("HTTP/3 requires an https URI");
-            return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
-                .with_context("HTTP/3 requires an https URI")
-                .into());
-        }
-
         let req = ConnectRequest::new(
             uri,
             protocol,
-            self.protocol,
+            defaults.protocol,
             config_set,
-            &self.config_set,
+            &defaults.config_set,
             bind_options,
-            &self.bind_options,
+            &defaults.bind_options,
         )
-        .map_err(|source| Error::new(ErrorKind::UserAbsoluteUriRequired, source))?;
+        .map_err(|source| {
+            debug!("Client requires absolute-form URIs, received: {uri:?}");
+            Error::new(ErrorKind::UserAbsoluteUriRequired, source)
+        })?;
+
+        // HTTP/3 has no cleartext form; an https-to-http redirect also ends here:
+        // https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1
+        #[cfg(feature = "http3")]
+        if req.resolved_protocol() == Protocol::Http3 && !uri.is_https() {
+            warn!("HTTP/3 requires an https URI");
+            return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
+                .with_context("HTTP/3 requires an https URI"));
+        }
 
         // Only clients that may negotiate HTTP/2 have a default group to probe.
         #[cfg(feature = "http2")]
         let extended_connect_key = (dedicated.is_some_and(|d| d.extended_connect)
-            && matches!(self.protocol, Protocol::Auto | Protocol::Http2))
-        .then(|| req.key_with_protocol(None, self.protocol, &self.config_set));
+            && matches!(defaults.protocol, Protocol::Auto | Protocol::Http2))
+        .then(|| req.key_with_protocol(None, defaults.protocol, &defaults.config_set));
 
         Ok(PoolRequest {
             request,
@@ -286,9 +296,7 @@ impl<S: Clone, B> Clone for Stack<S, B> {
         Self {
             inner: self.inner.clone(),
             proto: self.proto.clone(),
-            protocol: self.protocol,
-            config_set: self.config_set.clone(),
-            bind_options: self.bind_options.clone(),
+            defaults: self.defaults.clone(),
         }
     }
 }
@@ -311,7 +319,7 @@ where
     fn call(&mut self, request: Request<B>) -> Self::Future {
         match self.prepare(request) {
             Ok(request) => Either::Left(self.inner.call(request)),
-            Err(error) => Either::Right(future::err(error)),
+            Err(error) => Either::Right(future::err(error.into())),
         }
     }
 }
@@ -548,16 +556,18 @@ where
     C: TransportConnector,
 {
     /// Creates the terminal request service and its shared connection pool.
+    /// With `set_host`, HTTP/1 generates a missing `Host` field.
     pub(crate) fn new(
         pool_config: pool::Config,
         connector: C,
-        config: Config,
+        set_host: bool,
+        #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn CookieStore>>,
         runtime: DynRuntime,
     ) -> Self {
         Self {
-            pool: pool::Pool::new(pool_config, connector, runtime.clone(), config.set_host),
+            pool: pool::Pool::new(pool_config, connector, runtime.clone(), set_host),
             #[cfg(feature = "cookies")]
-            cookie_store: RequestConfig::new(config.cookie_store),
+            cookie_store: RequestConfig::new(cookie_store),
             runtime,
         }
     }
@@ -812,9 +822,75 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use http_body::Body as _;
+    use netty::conn;
 
     use super::*;
     use crate::conn::Conn;
+
+    /// Wraps `service` in the request stack of a client without options.
+    fn stack<S, B>(service: S, protocol: Protocol, retry_unsent: bool) -> Stack<S, B> {
+        let proto = pool::ProtocolBuilders {
+            http1: conn::http1::Builder::default(),
+            #[cfg(feature = "http2")]
+            http2: conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
+            #[cfg(feature = "http3")]
+            http3: conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
+        };
+        let defaults = ClientDefaults {
+            protocol,
+            config_set: ConfigSet::default(),
+            bind_options: BindOptions::default(),
+        };
+        layer(Arc::new(proto), Arc::new(defaults), retry_unsent).layer(service)
+    }
+
+    #[tokio::test]
+    async fn entry_checks_reject_requests_and_strip_userinfo_before_keying() {
+        let stack = stack(
+            tower::service_fn(|request: PoolRequest<()>| {
+                future::ready(Ok::<_, DispatchError<()>>(request))
+            }),
+            Protocol::Auto,
+            true,
+        );
+        for (method, version, uri, kind) in [
+            (
+                Method::CONNECT,
+                Version::HTTP_10,
+                "http://localhost/",
+                "UserUnsupportedRequestMethod",
+            ),
+            (
+                Method::GET,
+                Version::HTTP_09,
+                "http://localhost/",
+                "UserUnsupportedVersion",
+            ),
+            (
+                Method::GET,
+                Version::HTTP_11,
+                "/relative",
+                "UserAbsoluteUriRequired",
+            ),
+        ] {
+            let request = Request::builder()
+                .method(method)
+                .version(version)
+                .uri(uri)
+                .body(())
+                .unwrap();
+            let Err(error) = stack.clone().oneshot(request).await else {
+                panic!("{kind} must reject the request");
+            };
+            assert_eq!(error.to_string(), format!("client error ({kind})"));
+        }
+
+        let prepare = |uri| stack.clone().oneshot(Request::get(uri).body(()).unwrap());
+        let plain = prepare("http://localhost/").await.unwrap();
+        let userinfo = prepare("http://user:pw@localhost/").await.unwrap();
+        assert_eq!(userinfo.request.uri(), "http://localhost/");
+        assert_eq!(userinfo.config.req.key(), plain.config.req.key());
+    }
 
     #[tokio::test]
     async fn protocol_options_partition_connections_and_preserve_reuse() {
@@ -874,29 +950,18 @@ mod tests {
                 });
                 future::ready(Ok::<_, BoxError>(Conn::test(client)))
             });
-            let mut stack = layer(
-                conn::http1::Builder::default(),
-                #[cfg(feature = "http2")]
-                conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                #[cfg(feature = "http3")]
-                conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                true,
-                protocol,
-                ConfigSet::default(),
-                BindOptions::default(),
-            )
-            .layer(Dispatch::new(
-                pool::Config::default(),
-                connector,
-                Config {
-                    retry_unsent: true,
-                    set_host: true,
-                    protocol,
+            let mut stack = stack(
+                Dispatch::new(
+                    pool::Config::default(),
+                    connector,
+                    true,
                     #[cfg(feature = "cookies")]
-                    cookie_store: None,
-                },
-                DynRuntime::new(crate::rt::tokio::TokioRuntime),
-            ));
+                    None,
+                    DynRuntime::new(crate::rt::tokio::TokioRuntime),
+                ),
+                protocol,
+                true,
+            );
             for (attempt, (strict, id)) in [
                 (false, "0"),
                 (true, "1"),
@@ -999,19 +1064,7 @@ mod tests {
             if explicit {
                 request = request.header(COOKIE, "user=1").header(COOKIE, "other=2");
             }
-            ServiceBuilder::new()
-                .layer(layer(
-                    conn::http1::Builder::default(),
-                    #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    true,
-                    Protocol::Auto,
-                    ConfigSet::default(),
-                    BindOptions::default(),
-                ))
-                .service(service)
+            stack(service, Protocol::Auto, true)
                 .oneshot(request.body(crate::Body::default()).unwrap())
                 .await
                 .unwrap();
@@ -1108,21 +1161,7 @@ mod tests {
             let service = tower::service_fn(|request: PoolRequest<()>| {
                 future::ready(Ok::<_, DispatchError<()>>(request))
             });
-            let request = ServiceBuilder::new()
-                .layer(layer(
-                    conn::http1::Builder::default(),
-                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    true,
-                    client,
-                    ConfigSet::default(),
-                    BindOptions::default(),
-                ))
-                .service(service)
-                .oneshot(request)
-                .await
-                .unwrap();
+            let request = stack(service, client, true).oneshot(request).await.unwrap();
             assert_eq!(request.config.req.protocol(), expected);
             assert_eq!(
                 request.config.req.bind_options().as_deref(),
@@ -1192,21 +1231,13 @@ mod tests {
             #[cfg(feature = "http3")]
             (Protocol::Http3, true, false),
         ] {
-            let stack = ServiceBuilder::new()
-                .layer(layer(
-                    conn::http1::Builder::default(),
-                    #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    true,
-                    client,
-                    ConfigSet::default(),
-                    BindOptions::default(),
-                ))
-                .service(tower::service_fn(|request: PoolRequest<()>| {
+            let stack = stack(
+                tower::service_fn(|request: PoolRequest<()>| {
                     future::ready(Ok::<_, DispatchError<()>>(request))
-                }));
+                }),
+                client,
+                true,
+            );
             let websocket = stack
                 .clone()
                 .oneshot(request(Some(extended_connect)))
@@ -1288,25 +1319,12 @@ mod tests {
                 future::ready(result)
             });
 
-            let result = ServiceBuilder::new()
-                .layer(layer(
-                    conn::http1::Builder::default(),
-                    #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    enabled,
-                    Protocol::Auto,
-                    ConfigSet::default(),
-                    BindOptions::default(),
-                ))
-                .service(service)
-                .oneshot(
-                    Request::builder()
-                        .uri("http://localhost/upload?part=1")
-                        .body(crate::Body::from("payload"))
-                        .unwrap(),
-                );
+            let result = stack(service, Protocol::Auto, enabled).oneshot(
+                Request::builder()
+                    .uri("http://localhost/upload?part=1")
+                    .body(crate::Body::from("payload"))
+                    .unwrap(),
+            );
             let mut task = tokio_test::task::spawn(result);
             let Poll::Ready(result) = task.poll() else {
                 panic!("a successful or terminal result should finish without yielding");
@@ -1343,25 +1361,12 @@ mod tests {
             }
         });
         let mut task = tokio_test::task::spawn(
-            ServiceBuilder::new()
-                .layer(layer(
-                    conn::http1::Builder::default(),
-                    #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    true,
-                    Protocol::Auto,
-                    ConfigSet::default(),
-                    BindOptions::default(),
-                ))
-                .service(service)
-                .oneshot(
-                    Request::builder()
-                        .uri("http://localhost/")
-                        .body(crate::Body::default())
-                        .unwrap(),
-                ),
+            stack(service, Protocol::Auto, true).oneshot(
+                Request::builder()
+                    .uri("http://localhost/")
+                    .body(crate::Body::default())
+                    .unwrap(),
+            ),
         );
         assert!(task.poll().is_pending());
         assert!(!task.is_woken(), "a pending retry owns its wakeup");
@@ -1380,25 +1385,12 @@ mod tests {
             }))
         });
         let mut task = tokio_test::task::spawn(
-            ServiceBuilder::new()
-                .layer(layer(
-                    conn::http1::Builder::default(),
-                    #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
-                    true,
-                    Protocol::Auto,
-                    ConfigSet::default(),
-                    BindOptions::default(),
-                ))
-                .service(service)
-                .oneshot(
-                    Request::builder()
-                        .uri("http://localhost/")
-                        .body(crate::Body::default())
-                        .unwrap(),
-                ),
+            stack(service, Protocol::Auto, true).oneshot(
+                Request::builder()
+                    .uri("http://localhost/")
+                    .body(crate::Body::default())
+                    .unwrap(),
+            ),
         );
         for expected in [2, 4] {
             assert!(task.poll().is_pending());

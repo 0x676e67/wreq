@@ -27,9 +27,8 @@ use std::{
     time::Duration,
 };
 
-use futures_util::future::{Either as FutureEither, Ready, err as future_err};
 use http::{
-    Request as HttpRequest, Response as HttpResponse, Version,
+    Request as HttpRequest,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
 use netty::{body::Incoming, conn};
@@ -531,7 +530,7 @@ impl ClientBuilder {
                 };
                 Connector::builder(self.runtime.clone(), tls, config)
                     .connect_timeout(self.config.connect_timeout)
-                    .bind_options(self.config.bind_options)
+                    .bind_options(self.config.bind_options.clone())
                     .layers(self.config.connector_layers)
                     .build(tcp, resolver, self.config.config_set.clone())?
             };
@@ -543,6 +542,7 @@ impl ClientBuilder {
                 )
                 .config_set(self.config.config_set)
                 .protocol(self.config.protocol)
+                .bind_options(self.config.bind_options)
                 .pool_idle_timeout(self.config.pool_idle_timeout)
                 .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
                 .pool_max_size(self.config.pool_max_size)
@@ -1708,98 +1708,33 @@ impl ClientBuilder {
 /// Low-level Tower client and builder used by the public client.
 mod sealed {
     use super::{pool::TransportConnector, *};
-    use crate::ext::UriExt;
 
     /// Tower service beneath [`crate::Client`] that validates and sends HTTP requests.
     /// Applies request configuration, cancellation retries, pool checkout and protocol dispatch.
     /// Clones share the pool without cloning request bodies.
-    #[must_use]
-    pub struct Client<C> {
-        /// Composed service stack shared by client clones.
-        inner: svc::Stack<svc::Dispatch<C>, Body>,
-    }
+    pub type Client<C> = svc::Stack<svc::Dispatch<C>, Body>;
 
     /// Assembles the protocol, runtime, and pool services used by [`Client`].
     ///
     /// The builder owns client handshake configuration until [`Builder::build`]
     /// consumes it. The resulting client clones share the pool created around
     /// the supplied connector.
-    #[derive(Clone)]
     pub struct Builder {
-        /// Request retry and protocol-selection behavior.
-        config: svc::Config,
-
         /// Runtime used by protocol drivers and pool maintenance.
         runtime: DynRuntime,
 
-        /// Client HTTP/1 handshake configuration.
-        h1_builder: conn::http1::Builder,
+        /// Client handshake configuration for each HTTP version.
+        proto: pool::ProtocolBuilders,
 
-        /// Client HTTP/2 handshake configuration.
-        #[cfg(feature = "http2")]
-        h2_builder: conn::http2::Builder<DynRuntime>,
-
-        /// Client HTTP/3 handshake configuration.
-        #[cfg(feature = "http3")]
-        h3_builder: conn::http3::Builder<DynRuntime>,
+        /// Protocol, options and socket bindings that requests inherit.
+        defaults: svc::ClientDefaults,
 
         /// Connection-pool reuse and retention policy.
         pool_config: pool::Config,
 
-        /// Client protocol options.
-        config_set: ConfigSet,
-    }
-
-    // ===== impl Client =====
-
-    impl<C> Service<HttpRequest<Body>> for Client<C>
-    where
-        C: TransportConnector,
-    {
-        type Response = HttpResponse<Incoming>;
-        type Error = BoxError;
-        type Future = FutureEither<
-            <svc::Stack<svc::Dispatch<C>, Body> as Service<HttpRequest<Body>>>::Future,
-            Ready<Result<Self::Response, Self::Error>>,
-        >;
-
-        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-            self.inner.poll_ready(cx)
-        }
-
-        fn call(&mut self, mut req: HttpRequest<Body>) -> Self::Future {
-            match req.version() {
-                Version::HTTP_10 if req.method() == Method::CONNECT => {
-                    warn!("CONNECT is not allowed for HTTP/1.0");
-                    let error =
-                        error::Error::from_kind(error::ErrorKind::UserUnsupportedRequestMethod);
-                    return FutureEither::Right(future_err(error.into()));
-                }
-                Version::HTTP_10 | Version::HTTP_11 => {}
-                #[cfg(feature = "http2")]
-                Version::HTTP_2 => {}
-                #[cfg(feature = "http3")]
-                Version::HTTP_3 => {}
-                _unsupported => {
-                    warn!("Request has unsupported version: {:?}", _unsupported);
-                    let error = error::Error::from_kind(error::ErrorKind::UserUnsupportedVersion);
-                    return FutureEither::Right(future_err(error.into()));
-                }
-            }
-
-            match normalize_uri(&mut req) {
-                Ok(()) => FutureEither::Left(self.inner.call(req)),
-                Err(error) => FutureEither::Right(future_err(error.into())),
-            }
-        }
-    }
-
-    impl<C> Clone for Client<C> {
-        fn clone(&self) -> Self {
-            Self {
-                inner: self.inner.clone(),
-            }
-        }
+        /// Cookie store consulted immediately around protocol dispatch.
+        #[cfg(feature = "cookies")]
+        cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     }
 
     // ===== impl Builder =====
@@ -1808,26 +1743,27 @@ mod sealed {
         /// Creates a builder using `runtime` for protocol drivers and pool tasks.
         pub fn new(runtime: DynRuntime) -> Self {
             Self {
-                config: svc::Config {
-                    retry_unsent: true,
-                    set_host: true,
-                    protocol: Protocol::Auto,
-                    #[cfg(feature = "cookies")]
-                    cookie_store: None,
+                proto: pool::ProtocolBuilders {
+                    http1: conn::http1::Builder::default(),
+                    #[cfg(feature = "http2")]
+                    http2: conn::http2::Builder::new(runtime.clone()).timer(runtime.clone()),
+                    #[cfg(feature = "http3")]
+                    http3: conn::http3::Builder::new(runtime.clone()),
                 },
-                runtime: runtime.clone(),
-                h1_builder: conn::http1::Builder::default(),
-                #[cfg(feature = "http2")]
-                h2_builder: conn::http2::Builder::new(runtime.clone()).timer(runtime.clone()),
-                #[cfg(feature = "http3")]
-                h3_builder: conn::http3::Builder::new(runtime),
+                defaults: svc::ClientDefaults {
+                    protocol: Protocol::Auto,
+                    config_set: ConfigSet::default(),
+                    bind_options: BindOptions::default(),
+                },
                 pool_config: pool::Config {
                     idle_timeout: Some(Duration::from_secs(90)),
                     max_idle_per_host: usize::MAX,
                     max_size: None,
                     ..pool::Config::default()
                 },
-                config_set: ConfigSet::default(),
+                #[cfg(feature = "cookies")]
+                cookie_store: None,
+                runtime,
             }
         }
 
@@ -1892,7 +1828,7 @@ mod sealed {
         /// Shares the client's protocol selection with the request stack and pool.
         #[inline]
         pub fn protocol(mut self, protocol: Protocol) -> Self {
-            self.config.protocol = protocol;
+            self.defaults.protocol = protocol;
             self
         }
 
@@ -1903,17 +1839,26 @@ mod sealed {
         #[inline]
         pub fn config_set(mut self, config_set: ConfigSet) -> Self {
             if let Some(opts) = config_set.get::<Http1Options>() {
-                self.h1_builder = self.h1_builder.options(opts.clone());
+                self.proto.http1 = self.proto.http1.options(opts.clone());
             }
             #[cfg(feature = "http2")]
             if let Some(opts) = config_set.get::<Http2Options>() {
-                self.h2_builder = self.h2_builder.options(opts.clone());
+                self.proto.http2 = self.proto.http2.options(opts.clone());
             }
             #[cfg(feature = "http3")]
-            if let Some(opts) = config_set.get::<netty::http3::Http3Options>() {
-                self.h3_builder = self.h3_builder.options(opts.clone());
+            if let Some(opts) = config_set.get::<crate::http3::Http3Options>() {
+                self.proto.http3 = self.proto.http3.options(opts.clone());
             }
-            self.config_set = config_set;
+            self.defaults.config_set = config_set;
+            self
+        }
+
+        /// Sets the socket bindings that requests inherit.
+        ///
+        /// Pool keys count only request bindings that differ from these.
+        #[inline]
+        pub fn bind_options(mut self, bind_options: BindOptions) -> Self {
+            self.defaults.bind_options = bind_options;
             self
         }
 
@@ -1929,66 +1874,32 @@ mod sealed {
         ) -> Self {
             #[cfg(feature = "cookies")]
             {
-                self.config.cookie_store = cookie_store;
+                self.cookie_store = cookie_store;
             }
             self
         }
 
-        /// Consumes the builder and wraps both transports in the complete client stack.
-        pub fn build<C>(self, (connector, bind_options): (C, BindOptions)) -> Client<C>
+        /// Consumes the builder and wraps the connector in the complete client stack.
+        ///
+        /// Every client retries unsent requests and lets HTTP/1 generate a missing `Host`.
+        pub fn build<C>(self, connector: C) -> Client<C>
         where
             C: TransportConnector,
         {
-            Client {
-                inner: ServiceBuilder::new()
-                    .layer(svc::layer(
-                        self.h1_builder,
-                        #[cfg(feature = "http2")]
-                        self.h2_builder,
-                        #[cfg(feature = "http3")]
-                        self.h3_builder,
-                        self.config.retry_unsent,
-                        self.config.protocol,
-                        self.config_set,
-                        bind_options,
-                    ))
-                    .service(svc::Dispatch::new(
-                        self.pool_config,
-                        connector,
-                        self.config,
-                        self.runtime,
-                    )),
-            }
+            ServiceBuilder::new()
+                .layer(svc::layer(
+                    Arc::new(self.proto),
+                    Arc::new(self.defaults),
+                    true,
+                ))
+                .service(svc::Dispatch::new(
+                    self.pool_config,
+                    connector,
+                    true,
+                    #[cfg(feature = "cookies")]
+                    self.cookie_store,
+                    self.runtime,
+                ))
         }
-    }
-
-    /// Checks that the request target is absolute and strips its userinfo.
-    ///
-    /// Every target, including a redirect location, loses its userinfo, which senders
-    /// must not generate (RFC 9110 section 4.2.4):
-    /// <https://www.rfc-editor.org/rfc/rfc9110.html#section-4.2.4>
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the request target is not absolute.
-    fn normalize_uri<B>(req: &mut HttpRequest<B>) -> Result<(), error::Error> {
-        if req.uri().scheme().is_none() || req.uri().authority().is_none() {
-            debug!(
-                "Client requires absolute-form URIs, received: {:?}",
-                req.uri()
-            );
-            return Err(error::Error::from_kind(
-                error::ErrorKind::UserAbsoluteUriRequired,
-            ));
-        }
-
-        if req
-            .uri()
-            .authority()
-            .is_some_and(|authority| authority.as_str().contains('@'))
-        {
-            req.uri_mut().set_userinfo("", None);
-        }
-        Ok(())
     }
 }
