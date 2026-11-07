@@ -23,7 +23,7 @@ An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, f
 - Rotating Proxies
 - Tower Middleware
 - HTTP/2 over TLS
-- HTTP/3 over QUIC
+- HTTP/3 over QUIC (Tokio, or a custom runtime that implements `Runtime::udp_socket`; not Compio)
 - WebSocket Upgrade
 - HTTPS via BoringSSL
 - Certificate Store (CAs & mTLS)

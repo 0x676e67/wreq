@@ -78,7 +78,8 @@ use crate::{IntoUri, ext::UriExt};
 /// [RFC 9298 default template](https://www.rfc-editor.org/rfc/rfc9298.html#section-2),
 /// `https://host:port/.well-known/masque/udp/{target_host}/{target_port}/`.
 /// Proxy credentials and custom headers are sent in the CONNECT-UDP request.
-/// HTTP/1 and HTTP/2 requests through this proxy return an error.
+/// HTTP/1 and HTTP/2 requests through this proxy return an error, so `Proxy::http`
+/// rejects it. Without `http3`, `quic://` is ignored like other unsupported schemes.
 /// The outer connection uses the request's QUIC options with Datagrams enabled. Its MTU never
 /// drops below one that fits 1200-byte UDP payloads, and a `max_datagram_frame_size` too small
 /// to buffer 16 of them uses the default. A tunnel that cannot carry them fails the connection.
@@ -161,6 +162,7 @@ impl Proxy {
     /// use wreq::{Client, Proxy};
     ///
     /// # extern crate wreq;
+    /// # #[cfg(feature = "tokio-rt")]
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder_tokio()
     ///     .proxy(Proxy::http("https://my.prox")?)
@@ -181,6 +183,7 @@ impl Proxy {
     /// use wreq::{Client, Proxy};
     ///
     /// # extern crate wreq;
+    /// # #[cfg(feature = "tokio-rt")]
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder_tokio()
     ///     .proxy(Proxy::https("https://example.prox:4545")?)
@@ -204,6 +207,7 @@ impl Proxy {
     /// use wreq::{Client, Proxy};
     ///
     /// # extern crate wreq;
+    /// # #[cfg(feature = "tokio-rt")]
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder_tokio()
     ///     .proxy(Proxy::all("http://pro.xy")?)
@@ -224,6 +228,7 @@ impl Proxy {
     /// use wreq::{Client, Proxy};
     ///
     /// # extern crate wreq;
+    /// # #[cfg(feature = "tokio-rt")]
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::builder_tokio()
     ///     .proxy(Proxy::unix("/var/run/docker.sock")?)
@@ -238,15 +243,20 @@ impl Proxy {
     }
 
     fn new(scheme: ProxyScheme) -> crate::Result<Proxy> {
-        match &scheme {
-            ProxyScheme::All(uri) | ProxyScheme::Http(uri) | ProxyScheme::Https(uri)
-                if uri
-                    .scheme_str()
-                    .is_some_and(|scheme| scheme.eq_ignore_ascii_case("quic")) =>
-            {
-                quic_port(uri).map_err(crate::Error::builder)?;
+        // Without `http3`, `quic://` is ignored like any other unsupported scheme.
+        #[cfg(feature = "http3")]
+        if let ProxyScheme::All(uri) | ProxyScheme::Http(uri) | ProxyScheme::Https(uri) = &scheme
+            && uri
+                .scheme_str()
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("quic"))
+        {
+            // `http://` requests never use HTTP/3, so this proxy could only fail them.
+            if matches!(scheme, ProxyScheme::Http(_)) {
+                return Err(crate::Error::builder(
+                    "QUIC proxies require https:// targets; use Proxy::https or Proxy::all",
+                ));
             }
-            _ => {}
+            quic_port(uri).map_err(crate::Error::builder)?;
         }
         Ok(Proxy {
             extra: Extra {
@@ -556,6 +566,7 @@ mod tests {
         //assert_eq!(intercepted_uri(&p, other), target);
     }
 
+    #[cfg(feature = "http3")]
     #[test]
     fn test_quic_proxy() {
         let destination = uri("https://example.com/");
@@ -570,6 +581,8 @@ mod tests {
             let matcher = Proxy::https(address).unwrap().into_matcher();
             assert_eq!(intercept(&matcher, &destination).uri(), expected);
             assert!(matcher.intercept(&uri("http://example.com/")).is_none());
+            // http:// targets never use HTTP/3.
+            assert!(Proxy::http(address).unwrap_err().is_builder(), "{address}");
         }
         for address in [
             "quic://proxy.test:",
@@ -729,5 +742,6 @@ mod tests {
     fn test_socks5_proxy_default_port() {
         test_socks_proxy_default_port("socks5://example.com", "socks5://example.com:1234", 1234);
         test_socks_proxy_default_port("socks5h://example.com", "socks5h://example.com:1234", 1234);
+        test_socks_proxy_default_port("SOCKS5://example.com", "Socks5H://example.com:1234", 1234);
     }
 }

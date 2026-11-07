@@ -111,8 +111,21 @@ where
     }
 
     /// Returns whether a completed shared service exists.
+    #[cfg(feature = "http2")]
     pub(super) fn has_service(&self) -> bool {
         matches!(*self.state.lock(), State::Made { .. })
+    }
+
+    /// Returns whether a completed shared service exists and satisfies `predicate`.
+    #[cfg(feature = "http3")]
+    pub(super) fn has_service_and<F>(&self, predicate: F) -> bool
+    where
+        F: FnOnce(&M::Response) -> bool,
+    {
+        match &*self.state.lock() {
+            State::Made { service, .. } => predicate(service),
+            State::Empty | State::Making(_) => false,
+        }
     }
 
     /// Clones the completed service without joining or starting creation.

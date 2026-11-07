@@ -82,6 +82,15 @@ impl super::Runtime for TokioRuntime {
     }
 
     #[inline]
+    fn try_execute(&self, task: BoxFuture<'static, ()>) -> Result<(), BoxFuture<'static, ()>> {
+        let Ok(handle) = ::tokio::runtime::Handle::try_current() else {
+            return Err(task);
+        };
+        handle.spawn(task);
+        Ok(())
+    }
+
+    #[inline]
     fn resolver(&self) -> Arc<dyn Resolve> {
         Arc::new(Resolver)
     }

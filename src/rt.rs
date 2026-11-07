@@ -38,6 +38,15 @@ pub trait Runtime: Timer + Send + Sync + Debug + 'static {
     #[track_caller]
     fn execute(&self, fut: BoxFuture<'static, ()>);
 
+    /// Schedules a task like [`execute`](Self::execute), but hands it back when the current
+    /// thread has no runtime to run it. The client uses this for work that dropping pooled
+    /// connections can start. The default calls `execute`; override it if that can panic.
+    #[track_caller]
+    fn try_execute(&self, fut: BoxFuture<'static, ()>) -> Result<(), BoxFuture<'static, ()>> {
+        self.execute(fut);
+        Ok(())
+    }
+
     /// Returns the resolver used unless the client builder overrides DNS.
     fn resolver(&self) -> Arc<dyn Resolve>;
 

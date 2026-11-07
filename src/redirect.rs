@@ -142,6 +142,7 @@ impl Policy {
     /// # Example
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::Client;
     ///
     /// # use wreq::{Error, redirect};
@@ -159,6 +160,7 @@ impl Policy {
     /// });
     /// let client = Client::builder_tokio().redirect(custom).build()?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     #[inline]

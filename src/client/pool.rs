@@ -99,11 +99,13 @@ pub(super) fn is_canceled(error: &(dyn std::error::Error + 'static)) -> bool {
 /// # Examples
 ///
 /// ```rust
+/// # #[cfg(feature = "tokio-rt")] {
 /// use std::time::Duration;
 /// use wreq::{Client, PoolStrategy};
 ///
 /// let _client = Client::builder_tokio()
 ///     .pool_strategy(PoolStrategy::ReuseFirst(Duration::from_millis(50)));
+/// # }
 /// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -793,23 +795,36 @@ where
                 .matches_identity(identity)
                 .then(|| (entry.is_empty(), entry.is_retained()))
         });
-        let mut removed = None;
-        let mut discarded = None;
+        let mut removed = Vec::new();
+        let mut discarded = Vec::new();
         let mut schedule_expiration = false;
 
         match state {
-            Some((true, _)) => {
-                removed = services.remove_if(key, |_| true);
-            }
+            Some((true, _)) => removed.extend(services.remove_if(key, |_| true)),
             Some((false, true)) => {
                 schedule_expiration = true;
-                if let Some(evicted) = services.mark_retained(key, |entry| entry.is_retained()) {
+                let (pruned, evicted) = services.mark_retained(key, |entry| entry.is_retained());
+                // Pruned groups lost reusable state between sweeps, such as a closed
+                // QUIC connection. Idle sweeps may be disabled, so clean them up here.
+                if !pruned.is_empty() {
+                    let now = self.now();
+                    for key in &pruned {
+                        let empty = services.get_mut(key).is_some_and(|entry| {
+                            discarded.extend(entry.retain(now, self.idle_timeout));
+                            entry.is_empty()
+                        });
+                        if empty {
+                            removed.extend(services.remove_if(key, |_| true));
+                        }
+                    }
+                }
+                if let Some(evicted) = evicted {
                     let empty = services.get_mut(&evicted).is_some_and(|entry| {
-                        discarded = entry.evict_retained();
+                        discarded.extend(entry.evict_retained());
                         entry.is_empty()
                     });
                     if empty {
-                        removed = services.remove_if(&evicted, |_| true);
+                        removed.extend(services.remove_if(&evicted, |_| true));
                     }
                 }
             }
@@ -942,11 +957,12 @@ where
                 let service = self.http1_layer(&state).layer(connect);
                 Box::new(Http1Entry { service, state })
             }
+            // QUIC dials directly, so take the maker's connector instead of cloning again.
             #[cfg(feature = "http3")]
             Protocol::Http3 => Box::new(Http3Entry {
                 service: Singleton::new(http3::Connect::new(
-                    self.connector.clone(),
-                    self.runtime.clone(),
+                    connect.connector,
+                    connect.runtime,
                     self.connect_timeout,
                 )),
                 state,
@@ -1204,8 +1220,14 @@ where
             .map(defer_drop)
     }
 
+    /// Returns whether the singleton owns an open, unpoisoned sender.
+    ///
+    /// QUIC can close an idle connection before the next sweep; a dead sender
+    /// must not keep its idle-group LRU slot and displace live groups.
     fn is_retained(&self) -> bool {
-        self.service.has_service()
+        self.service.has_service_and(|connection| {
+            !connection.conn_info().poisoned() && !connection.is_closed()
+        })
     }
 
     fn evict_retained(&mut self) -> Option<DeferredDrop> {
@@ -1928,7 +1950,11 @@ mod tests {
     #[cfg(feature = "http2")]
     use std::hash::{Hash, Hasher};
     use std::io;
+    #[cfg(feature = "http3")]
+    use std::net::{Ipv4Addr, SocketAddr};
 
+    #[cfg(feature = "http3")]
+    use ::quic::crypto::rustls::{QuicClientConfig, QuicServerConfig};
     #[cfg(feature = "http2")]
     use bytes::Bytes;
     #[cfg(feature = "http2")]
@@ -1956,6 +1982,9 @@ mod tests {
         /// Counts HTTP/2 connection attempts and gates transport creation.
         #[cfg(feature = "http2")]
         Http2(Arc<AtomicUsize>, Arc<tokio::sync::Semaphore>),
+        /// Opens a fresh QUIC connection to the local server at this address.
+        #[cfg(feature = "http3")]
+        Http3(SocketAddr, ::quic::ClientConfig),
     }
 
     impl Service<ConnectRequest> for TestConnector {
@@ -1974,6 +2003,19 @@ mod tests {
                 )
                 .into()))),
                 Self::Pending => Box::pin(std::future::pending()),
+                #[cfg(feature = "http3")]
+                Self::Http3(server, config) => {
+                    let (server, config) = (*server, config.clone());
+                    Box::pin(async move {
+                        let endpoint = ::quic::Endpoint::client((Ipv4Addr::LOCALHOST, 0).into())?;
+                        let connection =
+                            endpoint.connect_with(config, server, "localhost")?.await?;
+                        Ok(Conn {
+                            inner: Either::Right((connection, endpoint)),
+                            connected: Connected::new(),
+                        })
+                    })
+                }
                 #[cfg(feature = "http2")]
                 Self::Http2(calls, gate) => {
                     calls.fetch_add(1, Ordering::Relaxed);
@@ -2092,6 +2134,52 @@ mod tests {
         )
     }
 
+    /// Starts a local QUIC server and returns a connector trusting its certificate.
+    /// The server keeps every accepted connection open until the test runtime ends.
+    #[cfg(feature = "http3")]
+    fn http3_connector() -> TestConnector {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let mut server_tls = rustls::ServerConfig::builder_with_provider(provider.clone())
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.cert.der().clone()],
+                rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der())
+                    .into(),
+            )
+            .unwrap();
+        server_tls.alpn_protocols = vec![b"h3".to_vec()];
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert.cert.der().clone()).unwrap();
+        let mut client_tls = rustls::ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        client_tls.alpn_protocols = vec![b"h3".to_vec()];
+
+        let server = ::quic::Endpoint::server(
+            ::quic::ServerConfig::with_crypto(Arc::new(
+                QuicServerConfig::try_from(server_tls).unwrap(),
+            )),
+            (Ipv4Addr::LOCALHOST, 0).into(),
+        )
+        .unwrap();
+        let address = server.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut peers = Vec::new();
+            while let Some(incoming) = server.accept().await {
+                peers.extend(incoming.await);
+            }
+        });
+        TestConnector::Http3(
+            address,
+            ::quic::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_tls).unwrap())),
+        )
+    }
+
     #[test]
     fn protocol_modes_build_specialized_entries() {
         /// Counts connector copies made while composing protocol entries.
@@ -2124,6 +2212,8 @@ mod tests {
             Protocol::Http1,
             #[cfg(feature = "http2")]
             Protocol::Http2,
+            #[cfg(feature = "http3")]
+            Protocol::Http3,
             Protocol::Auto,
         ]
         .into_iter()
@@ -2136,14 +2226,12 @@ mod tests {
             };
             let entry = pool.inner.targeter.service(&target);
 
-            assert_eq!(
-                entry.protocol(),
-                if cfg!(feature = "http2") {
-                    protocol
-                } else {
-                    Protocol::Http1
-                }
-            );
+            let expected = match protocol {
+                #[cfg(not(feature = "http2"))]
+                Protocol::Auto => Protocol::Http1,
+                protocol => protocol,
+            };
+            assert_eq!(entry.protocol(), expected);
             assert_eq!(clones.load(Ordering::Relaxed), index + 1);
         }
     }
@@ -2335,9 +2423,9 @@ mod tests {
 
         assert!(!pool.inner.expire.is_running());
         drop(pooled);
+        tokio::task::yield_now().await;
         assert!(pool.inner.expire.is_running());
 
-        tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_millis(100)).await;
         tokio::task::yield_now().await;
 
@@ -2364,6 +2452,36 @@ mod tests {
 
         assert!(!pool.inner.services.lock().is_empty());
         assert!(!pool.inner.expire.is_running());
+    }
+
+    #[tokio::test]
+    async fn idle_task_waits_for_a_runtime_after_off_runtime_drop() {
+        let pool = Pool::<_, crate::Body>::new(
+            Config {
+                idle_timeout: Some(Duration::from_secs(60)),
+                ..Config::default()
+            },
+            TestConnector::KeepsAlive,
+            RuntimeHandle::new(crate::rt::tokio::TokioRuntime),
+            true,
+        );
+        let checkout = || pool.checkout(connection(connect_request()), Protocol::Http1);
+
+        // Returning a connection on a thread without a runtime keeps it pooled but
+        // cannot start the watcher.
+        let pooled = checkout().await.expect("successful checkout");
+        std::thread::spawn(move || drop(pooled))
+            .join()
+            .expect("drop without a runtime");
+        tokio::task::yield_now().await;
+        assert!(!pool.inner.expire.is_running());
+
+        // The next return on the runtime starts it.
+        let pooled = checkout().await.expect("reused checkout");
+        assert!(pooled.is_reused());
+        drop(pooled);
+        tokio::task::yield_now().await;
+        assert!(pool.inner.expire.is_running());
     }
 
     #[tokio::test]
@@ -2433,6 +2551,8 @@ mod tests {
             Protocol::Http1,
             #[cfg(feature = "http2")]
             Protocol::Http2,
+            #[cfg(feature = "http3")]
+            Protocol::Http3,
             Protocol::Auto,
         ] {
             let pool = test_pool(TestConnector::Fails);
@@ -2611,5 +2731,46 @@ mod tests {
         let mut services = pool.inner.services.lock();
         assert!(services.get_mut(&first_key).is_some());
         assert!(services.get_mut(&second_key).is_none());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "http3")]
+    async fn pool_max_size_skips_dead_http3_groups() {
+        let pool = Pool::<_, crate::Body>::new(
+            Config {
+                idle_timeout: None,
+                max_pool_size: NonZeroUsize::new(2),
+                ..Config::default()
+            },
+            http3_connector(),
+            RuntimeHandle::new(crate::rt::tokio::TokioRuntime),
+            true,
+        );
+        let [live, dead, next] =
+            ["live", "dead", "next"].map(|name| grouped_request(Group::new(name)));
+        let (live_key, dead_key, next_key) = (live.key(), dead.key(), next.key());
+        let checkout = |req| pool.checkout(connection(req), Protocol::Http3);
+
+        // Established HTTP/3 senders stay retained after their checkouts end.
+        drop(checkout(live).await.expect("live checkout"));
+        let pooled = checkout(dead).await.expect("dead checkout");
+        let conn_info = pooled.conn_info().clone();
+        drop(pooled);
+        // Kill the idle MRU sender without a checkout, as a QUIC idle close would.
+        conn_info.poison();
+
+        // The full LRU removes the dead group instead of evicting the live one,
+        // even though idle sweeps are disabled.
+        drop(checkout(next).await.expect("next checkout"));
+        let mut services = pool.inner.services.lock();
+        for key in [&live_key, &next_key] {
+            assert!(
+                services
+                    .get_mut(key)
+                    .is_some_and(|entry| entry.is_retained())
+            );
+        }
+        assert!(services.get_mut(&dead_key).is_none());
+        assert_eq!(services.iter_mut().count(), 2);
     }
 }

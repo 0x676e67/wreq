@@ -96,7 +96,15 @@ impl WebSocketRequestBuilder {
     ///   open an HTTP/2 connection
     /// - Waits for the server's SETTINGS and fails if it did not enable the protocol
     ///
+    /// # Other versions
+    ///
+    /// - [`Version::HTTP_10`] is sent as HTTP/1.1
+    /// - WebSocket over HTTP/3 ([RFC 9220]) is not supported; [`Version::HTTP_3`],
+    ///   [`Version::HTTP_09`], and [`Version::HTTP_2`] without the `http2` feature fail the
+    ///   handshake with an upgrade error
+    ///
     /// [RFC 8441]: https://www.rfc-editor.org/rfc/rfc8441
+    /// [RFC 9220]: https://www.rfc-editor.org/rfc/rfc9220
     #[inline]
     pub fn version(mut self, version: Version) -> Self {
         self.version = Some(version);
@@ -203,6 +211,7 @@ impl WebSocketRequestBuilder {
     /// Enable HTTP authentication.
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # use wreq::Error;
@@ -215,6 +224,7 @@ impl WebSocketRequestBuilder {
     ///     .send()
     ///     .await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     #[inline]
@@ -230,6 +240,7 @@ impl WebSocketRequestBuilder {
     /// Enable HTTP basic authentication.
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # use wreq::Error;
@@ -242,6 +253,7 @@ impl WebSocketRequestBuilder {
     ///     .send()
     ///     .await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     #[inline]
@@ -257,6 +269,7 @@ impl WebSocketRequestBuilder {
     /// Enable HTTP bearer authentication.
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # use wreq::Error;
@@ -269,6 +282,7 @@ impl WebSocketRequestBuilder {
     ///     .send()
     ///     .await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     #[inline]
@@ -357,6 +371,7 @@ impl WebSocketRequestBuilder {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::Client;
     ///
     /// # fn doc() -> Result<(), wreq::Error> {
@@ -365,6 +380,7 @@ impl WebSocketRequestBuilder {
     ///     .interface(interface)
     ///     .build()?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     ///

@@ -12,7 +12,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
     time::{Duration, Instant},
 };
 
@@ -30,14 +30,22 @@ use crate::{
 
 /// Runtime that uses Compio for task execution, timers, system DNS and socket I/O.
 /// UDP sockets are not supported yet, so HTTP/3 connections fail with an unsupported error.
-/// Poll and drop its futures and streams on the Compio thread that created them.
+///
+/// Compio is thread-per-core, and a client's clones share one pool that hands connections
+/// and timers between requests. Keep a client, its clones, futures and responses on one
+/// Compio runtime thread, and build one client per thread. Use from another thread or
+/// outside a Compio runtime panics, as Tokio does outside a runtime.
+///
+/// Socket writes are buffered until a flush or the next read; flush upgraded connections as
+/// `AsyncWrite` requires.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CompioRuntime;
 
-/// A Compio timer bound to its creating runtime thread.
-/// SendWrapper checks thread affinity; the boxed anonymous future can be replaced on reset.
+/// A fused Compio timer bound to its creating runtime thread.
+/// Compio's sleep is an `async fn` that panics if resumed after completion, so the finished
+/// future is dropped and later polls stay ready until `reset` arms a new one.
 struct CompioSleep {
-    inner: SendWrapper<LocalBoxFuture<'static, ()>>,
+    inner: Option<SendWrapper<LocalBoxFuture<'static, ()>>>,
 }
 
 // ===== impl CompioRuntime =====
@@ -58,6 +66,15 @@ impl Runtime for CompioRuntime {
     #[inline]
     fn execute(&self, task: BoxFuture<'static, ()>) {
         runtime::spawn(task).detach();
+    }
+
+    #[inline]
+    fn try_execute(&self, task: BoxFuture<'static, ()>) -> Result<(), BoxFuture<'static, ()>> {
+        let Some(current) = runtime::Runtime::try_current() else {
+            return Err(task);
+        };
+        current.spawn(task).detach();
+        Ok(())
     }
 
     #[inline]
@@ -92,7 +109,7 @@ impl CompioSleep {
         Fut: Future<Output = ()> + 'static,
     {
         Self {
-            inner: SendWrapper::new(Box::pin(fut)),
+            inner: Some(SendWrapper::new(Box::pin(fut))),
         }
     }
 }
@@ -102,14 +119,19 @@ impl Future for CompioSleep {
 
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.get_mut().inner.as_mut().poll(cx)
+        let this = self.get_mut();
+        if let Some(sleep) = &mut this.inner {
+            ready!(sleep.as_mut().poll(cx));
+            this.inner = None;
+        }
+        Poll::Ready(())
     }
 }
 
 impl Sleep for CompioSleep {
     #[inline]
     fn reset(self: Pin<&mut Self>, deadline: Instant) {
-        self.get_mut().inner = SendWrapper::new(Box::pin(time::sleep_until(deadline)));
+        self.get_mut().inner = Some(SendWrapper::new(Box::pin(time::sleep_until(deadline))));
     }
 }
 

@@ -79,8 +79,9 @@ jobs:
         with:
           toolchain: ${{ steps.metadata.outputs.msrv }}
       - uses: Swatinem/rust-cache@v2
+      # Include the HTTP/3, Compio and SOCKS code with their pinned git dependencies.
       - name: Check
-        run: cargo check
+        run: cargo check --features compio-rt,http3,socks
 
   test:
     name: Test (${{ matrix.feature-set }})
@@ -94,9 +95,11 @@ jobs:
           - "--no-default-features --features tokio-rt,webpki-roots" # HTTP/1 only
           - "--features compio-rt"
           - "--no-default-features --features compio-rt,webpki-roots" # Compio only
+          - "--no-default-features --features compio-rt,webpki-roots,http3" # Compio only with HTTP/3
           - "--features compio-rt,http3"
           - "--features http3"
           - "--no-default-features --features tokio-rt,webpki-roots,http3" # HTTP/3 without HTTP/2
+          - "--no-default-features --features webpki-roots,http2,http3,socks" # No built-in runtime
           - "--all-features"
           - "--features form"
           - "--features query"
@@ -108,6 +111,7 @@ jobs:
           - "--features json"
           - "--features multipart"
           - "--features stream"
+          - "--features socks"
           - "--features hickory-dns"
         # Only these rows run the tests that reach public hosts.
         include:
@@ -132,6 +136,10 @@ jobs:
       - uses: taiki-e/install-action@v2.87.24
         with:
           tool: cargo-nextest
+      # Test builds also enable dev-dependency features such as Tokio `net` and QUIC
+      # `runtime-tokio`, so check the library alone to catch a missing cfg.
+      - name: Check library (${{ matrix.feature-set }})
+        run: cargo check --lib ${{ matrix.feature-set }}
       # The emulation tests reach tls.browserleaks.com.
       - name: Run tests (${{ matrix.feature-set }})
         run: cargo nextest run --workspace ${{ matrix.feature-set }} ${{ !matrix.public-network && '-E "not binary_id(wreq::emulate)"' || '' }}

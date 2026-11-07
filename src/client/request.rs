@@ -135,6 +135,7 @@ impl Request {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// let request = Client::new(TokioRuntime)
@@ -142,6 +143,7 @@ impl Request {
     ///     .build()
     ///     .expect("failed to build request");
     /// assert!(request.extensions().get::<i32>().is_none());
+    /// # }
     /// ```
     #[inline]
     pub fn extensions(&self) -> &Extensions {
@@ -153,6 +155,7 @@ impl Request {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// let mut request = Client::new(TokioRuntime)
@@ -161,6 +164,7 @@ impl Request {
     ///     .expect("failed to build request");
     /// request.extensions_mut().insert("hello");
     /// assert_eq!(request.extensions().get(), Some(&"hello"));
+    /// # }
     /// ```
     #[inline]
     pub fn extensions_mut(&mut self) -> &mut Extensions {
@@ -306,6 +310,7 @@ impl RequestBuilder {
     /// Enable HTTP authentication.
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # use wreq::Error;
@@ -319,6 +324,7 @@ impl RequestBuilder {
     ///     .await?;
     /// # Ok(())
     /// # }
+    /// # }
     /// ```
     pub fn auth<V>(self, token: V) -> RequestBuilder
     where
@@ -331,6 +337,7 @@ impl RequestBuilder {
     /// Enable HTTP basic authentication.
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # use wreq::Error;
@@ -343,6 +350,7 @@ impl RequestBuilder {
     ///     .send()
     ///     .await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub fn basic_auth<U, P>(self, username: U, password: Option<P>) -> RequestBuilder
@@ -357,6 +365,7 @@ impl RequestBuilder {
     /// Enable HTTP bearer authentication.
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # use wreq::Error;
@@ -369,6 +378,7 @@ impl RequestBuilder {
     ///     .send()
     ///     .await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub fn bearer_auth<T: fmt::Display>(self, token: T) -> RequestBuilder {
@@ -462,6 +472,7 @@ impl RequestBuilder {
     /// header.
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # use wreq::Error;
@@ -478,6 +489,7 @@ impl RequestBuilder {
     ///     .send()
     ///     .await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     ///
@@ -550,6 +562,7 @@ impl RequestBuilder {
     /// Sends a multipart/form-data body.
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, multipart::Form, rt::tokio::TokioRuntime};
     ///
     /// # use wreq::Error;
@@ -562,6 +575,7 @@ impl RequestBuilder {
     ///
     /// let response = client.post("your uri").multipart(form).send().await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     #[cfg(feature = "multipart")]
@@ -732,6 +746,7 @@ impl RequestBuilder {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::Client;
     ///
     /// # fn doc() -> Result<(), wreq::Error> {
@@ -740,6 +755,7 @@ impl RequestBuilder {
     ///     .interface(interface)
     ///     .build()?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     ///
@@ -843,6 +859,7 @@ impl RequestBuilder {
     /// # Example
     ///
     /// ```no_run
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # use wreq::Error;
@@ -850,6 +867,7 @@ impl RequestBuilder {
     /// # async fn run() -> Result<(), Error> {
     /// let response = Client::new(TokioRuntime).get("https://hyper.rs").send().await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub fn send(self) -> impl Future<Output = crate::Result<Response>> {
@@ -867,6 +885,7 @@ impl RequestBuilder {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # use wreq::Error;
@@ -877,6 +896,7 @@ impl RequestBuilder {
     /// let clone = builder.try_clone();
     /// assert!(clone.is_some());
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub fn try_clone(&self) -> Option<RequestBuilder> {

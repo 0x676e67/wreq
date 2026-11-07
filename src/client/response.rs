@@ -150,6 +150,7 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -162,6 +163,7 @@ impl Response {
     ///
     /// println!("text: {content:?}");
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub async fn text(self) -> crate::Result<String> {
@@ -195,6 +197,7 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -207,6 +210,7 @@ impl Response {
     ///
     /// println!("text: {content:?}");
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     #[cfg(feature = "charset")]
@@ -240,6 +244,7 @@ impl Response {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")]
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # extern crate wreq;
@@ -254,6 +259,7 @@ impl Response {
     ///     origin: String,
     /// }
     ///
+    /// # #[cfg(feature = "tokio-rt")]
     /// # async fn run() -> Result<(), Error> {
     /// let ip = Client::new(TokioRuntime)
     ///     .get("http://httpbin.org/ip")
@@ -295,6 +301,7 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -307,6 +314,7 @@ impl Response {
     ///
     /// println!("bytes: {bytes:?}");
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     #[inline]
@@ -322,6 +330,7 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use futures_util::StreamExt;
     /// use wreq::{Client, rt::tokio::TokioRuntime};
     ///
@@ -336,6 +345,7 @@ impl Response {
     ///     println!("Chunk: {:?}", item?);
     /// }
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     ///
@@ -356,6 +366,7 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// # use wreq::{Client, tls::TlsInfo};
     /// # async fn run() -> wreq::Result<()> {
     /// // Build a client that records TLS information.
@@ -374,6 +385,7 @@ impl Response {
     ///
     /// # Ok(())
     /// # }
+    /// # }
     /// ```
     #[inline]
     pub fn extensions(&self) -> &http::Extensions {
@@ -385,6 +397,7 @@ impl Response {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// # use wreq::{Client, tls::TlsInfo};
     /// # async fn run() -> wreq::Result<()> {
     /// // Build a client that records TLS information.
@@ -402,6 +415,7 @@ impl Response {
     /// }
     ///
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     #[inline]

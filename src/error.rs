@@ -112,6 +112,7 @@ impl Error {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use std::time::Duration;
     ///
     /// use wreq::{Client, rt::tokio::TokioRuntime};
@@ -130,6 +131,7 @@ impl Error {
     ///         }
     ///     }
     /// }
+    /// # }
     /// # }
     /// ```
     #[inline]

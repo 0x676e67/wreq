@@ -957,30 +957,33 @@ async fn request_version_configuration_survives_clone_and_conversion() {
         format!("{err:?}").contains("HTTP/3 requires an https URI"),
         "{err:?}"
     );
+}
 
+// Kept apart from the HTTP/2 tests so it also runs without the `http2` feature (#1381).
+#[cfg(feature = "http3")]
+#[tokio::test]
+async fn http1_connection_rejects_http3_wire_version() {
+    let server = server::http(|_| async { http::Response::default() });
+    let client = Client::builder_tokio()
+        .no_proxy()
+        .layer(tower::util::MapRequestLayer::new(
+            |mut request: http::Request<wreq::Body>| {
+                *request.version_mut() = Version::HTTP_3;
+                request
+            },
+        ))
+        .build()
+        .unwrap();
     // HTTP/1 connections reject a non-HTTP/1 wire version instead of encoding it.
-    #[cfg(feature = "http3")]
-    {
-        let layered_client = Client::builder_tokio()
-            .no_proxy()
-            .layer(tower::util::MapRequestLayer::new(
-                |mut request: http::Request<wreq::Body>| {
-                    *request.version_mut() = Version::HTTP_3;
-                    request
-                },
-            ))
-            .build()
-            .unwrap();
-        let err = layered_client
-            .get(format!("http://{}", server.addr()))
-            .send()
-            .await
-            .unwrap_err();
-        assert!(
-            format!("{err:?}").contains("UserUnsupportedVersion"),
-            "{err:?}"
-        );
-    }
+    let err = client
+        .get(format!("http://{}", server.addr()))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{err:?}").contains("UserUnsupportedVersion"),
+        "{err:?}"
+    );
 }
 
 #[cfg(feature = "http3")]

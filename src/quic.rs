@@ -124,6 +124,9 @@ pub struct QuicOptions {
 
     /// TLS 1.3 cipher suites in offer order, as
     /// [`TlsOptions::tls13_cipher_list`](crate::tls::TlsOptions::tls13_cipher_list).
+    /// An empty list uses the backend defaults. Duplicate suites fail TLS setup.
+    ///
+    /// **Default:** `None` (backend defaults).
     #[deftly(config_key(context))]
     pub tls13_cipher_list: Option<Cow<'static, [Tls13Cipher]>>,
 

@@ -307,6 +307,9 @@ impl Client {
     }
 
     /// Creates a client builder using Compio for tasks, timers and DNS.
+    ///
+    /// Use the client and its clones from a single Compio runtime thread; calling them from
+    /// another thread panics. See [`CompioRuntime`](crate::rt::compio::CompioRuntime).
     #[cfg(feature = "compio-rt")]
     #[cfg_attr(docsrs, doc(cfg(feature = "compio-rt")))]
     pub fn builder_compio() -> ClientBuilder {
@@ -622,6 +625,7 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::Client;
     ///
     /// # async fn doc() -> wreq::Result<()> {
@@ -631,6 +635,7 @@ impl ClientBuilder {
     /// let client = Client::builder_tokio().user_agent(APP_USER_AGENT).build()?;
     /// let res = client.get("https://www.rust-lang.org").send().await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub fn user_agent<V>(mut self, value: V) -> ClientBuilder
@@ -654,6 +659,7 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, header};
     ///
     /// # async fn doc() -> wreq::Result<()> {
@@ -670,11 +676,13 @@ impl ClientBuilder {
     /// let res = client.get("https://www.rust-lang.org").send().await?;
     /// # Ok(())
     /// # }
+    /// # }
     /// ```
     ///
     /// Override the default headers:
     ///
     /// ```rust
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, header};
     ///
     /// # async fn doc() -> wreq::Result<()> {
@@ -689,6 +697,7 @@ impl ClientBuilder {
     ///     .send()
     ///     .await?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     #[inline]
@@ -892,7 +901,8 @@ impl ClientBuilder {
 
     /// Set a `RedirectPolicy` for this client.
     ///
-    /// Default will follow redirects up to a maximum of 10.
+    /// Default is [`Policy::none()`](redirect::Policy::none), which returns redirect responses
+    /// as-is. Use [`Policy::default()`](redirect::Policy::default) to follow up to 10 redirects.
     #[inline]
     pub fn redirect(mut self, policy: redirect::Policy) -> ClientBuilder {
         self.config.redirect_policy = policy;
@@ -930,10 +940,12 @@ impl ClientBuilder {
     ///
     /// # Example
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::{Client, Proxy};
     ///
     /// let proxy = Proxy::http("http://proxy:8080").unwrap();
     /// let client = Client::builder_tokio().proxy(proxy).build().unwrap();
+    /// # }
     /// ```
     #[inline]
     pub fn proxy(mut self, proxy: Proxy) -> ClientBuilder {
@@ -984,8 +996,9 @@ impl ClientBuilder {
     /// Set a timeout for only the connect phase of a `Client`.
     ///
     /// The timeout covers DNS resolution, the complete TCP address race,
-    /// proxy tunneling, and the TLS handshake. For HTTP/3 it covers the QUIC
-    /// handshake and opening the HTTP/3 control and QPACK streams.
+    /// proxy tunneling, and the TLS handshake. For HTTP/3 it covers DNS
+    /// resolution, proxy setup, the QUIC handshake and opening the HTTP/3
+    /// control and QPACK streams.
     ///
     /// Default is `None`, which leaves these steps without a deadline: an HTTP/3 server that
     /// withholds stream credit can then stall a new connection and the requests waiting for it.
@@ -998,7 +1011,8 @@ impl ClientBuilder {
     /// Set whether connections should emit verbose logs.
     ///
     /// Enabling this option will emit [log][] messages at the `TRACE` level
-    /// for read and write operations on connections.
+    /// for read and write operations on TCP and Unix connections. HTTP/3
+    /// connections are not traced.
     ///
     /// [log]: https://crates.io/crates/log
     #[inline]
@@ -1073,7 +1087,8 @@ impl ClientBuilder {
     /// TLS connections offer only `h2` through ALPN; if the peer omits ALPN,
     /// the client still attempts H2 and fails if the peer cannot speak it.
     /// An explicit HTTP/1 [`version`](RequestBuilder::version) on a request
-    /// overrides this setting. A WebSocket handshake without an explicit version
+    /// overrides this setting, as does HTTP/3 with the `http3` feature, which
+    /// connects over QUIC. A WebSocket handshake without an explicit version
     /// may still use a dedicated HTTP/1.1 connection.
     #[inline]
     #[cfg(feature = "http2")]
@@ -1296,6 +1311,7 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use std::net::IpAddr;
     /// use wreq::Client;
     ///
@@ -1304,6 +1320,7 @@ impl ClientBuilder {
     ///     .local_address(local_addr)
     ///     .build()
     ///     .unwrap();
+    /// # }
     /// ```
     #[inline]
     pub fn local_address<T>(mut self, addr: T) -> ClientBuilder
@@ -1320,6 +1337,7 @@ impl ClientBuilder {
     ///  # Example
     /// ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use std::net::{Ipv4Addr, Ipv6Addr};
     /// use wreq::Client;
     ///
@@ -1329,6 +1347,7 @@ impl ClientBuilder {
     ///     .local_addresses(ipv4, ipv6)
     ///     .build()
     ///     .unwrap();
+    /// # }
     /// ```
     #[inline]
     pub fn local_addresses<V4, V6>(mut self, ipv4: V4, ipv6: V6) -> ClientBuilder
@@ -1365,6 +1384,7 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use wreq::Client;
     ///
     /// # fn doc() -> Result<(), wreq::Error> {
@@ -1373,6 +1393,7 @@ impl ClientBuilder {
     ///     .interface(interface)
     ///     .build()?;
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     ///
@@ -1487,7 +1508,8 @@ impl ClientBuilder {
 
     /// Set the minimum required TLS version for connections.
     ///
-    /// By default the TLS backend's own default is used.
+    /// By default the TLS backend's own default is used. HTTP/3 always uses
+    /// TLS 1.3 and ignores this setting.
     #[inline]
     pub fn tls_min_version(mut self, version: TlsVersion) -> ClientBuilder {
         self.config.tls_min_version = Some(version);
@@ -1496,7 +1518,8 @@ impl ClientBuilder {
 
     /// Set the maximum allowed TLS version for connections.
     ///
-    /// By default there's no maximum.
+    /// By default there's no maximum. HTTP/3 requires TLS 1.3, so a lower
+    /// maximum makes every HTTP/3 connection fail.
     #[inline]
     pub fn tls_max_version(mut self, version: TlsVersion) -> ClientBuilder {
         self.config.tls_max_version = Some(version);
@@ -1595,6 +1618,7 @@ impl ClientBuilder {
     ///
     /// Example usage:
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use std::time::Duration;
     /// use tower::timeout::TimeoutLayer;
     /// use wreq::Client;
@@ -1604,6 +1628,7 @@ impl ClientBuilder {
     ///     .layer(TimeoutLayer::new(Duration::from_millis(50)))
     ///     .build()
     ///     .unwrap();
+    /// # }
     /// ```
     #[inline]
     pub fn layer<L>(mut self, layer: L) -> ClientBuilder
@@ -1644,6 +1669,7 @@ impl ClientBuilder {
     ///
     /// Example usage:
     /// ```
+    /// # #[cfg(feature = "tokio-rt")] {
     /// use std::time::Duration;
     /// use tower::limit::ConcurrencyLimitLayer;
     /// use tower::timeout::TimeoutLayer;
@@ -1657,6 +1683,7 @@ impl ClientBuilder {
     ///     .connector_layer(ConcurrencyLimitLayer::new(2))
     ///     .build()
     ///     .unwrap();
+    /// # }
     /// ```
     #[inline]
     pub fn connector_layer<L>(mut self, layer: L) -> ClientBuilder

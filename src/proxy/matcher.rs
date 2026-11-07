@@ -310,38 +310,38 @@ fn get_first_env(names: &[&str]) -> String {
     String::new()
 }
 
+/// Proxy schemes this build can use, in canonical lowercase form.
+/// Any other scheme, including `quic` without `http3`, is ignored.
+const PROXY_SCHEMES: &[&str] = &[
+    "http",
+    "https",
+    "socks4",
+    "socks4a",
+    "socks5",
+    "socks5h",
+    #[cfg(feature = "http3")]
+    "quic",
+];
+
 fn parse_env_uri(val: &str) -> Option<Intercept> {
     let uri = val.parse::<Uri>().ok()?;
     let mut builder = Uri::builder();
-    let is_quic = uri
-        .scheme_str()
-        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("quic"));
-    let mut is_httpish = false;
-    let mut is_socks = false;
     let mut auth = Auth::Empty;
 
-    builder = builder.scheme(match uri.scheme_str() {
-        Some(s) => {
-            if is_quic {
-                is_httpish = true;
-                "quic"
-            } else if matches!(s, "http" | "https") {
-                is_httpish = true;
-                s
-            } else if matches!(s, "socks4" | "socks4a" | "socks5" | "socks5h") {
-                is_socks = true;
-                s
-            } else {
-                // can't use this proxy scheme
-                return None;
-            }
-        }
+    // `Uri` lowercases only `http` and `https`, so match every scheme case-insensitively.
+    let scheme = match uri.scheme_str() {
+        // can't use other proxy schemes
+        Some(s) => PROXY_SCHEMES
+            .iter()
+            .copied()
+            .find(|scheme| s.eq_ignore_ascii_case(scheme))?,
         // if no scheme provided, assume they meant 'http'
-        None => {
-            is_httpish = true;
-            "http"
-        }
-    });
+        None => "http",
+    };
+    let is_quic = scheme == "quic";
+    let is_socks = matches!(scheme, "socks4" | "socks4a" | "socks5" | "socks5h");
+    let is_httpish = !is_socks;
+    builder = builder.scheme(scheme);
 
     let authority = {
         let authority = uri.authority()?;
@@ -706,6 +706,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_parse_scheme_case_insensitive() {
+        for (address, expected) in [
+            ("SOCKS4://localhost", "socks4://localhost:1080"),
+            ("Socks4A://localhost:8887", "socks4a://localhost:8887"),
+            ("SOCKS5://user:pass@localhost", "socks5://localhost:1080"),
+            ("SOCKS5H://localhost:8887", "socks5h://localhost:8887"),
+            ("HTTPS://localhost:8887", "https://localhost:8887"),
+        ] {
+            let p = p! { all = address, };
+            assert_eq!(intercept(&p, "https://example.local").uri(), expected);
+        }
+
+        // Without HTTP/3, `quic://` is an unsupported scheme like any other.
+        let p = p! { all = "QUIC://proxy.test", };
+        assert_eq!(
+            p.intercept(&"https://example.local".parse().unwrap())
+                .is_some(),
+            cfg!(feature = "http3")
+        );
+    }
+
+    #[cfg(feature = "http3")]
     #[test]
     fn test_quic_environment_keeps_invalid_ports_intercepted() {
         for address in [

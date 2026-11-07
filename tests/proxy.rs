@@ -10,6 +10,7 @@ use wreq::Client;
 // serialize tests that read from / write to environment variables
 static HTTP_PROXY_ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
+#[cfg(feature = "http3")]
 #[tokio::test]
 async fn quic_proxy_rejects_stream_requests_before_dns() {
     struct NoResolver;

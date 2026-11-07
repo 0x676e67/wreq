@@ -10,7 +10,9 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use crate::Error;
 
 /// A bidirectional stream from an HTTP upgrade or CONNECT tunnel.
-/// An HTTP/2 tunnel owns one stream on a shared connection.
+/// An HTTP/2 or HTTP/3 tunnel owns one stream on a shared connection and shares its flow
+/// control; an HTTP/3 tunnel also holds one `Http3Options::max_concurrent_requests` slot
+/// until it closes.
 #[derive(Debug)]
 pub struct Upgraded(upgrade::Upgraded);
 

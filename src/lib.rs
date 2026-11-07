@@ -33,6 +33,7 @@
 //! ## Making a GET request
 //!
 //! ```rust
+//! # #[cfg(feature = "tokio-rt")] {
 //! use std::time::Duration;
 //!
 //! use wreq::{Client, rt::tokio::TokioRuntime};
@@ -50,6 +51,7 @@
 //! println!("body = {:?}", body);
 //! # Ok(())
 //! # }
+//! # }
 //! ```
 //!
 //! Reuse the [`Client`][client] for later requests to take advantage of
@@ -64,6 +66,7 @@
 //! type, you can use the `wreq::Body` constructors.
 //!
 //! ```rust
+//! # #[cfg(feature = "tokio-rt")] {
 //! use wreq::{Client, rt::tokio::TokioRuntime};
 //!
 //! # use wreq::Error;
@@ -76,6 +79,7 @@
 //!     .send()
 //!     .await?;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 //!
@@ -90,6 +94,7 @@
 //! The feature `form` is required.
 //!
 //! ```rust
+//! # #[cfg(feature = "tokio-rt")] {
 //! use wreq::{Client, rt::tokio::TokioRuntime};
 //!
 //! # use wreq::Error;
@@ -105,6 +110,7 @@
 //!     .await?;
 //! # Ok(())
 //! # }
+//! # }
 //! ```
 //!
 //! ### JSON
@@ -114,6 +120,7 @@
 //! serialized into JSON. The feature `json` is required.
 //!
 //! ```rust
+//! # #[cfg(feature = "tokio-rt")] {
 //! use wreq::{Client, rt::tokio::TokioRuntime};
 //!
 //! # use wreq::Error;
@@ -134,6 +141,7 @@
 //!     .await?;
 //! # Ok(())
 //! # }
+//! # }
 //! ```
 //!
 //! ## Websocket
@@ -145,6 +153,7 @@
 //! use std::time::Duration;
 //!
 //! use http::Version;
+//! # #[cfg(feature = "tokio-rt")]
 //! use wreq::{Client, rt::tokio::TokioRuntime};
 //!
 //! # #[cfg(feature = "ws")]
@@ -152,7 +161,7 @@
 //! # #[cfg(feature = "ws")]
 //! use wreq::{header, ws::message::Message};
 //!
-//! # #[cfg(feature = "ws")]
+//! # #[cfg(all(feature = "ws", feature = "tokio-rt"))]
 //! #[tokio::main]
 //! async fn main() -> wreq::Result<()> {
 //!     let websocket = Client::builder(TokioRuntime)
@@ -183,7 +192,7 @@
 //!
 //!     Ok(())
 //! }
-//! # #[cfg(not(feature = "ws"))]
+//! # #[cfg(not(all(feature = "ws", feature = "tokio-rt")))]
 //! # fn main() {}
 //! ```
 //!
@@ -350,6 +359,7 @@ pub mod http2 {
 }
 
 #[cfg(feature = "http3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
 pub mod http3 {
     //! HTTP/3 protocol options and utilities.
 
@@ -360,6 +370,7 @@ pub mod http3 {
 }
 
 #[cfg(feature = "http3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
 pub mod quic;
 
 pub use http::{Method, StatusCode, Uri, Version};

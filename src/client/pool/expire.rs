@@ -40,14 +40,14 @@ pub(super) trait Inspect: Send + Sync + 'static {
 /// Runs one expiration watcher for a weakly owned pool target.
 ///
 /// `Expire` remains dormant until its owner observes retained state and calls
-/// [`Expire::schedule`]. At most one task runs at a time. The task repeatedly
-/// asks [`Inspect`] to filter the wrapped pool, then stops once no reusable state
+/// [`Expire::schedule`]. At most one watcher runs at a time. It repeatedly asks
+/// [`Inspect`] to filter the wrapped pool, then stops once no reusable state
 /// remains.
 pub(super) struct Expire<T> {
     /// Pool inspected on each expiration tick.
     target: Weak<T>,
 
-    /// Prevents concurrent watcher tasks for the same pool.
+    /// Held by the task running the watcher loop; a spawned task claims it on first poll or exits.
     running: Arc<AtomicBool>,
 
     /// Closes the watcher when this component is dropped.
@@ -98,23 +98,27 @@ where
         let Some(deadline) = self.runtime.now().checked_add(interval) else {
             return;
         };
-        if self
-            .running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        if self.running.load(Ordering::Acquire) {
             return;
         }
 
         let target = self.target.clone();
         let mut running = Running {
             flag: self.running.clone(),
-            owned: true,
+            owned: false,
         };
         let timer = self.runtime.timer();
         let mut shutdown = self.shutdown.subscribe();
 
-        self.runtime.execute(Box::pin(async move {
+        // Off a runtime thread, as when a pooled value drops there, the task comes back
+        // and is dropped; checkouts still reject expired connections. Claiming `running`
+        // only once polled keeps such a task from hiding a concurrent schedule's request.
+        // Each schedule before the first task is polled spawns its own task; the extras
+        // exit on a failed claim.
+        let _ = self.runtime.try_execute(Box::pin(async move {
+            if !running.claim() {
+                return;
+            }
             let mut sleep = timer.sleep_until(deadline);
 
             loop {
@@ -140,7 +144,7 @@ where
                     .next()
                     .filter(|next| *next != Duration::ZERO)
                     .and_then(|next| timer.now().checked_add(next))
-                    && running.reacquire()
+                    && running.claim()
                 {
                     sleep.reset(deadline);
                     continue;
@@ -170,8 +174,8 @@ impl Running {
         }
     }
 
-    /// Takes ownership back unless another watcher has already started.
-    fn reacquire(&mut self) -> bool {
+    /// Takes ownership unless another watcher already holds it.
+    fn claim(&mut self) -> bool {
         self.owned = self
             .flag
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -248,11 +252,15 @@ mod tests {
                 RuntimeHandle::new(crate::rt::tokio::TokioRuntime),
             );
             expire.schedule(Some(Duration::from_secs(60)));
+            // Only a polled task claims the watcher, so one a runtime hands back never
+            // turns away a concurrent schedule.
+            assert!(!expire.is_running());
+            tokio::task::yield_now().await;
             expire
         });
         assert!(expire.is_running());
 
-        // Runtime shutdown drops the unpolled watcher; a later schedule must start again.
+        // Runtime shutdown drops the sleeping watcher; a later schedule must start again.
         drop(runtime);
         assert!(!expire.is_running());
     }

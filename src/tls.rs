@@ -364,7 +364,9 @@ pub struct TlsOptions {
     pub cipher_list: Option<Cow<'static, str>>,
 
     /// TLS 1.3 cipher suites in the order offered to the server.
-    /// `None` or an empty list uses the backend defaults. Duplicate suites fail TLS setup.
+    /// An empty list uses the backend defaults. Duplicate suites fail TLS setup.
+    ///
+    /// **Default:** `None` (backend defaults).
     #[deftly(config_key(context))]
     pub tls13_cipher_list: Option<Cow<'static, [Tls13Cipher]>>,
 
