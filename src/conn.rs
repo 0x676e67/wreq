@@ -1,5 +1,5 @@
 //! Connector composition, established connections and response metadata.
-//! [`layer`] handles proxy routing, stream TLS and connection timeouts;
+//! [`layer`] handles proxy tunnels, stream TLS and the connection deadline;
 //! [`transport`] handles dialing and QUIC endpoints. Protocol pools live in the client.
 
 pub(crate) mod config;
@@ -13,7 +13,6 @@ pub(super) mod transport;
 use std::{
     any::{TypeId, type_name},
     fmt::{self, Debug, Formatter},
-    future::Future,
     io::{self, IoSlice},
     iter,
     net::SocketAddr,
@@ -22,7 +21,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    task::{Context, Poll, ready},
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -33,35 +32,39 @@ use config::ConfigSet;
 use futures_util::future::BoxFuture;
 use layer::{
     proxy::{ProxyConnector, ProxyLayer},
-    timeout::{Timeout, TimeoutLayer},
+    timeout::TimeoutFuture,
 };
 use pin_project_lite::pin_project;
 use request::ConnectRequest;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::{
-    BoxError, Layer, Service, ServiceBuilder, ServiceExt,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapRequestLayer},
+    BoxError, Layer, Service, ServiceBuilder, ServiceExt, service_fn,
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
 use transport::{BindOptions, SocketConnector};
 #[cfg(feature = "http3")]
 use {
-    crate::protocol::TransportKind,
+    crate::{
+        error::{ProxyConnect, ProxyMismatch},
+        protocol::TransportKind,
+        proxy::{Intercepted, quic_port},
+    },
     btls::x509::X509,
-    layer::proxy::{QuicProxyConnector, QuicProxyLayer},
+    layer::proxy::{intercept, quic::masque},
     std::ops::Deref,
+    transport::QuicConnector,
 };
+#[cfg(all(feature = "http3", feature = "socks"))]
+use {layer::proxy::quic::socks, transport::TcpConnector};
 
 use crate::{
     dns::DynResolver,
     error::map_timeout_to_connector_error,
     proxy::{Matcher as ProxyMatcher, matcher::Intercept},
-    rt::DynRuntime,
+    rt::{DynRuntime, Timer as _},
     tls::{AlpnProtocol, TlsInfo, config::TlsBuilder, connector::MaybeHttpsStream},
 };
-
-/// Concrete stream path; [`Connector`] wraps both transports in any user layers.
-type Stack = Timeout<ProxyConnector<SocketConnector>>;
 
 /// Type-erased transport service retained after custom connector layers are composed.
 pub type BoxedTransportConnector = BoxCloneSyncService<Unnameable, Conn, BoxError>;
@@ -80,17 +83,33 @@ pub(crate) struct Config {
     pub tls_info: bool,
 }
 
-/// Establishes stream and QUIC transports through one shared middleware stack.
-/// Without user layers, each transport retains its concrete connection service.
+/// Establishes stream and QUIC transports under one connection deadline.
+/// The deadline starts when the connector is called, after readiness waits, and covers any
+/// user layers, proxy setup and the transport handshakes. Clones share the transports.
 #[derive(Clone)]
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum Connector {
-    Direct {
-        stream: Stack,
-        #[cfg(feature = "http3")]
-        quic: Timeout<QuicProxyConnector>,
-    },
+pub(crate) struct Connector {
+    stack: Stack,
+    timeout: Option<Duration>,
+    runtime: DynRuntime,
+}
+
+/// The built-in transports, called directly or through user connector layers.
+#[derive(Clone)]
+enum Stack {
+    Direct(Arc<Direct>),
     Layered(BoxedTransportConnector),
+}
+
+/// Built-in transports, selected by the transport the request's protocol runs over.
+struct Direct {
+    stream: ProxyConnector<SocketConnector>,
+    #[cfg(feature = "http3")]
+    quic: QuicConnector,
+    #[cfg(feature = "http3")]
+    proxies: Arc<Vec<ProxyMatcher>>,
+    /// Dials the TCP control connections of SOCKS5 UDP associations.
+    #[cfg(all(feature = "http3", feature = "socks"))]
+    tcp: TcpConnector<DynResolver>,
 }
 
 /// Builds the stream and QUIC paths from common client settings.
@@ -103,20 +122,6 @@ pub(crate) struct ConnectorBuilder {
     connect_timeout: Option<Duration>,
     bind_options: BindOptions,
     layers: Vec<BoxedConnectorLayer>,
-}
-
-/// Drives one selected transport or the shared middleware stack without extra boxing.
-pub(crate) enum ConnectorFuture {
-    Stream {
-        future: <Stack as Service<ConnectRequest>>::Future,
-    },
-    #[cfg(feature = "http3")]
-    Quic {
-        future: <Timeout<QuicProxyConnector> as Service<ConnectRequest>>::Future,
-    },
-    Layered {
-        future: BoxFuture<'static, Result<Conn, BoxError>>,
-    },
 }
 
 // ===== impl Connector =====
@@ -142,68 +147,81 @@ impl Connector {
 impl Service<ConnectRequest> for Connector {
     type Response = Conn;
     type Error = BoxError;
-    type Future = ConnectorFuture;
+    type Future = TimeoutFuture<BoxFuture<'static, Result<Conn, BoxError>>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match self {
-            Self::Direct {
-                stream,
-                #[cfg(feature = "http3")]
-                quic,
-            } => {
-                // Both built-in paths are always ready; user layers reserve capacity outside.
-                ready!(stream.poll_ready(cx))?;
-                #[cfg(feature = "http3")]
-                ready!(quic.poll_ready(cx))?;
-                Poll::Ready(Ok(()))
-            }
-            Self::Layered(service) => service.poll_ready(cx),
+        match &mut self.stack {
+            // The built-in transports are always ready; user layers reserve capacity here,
+            // before the deadline starts.
+            Stack::Direct(_) => Poll::Ready(Ok(())),
+            Stack::Layered(service) => service.poll_ready(cx),
         }
     }
 
     fn call(&mut self, request: ConnectRequest) -> Self::Future {
-        match self {
-            Self::Direct {
-                stream,
-                #[cfg(feature = "http3")]
-                quic,
-            } => {
-                #[cfg(feature = "http3")]
-                if request.resolved_protocol().transport() == TransportKind::Quic {
-                    return ConnectorFuture::Quic {
-                        future: quic.call(request),
-                    };
-                }
-                ConnectorFuture::Stream {
-                    future: stream.call(request),
-                }
-            }
-            Self::Layered(service) => ConnectorFuture::Layered {
-                future: service.call(Unnameable(request)),
-            },
-        }
+        let future = match &mut self.stack {
+            Stack::Direct(direct) => direct.connect(request),
+            Stack::Layered(service) => service.call(Unnameable(request)),
+        };
+        let sleep = self.timeout.map(|timeout| self.runtime.sleep(timeout));
+        TimeoutFuture::new(future, sleep)
     }
 }
 
-// ===== impl ConnectorFuture =====
+// ===== impl Direct =====
 
-impl Future for ConnectorFuture {
-    type Output = Result<Conn, BoxError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut() {
-            Self::Stream { future } => Pin::new(future).poll(cx),
-            #[cfg(feature = "http3")]
-            Self::Quic { future } => Pin::new(future).poll(cx),
-            Self::Layered { future } => future.as_mut().poll(cx),
+impl Direct {
+    /// Starts one attempt over the request's transport; the future shares the transports.
+    fn connect(
+        self: &Arc<Self>,
+        request: ConnectRequest,
+    ) -> BoxFuture<'static, Result<Conn, BoxError>> {
+        #[cfg(feature = "http3")]
+        if request.resolved_protocol().transport() == TransportKind::Quic {
+            let direct = self.clone();
+            return Box::pin(async move { direct.connect_quic(request).await });
         }
+        self.stream.connect(request)
+    }
+
+    /// Connects over QUIC directly, through a `quic://` MASQUE proxy, or through SOCKS5 UDP.
+    /// Other proxy routes fail before DNS.
+    #[cfg(feature = "http3")]
+    async fn connect_quic(&self, request: ConnectRequest) -> Result<Conn, BoxError> {
+        let proxy = match intercept(&request, &self.proxies) {
+            None => return self.quic.connect(&request).await,
+            #[cfg(feature = "socks")]
+            Some(Intercepted::Proxy(proxy))
+                if matches!(proxy.uri().scheme_str(), Some("socks5" | "socks5h")) =>
+            {
+                let mut tcp = self.tcp.clone();
+                if let Some(bind_options) = request.bind_options() {
+                    tcp = tcp.set_bind_options(bind_options);
+                }
+                return socks::connect(&self.quic, tcp, request, proxy).await;
+            }
+            Some(Intercepted::Proxy(proxy)) if proxy.uri().scheme_str() == Some("quic") => proxy,
+            Some(_) => {
+                return Err(ProxyMismatch(
+                    "HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature",
+                )
+                .into());
+            }
+        };
+
+        // Environment proxy entries reach this point without builder validation.
+        if let Err(message) = quic_port(proxy.uri()) {
+            return Err(ProxyConnect::Message(message).into());
+        }
+
+        masque::connect(&self.quic, request, proxy).await
     }
 }
 
 // ===== impl ConnectorBuilder =====
 
 impl ConnectorBuilder {
-    /// Sets the connection deadline for both transport paths.
+    /// Sets the deadline of each connector call, covering user layers and both transports.
     #[inline]
     pub(crate) fn connect_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.connect_timeout = timeout;
@@ -232,80 +250,60 @@ impl ConnectorBuilder {
         resolver: DynResolver,
         config_set: ConfigSet,
     ) -> Result<Connector, crate::Error> {
-        // With user layers, one outer timeout covers the complete middleware call.
-        let transport_timeout = self
-            .layers
-            .is_empty()
-            .then_some(self.connect_timeout)
-            .flatten();
         let tcp = tcp
             .enforce_http(false)
-            .set_connect_timeout(self.connect_timeout)
             .set_bind_options(&self.bind_options)
             .build(resolver.clone());
 
         #[cfg(feature = "http3")]
         let quic = {
             let tls = self.tls.clone().build_quic(config_set.clone())?;
-            ServiceBuilder::new()
-                .layer(TimeoutLayer::new(self.runtime.clone(), transport_timeout))
-                .layer(QuicProxyLayer::new(
-                    self.runtime.clone(),
-                    self.config.proxies.clone(),
-                    #[cfg(feature = "socks")]
-                    tcp.clone(),
-                    #[cfg(feature = "socks")]
-                    resolver.clone(),
-                ))
-                .service(
-                    transport::QuicConnector::builder(
-                        self.runtime.clone(),
-                        tls,
-                        self.config.tls_info,
-                    )
-                    .bind_options(self.bind_options)
-                    .build(resolver.clone()),
-                )
+            QuicConnector::builder(self.runtime.clone(), tls, self.config.tls_info)
+                .bind_options(self.bind_options)
+                .build(resolver.clone())
         };
 
-        let stream = {
-            let tls = self.tls.build(config_set)?;
-            ServiceBuilder::new()
-                .layer(TimeoutLayer::new(self.runtime.clone(), transport_timeout))
-                .layer(ProxyLayer::new(self.config, tls, resolver))
-                .service(SocketConnector::new(
-                    #[cfg(unix)]
-                    self.runtime.clone(),
-                    tcp,
-                ))
-        };
-
-        let connector = Connector::Direct {
-            stream,
+        // The QUIC fields clone their state before the stream stack takes it.
+        let direct = Arc::new(Direct {
             #[cfg(feature = "http3")]
             quic,
+            #[cfg(feature = "http3")]
+            proxies: self.config.proxies.clone(),
+            #[cfg(all(feature = "http3", feature = "socks"))]
+            tcp: tcp.clone(),
+            stream: {
+                let tls = self.tls.build(config_set)?;
+                ServiceBuilder::new()
+                    .layer(ProxyLayer::new(self.config, tls, resolver))
+                    .service(SocketConnector::new(
+                        #[cfg(unix)]
+                        self.runtime.clone(),
+                        tcp,
+                    ))
+            },
+        });
+
+        let stack = if self.layers.is_empty() {
+            Stack::Direct(direct)
+        } else {
+            let service = self.layers.iter().fold(
+                BoxCloneSyncService::new(service_fn(move |Unnameable(request)| {
+                    direct.connect(request)
+                })),
+                |service, layer| layer.layer(service),
+            );
+            // The connector's deadline also covers user layers; this maps a tower timeout
+            // supplied among them.
+            Stack::Layered(BoxCloneSyncService::new(
+                service.map_err(map_timeout_to_connector_error),
+            ))
         };
 
-        if self.layers.is_empty() {
-            return Ok(connector);
-        }
-
-        let service = self.layers.iter().fold(
-            BoxCloneSyncService::new(
-                ServiceBuilder::new()
-                    .layer(MapRequestLayer::new(|request: Unnameable| request.0))
-                    .service(connector),
-            ),
-            |service, layer| layer.layer(service),
-        );
-
-        // Keep the built-in timeout outside user layers so it covers their work too.
-        // The final mapping also handles a tower timeout supplied by the caller.
-        let service = TimeoutLayer::new(self.runtime, self.connect_timeout)
-            .layer(service)
-            .map_err(map_timeout_to_connector_error);
-
-        Ok(Connector::Layered(BoxCloneSyncService::new(service)))
+        Ok(Connector {
+            stack,
+            timeout: self.connect_timeout,
+            runtime: self.runtime,
+        })
     }
 }
 
@@ -880,5 +878,60 @@ mod tests {
         assert_eq!(clones.load(Ordering::Relaxed), 2);
         changed.poison();
         assert!(original.poisoned());
+    }
+
+    /// Client rules and request overrides that QUIC cannot use fail before any DNS lookup.
+    #[cfg(feature = "http3")]
+    #[tokio::test]
+    async fn quic_rejects_unsupported_proxy_routes_before_dns() {
+        struct NoDns;
+
+        impl crate::dns::Resolve for NoDns {
+            fn resolve(&self, name: crate::dns::Name) -> crate::dns::Resolving {
+                panic!("an unsupported proxy route resolved {name}")
+            }
+        }
+
+        let runtime = DynRuntime::new(crate::rt::tokio::TokioRuntime);
+        let proxy = || {
+            crate::Proxy::all("http://proxy:8080")
+                .unwrap()
+                .into_matcher()
+        };
+        let mut overridden = ConfigSet::default();
+        overridden.insert(proxy());
+        for (proxies, config_set) in [
+            (vec![proxy()], ConfigSet::default()),
+            (Vec::new(), overridden),
+        ] {
+            let config = Config {
+                proxies: Arc::new(proxies),
+                verbose: false,
+                nodelay: false,
+                tls_info: false,
+            };
+            let connector = Connector::builder(runtime.clone(), TlsBuilder::new(), config)
+                .build(
+                    transport::TcpConnector::new(runtime.clone()),
+                    DynResolver::new(Arc::new(NoDns)),
+                    ConfigSet::default(),
+                )
+                .unwrap();
+            let request = ConnectRequest::test(
+                ::http::Uri::from_static("https://localhost/"),
+                Some(crate::Protocol::Http3),
+                config_set,
+            );
+            let error = connector
+                .oneshot(request)
+                .await
+                .err()
+                .expect("QUIC must reject a proxy route");
+            assert!(error.is::<crate::error::ProxyMismatch>());
+            assert_eq!(
+                error.to_string(),
+                "HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature"
+            );
+        }
     }
 }

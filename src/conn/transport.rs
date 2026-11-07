@@ -5,7 +5,8 @@
 //! DNS completes before racing addresses. With Happy Eyeballs enabled, families
 //! alternate and attempts are staggered, with at most six active attempts.
 //! If every active attempt fails, the next starts immediately; success drops pending attempts.
-//! One deadline covers the whole race. Disabling racing preserves resolver order.
+//! The connector's deadline covers DNS and the whole race. Disabling racing preserves resolver
+//! order.
 //!
 //! See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305#section-5).
 
@@ -38,20 +39,16 @@ use std::{
     time::Duration,
 };
 
-use futures_util::future::Either;
-
 use crate::{
-    dns::{self, DnsResolver, SocketAddrs},
+    dns::{self, SocketAddrs},
     error::BoxError,
 };
 
 const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
 
 /// Timing policy shared by TCP and QUIC address attempts.
-/// The timeout covers the complete race, never an individual address.
 #[derive(Clone, Copy)]
 pub(crate) struct ConnectOptions {
-    pub(crate) timeout: Option<Duration>,
     pub(crate) happy_eyeballs_timeout: Option<Duration>,
 }
 
@@ -106,20 +103,25 @@ enum Event<C> {
     DelayElapsed,
 }
 
-/// Resolves one host, preserving custom DNS ports unless the URI supplies a port.
-/// IP literals bypass the resolver; brackets are stripped from IPv6 hosts.
-pub(super) async fn resolve<R: DnsResolver>(
-    resolver: &mut R,
+/// Resolves one host through `lookup`, preserving custom DNS ports unless the URI supplies a
+/// port. IP literals bypass the lookup; brackets are stripped from IPv6 hosts.
+pub(super) async fn resolve<F, A, E>(
     host: &str,
     port: u16,
     explicit_port: bool,
-) -> Result<SocketAddrs, ConnectError> {
+    lookup: impl FnOnce(dns::Name) -> F,
+) -> Result<SocketAddrs, ConnectError>
+where
+    F: Future<Output = Result<A, E>>,
+    A: Iterator<Item = SocketAddr>,
+    E: Into<BoxError>,
+{
     let host = crate::util::strip_ipv6_brackets(host);
     if let Some(addrs) = SocketAddrs::try_parse(host, port) {
         return Ok(addrs);
     }
 
-    let addrs = dns::resolve(resolver, dns::Name::from(host))
+    let addrs = lookup(dns::Name::from(host))
         .await
         .map_err(ConnectError::dns)?;
     Ok(SocketAddrs::new(
@@ -139,7 +141,6 @@ pub(super) async fn resolve<R: DnsResolver>(
 impl Default for ConnectOptions {
     fn default() -> Self {
         Self {
-            timeout: None,
             happy_eyeballs_timeout: Some(Duration::from_millis(300)),
         }
     }
@@ -147,7 +148,7 @@ impl Default for ConnectOptions {
 
 impl ConnectOptions {
     /// Tries candidates using transport-specific setup and the selected clock.
-    /// Setup errors and failed futures advance through addresses under one deadline.
+    /// Setup errors and failed futures advance through addresses.
     pub(super) async fn connect<C, F, S>(
         self,
         addrs: SocketAddrs,
@@ -164,29 +165,24 @@ impl ConnectOptions {
             (None, Some(_)) => addrs.filter(SocketAddr::is_ipv6),
             _ => addrs,
         };
-        let timeout = self.timeout.map(&sleep);
-
         // Avoid allocating an active set when no overlapping attempts are needed.
         if self.happy_eyeballs_timeout.is_none() || addrs.len() <= 1 {
-            let fut = async {
-                let mut first_error = None;
-                for addr in addrs {
-                    let result = match start(addr) {
-                        Ok(future) => future.await,
-                        Err(error) => Err(error),
-                    };
-                    match result {
-                        Ok(connection) => return Ok(connection),
-                        Err(error) => {
-                            let error = error.with_addr(addr);
-                            trace!("connect error for {}: {:?}", addr, error);
-                            first_error.get_or_insert(error);
-                        }
+            let mut first_error = None;
+            for addr in addrs {
+                let result = match start(addr) {
+                    Ok(future) => future.await,
+                    Err(error) => Err(error),
+                };
+                match result {
+                    Ok(connection) => return Ok(connection),
+                    Err(error) => {
+                        let error = error.with_addr(addr);
+                        trace!("connect error for {}: {:?}", addr, error);
+                        first_error.get_or_insert(error);
                     }
                 }
-                Err(first_error.unwrap_or_else(ConnectError::network_unreachable))
-            };
-            return connect_with_timeout(fut, timeout).await;
+            }
+            return Err(first_error.unwrap_or_else(ConnectError::network_unreachable));
         }
 
         let mut race = Race {
@@ -196,11 +192,8 @@ impl ConnectOptions {
             next_order: 0,
             first_error: None,
         };
-        connect_with_timeout(
-            race.connect(self.happy_eyeballs_timeout, &mut start, sleep),
-            timeout,
-        )
-        .await
+        race.connect(self.happy_eyeballs_timeout, &mut start, sleep)
+            .await
     }
 }
 
@@ -401,24 +394,6 @@ where
     }
 }
 
-/// Applies one deadline, letting a connection ready at the deadline win the tie.
-async fn connect_with_timeout<C, F, S>(future: F, timeout: Option<S>) -> Result<C, ConnectError>
-where
-    F: Future<Output = Result<C, ConnectError>>,
-    S: Future<Output = ()>,
-{
-    let Some(timeout) = timeout else {
-        return future.await;
-    };
-    match futures_util::future::select(pin!(future), pin!(timeout)).await {
-        Either::Left((result, _)) => result,
-        Either::Right(((), _)) => Err(ConnectError::new(
-            "connect timeout",
-            io::Error::new(io::ErrorKind::TimedOut, "connect timeout"),
-        )),
-    }
-}
-
 /// Binds TCP or UDP sockets to the selected network interface.
 #[cfg(any(
     target_os = "android",
@@ -594,7 +569,6 @@ mod tests {
     const V6: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 443);
     const DELAY: Duration = Duration::from_millis(10);
     const OPTIONS: ConnectOptions = ConnectOptions {
-        timeout: None,
         happy_eyeballs_timeout: Some(DELAY),
     };
 
@@ -629,7 +603,7 @@ mod tests {
             ))
         });
         for (host, expected) in [("127.0.0.1", V4), ("[::1]", V6)] {
-            let addrs = resolve(&mut resolver, host, 443, false)
+            let addrs = resolve(host, 443, false, |name| dns::resolve(&mut resolver, name))
                 .await
                 .unwrap()
                 .collect::<Vec<_>>();
@@ -637,11 +611,13 @@ mod tests {
         }
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         for (port, explicit, expected) in [(443, false, [8443, 443]), (444, true, [444, 444])] {
-            let ports = resolve(&mut resolver, "example.test", port, explicit)
-                .await
-                .unwrap()
-                .map(|addr| addr.port())
-                .collect::<Vec<_>>();
+            let ports = resolve("example.test", port, explicit, |name| {
+                dns::resolve(&mut resolver, name)
+            })
+            .await
+            .unwrap()
+            .map(|addr| addr.port())
+            .collect::<Vec<_>>();
             assert_eq!(ports, expected);
         }
         assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -650,10 +626,12 @@ mod tests {
                 io::ErrorKind::NotFound,
             )))
         });
-        let error = resolve(&mut failed, "example.test", 443, false)
-            .await
-            .err()
-            .unwrap();
+        let error = resolve("example.test", 443, false, |name| {
+            dns::resolve(&mut failed, name)
+        })
+        .await
+        .err()
+        .unwrap();
         assert_eq!(error.msg, "dns error");
         assert_eq!(
             error.cause.unwrap().downcast::<io::Error>().unwrap().kind(),
@@ -676,7 +654,6 @@ mod tests {
             let started = tokio::time::Instant::now();
             let result = ConnectOptions {
                 happy_eyeballs_timeout,
-                ..OPTIONS
             }
             .connect(
                 SocketAddrs::new([v4.as_slice(), v6.as_slice()].concat()),
@@ -761,7 +738,6 @@ mod tests {
                 let started = tokio::time::Instant::now();
                 let result = ConnectOptions {
                     happy_eyeballs_timeout,
-                    ..OPTIONS
                 }
                 .connect(
                     SocketAddrs::new(vec![V4, V6]),
@@ -811,50 +787,30 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn dropping_or_timing_out_the_race_cancels_pending_attempts() {
-        assert!(
-            connect_with_timeout(ready(Ok(())), Some(ready(())))
-                .await
-                .is_ok(),
-            "a ready connection should win a timeout tie"
-        );
-
-        for timeout in [None, Some(DELAY * 5 / 2)] {
-            let active = Arc::new(AtomicUsize::new(0));
-            let mut launched = 0;
-            let bindings = BindOptions::default();
-            let started = tokio::time::Instant::now();
-            let mut race = Box::pin(ConnectOptions { timeout, ..OPTIONS }.connect(
-                SocketAddrs::new((1..=4).map(|port| SocketAddr::new(V4.ip(), port)).collect()),
-                &bindings,
-                |_| {
-                    launched += 1;
-                    let guard = Active::new(&active);
-                    Ok(async move {
-                        let _guard = guard;
-                        pending::<Result<(), ConnectError>>().await
-                    }
-                    .boxed())
-                },
-                tokio::time::sleep,
-            ));
-            assert!(poll!(race.as_mut()).is_pending());
-            tokio::time::advance(DELAY).await;
-            assert!(poll!(race.as_mut()).is_pending());
-            assert_eq!(active.load(Ordering::SeqCst), 2);
-            if let Some(timeout) = timeout {
-                let error = race.await.unwrap_err();
-                assert_eq!(started.elapsed(), timeout);
-                assert_eq!(
-                    error.cause.unwrap().downcast::<io::Error>().unwrap().kind(),
-                    io::ErrorKind::TimedOut
-                );
-                assert_eq!(launched, 3);
-            } else {
-                drop(race);
-                assert_eq!(launched, 2);
-            }
-            assert_eq!(active.load(Ordering::SeqCst), 0);
-        }
+    async fn dropping_the_race_cancels_pending_attempts() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let mut launched = 0;
+        let bindings = BindOptions::default();
+        let mut race = Box::pin(OPTIONS.connect(
+            SocketAddrs::new((1..=4).map(|port| SocketAddr::new(V4.ip(), port)).collect()),
+            &bindings,
+            |_| {
+                launched += 1;
+                let guard = Active::new(&active);
+                Ok(async move {
+                    let _guard = guard;
+                    pending::<Result<(), ConnectError>>().await
+                }
+                .boxed())
+            },
+            tokio::time::sleep,
+        ));
+        assert!(poll!(race.as_mut()).is_pending());
+        tokio::time::advance(DELAY).await;
+        assert!(poll!(race.as_mut()).is_pending());
+        assert_eq!(active.load(Ordering::SeqCst), 2);
+        drop(race);
+        assert_eq!(launched, 2);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
     }
 }

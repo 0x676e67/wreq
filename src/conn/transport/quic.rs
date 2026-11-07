@@ -1,5 +1,5 @@
 //! QUIC dialing, socket bindings, TLS handshakes and endpoint reuse.
-//! The proxy layer supplies tunnel sockets; this transport authenticates the
+//! Proxy routes supply tunnel sockets; this transport authenticates the
 //! target over them using the original request's configuration and token scope.
 
 use std::{
@@ -8,7 +8,6 @@ use std::{
     num::NonZeroUsize,
     pin::pin,
     sync::Arc,
-    task::{Context, Poll},
 };
 
 use ::quic::{AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokenStore};
@@ -18,7 +17,7 @@ use http::Uri;
 use lru::LruCache;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::Notify;
-use tower::{BoxError, Service};
+use tower::BoxError;
 
 use super::{BindOptions, ConnectError, ConnectOptions, resolve};
 use crate::{
@@ -27,7 +26,7 @@ use crate::{
         request::{ConnectRequest, ConnectionKey},
     },
     dns::{DynResolver, SocketAddrs},
-    rt::{DynRuntime, Timer},
+    rt::{DynRuntime, Timer as _},
     sync::Mutex,
     tls::quic::{QuicConfig, TlsConfig},
 };
@@ -35,7 +34,7 @@ use crate::{
 /// Connects one HTTP/3 origin using the selected runtime and TLS policy.
 /// Client socket bindings share one endpoint per address family; request-local
 /// bindings retain their endpoints with the resulting pooled connection.
-#[derive(Clone)]
+/// Attempts borrow the connector, so it is shared rather than cloned per attempt.
 pub(crate) struct QuicConnector {
     runtime: DynRuntime,
     resolver: DynResolver,
@@ -103,6 +102,19 @@ impl QuicConnector {
             bind_options: BindOptions::default(),
             connect_options: ConnectOptions::default(),
         }
+    }
+
+    /// Returns the runtime that drives endpoints, tunnels and timers.
+    #[inline]
+    pub(crate) fn runtime(&self) -> &DynRuntime {
+        &self.runtime
+    }
+
+    /// Returns the resolver for target and relay names reached through SOCKS5.
+    #[cfg(feature = "socks")]
+    #[inline]
+    pub(crate) fn resolver(&self) -> &DynResolver {
+        &self.resolver
     }
 
     /// Opens a UDP endpoint for the address family of `remote`.
@@ -280,19 +292,15 @@ impl QuicConnector {
         Ok(endpoint)
     }
 
-    async fn connect(
-        mut self,
-        request: ConnectRequest,
-        timer: &dyn Timer,
-    ) -> Result<Conn, BoxError> {
-        let config = self.config(&request, None)?;
-        let bind_options = self.merged_bind_options(&request);
+    /// Connects to the request's route directly and retains the connection's endpoint.
+    pub(crate) async fn connect(&self, request: &ConnectRequest) -> Result<Conn, BoxError> {
+        let config = self.config(request, None)?;
+        let bind_options = self.merged_bind_options(request);
         let (connection, endpoint) = self
             .dial(
                 request.route_uri(),
                 &bind_options,
                 &config,
-                timer,
                 bind_options == self.bind_options,
             )
             .await?;
@@ -302,17 +310,16 @@ impl QuicConnector {
     /// Dials the proxy without using target-scoped address tokens or endpoint slots.
     /// TLS tickets retain the original request identity and the proxy's distinct route.
     pub(crate) async fn connect_proxy(
-        &mut self,
+        &self,
         request: &ConnectRequest,
         uri: &Uri,
-        timer: &dyn Timer,
     ) -> Result<(Connection, Endpoint), BoxError> {
         let mut config = self
             .tls
             .config(&request.clone().with_route_uri(uri.clone()), None)?;
         config.transport_config(self.tls.proxy_transport(request)?);
         let bind_options = self.merged_bind_options(request);
-        self.dial(uri, &bind_options, &config, timer, false).await
+        self.dial(uri, &bind_options, &config, false).await
     }
 
     /// Returns the target's configuration over a tunnel, built before the tunnel so a local
@@ -365,19 +372,18 @@ impl QuicConnector {
 
     /// Resolves and races physical addresses for either a target or a proxy.
     async fn dial(
-        &mut self,
+        &self,
         uri: &Uri,
         bind_options: &BindOptions,
         config: &QuicConfig,
-        timer: &dyn Timer,
         shared: bool,
     ) -> Result<(Connection, Endpoint), BoxError> {
         let host = crate::util::strip_ipv6_brackets(uri.host().ok_or("HTTP/3 URI has no host")?);
         let addresses = resolve(
-            &mut self.resolver,
             host,
             uri.port_u16().unwrap_or(443),
             uri.port().is_some(),
+            |name| self.resolver.resolve(name),
         )
         .await?;
         // The IPv6 endpoint is V6ONLY and cannot reach a v4-mapped address, so such an address
@@ -393,12 +399,8 @@ impl QuicConnector {
         } else {
             &local_endpoints
         };
-        // The outer timeout covers DNS, endpoint setup and every handshake.
-        let policy = ConnectOptions {
-            timeout: None,
-            ..self.connect_options
-        };
-        Ok(policy
+        Ok(self
+            .connect_options
             .connect(
                 addresses,
                 bind_options,
@@ -407,7 +409,7 @@ impl QuicConnector {
                         Box::pin(self.connect_addr(endpoints, bind_options, config, address, host));
                     Ok(attempt)
                 },
-                |duration| timer.sleep(duration),
+                |duration| self.runtime.sleep(duration),
             )
             .await?)
     }
@@ -473,22 +475,6 @@ fn session_error(error: ::quic::ConnectError, config: &QuicConfig) -> BoxError {
             Box::new(rejected.clone())
         }
         _ => Box::new(error),
-    }
-}
-
-impl Service<ConnectRequest> for QuicConnector {
-    type Response = Conn;
-    type Error = BoxError;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, request: ConnectRequest) -> Self::Future {
-        let this = self.clone();
-        let timer = this.runtime.timer();
-        Box::pin(async move { this.connect(request, &*timer).await })
     }
 }
 
@@ -576,18 +562,15 @@ mod tests {
     use std::{
         net::{IpAddr, UdpSocket},
         sync::atomic::{AtomicUsize, Ordering},
+        task::{Context, Poll},
         time::Duration,
     };
 
     use http::Uri;
-    use tower::{Layer, ServiceExt};
 
     use super::*;
     use crate::{
-        conn::{
-            config::ConfigSet,
-            layer::{proxy::QuicProxyLayer, timeout::TimeoutLayer},
-        },
+        conn::{config::ConfigSet, layer::timeout::TimeoutFuture},
         dns::{Addrs, Name, Resolve, Resolving},
         rt::tokio::TokioRuntime,
         tls::{config::TlsBuilder, trust::CertStore},
@@ -621,13 +604,13 @@ mod tests {
     }
 
     async fn connect(
-        connector: &mut QuicConnector,
+        connector: &QuicConnector,
         request: ConnectRequest,
         server: &::quic::Endpoint,
     ) -> (Connection, Endpoint, Connection) {
         let uri = request.uri().clone();
         let (connection, peer) = tokio::time::timeout(Duration::from_secs(5), async {
-            tokio::try_join!(connector.call(request), async {
+            tokio::try_join!(connector.connect(&request), async {
                 server.accept().await.unwrap().await.map_err(BoxError::from)
             })
         })
@@ -696,7 +679,7 @@ mod tests {
         let mut connector = connector(resolver.clone(), &cert);
         connector.connect_options.happy_eyeballs_timeout = Some(Duration::from_millis(20));
         let localhost = request(Uri::from_static("https://localhost/"), None);
-        let (connection, _, _peer) = connect(&mut connector, localhost, &server4).await;
+        let (connection, _, _peer) = connect(&connector, localhost, &server4).await;
         assert_eq!(connection.remote_address(), addr4);
         assert_eq!(resolver.calls.load(Ordering::SeqCst), 1);
 
@@ -732,16 +715,15 @@ mod tests {
             let server = Endpoint::server(server_config.clone(), (address, 0).into()).unwrap();
             let remote = server.local_addr().unwrap();
             let resolver = resolving(vec![remote]);
-            let mut connector = connector(resolver.clone(), &cert);
+            let connector = connector(resolver.clone(), &cert);
             let localhost = request(Uri::from_static("https://localhost/"), None);
-            let (first, shared, first_peer) = connect(&mut connector, localhost, &server).await;
+            let (first, shared, first_peer) = connect(&connector, localhost, &server).await;
             let local = shared.local_addr().unwrap();
             assert_eq!(first.remote_address(), remote);
             assert!(local.ip().is_unspecified());
 
             // IP literals bypass DNS while reusing the family's socket.
-            let (second, reused, second_peer) =
-                connect(&mut connector, literal(remote), &server).await;
+            let (second, reused, second_peer) = connect(&connector, literal(remote), &server).await;
             assert_eq!(reused.local_addr().unwrap(), local);
             assert_eq!(first_peer.remote_address(), second_peer.remote_address());
             assert_eq!(resolver.calls.load(Ordering::SeqCst), 1);
@@ -749,8 +731,7 @@ mod tests {
             // The IPv6 socket is V6ONLY, so a v4-mapped address must use the IPv4 one.
             if let IpAddr::V4(ipv4) = address {
                 let mapped = SocketAddr::new(ipv4.to_ipv6_mapped().into(), remote.port());
-                let (mapped, reused, _peer) =
-                    connect(&mut connector, literal(mapped), &server).await;
+                let (mapped, reused, _peer) = connect(&connector, literal(mapped), &server).await;
                 assert_eq!(mapped.remote_address(), remote);
                 assert_eq!(reused.local_addr().unwrap(), local);
                 mapped.close(0u32.into(), b"done");
@@ -759,7 +740,7 @@ mod tests {
             let mut bindings = BindOptions::default();
             bindings.set_local_address(address);
             let localhost = request(Uri::from_static("https://localhost/"), Some(bindings));
-            let (bound, isolated, _bound_peer) = connect(&mut connector, localhost, &server).await;
+            let (bound, isolated, _bound_peer) = connect(&connector, localhost, &server).await;
             let isolated = isolated.local_addr().unwrap();
             assert_eq!(isolated.ip(), address);
             assert_ne!(isolated.port(), local.port());
@@ -782,8 +763,7 @@ mod tests {
             ::quic::Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         let addr4 = server4.local_addr().unwrap();
         let mut connector = connector(resolving(vec![addr4]), &cert);
-        let (first, endpoint4, _first_peer) =
-            connect(&mut connector, literal(addr4), &server4).await;
+        let (first, endpoint4, _first_peer) = connect(&connector, literal(addr4), &server4).await;
 
         // Invalid key shares fail in the SSL callback, which the QUIC stack reports like a
         // stopped driver. The TLS error must surface without opening another socket, which a
@@ -795,7 +775,7 @@ mod tests {
         connector
             .bind_options
             .set_local_address(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)));
-        let error = connector.call(configured(invalid)).await.err().unwrap();
+        let error = connector.connect(&configured(invalid)).await.err().unwrap();
         connector.bind_options = BindOptions::default();
         let mut chain = std::iter::successors(
             Some(&*error as &(dyn std::error::Error + 'static)),
@@ -808,17 +788,17 @@ mod tests {
         assert!(same_socket(&current(&connector.endpoints.ipv4), &endpoint4));
 
         let blackhole = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let timed_out =
-            TimeoutLayer::new(connector.runtime.clone(), Some(Duration::from_millis(30)))
-                .layer(connector.clone())
-                .oneshot(literal(blackhole.local_addr().unwrap()))
-                .await
-                .err()
-                .unwrap();
+        let timed_out = TimeoutFuture::new(
+            connector.connect(&literal(blackhole.local_addr().unwrap())),
+            Some(connector.runtime.sleep(Duration::from_millis(30))),
+        )
+        .await
+        .err()
+        .unwrap();
         assert!(timed_out.is::<crate::error::TimedOut>());
         assert!(first.close_reason().is_none());
 
-        let (after, reused4, _after_peer) = connect(&mut connector, literal(addr4), &server4).await;
+        let (after, reused4, _after_peer) = connect(&connector, literal(addr4), &server4).await;
         assert_eq!(
             reused4.local_addr().unwrap(),
             endpoint4.local_addr().unwrap()
@@ -885,10 +865,9 @@ mod tests {
         };
         let connect = || {
             let runtime = runtime();
-            let mut connector = connector.clone();
             let request = request(Uri::from_static("https://localhost/"), None);
             let (connection, endpoint) = runtime
-                .block_on(async { connector.call(request).await })
+                .block_on(connector.connect(&request))
                 .unwrap()
                 .transport
                 .into_quic()
@@ -953,7 +932,7 @@ mod tests {
             .log(Arc::new(AcceptAll));
         config.validation_token_config(validation);
         let server = ::quic::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
-        let mut connector = connector(resolving(vec![server.local_addr().unwrap()]), &cert);
+        let connector = connector(resolving(vec![server.local_addr().unwrap()]), &cert);
         let request = |group: &'static str| configured(crate::group::Group::new(group));
 
         let key = request("first").key();
@@ -976,8 +955,9 @@ mod tests {
                 .await
                 .expect("the first connection must receive its tokens");
             }
+            let target = request(group);
             let attempt = async {
-                tokio::join!(connector.call(request(group)), async {
+                tokio::join!(connector.connect(&target), async {
                     let incoming = server.accept().await.unwrap();
                     let presented = incoming.remote_address_validated();
                     (presented, incoming.await.unwrap())
@@ -993,57 +973,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_unsupported_proxy_routes_before_dns() {
-        let resolver = resolving(Vec::new());
-        let transport = connector(resolver.clone(), &test_server_config().1);
-        let proxy = || {
-            crate::Proxy::all("http://proxy:8080")
-                .unwrap()
-                .into_matcher()
-        };
-        #[cfg(feature = "socks")]
-        let tcp = crate::conn::transport::TcpConnector::new(transport.runtime.clone())
-            .build(transport.resolver.clone());
-        let uri = Uri::from_static("https://localhost/");
-        for (proxies, request) in [
-            (Arc::new(vec![proxy()]), request(uri, None)),
-            (Arc::default(), configured(proxy())),
-        ] {
-            let mut connector = QuicProxyLayer::new(
-                transport.runtime.clone(),
-                proxies,
-                #[cfg(feature = "socks")]
-                tcp.clone(),
-                #[cfg(feature = "socks")]
-                transport.resolver.clone(),
-            )
-            .layer(transport.clone());
-            let error = connector
-                .call(request)
-                .await
-                .err()
-                .expect("QUIC must reject a proxy route");
-            assert!(error.is::<crate::error::ProxyMismatch>());
-            assert_eq!(
-                error.to_string(),
-                "HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature"
-            );
-        }
-        assert_eq!(resolver.calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
     async fn applies_request_transport_options() {
         let (config, cert) = test_server_config();
         let server = ::quic::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
-        let mut connector = connector(resolving(vec![server.local_addr().unwrap()]), &cert);
+        let connector = connector(resolving(vec![server.local_addr().unwrap()]), &cert);
 
         // The negotiated idle timeout is the lower of both peers' values.
         let options = crate::quic::QuicOptions::builder()
             .max_idle_timeout(Duration::from_millis(200))
             .build();
         let (_client, _endpoint, accepted) =
-            connect(&mut connector, configured(options), &server).await;
+            connect(&connector, configured(options), &server).await;
         let error = tokio::time::timeout(Duration::from_secs(5), accepted.closed())
             .await
             .unwrap();

@@ -1,37 +1,15 @@
-//! Runtime-neutral timeout middleware for connector services.
+//! Runtime-neutral deadline for one connector call.
 
 use std::{
     future::Future,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
 
 use pin_project_lite::pin_project;
-use tower::{BoxError, Layer, Service};
+use tower::BoxError;
 
-use crate::{
-    error::TimedOut,
-    rt::{BoxSleep, DynRuntime, Timer},
-};
-
-/// Adds a connection timeout using the client's timer provider.
-/// The timer starts when the service is called.
-#[derive(Clone)]
-pub(in crate::conn) struct TimeoutLayer {
-    timer: Arc<dyn Timer>,
-    timeout: Option<Duration>,
-}
-
-/// Creates a separate deadline for each connection attempt.
-/// Readiness waits before `call` are outside the deadline.
-#[derive(Clone)]
-pub struct Timeout<S> {
-    inner: S,
-    timer: Arc<dyn Timer>,
-    timeout: Option<Duration>,
-}
+use crate::{error::TimedOut, rt::BoxSleep};
 
 pin_project! {
     /// Owns one in-flight connection and its optional timeout sleep.
@@ -42,52 +20,6 @@ pin_project! {
         #[pin]
         future: F,
         sleep: Option<BoxSleep>,
-    }
-}
-
-// ===== impl TimeoutLayer =====
-
-impl TimeoutLayer {
-    pub(in crate::conn) fn new(runtime: DynRuntime, timeout: Option<Duration>) -> Self {
-        Self {
-            timer: runtime.timer(),
-            timeout,
-        }
-    }
-}
-
-impl<S> Layer<S> for TimeoutLayer {
-    type Service = Timeout<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        Timeout {
-            inner,
-            timer: self.timer.clone(),
-            timeout: self.timeout,
-        }
-    }
-}
-
-// ===== impl Timeout =====
-
-impl<S, Request> Service<Request> for Timeout<S>
-where
-    S: Service<Request>,
-    S::Error: Into<BoxError>,
-{
-    type Response = S::Response;
-    type Error = BoxError;
-    type Future = TimeoutFuture<S::Future>;
-
-    #[inline]
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(Into::into)
-    }
-
-    fn call(&mut self, request: Request) -> Self::Future {
-        let future = self.inner.call(request);
-        let sleep = self.timeout.map(|timeout| self.timer.sleep(timeout));
-        TimeoutFuture::new(future, sleep)
     }
 }
 

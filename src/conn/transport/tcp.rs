@@ -1,5 +1,5 @@
 //! URI resolution, TCP socket configuration and runtime connection setup.
-//! Address ordering, racing and deadlines use the shared transport policy.
+//! Address ordering and racing use the shared transport policy; the connector sets the deadline.
 
 use std::{
     io,
@@ -163,14 +163,6 @@ impl<R> TcpConnector<R> {
         self
     }
 
-    /// Sets the timeout for the TCP connection race, after DNS resolution.
-    /// Defaults to `None`; the outer connector also applies its overall connection timeout.
-    #[inline]
-    pub(crate) fn set_connect_timeout(mut self, dur: Option<Duration>) -> Self {
-        self.options_mut().connect_options.timeout = dur;
-        self
-    }
-
     /// Sets the delay between overlapping attempts; defaults to 300 milliseconds.
     /// The first starts immediately. `None` tries addresses sequentially.
     /// See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305.html#section-5).
@@ -229,7 +221,10 @@ where
 
         Box::pin(async move {
             let (host, port) = get_host_port(&this.options, &dst)?;
-            let addrs = resolve(&mut this.resolver, host, port, dst.port().is_some()).await?;
+            let addrs = resolve(host, port, dst.port().is_some(), |name| {
+                dns::resolve(&mut this.resolver, name)
+            })
+            .await?;
             connect(addrs, &this.options, this.runtime).await
         })
     }

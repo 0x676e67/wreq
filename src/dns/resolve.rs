@@ -93,27 +93,35 @@ pub(crate) struct DynResolver {
     resolver: Arc<dyn Resolve>,
 }
 
+/// Resolution future of a [`DynResolver`]; failures are reported as [`DnsError`].
+type DynResolving = MapErr<MapErr<Resolving, fn(BoxError) -> DnsError>, fn(DnsError) -> BoxError>;
+
 impl DynResolver {
     /// Creates a new [`DynResolver`] with the provided resolver.
     pub(crate) fn new(resolver: Arc<dyn Resolve>) -> Self {
         Self { resolver }
+    }
+
+    /// Resolves `name` through a shared reference; the resolver is always ready.
+    pub(crate) fn resolve(&self, name: Name) -> DynResolving {
+        self.resolver
+            .resolve(name)
+            .map_err(DnsError as _)
+            .map_err(Into::into)
     }
 }
 
 impl Service<Name> for DynResolver {
     type Response = Addrs;
     type Error = BoxError;
-    type Future = MapErr<MapErr<Resolving, fn(BoxError) -> DnsError>, fn(DnsError) -> Self::Error>;
+    type Future = DynResolving;
 
     fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, name: Name) -> Self::Future {
-        self.resolver
-            .resolve(name)
-            .map_err(DnsError as _)
-            .map_err(Into::into)
+        DynResolver::resolve(self, name)
     }
 }
 

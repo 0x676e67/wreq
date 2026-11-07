@@ -37,7 +37,7 @@ use crate::{
     dns::DynResolver,
     error::ProxyConnect,
     proxy::matcher::Intercept,
-    rt::{BoxConnection, Timer},
+    rt::{BoxConnection, Timer as _},
     sync::Mutex,
     tls::quic::QuicConfig,
 };
@@ -99,16 +99,14 @@ pin_project! {
 }
 
 /// Resolves SOCKS5 targets locally or delegates SOCKS5h target names to the proxy.
-pub(super) async fn connect(
-    inner: QuicConnector,
+pub(crate) async fn connect(
+    quic: &QuicConnector,
     tcp: TcpConnector<DynResolver>,
-    mut resolver: DynResolver,
-    timer: Arc<dyn Timer>,
     request: ConnectRequest,
     proxy: Intercept,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
-    let config = inner.tunnel_config(&request)?;
+    let config = quic.tunnel_config(&request)?;
     let uri = request.route_uri();
     let host = crate::util::strip_ipv6_brackets(uri.host().ok_or(URI_MISSING_HOST)?);
     let port = uri.port_u16().unwrap_or(443);
@@ -118,12 +116,13 @@ pub(super) async fn connect(
             Ok(ip) => Address::Ip((ip, port).into()),
             Err(_) => Address::Domain(host.into(), port),
         };
-        return Ok(
-            connect_target(&inner, tcp, &resolver, &request, &proxy, &config, target).await?,
-        );
+        return Ok(connect_target(quic, tcp, &request, &proxy, &config, target).await?);
     }
 
-    let addresses = transport::resolve(&mut resolver, host, port, uri.port().is_some()).await?;
+    let addresses = transport::resolve(host, port, uri.port().is_some(), |name| {
+        quic.resolver().resolve(name)
+    })
+    .await?;
 
     // Target families are independent of the physical proxy's bindings.
     Ok(ConnectOptions::default()
@@ -133,9 +132,8 @@ pub(super) async fn connect(
             |address| {
                 let target = Address::Ip(address);
                 let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
-                    &inner,
+                    quic,
                     tcp.clone(),
-                    &resolver,
                     &request,
                     &proxy,
                     &config,
@@ -143,7 +141,7 @@ pub(super) async fn connect(
                 ));
                 Ok(attempt)
             },
-            |duration| timer.sleep(duration),
+            |duration| quic.runtime().sleep(duration),
         )
         .await?)
 }
@@ -151,9 +149,8 @@ pub(super) async fn connect(
 /// Each candidate owns its association; cancellation closes the control stream and UDP socket.
 /// Errors name the stage that failed; those of the proxy's stages are proxy connect errors.
 async fn connect_target(
-    inner: &QuicConnector,
+    quic: &QuicConnector,
     tcp: TcpConnector<DynResolver>,
-    resolver: &DynResolver,
     request: &ConnectRequest,
     proxy: &Intercept,
     config: &QuicConfig,
@@ -204,12 +201,12 @@ async fn connect_target(
             Address::Ip(relay) if relay.ip().is_unspecified() => {
                 return Err(PEER_ADDR_REQUIRED.into());
             }
-            Address::Ip(relay) => (inner.udp_socket(request, relay)?, relay),
+            Address::Ip(relay) => (quic.udp_socket(request, relay)?, relay),
             Address::Domain(host, port) => {
-                let mut resolver = resolver.clone();
-
                 // BND.PORT is authoritative even when the resolver returns another port.
-                let mut resolving = pin!(transport::resolve(&mut resolver, &host, port, true));
+                let mut resolving = pin!(transport::resolve(&host, port, true, |name| {
+                    quic.resolver().resolve(name)
+                }));
                 let addresses = poll_fn(|cx| {
                     // The association can close while DNS is pending; stop that lookup too.
                     if let Poll::Ready(result) = association.poll_closed(cx) {
@@ -241,7 +238,7 @@ async fn connect_target(
                     .filter(preferred)
                     .chain(addresses.iter().filter(|addr| !preferred(addr)))
                 {
-                    match inner.udp_socket(request, relay) {
+                    match quic.udp_socket(request, relay) {
                         Ok(socket) => {
                             selected = Some((socket, relay));
                             break;
@@ -263,8 +260,7 @@ async fn connect_target(
     let (socket, relay) = open_relay.await.map_err(proxy_error(RELAY_ERROR))?;
     let ended = socket.shared.ended.clone();
 
-    inner
-        .finish_tunnel(request, config, socket, relay, ended)
+    quic.finish_tunnel(request, config, socket, relay, ended)
         .await
         .map_err(ConnectError::m(TARGET_HANDSHAKE_ERROR))
 }

@@ -1,22 +1,17 @@
 //! TCP and Unix proxy handshakes, shared proxy selection and target TLS.
 //! Every stream route ends in one place that finishes TLS and builds the [`Conn`].
-//! With `http3`, the `quic` submodule establishes QUIC proxy routes.
+//! With `http3`, the `quic` submodule carries QUIC through MASQUE and SOCKS5 UDP tunnels.
 
 #[cfg(feature = "http3")]
-mod quic;
+pub(crate) mod quic;
 
-use std::{
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 use http::Uri;
 #[cfg(feature = "socks")]
 use netty::proxy::socks;
 use netty::proxy::tunnel;
-#[cfg(feature = "http3")]
-pub(crate) use quic::{QuicProxyConnector, QuicProxyLayer};
 use tower::{BoxError, Layer, Service, ServiceExt, util::MapRequest};
 
 use crate::{
@@ -44,7 +39,6 @@ pub(crate) struct ProxyLayer {
 /// Establishes a direct socket, a forward-proxy connection, or a proxy tunnel,
 /// then finishes target TLS and returns the stream for the HTTP/1 or HTTP/2 pool.
 /// Each attempt waits for readiness on the socket service instance it calls.
-#[derive(Clone)]
 pub(crate) struct ProxyConnector<S> {
     inner: S,
     config: Arc<Config>,
@@ -66,7 +60,7 @@ trait Dialed {
 }
 
 /// Tries the request's proxy rule, then the client's rules in order.
-fn intercept(request: &ConnectRequest, proxies: &[Matcher]) -> Option<Intercepted> {
+pub(crate) fn intercept(request: &ConnectRequest, proxies: &[Matcher]) -> Option<Intercepted> {
     request
         .config_override::<Matcher>()
         .and_then(|proxy| proxy.intercept(request.uri()))
@@ -151,21 +145,17 @@ impl<S> Layer<S> for ProxyLayer {
 
 // ===== impl ProxyConnector =====
 
-impl<S> Service<ConnectRequest> for ProxyConnector<S>
+impl<S> ProxyConnector<S>
 where
     S: Service<SocketRequest, Response = BoxConnection> + Clone + Send + 'static,
     S::Error: Into<BoxError>,
     S::Future: Send + Unpin + 'static,
 {
-    type Response = Conn;
-    type Error = BoxError;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: ConnectRequest) -> Self::Future {
+    /// Starts one attempt through a shared reference; the future owns what it needs.
+    pub(crate) fn connect(
+        &self,
+        req: ConnectRequest,
+    ) -> BoxFuture<'static, Result<Conn, BoxError>> {
         let inner = self.inner.clone();
         let config = self.config.clone();
         let tls = self.tls.clone();

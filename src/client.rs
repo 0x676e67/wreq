@@ -1806,8 +1806,9 @@ mod sealed {
             self
         }
 
-        /// Sets the deadline covering an HTTP/3 connection and its handshake.
-        /// The connector bounds only the QUIC part; the default is `None`.
+        /// Sets the deadline for a new HTTP/3 connection, starting once the connector is ready.
+        /// It covers the connector call and the HTTP/3 handshake that opens the control and
+        /// QPACK streams; the connector's own deadline covers only its call. Defaults to `None`.
         #[inline]
         pub fn http3_connect_timeout(
             #[cfg_attr(
