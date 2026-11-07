@@ -437,15 +437,10 @@ trait Http2Pool<B>: Clone + Send + 'static {
     fn has_service(&self) -> bool;
 }
 
-/// Boxed future that establishes the singleton HTTP/2 sender.
 #[cfg(feature = "http2")]
 type H2MakeFuture<B> = BoxFuture<'static, Result<http2::Connection<B>, BoxError>>;
-
-/// Generation-aware checkout of the shared HTTP/2 sender.
 #[cfg(feature = "http2")]
 type H2Pooled<B> = Singled<H2MakeFuture<B>, http2::Connection<B>>;
-
-/// Future joining an existing HTTP/2 singleton generation.
 #[cfg(feature = "http2")]
 type H2Checkout<B> = SingletonFuture<H2MakeFuture<B>, http2::Connection<B>>;
 
