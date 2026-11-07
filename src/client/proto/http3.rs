@@ -106,15 +106,14 @@ where
             // As for the connector's own timeout, readiness waits such as concurrency admission
             // come before the deadline.
             connector.ready().await?;
+
             // A peer that withholds stream credit stalls the handshake after the QUIC connection
             // is up, so the deadline also covers opening the control and QPACK streams.
-            let deadline = timeout.map(|timeout| runtime.sleep(timeout));
-            let connecting = connector.call(target.connection.req);
             let handshake = async {
                 let Conn {
                     inner,
                     connected: conn_info,
-                } = connecting.await?;
+                } = connector.call(target.connection.req).await?;
                 let Either::Right((quic, endpoint)) = inner else {
                     return Err::<_, BoxError>("QUIC connection returned a stream".into());
                 };
@@ -122,14 +121,16 @@ where
                 let (tx, driver) = builder.handshake::<_, B>(transport).await?;
                 Ok((tx, driver, endpoint, conn_info))
             };
-            let (mut tx, driver, endpoint, conn_info) = match deadline {
-                // A connection ready at the deadline wins the tie.
-                Some(deadline) => match future::select(pin!(handshake), deadline).await {
-                    Either::Left((result, _)) => result?,
-                    Either::Right(((), _)) => return Err(Box::new(TimedOut) as BoxError),
-                },
-                None => handshake.await?,
-            };
+
+            let (mut tx, driver, endpoint, conn_info) =
+                match timeout.map(|timeout| runtime.sleep(timeout)) {
+                    Some(deadline) => match future::select(pin!(handshake), deadline).await {
+                        Either::Left((result, _)) => result?,
+                        Either::Right(((), _)) => return Err(Box::new(TimedOut) as _),
+                    },
+                    None => handshake.await?,
+                };
+
             runtime.execute(Box::pin(async move {
                 let _endpoint = endpoint;
                 if let Err(_error) = driver.await {
@@ -137,6 +138,7 @@ where
                 }
             }));
             tx.ready().await?;
+
             Ok(Connection {
                 tx,
                 state: Arc::new(ConnectionState::new(runtime.now())),
