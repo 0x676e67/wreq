@@ -46,7 +46,7 @@ use tower::{
 use transport::{BindOptions, SocketConnector};
 #[cfg(feature = "http3")]
 use {
-    crate::Protocol,
+    crate::protocol::TransportKind,
     futures_util::future::Either,
     layer::proxy::{QuicProxyConnector, QuicProxyLayer},
 };
@@ -168,7 +168,7 @@ impl Service<ConnectRequest> for Connector {
                 quic,
             } => {
                 #[cfg(feature = "http3")]
-                if request.resolved_protocol() == Protocol::Http3 {
+                if request.resolved_protocol().transport() == TransportKind::Quic {
                     return ConnectorFuture::Quic {
                         future: quic.call(request),
                     };

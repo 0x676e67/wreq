@@ -24,8 +24,6 @@ use super::{
     error::{Error, ErrorKind},
     pool::ConnectionConfig,
 };
-#[cfg(feature = "http2")]
-use crate::Protocol;
 #[cfg(any(feature = "http2", feature = "http3"))]
 use crate::sync::Mutex;
 use crate::{Body, conn::Connected};
@@ -39,8 +37,6 @@ use crate::{Body, conn::Connected};
 pub(super) struct Established<T> {
     io: T,
     connected: Connected,
-    #[cfg(feature = "http2")]
-    protocol: Protocol,
     config: ConnectionConfig,
     #[cfg(feature = "http2")]
     idle_at: Instant,
@@ -145,32 +141,28 @@ impl<T> Established<T> {
     pub(super) fn new(
         io: T,
         connected: Connected,
-        #[cfg(feature = "http2")] protocol: Protocol,
         config: ConnectionConfig,
         #[cfg(feature = "http2")] idle_at: Instant,
     ) -> Self {
         Self {
             io,
             connected,
-            #[cfg(feature = "http2")]
-            protocol,
             config,
             #[cfg(feature = "http2")]
             idle_at,
         }
     }
 
+    /// Returns metadata for the transport, including its negotiated ALPN.
+    #[cfg(feature = "http2")]
+    pub(super) fn connected(&self) -> &Connected {
+        &self.connected
+    }
+
     /// Returns when this transport became available for protocol selection.
     #[cfg(feature = "http2")]
     pub(super) fn idle_at(&self) -> Instant {
         self.idle_at
-    }
-
-    /// Chooses HTTP/2 when requested explicitly or negotiated by the transport.
-    #[cfg(feature = "http2")]
-    pub(super) fn should_use_http2(&self) -> bool {
-        self.protocol == Protocol::Http2
-            || (self.protocol == Protocol::Auto && self.connected.is_negotiated_h2())
     }
 }
 

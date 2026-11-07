@@ -1,4 +1,5 @@
-//! HTTP protocol selection shared by dispatch, connection pools, and TLS.
+//! HTTP protocol selection shared by dispatch, connection pools, and TLS, and the transport
+//! each protocol runs over.
 
 /// Selects the HTTP protocol used when establishing a connection.
 /// Includes automatic negotiation as well as fixed HTTP protocol modes.
@@ -25,4 +26,27 @@ pub(crate) enum Protocol {
     /// Uses HTTP/3 over QUIC without falling back to TCP.
     #[cfg(feature = "http3")]
     Http3,
+}
+
+/// Transport a connection and its TLS handshake run over.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum TransportKind {
+    /// A TCP or Unix byte stream.
+    Stream,
+    /// A QUIC connection.
+    #[cfg(feature = "http3")]
+    Quic,
+}
+
+impl Protocol {
+    /// Returns the transport this protocol runs over.
+    #[cfg(feature = "http3")]
+    pub(crate) const fn transport(self) -> TransportKind {
+        match self {
+            Self::Auto | Self::Http1 => TransportKind::Stream,
+            #[cfg(feature = "http2")]
+            Self::Http2 => TransportKind::Stream,
+            Self::Http3 => TransportKind::Quic,
+        }
+    }
 }

@@ -512,7 +512,6 @@ impl ClientBuilder {
 
             let connector = {
                 let tls = TlsBuilder::new()
-                    .protocol(self.config.protocol)
                     .keylog(self.config.tls_keylog)
                     .cert_store(self.config.tls_cert_store)
                     .identity(self.config.tls_identity)

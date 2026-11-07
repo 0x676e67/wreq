@@ -11,14 +11,13 @@ use super::{
     session::{SessionStore, TlsSessionStore},
     trust::{CertStore, Identity},
 };
-use crate::{Error, Protocol, conn::config::ConfigSet};
+use crate::{Error, conn::config::ConfigSet};
 
 /// Client settings used to build TLS connection services and QUIC configurations.
-/// Protocol selection and minimum version apply to TCP/Unix. QUIC checks the maximum
-/// version against TLS 1.3 and uses its own ALPN.
+/// The minimum version applies to TCP/Unix. QUIC checks the maximum version against
+/// TLS 1.3 and uses its own ALPN.
 #[derive(Clone)]
 pub(super) struct Config {
-    pub(super) protocol: Protocol,
     pub(super) max_version: Option<TlsVersion>,
     pub(super) min_version: Option<TlsVersion>,
     pub(super) sni: bool,
@@ -87,7 +86,6 @@ impl TlsBuilder {
     pub(crate) fn new() -> Self {
         Self {
             config: Config {
-                protocol: Protocol::Auto,
                 min_version: None,
                 max_version: None,
                 identity: None,
@@ -99,21 +97,6 @@ impl TlsBuilder {
                 session_store: Arc::new(SessionStore::new(None)),
             },
         }
-    }
-
-    /// Supplies the HTTP preference used for TCP TLS negotiation.
-    /// HTTP/3 uses automatic selection on TCP; QUIC sets its own ALPN.
-    /// Fixed modes override TLS options; automatic mode preserves their ALPN list.
-    #[inline]
-    pub fn protocol(mut self, protocol: Protocol) -> Self {
-        #[cfg(feature = "http3")]
-        let protocol = if protocol == Protocol::Http3 {
-            Protocol::Auto
-        } else {
-            protocol
-        };
-        self.config.protocol = protocol;
-        self
     }
 
     /// Sets the TLS keylog policy.

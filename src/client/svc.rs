@@ -37,6 +37,8 @@ use super::{
     pool::{self, ConnectionConfig, TransportConnector},
     request::RequestVersion,
 };
+#[cfg(feature = "http3")]
+use crate::protocol::TransportKind;
 use crate::{
     Body, Protocol,
     config::RequestConfig,
@@ -96,6 +98,8 @@ struct Http1Upgrade {
 pub struct PoolRequest<B> {
     request: Request<B>,
     config: ConnectionConfig,
+    /// Whether the wire version follows the connection, as an explicit `Protocol::Auto` asks.
+    negotiable: bool,
     /// Default-group key whose established sender may carry this WebSocket.
     #[cfg(feature = "http2")]
     extended_connect_key: Option<crate::conn::request::ConnectionKey>,
@@ -130,6 +134,8 @@ pin_project! {
 /// Kept outside `pin_project!`, whose fields cannot carry `cfg` attributes.
 struct Original {
     uri: Uri,
+    /// Wire version before a connection fitted it; the next connection may differ.
+    version: Version,
     /// Whether the caller set `Cookie`; otherwise each attempt regenerates it.
     #[cfg(feature = "cookies")]
     had_cookie: bool,
@@ -137,8 +143,8 @@ struct Original {
 
 /// Performs one connection-pool checkout and protocol send attempt.
 ///
-/// Each call checks out a compatible sender, applies cookies, dispatches the
-/// request, and attaches connection metadata. HTTP/2 and HTTP/3 release their
+/// Each call checks out a compatible sender, fits the request to it, applies cookies,
+/// dispatches the request, and attaches connection metadata. HTTP/2 and HTTP/3 release their
 /// local checkout after response headers. HTTP/1 returns immediately only when
 /// its sender is ready again; otherwise a pool-owned task waits before returning
 /// it. Errors preserve an unsent request when the protocol dispatcher can prove
@@ -266,7 +272,7 @@ impl<S, B> Stack<S, B> {
         // HTTP/3 has no cleartext form; an https-to-http redirect also ends here:
         // https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1
         #[cfg(feature = "http3")]
-        if req.resolved_protocol() == Protocol::Http3 && !uri.is_https() {
+        if req.resolved_protocol().transport() == TransportKind::Quic && !uri.is_https() {
             warn!("HTTP/3 requires an https URI");
             return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
                 .with_context("HTTP/3 requires an https URI"));
@@ -285,6 +291,7 @@ impl<S, B> Stack<S, B> {
                 proto: self.proto.clone(),
                 dedicated: dedicated.is_some(),
             },
+            negotiable: protocol == Some(Protocol::Auto),
             #[cfg(feature = "http2")]
             extended_connect_key,
         })
@@ -341,6 +348,7 @@ where
     fn call(&mut self, request: PoolRequest<B>) -> Self::Future {
         let original = Original {
             uri: request.request.uri().clone(),
+            version: request.request.version(),
             #[cfg(feature = "cookies")]
             had_cookie: request.request.headers().contains_key(COOKIE),
         };
@@ -394,6 +402,7 @@ where
             };
 
             *request.request.uri_mut() = this.original.uri.clone();
+            *request.request.version_mut() = this.original.version;
             // Regenerate automatic cookies for the next protocol; retain user headers.
             #[cfg(feature = "cookies")]
             if !this.original.had_cookie {
@@ -467,6 +476,44 @@ fn with_h2_alpn_context(error: Error, unnegotiated_h2: bool) -> Error {
     }
 }
 
+/// Fits the request to the checked-out connection and returns whether it uses extended CONNECT.
+///
+/// Multiplexed connections set their own wire version. HTTP/1 sets HTTP/1.1 only for a
+/// `negotiable` request and otherwise requires HTTP/1.0 or HTTP/1.1. Extended CONNECT must
+/// match the connection, and a plain CONNECT target gains its default port.
+fn reconcile(
+    request: &mut Request<Body>,
+    pooled: &pool::Pooled,
+    negotiable: bool,
+) -> Result<bool, Error> {
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    let extended = matched_extended_connect(request, pooled)?;
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    if extended && pooled.extended_connect() == Some(false) {
+        return Err(extended_connect_disabled(pooled));
+    }
+    #[cfg(not(any(feature = "http2", feature = "http3")))]
+    let extended = false;
+
+    let version = pooled.version();
+    let multiplexed = version != Version::HTTP_11;
+    if multiplexed || negotiable {
+        *request.version_mut() = version;
+    } else if !matches!(request.version(), Version::HTTP_10 | Version::HTTP_11) {
+        warn!(
+            "Connection is HTTP/1, but request requires {:?}",
+            request.version()
+        );
+        return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
+            .with_connect_info(pooled.connected().clone()));
+    }
+
+    if request.method() == Method::CONNECT && !extended {
+        connect_target_port(request, multiplexed)?;
+    }
+    Ok(extended)
+}
+
 /// Returns whether the request uses extended CONNECT on this connection.
 /// HTTP/2 takes `:protocol` from `http2::ext::Protocol` ([RFC 8441 §4]) and HTTP/3 from
 /// `netty::http3::Protocol` ([RFC 9220 §3]); a marker the connection would ignore fails
@@ -485,9 +532,10 @@ fn matched_extended_connect<B>(request: &Request<B>, pooled: &pool::Pooled) -> R
         feature = "http3" => extensions.get::<netty::http3::Protocol>().is_some(),
         _ => false,
     };
-    let matched = cfg_select! {
-        feature = "http3" => (http2 && pooled.is_http2()) || (http3 && pooled.is_http3()),
-        _ => http2 && pooled.is_http2(),
+    let matched = match pooled.version() {
+        Version::HTTP_2 => http2,
+        Version::HTTP_3 => http3,
+        _ => false,
     };
     if (http2 || http3) && !matched {
         warn!("extended CONNECT protocol does not match the connection's HTTP version");
@@ -602,6 +650,7 @@ where
             let PoolRequest {
                 mut request,
                 config,
+                negotiable,
                 #[cfg(feature = "http2")]
                 extended_connect_key,
             } = request;
@@ -621,94 +670,46 @@ where
 
             let mut pooled = match reused {
                 Some(pooled) => pooled,
-                None => {
-                    let protocol = config.req.resolved_protocol();
-                    match this.pool.checkout(config.clone(), protocol).await {
-                        Ok(pooled) => pooled,
-                        Err(error) if pool::is_canceled(&*error) => {
-                            return Err(DispatchError::CheckoutCanceled {
-                                error: Error::new(ErrorKind::Connect, error),
-                                request: Box::new(PoolRequest {
-                                    request,
-                                    config,
-                                    #[cfg(feature = "http2")]
-                                    extended_connect_key,
-                                }),
-                            });
-                        }
-                        Err(error) => {
-                            return Err(DispatchError::Terminal(Error::new(
-                                ErrorKind::Connect,
-                                error,
-                            )));
-                        }
+                None => match this.pool.checkout(config.clone()).await {
+                    Ok(pooled) => pooled,
+                    Err(error) if pool::is_canceled(&*error) => {
+                        return Err(DispatchError::CheckoutCanceled {
+                            error: Error::new(ErrorKind::Connect, error),
+                            request: Box::new(PoolRequest {
+                                request,
+                                config,
+                                negotiable,
+                                #[cfg(feature = "http2")]
+                                extended_connect_key,
+                            }),
+                        });
                     }
-                }
+                    Err(error) => {
+                        return Err(DispatchError::Terminal(Error::new(
+                            ErrorKind::Connect,
+                            error,
+                        )));
+                    }
+                },
             };
 
-            #[cfg(feature = "http3")]
-            if pooled.is_http3() {
-                *request.version_mut() = Version::HTTP_3;
-            }
-
-            #[cfg(any(feature = "http2", feature = "http3"))]
-            let extended = match matched_extended_connect(&request, &pooled) {
+            // Cookies keep the request URI; only the wire target of a CONNECT changes.
+            #[cfg(feature = "cookies")]
+            let uri = request.uri().clone();
+            #[cfg_attr(
+                not(any(feature = "http2", feature = "http3")),
+                expect(unused_variables, reason = "HTTP/1 has no extended CONNECT")
+            )]
+            let extended = match reconcile(&mut request, &pooled, negotiable) {
                 Ok(extended) => extended,
                 Err(error) => return Err(DispatchError::Terminal(error)),
             };
-            #[cfg(any(feature = "http2", feature = "http3"))]
-            if extended && pooled.extended_connect() == Some(false) {
-                return Err(DispatchError::Terminal(extended_connect_disabled(&pooled)));
-            }
-            #[cfg(not(any(feature = "http2", feature = "http3")))]
-            let extended = false;
 
-            if config.req.protocol() == Some(Protocol::Auto) {
-                // Resolve the wire version on every attempt: an unsent retry may
-                // select a different protocol, but retains the original preference.
-                *request.version_mut() = if pooled.is_http2() {
-                    Version::HTTP_2
-                } else {
-                    Version::HTTP_11
-                };
-            } else if pooled.is_http1()
-                && !matches!(request.version(), Version::HTTP_10 | Version::HTTP_11)
-            {
-                warn!(
-                    "Connection is HTTP/1, but request requires {:?}",
-                    request.version()
-                );
-                return Err(DispatchError::Terminal(
-                    Error::from_kind(ErrorKind::UserUnsupportedVersion)
-                        .with_connect_info(pooled.connected().clone()),
-                ));
-            }
-
-            #[cfg(feature = "cookies")]
-            let uri = request.uri().clone();
             #[cfg(feature = "cookies")]
             let cookie_store = this.cookie_store.fetch(request.extensions()).cloned();
-
             #[cfg(feature = "cookies")]
             if let Some(ref cookie_store) = cookie_store {
-                // ALPN may select HTTP/2 while an automatic request still has
-                // its default HTTP/1.1 version in the request object.
-                let version = if pooled.is_http2() {
-                    Version::HTTP_2
-                } else if pooled.is_http1() {
-                    Version::HTTP_11
-                } else {
-                    Version::HTTP_3
-                };
-                apply_request_cookies(&mut request, cookie_store.as_ref(), &uri, version);
-            }
-
-            // Only the wire target changes; cookies keep the request URI.
-            if request.method() == Method::CONNECT
-                && !extended
-                && let Err(error) = connect_target_port(&mut request, !pooled.is_http1())
-            {
-                return Err(DispatchError::Terminal(error));
+                apply_request_cookies(&mut request, cookie_store.as_ref(), &uri, pooled.version());
             }
 
             let mut response = match pooled.call(request).await {
@@ -716,7 +717,7 @@ where
                 Err(mut error) => {
                     let connection_reused = pooled.is_reused();
                     let connect_info = pooled.connected().clone();
-                    let unnegotiated_h2 = pooled.is_http2()
+                    let unnegotiated_h2 = pooled.version() == Version::HTTP_2
                         && config.req.uri().is_https()
                         && !connect_info.is_negotiated_h2();
                     // A returned request was not sent; only protocol rejections are final,
@@ -737,6 +738,7 @@ where
                             request: Box::new(PoolRequest {
                                 request,
                                 config,
+                                negotiable,
                                 #[cfg(feature = "http2")]
                                 extended_connect_key,
                             }),
@@ -764,7 +766,10 @@ where
             response.extensions_mut().insert(pooled.connected().clone());
 
             // Multiplexed senders are shared, so only HTTP/1 waits to become ready again.
-            if !pooled.is_http1() || !pooled.is_pool_enabled() || pooled.is_ready() {
+            if pooled.version() != Version::HTTP_11
+                || !pooled.is_pool_enabled()
+                || pooled.is_ready()
+            {
                 drop(pooled);
             } else {
                 this.runtime.execute(Box::pin(async move {
@@ -842,6 +847,36 @@ mod tests {
             bind_options: BindOptions::default(),
         };
         layer(Arc::new(proto), Arc::new(defaults), retry_unsent).layer(service)
+    }
+
+    /// Dispatches over fresh HTTP/1 connections whose server answers with `handler`.
+    fn http1_dispatch<F>(
+        handler: F,
+        #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn CookieStore>>,
+    ) -> Dispatch<impl TransportConnector>
+    where
+        F: Fn(Request<hyper::body::Incoming>) -> Response<String> + Clone + Send + Sync + 'static,
+    {
+        let connector = tower::service_fn(move |_: ConnectRequest| {
+            let handler = handler.clone();
+            let service = hyper::service::service_fn(move |request| {
+                future::ready(Ok::<_, std::convert::Infallible>(handler(request)))
+            });
+            let (client, server) = tokio::io::duplex(16384);
+            tokio::spawn(
+                hyper::server::conn::http1::Builder::new()
+                    .serve_connection(hyper_util::rt::TokioIo::new(server), service),
+            );
+            future::ready(Ok::<_, BoxError>(Conn::test(client)))
+        });
+        Dispatch::new(
+            pool::Config::default(),
+            connector,
+            true,
+            #[cfg(feature = "cookies")]
+            cookie_store,
+            DynRuntime::new(crate::rt::tokio::TokioRuntime),
+        )
     }
 
     #[tokio::test]
@@ -1070,6 +1105,56 @@ mod tests {
                 .unwrap();
             assert_eq!(calls.load(Ordering::Relaxed), 2);
         }
+    }
+
+    #[cfg(feature = "cookies")]
+    #[tokio::test]
+    async fn cookies_keep_the_request_uri_of_a_connect_target() {
+        use http_body_util::BodyExt;
+
+        /// Records the URIs that dispatch reads and stores cookies for.
+        #[derive(Default)]
+        struct Recorder(crate::sync::Mutex<Vec<String>>);
+
+        impl CookieStore for Recorder {
+            fn set_cookies(&self, _: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri) {
+                self.0.lock().push(format!("set {uri}"));
+            }
+
+            fn cookies(&self, uri: &Uri, _: Version) -> Cookies {
+                self.0.lock().push(format!("get {uri}"));
+                Cookies::Compressed(HeaderValue::from_static("a=1"))
+            }
+        }
+
+        let store = Arc::new(Recorder::default());
+        let dispatch = http1_dispatch(
+            |request| {
+                let target = format!("{} {:?}", request.uri(), request.headers()[COOKIE]);
+                let mut response = Response::new(target);
+                *response.status_mut() = http::StatusCode::FORBIDDEN;
+                response
+                    .headers_mut()
+                    .insert(http::header::SET_COOKIE, HeaderValue::from_static("b=2"));
+                response
+            },
+            Some(store.clone()),
+        );
+        let response = stack(dispatch, Protocol::Auto, true)
+            .oneshot(
+                Request::connect("http://localhost/")
+                    .body(crate::Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // The wire target names the default port; both cookie calls see the request URI.
+        let target = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(target, "localhost:80 \"a=1\"");
+        assert_eq!(
+            *store.0.lock(),
+            ["get http://localhost/", "set http://localhost/"]
+        );
     }
 
     #[tokio::test]
@@ -1397,5 +1482,48 @@ mod tests {
             assert!(task.is_woken());
             assert_eq!(calls.load(Ordering::Relaxed), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn unsent_retries_restore_the_wire_version_for_http1() {
+        use http_body_util::BodyExt;
+
+        let dispatch = http1_dispatch(
+            |request| Response::new(format!("{:?}", request.version())),
+            #[cfg(feature = "cookies")]
+            None,
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let attempts = calls.clone();
+        let service = tower::service_fn(move |mut request: PoolRequest<crate::Body>| {
+            let mut dispatch = dispatch.clone();
+            let first = attempts.fetch_add(1, Ordering::Relaxed) == 0;
+            async move {
+                if !first {
+                    return dispatch.call(request).await;
+                }
+                // A multiplexed connection set its version before returning the request unsent.
+                *request.request.version_mut() = Version::HTTP_2;
+                Err(DispatchError::Unsent {
+                    error: Error::from_kind(ErrorKind::Canceled),
+                    request: Box::new(request),
+                    connection_reused: true,
+                })
+            }
+        });
+
+        // Without a version preference, HTTP/1 accepts only an HTTP/1 wire version.
+        let response = stack(service, Protocol::Auto, true)
+            .oneshot(
+                Request::get("http://localhost/")
+                    .version(Version::HTTP_10)
+                    .body(crate::Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        let version = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(version, "HTTP/1.0");
     }
 }

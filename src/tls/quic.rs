@@ -18,7 +18,7 @@ use super::{
     AlpnProtocol, AlpsProtocol, TlsVersion,
     config::Config,
     ext::{SslContextBuilderExt as _, set_ech_grease_host},
-    session::{Key, SessionStore, SessionTarget, SessionTransport},
+    session::{Key, SessionStore, SessionTarget},
 };
 use crate::{
     Error, Result,
@@ -27,6 +27,7 @@ use crate::{
         request::ConnectRequest,
         transport::TUNNEL_MTU,
     },
+    protocol::TransportKind,
     quic::QuicOptions,
     sync::Mutex,
 };
@@ -142,7 +143,7 @@ impl TlsConfig {
         let overrides = Overrides::for_context(
             request.config_set().clone(),
             &inner.config_set,
-            SessionTransport::Quic,
+            TransportKind::Quic,
         );
         let mut crypto = if overrides.is_empty() {
             inner.context.clone()
@@ -170,7 +171,7 @@ impl TlsConfig {
             let target = SessionTarget::new(
                 request,
                 &inner.config_set,
-                SessionTransport::Quic,
+                TransportKind::Quic,
                 None,
                 session_store.session_id_context().map_err(Error::tls)?,
             );

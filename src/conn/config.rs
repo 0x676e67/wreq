@@ -13,7 +13,7 @@ use std::{
 
 use lru::DefaultHasher;
 
-use crate::{Protocol, tls::session::SessionTransport};
+use crate::{Protocol, protocol::TransportKind};
 
 /// Implements whole-value identity for one protocol configuration type.
 macro_rules! impl_connect_config {
@@ -248,20 +248,20 @@ impl ConfigScope {
     }
 
     /// Selects session configuration for `transport`, excluding HTTP options.
-    const fn session(transport: SessionTransport) -> Self {
+    const fn session(transport: TransportKind) -> Self {
         Self::ALL.without(Self::HTTP.or(match transport {
-            SessionTransport::Stream => Self::QUIC_ONLY,
+            TransportKind::Stream => Self::QUIC_ONLY,
             #[cfg(feature = "http3")]
-            SessionTransport::Quic => Self::TCP_ONLY,
+            TransportKind::Quic => Self::TCP_ONLY,
         }))
     }
 
     /// Selects TLS context configuration, excluding routes and groups.
-    const fn context(transport: SessionTransport) -> Self {
+    const fn context(transport: TransportKind) -> Self {
         match transport {
-            SessionTransport::Stream => Self::TLS,
+            TransportKind::Stream => Self::TLS,
             #[cfg(feature = "http3")]
-            SessionTransport::Quic => Self::QUIC,
+            TransportKind::Quic => Self::QUIC,
         }
     }
 
@@ -447,7 +447,7 @@ impl Overrides {
     pub(crate) fn for_session(
         config_set: ConfigSet,
         client_config_set: &ConfigSet,
-        transport: SessionTransport,
+        transport: TransportKind,
     ) -> Self {
         Self::select(
             config_set,
@@ -461,7 +461,7 @@ impl Overrides {
     pub(crate) fn for_context(
         config_set: ConfigSet,
         client_config_set: &ConfigSet,
-        transport: SessionTransport,
+        transport: TransportKind,
     ) -> Self {
         Self::select(
             config_set,
@@ -766,9 +766,9 @@ mod tests {
                 Overrides::for_session(
                     config_set.clone(),
                     &client_config_set,
-                    SessionTransport::Stream,
+                    TransportKind::Stream,
                 ),
-                Overrides::for_context(config_set, &client_config_set, SessionTransport::Stream),
+                Overrides::for_context(config_set, &client_config_set, TransportKind::Stream),
             ];
             for (projection, counted) in projections.into_iter().zip(expected) {
                 assert_eq!(!projection.is_empty(), counted);

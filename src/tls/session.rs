@@ -32,6 +32,7 @@ use crate::{
         request::ConnectRequest,
         transport::BindOptions,
     },
+    protocol::TransportKind,
     sync::Mutex,
     tls::TlsVersion,
 };
@@ -71,20 +72,12 @@ pub(crate) struct SessionTarget {
 /// apart; socket bindings and the remaining connection configuration stay in.
 #[derive(Clone)]
 struct SessionKey {
-    transport: SessionTransport,
+    transport: TransportKind,
     origin: Uri,
     route: Uri,
     overrides: Overrides,
     bind_options: Option<Arc<BindOptions>>,
     hash: u64,
-}
-
-/// Transport a TLS handshake runs over.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum SessionTransport {
-    Stream,
-    #[cfg(feature = "http3")]
-    Quic,
 }
 
 /// A TLS session that can be stored and retrieved from a session store.
@@ -151,7 +144,7 @@ pub struct LruTlsSessionStore {
 
 impl SessionKey {
     /// Derives the TLS identity of a connection request over `transport`.
-    fn new(req: &ConnectRequest, config_set: &ConfigSet, transport: SessionTransport) -> Self {
+    fn new(req: &ConnectRequest, config_set: &ConfigSet, transport: TransportKind) -> Self {
         let overrides = Overrides::for_session(req.config_set().clone(), config_set, transport);
         let origin = req.uri().clone();
         let route = req.route_uri().clone();
@@ -194,7 +187,7 @@ impl SessionTarget {
     pub(crate) fn new(
         req: &ConnectRequest,
         config_set: &ConfigSet,
-        transport: SessionTransport,
+        transport: TransportKind,
         remote_ip: Option<IpAddr>,
         session_id_context: [u8; SESSION_ID_CONTEXT_LENGTH],
     ) -> Self {
@@ -413,8 +406,7 @@ mod tests {
         let config_set = ConfigSet::default();
         let req = request(None, ConfigSet::default(), &config_set);
         let context = [1; SESSION_ID_CONTEXT_LENGTH];
-        let target =
-            |ip| SessionTarget::new(&req, &config_set, SessionTransport::Stream, ip, context);
+        let target = |ip| SessionTarget::new(&req, &config_set, TransportKind::Stream, ip, context);
         let known = target(Some(IpAddr::from([192, 0, 2, 1])));
 
         let rsa = known.key_for(Some(Nid::KX_RSA)).unwrap();
@@ -432,7 +424,7 @@ mod tests {
             SessionKey::new(
                 &request(protocol, config_set, &client_config_set),
                 &client_config_set,
-                SessionTransport::Stream,
+                TransportKind::Stream,
             )
         };
         let plain = key(None, ConfigSet::default());
@@ -462,12 +454,12 @@ mod tests {
             ),
             key(None, tls(TlsOptions::builder().key_shares(Vec::new()))),
             key(None, grouped),
-            SessionKey::new(&proxied, &client_config_set, SessionTransport::Stream),
+            SessionKey::new(&proxied, &client_config_set, TransportKind::Stream),
             #[cfg(feature = "http3")]
             SessionKey::new(
                 &request(None, ConfigSet::default(), &client_config_set),
                 &client_config_set,
-                SessionTransport::Quic,
+                TransportKind::Quic,
             ),
         ];
         for other in others {
@@ -497,7 +489,7 @@ mod tests {
             ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
             ..Default::default()
         })));
-        let assert_bindings = |transport: SessionTransport| {
+        let assert_bindings = |transport: TransportKind| {
             let inherited_key = SessionKey::new(&inherited, &client_config_set, transport);
             assert!(inherited_key == SessionKey::new(&equal, &client_config_set, transport));
             assert!(inherited_key != SessionKey::new(&changed, &client_config_set, transport));
@@ -508,8 +500,8 @@ mod tests {
             };
             assert!(context(&inherited) == context(&changed));
         };
-        assert_bindings(SessionTransport::Stream);
+        assert_bindings(TransportKind::Stream);
         #[cfg(feature = "http3")]
-        assert_bindings(SessionTransport::Quic);
+        assert_bindings(TransportKind::Quic);
     }
 }

@@ -304,7 +304,7 @@ mod conn;
 mod error;
 mod group;
 mod into_uri;
-mod proto;
+mod protocol;
 mod proxy;
 pub mod rt;
 mod sync;
@@ -322,7 +322,7 @@ pub mod tls;
 pub use self::client::multipart;
 #[cfg(feature = "ws")]
 pub use self::client::ws;
-pub(crate) use self::proto::Protocol;
+pub(crate) use self::protocol::Protocol;
 pub use self::{
     client::{
         Client, ClientBuilder,

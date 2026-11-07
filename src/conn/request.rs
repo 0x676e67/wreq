@@ -86,6 +86,7 @@ impl ConnectRequest {
     /// Returns the request's connection protocol preference.
     /// `None` inherits the client; `Some(Protocol::Auto)` allows protocol negotiation.
     /// This is a selection policy, not the established connection's wire version.
+    #[cfg(test)]
     pub(crate) fn protocol(&self) -> Option<Protocol> {
         self.key.protocol
     }

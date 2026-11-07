@@ -31,10 +31,8 @@ use crate::{
         request::ConnectRequest,
     },
     ext::UriExt,
-    tls::{
-        AlpnProtocol, TlsOptions,
-        session::{SessionTarget, SessionTransport},
-    },
+    protocol::TransportKind,
+    tls::{AlpnProtocol, TlsOptions, session::SessionTarget},
 };
 
 const URI_MISSING_HOST: &str = "URI missing host";
@@ -126,13 +124,13 @@ impl HttpsLayer {
         // Disabled proxy ALPN also skips ALPS. An advertised ALPN list must be nonempty:
         // https://www.rfc-editor.org/rfc/rfc7301#section-3.1
         if alpn_enabled {
-            // client::svc::Stack has resolved the request protocol. Auto prefers the first
-            // nonempty request or client list, preserving its order.
-            let protocols: &[AlpnProtocol] = match req.protocol().unwrap_or(inner.config.protocol) {
+            let protocols: &[AlpnProtocol] = match req.resolved_protocol() {
                 Protocol::Http1 => &[AlpnProtocol::HTTP1],
                 #[cfg(feature = "http2")]
                 Protocol::Http2 => &[AlpnProtocol::HTTP2],
-                Protocol::Auto => options
+                // Auto prefers the first nonempty request or client list, preserving its
+                // order. HTTP/3 dials QUIC, which sets its own ALPN, so it never gets here.
+                _ => options
                     .into_iter()
                     .chain(inner.options.as_deref())
                     .filter_map(|options| options.alpn_protocols.as_deref())
@@ -142,12 +140,6 @@ impl HttpsLayer {
                         AlpnProtocol::HTTP2,
                         AlpnProtocol::HTTP1,
                     ]),
-                #[cfg(feature = "http3")]
-                Protocol::Http3 => &[
-                    #[cfg(feature = "http2")]
-                    AlpnProtocol::HTTP2,
-                    AlpnProtocol::HTTP1,
-                ],
             };
             cfg.set_alpn_protos(&AlpnProtocol::encode_sequence(protocols))?;
 
@@ -187,7 +179,7 @@ impl HttpsLayer {
             let target = SessionTarget::new(
                 &req,
                 &inner.config_set,
-                SessionTransport::Stream,
+                TransportKind::Stream,
                 conn.remote_addr().map(|addr| addr.ip()),
                 session_store.session_id_context()?,
             );
@@ -268,7 +260,7 @@ impl<S> HttpsConnector<S> {
         let overrides = Overrides::for_context(
             req.config_set().clone(),
             &inner.config_set,
-            SessionTransport::Stream,
+            TransportKind::Stream,
         );
         self.context = if overrides.is_empty() {
             inner.context.clone()
