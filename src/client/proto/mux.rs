@@ -10,7 +10,7 @@ use std::{
 };
 
 use futures_util::{TryFutureExt, future::BoxFuture};
-use http::{Request, Response};
+use http::{Request, Response, Version};
 use netty::{body::Incoming, conn};
 use tower::Service;
 
@@ -69,6 +69,16 @@ impl Connection {
     /// Returns metadata for the underlying transport.
     pub fn connected(&self) -> &Connected {
         &self.connected
+    }
+
+    /// Returns the HTTP version spoken by the protocol sender.
+    pub fn version(&self) -> Version {
+        match &self.tx {
+            #[cfg(feature = "http2")]
+            Sender::Http2(_) => Version::HTTP_2,
+            #[cfg(feature = "http3")]
+            Sender::Http3(_) => Version::HTTP_3,
+        }
     }
 
     /// Returns whether the protocol sender is immediately ready.

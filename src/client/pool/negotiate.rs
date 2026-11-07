@@ -28,19 +28,11 @@ use tower::{
     util::{Either as ServiceEither, Oneshot},
 };
 
-use super::cache::Started;
+use super::{
+    cache::Started,
+    singleton::{Singled, Singleton, SingletonFuture},
+};
 use crate::sync::Mutex;
-
-/// Starts configuring a protocol-negotiating pool.
-pub(super) fn builder() -> Builder<WantsConnect, WantsInspect, WantsFallback, WantsUpgrade> {
-    Builder {
-        connect: WantsConnect,
-        inspect: WantsInspect,
-        fallback: WantsFallback,
-        upgrade: WantsUpgrade,
-        signal: UpgradeSignal::new(),
-    }
-}
 
 /// Selects a fallback or upgraded pool from an intermediate connection result.
 ///
@@ -117,54 +109,8 @@ pin_project! {
     }
 }
 
-/// Type-state builder for the connector, inspector, and two pool layers.
-///
-/// Each setter replaces one marker with its concrete component. `build` is
-/// available only after the connector, inspection predicate, fallback layer,
-/// and upgrade layer have compatible service types.
-#[derive(Debug)]
-pub(super) struct Builder<C, I, L, R> {
-    /// Service that establishes the intermediate connection.
-    connect: C,
-
-    /// Predicate selecting the upgraded path.
-    inspect: I,
-
-    /// Layer applied to fallback connections.
-    fallback: L,
-
-    /// Layer applied to upgraded connections.
-    upgrade: R,
-
-    /// Notification shared by fallback and direct upgraded attempts.
-    signal: UpgradeSignal,
-}
-
-/// Marks a builder awaiting [`Builder::connect`].
-#[derive(Debug)]
-pub(super) struct WantsConnect;
-/// Marks a builder awaiting [`Builder::inspect`].
-#[derive(Debug)]
-pub(super) struct WantsInspect;
-/// Marks a builder awaiting [`Builder::fallback`].
-#[derive(Debug)]
-pub(super) struct WantsFallback;
-/// Marks a builder awaiting [`Builder::upgrade`].
-#[derive(Debug)]
-pub(super) struct WantsUpgrade;
-
-/// Checks out a service only when one exists or is already being constructed.
-///
-/// Negotiation uses this operation before starting another physical connection.
-/// Unlike `Service::call`, an empty implementation must return `None` and leave
-/// its maker untouched.
-pub(super) trait Existing<S>: Service<S> {
-    /// Joins existing upgraded state without starting a new maker.
-    fn checkout(&self) -> Option<Self::Future>;
-
-    /// Clones only completed upgraded state, never joining a maker.
-    fn checkout_made(&self) -> Option<Self::Response>;
-}
+/// Future joining a completed or in-progress upgraded singleton generation.
+type UpgradeFuture<M, S> = SingletonFuture<<M as Service<S>>::Future, <M as Service<S>>::Response>;
 
 /// Existing upgraded work selected before falling back to a new connection.
 enum Selection<F, S> {
@@ -174,84 +120,6 @@ enum Selection<F, S> {
     Pending(S),
     /// No upgraded work is currently available.
     Fallback,
-}
-
-// ===== impl Builder =====
-
-impl<C, I, L, R> Builder<C, I, L, R> {
-    /// Sets the service that creates intermediate connections.
-    pub(super) fn connect<CC>(self, connect: CC) -> Builder<CC, I, L, R> {
-        Builder {
-            connect,
-            inspect: self.inspect,
-            fallback: self.fallback,
-            upgrade: self.upgrade,
-            signal: self.signal,
-        }
-    }
-
-    /// Sets the predicate that identifies upgraded connections.
-    pub(super) fn inspect<II>(self, inspect: II) -> Builder<C, II, L, R> {
-        Builder {
-            connect: self.connect,
-            inspect,
-            fallback: self.fallback,
-            upgrade: self.upgrade,
-            signal: self.signal,
-        }
-    }
-
-    /// Sets the layer used for fallback connections.
-    pub(super) fn fallback<LL>(self, fallback: LL) -> Builder<C, I, LL, R> {
-        Builder {
-            connect: self.connect,
-            inspect: self.inspect,
-            fallback,
-            upgrade: self.upgrade,
-            signal: self.signal,
-        }
-    }
-
-    /// Sets the layer used for upgraded connections.
-    pub(super) fn upgrade<RR>(self, upgrade: RR) -> Builder<C, I, L, RR> {
-        Builder {
-            connect: self.connect,
-            inspect: self.inspect,
-            fallback: self.fallback,
-            upgrade,
-            signal: self.signal,
-        }
-    }
-
-    /// Builds the negotiating pool after all components are supplied.
-    pub(super) fn build<Dst>(self) -> Negotiate<L::Service, R::Service, C::Response>
-    where
-        C: Service<Dst>,
-        C::Error: Into<BoxError>,
-        C::Response: Send + 'static,
-        L: Layer<Inspector<C, C::Response, I>>,
-        L::Service: Service<Dst> + Clone,
-        <L::Service as Service<Dst>>::Error: Into<BoxError>,
-        R: Layer<Provided<C::Response>>,
-        R::Service: Existing<C::Response> + Clone,
-        <R::Service as Service<C::Response>>::Error: Into<BoxError>,
-        I: Fn(&C::Response) -> bool + Clone,
-    {
-        let pending = Arc::new(Mutex::new(VecDeque::new()));
-        let signal = self.signal;
-        let fallback = self.fallback.layer(Inspector {
-            service: self.connect,
-            inspect: self.inspect,
-            pending: pending.clone(),
-            signal,
-        });
-        let upgrade = self.upgrade.layer(Provided(PhantomData));
-        Negotiate {
-            fallback,
-            upgrade,
-            pending,
-        }
-    }
 }
 
 // ===== impl Negotiate =====
@@ -267,13 +135,28 @@ impl<L: Clone, R: Clone, S> Clone for Negotiate<L, R, S> {
 }
 
 impl<L, R, S> Negotiate<L, R, S> {
-    /// Joins existing upgraded work without invoking the fallback service.
-    /// Returns redundant transports for destruction outside any caller-held lock.
-    pub(super) fn checkout_existing(&self) -> Option<(R::Future, VecDeque<S>)>
+    /// Composes both pools around one inspected connection service.
+    ///
+    /// `fallback` wraps `connect`, whose results `inspect` may divert to the
+    /// pending queue; `upgrade` wraps the identity maker those results enter.
+    pub(super) fn new<C, I, LL, RR>(connect: C, inspect: I, fallback: LL, upgrade: RR) -> Self
     where
-        R: Existing<S>,
+        I: Fn(&S) -> bool,
+        LL: Layer<Inspector<C, S, I>, Service = L>,
+        RR: Layer<Provided<S>, Service = R>,
     {
-        checkout_existing(&self.upgrade, &mut self.pending.lock())
+        let pending = Arc::new(Mutex::new(VecDeque::new()));
+        let fallback = fallback.layer(Inspector {
+            service: connect,
+            inspect,
+            pending: pending.clone(),
+            signal: UpgradeSignal::new(),
+        });
+        Self {
+            fallback,
+            upgrade: upgrade.layer(Provided(PhantomData)),
+            pending,
+        }
     }
 
     /// Borrows the fallback pool.
@@ -327,25 +210,38 @@ impl<L, R, S> Negotiate<L, R, S> {
     }
 }
 
-impl<L, R, S, Dst> Service<Dst> for Negotiate<L, R, S>
+impl<L, M, S> Negotiate<L, Singleton<M, S>, S>
+where
+    M: Service<S>,
+    M::Response: Clone,
+{
+    /// Joins existing upgraded work without invoking the fallback service.
+    /// Returns redundant transports for destruction outside any caller-held lock.
+    pub(super) fn checkout_existing(&self) -> Option<(UpgradeFuture<M, S>, VecDeque<S>)> {
+        checkout_existing(&self.upgrade, &mut self.pending.lock())
+    }
+}
+
+impl<L, M, S, Dst> Service<Dst> for Negotiate<L, Singleton<M, S>, S>
 where
     L: Service<Dst> + Clone,
     L::Error: Into<BoxError>,
-    R: Existing<S> + Clone,
-    R::Error: Into<BoxError>,
+    M: Service<S> + Clone,
+    M::Response: Clone,
+    M::Error: Into<BoxError>,
     Dst: Clone,
     S: Send + 'static,
 {
-    type Response = Negotiated<L::Response, R::Response>;
+    type Response = Negotiated<L::Response, Singled<M::Future, M::Response>>;
     type Error = BoxError;
-    type Future = Negotiating<Dst, L, R, S>;
+    type Future = Negotiating<Dst, L, Singleton<M, S>, S>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.fallback.poll_ready(cx).map_err(Into::into)
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
-        let state = match select_upgrade(&mut self.upgrade, &self.pending) {
+        let state = match select_upgrade(&self.upgrade, &self.pending) {
             Selection::Existing(future) => State::Upgrade { future },
             Selection::Pending(service) => State::Upgrade {
                 future: self.upgrade.call(service),
@@ -370,16 +266,17 @@ where
 
 // ===== impl Negotiating =====
 
-impl<Dst, L, R, S> Future for Negotiating<Dst, L, R, S>
+impl<Dst, L, M, S> Future for Negotiating<Dst, L, Singleton<M, S>, S>
 where
     L: Service<Dst> + Clone,
     L::Error: Into<BoxError>,
-    R: Existing<S>,
-    R::Error: Into<BoxError>,
+    M: Service<S>,
+    M::Response: Clone,
+    M::Error: Into<BoxError>,
     Dst: Clone,
     S: Send + 'static,
 {
-    type Output = Result<Negotiated<L::Response, R::Response>, BoxError>;
+    type Output = Result<Negotiated<L::Response, Singled<M::Future, M::Response>>, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
@@ -431,9 +328,13 @@ where
 }
 
 /// Selects upgraded work atomically and destroys redundant transports unlocked.
-fn select_upgrade<R, S>(upgrade: &mut R, pending: &Mutex<VecDeque<S>>) -> Selection<R::Future, S>
+fn select_upgrade<M, S>(
+    upgrade: &Singleton<M, S>,
+    pending: &Mutex<VecDeque<S>>,
+) -> Selection<UpgradeFuture<M, S>, S>
 where
-    R: Existing<S>,
+    M: Service<S>,
+    M::Response: Clone,
 {
     let mut pending = pending.lock();
     let (selection, discarded) = match checkout_existing(upgrade, &mut pending) {
@@ -451,12 +352,13 @@ where
 }
 
 /// Selects an existing generation and detaches transports made redundant by it.
-fn checkout_existing<R, S>(
-    upgrade: &R,
+fn checkout_existing<M, S>(
+    upgrade: &Singleton<M, S>,
     pending: &mut VecDeque<S>,
-) -> Option<(R::Future, VecDeque<S>)>
+) -> Option<(UpgradeFuture<M, S>, VecDeque<S>)>
 where
-    R: Existing<S>,
+    M: Service<S>,
+    M::Response: Clone,
 {
     upgrade
         .checkout()
@@ -710,7 +612,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::client::pool::singleton::Singleton;
 
     /// Immediately returns the protocol label supplied by the test.
     /// Substitutes for transport creation when testing protocol selection.
@@ -791,12 +692,12 @@ mod tests {
     #[tokio::test]
     async fn inspected_connections_select_the_expected_pool() {
         for (protocol, upgraded) in [("http/1.1", false), ("h2", true)] {
-            let negotiate = builder()
-                .connect(ReadyConnector(protocol))
-                .inspect(|protocol: &&str| *protocol == "h2")
-                .fallback(LayerFn(|service| service))
-                .upgrade(LayerFn(Singleton::new))
-                .build::<()>();
+            let negotiate = Negotiate::new(
+                ReadyConnector(protocol),
+                |protocol: &&str| *protocol == "h2",
+                LayerFn(|service| service),
+                LayerFn(Singleton::new),
+            );
 
             let selected = Oneshot::new(negotiate, ()).await.unwrap();
             match selected {

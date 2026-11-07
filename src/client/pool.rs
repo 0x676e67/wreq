@@ -53,7 +53,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service, ServiceBuilder, util::Oneshot};
 
 #[cfg(feature = "http2")]
-use self::negotiate::{Existing, Negotiate, Negotiated};
+use self::negotiate::{Negotiate, Negotiated};
 #[cfg(any(feature = "http2", feature = "http3"))]
 use self::singleton::{Singled, Singleton, SingletonError, SingletonFuture};
 use self::{
@@ -304,10 +304,10 @@ trait Entry: Send {
         pool_enabled: bool,
     ) -> (Checkout, Option<ConnectionConfig>);
 
-    /// Clones an established HTTP/2 sender without creating, joining, or draining
-    /// work. Other protocols and generations still being made return `None`.
+    /// Clones an established shared sender without creating, joining, or draining
+    /// work. HTTP/1 entries and generations still being made return `None`.
     #[cfg(feature = "http2")]
-    fn checkout_made(&self) -> Option<(H2Pooled, Arc<EntryState>)>;
+    fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)>;
 
     /// Removes expired or closed idle connections for unlocked destruction.
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop>;
@@ -339,25 +339,18 @@ struct Http1Entry<L> {
     state: Arc<EntryState>,
 }
 
-/// Fixed HTTP/2 entry sharing one connection generation across cold checkouts.
+/// Fixed HTTP/2 or HTTP/3 entry sharing one connection generation across cold checkouts.
 /// Once established, the sender is cloned for concurrent requests.
 /// Pending uses keep the entry alive; `state` identifies it during cleanup.
-#[cfg(feature = "http2")]
-struct Http2Entry<R> {
-    /// Shared HTTP/2 sender singleton.
+#[cfg(any(feature = "http2", feature = "http3"))]
+struct MuxEntry<R> {
+    /// Shared sender singleton.
     service: R,
     /// Checkout count and identity-aware cleanup for this entry.
     state: Arc<EntryState>,
-}
-
-/// Fixed HTTP/3 entry sharing one connection generation across checkouts.
-#[cfg(feature = "http3")]
-struct Http3Entry<M>
-where
-    M: Service<PoolTarget>,
-{
-    service: Singleton<M, PoolTarget>,
-    state: Arc<EntryState>,
+    /// Protocol whose handshake the singleton runs.
+    #[cfg(test)]
+    protocol: Protocol,
 }
 
 /// Entry that selects HTTP/1 or HTTP/2 after transport negotiation.
@@ -390,39 +383,15 @@ trait Http1Pool:
     fn is_empty(&self) -> bool;
 }
 
-/// Idle-management operations required from the HTTP/2 singleton.
-///
-/// The entry needs to inspect and remove a completed sender without starting
-/// another maker. In-progress handshakes are retained because canceling them
-/// would also cancel participating checkouts.
-#[cfg(feature = "http2")]
-trait Http2Pool: Clone + Send + 'static {
-    /// Removes a closed or expired idle HTTP/2 sender.
-    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Option<mux::Connection>;
-
-    /// Removes the completed shared HTTP/2 sender without canceling its maker.
-    fn take_idle(&mut self) -> Option<mux::Connection>;
-
-    /// Returns whether the HTTP/2 singleton is empty.
-    fn is_empty(&self) -> bool;
-
-    /// Returns whether the singleton has completed its shared sender.
-    fn has_service(&self) -> bool;
-}
-
-#[cfg(feature = "http2")]
-type H2MakeFuture = BoxFuture<'static, Result<mux::Connection, BoxError>>;
-#[cfg(feature = "http2")]
-type H2Pooled = Singled<H2MakeFuture, mux::Connection>;
-#[cfg(feature = "http2")]
-type H2Checkout = SingletonFuture<H2MakeFuture, mux::Connection>;
-
-#[cfg(feature = "http3")]
-type H3MakeFuture = BoxFuture<'static, Result<mux::Connection, BoxError>>;
-#[cfg(feature = "http3")]
-type H3Pooled = Singled<H3MakeFuture, mux::Connection>;
-#[cfg(feature = "http3")]
-type H3Checkout = SingletonFuture<H3MakeFuture, mux::Connection>;
+/// Handshake future of one HTTP/2 or HTTP/3 connection.
+#[cfg(any(feature = "http2", feature = "http3"))]
+type MuxMake = BoxFuture<'static, Result<mux::Connection, BoxError>>;
+/// Shared sender clone checked out from a singleton.
+#[cfg(any(feature = "http2", feature = "http3"))]
+type MuxPooled = Singled<MuxMake, mux::Connection>;
+/// Future joining an existing singleton generation.
+#[cfg(any(feature = "http2", feature = "http3"))]
+type MuxCheckout = SingletonFuture<MuxMake, mux::Connection>;
 
 /// Defers checkout completion and resource destruction until the map is unlocked.
 ///
@@ -431,21 +400,15 @@ type H3Checkout = SingletonFuture<H3MakeFuture, mux::Connection>;
 /// case, the entry remains active until it is transferred to the sender.
 enum Checkout {
     /// Existing singleton work, without another box around its future.
-    #[cfg(feature = "http2")]
-    Http2 {
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    Mux {
         /// Owns the sender clone or pending-generation participation.
-        future: H2Checkout,
+        future: MuxCheckout,
         /// Redundant negotiated transports released on the first poll or drop.
         discarded: Option<DeferredDrop>,
         /// Drops after the singleton participant so cleanup sees its final state.
         usage: Option<EntryUse>,
         /// Whether the resulting sender belongs to a shared pool.
-        pool_enabled: bool,
-    },
-    #[cfg(feature = "http3")]
-    Http3 {
-        future: H3Checkout,
-        usage: Option<EntryUse>,
         pool_enabled: bool,
     },
     /// Composed cache or negotiation work, retaining its own scheduling state.
@@ -455,10 +418,8 @@ enum Checkout {
 /// HTTP sender selected for one pool checkout.
 enum PooledInner {
     Http1(Cached<http1::Connection>),
-    #[cfg(feature = "http2")]
-    Http2(H2Pooled),
-    #[cfg(feature = "http3")]
-    Http3(H3Pooled),
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    Mux(MuxPooled),
 }
 
 /// Type-erased connection state held until the outer map lock is released.
@@ -677,7 +638,7 @@ where
         let connection = service.inner();
         let usable = connection.extended_connect() == Some(true)
             && connection.is_reusable(self.inner.now(), self.inner.idle_timeout);
-        usable.then(|| Pooled::new_h2(service, true, EntryUse::new(state)))
+        usable.then(|| Pooled::new_mux(service, true, EntryUse::new(state)))
     }
 }
 
@@ -867,21 +828,25 @@ where
             }
             // QUIC dials directly, so take the maker's connector instead of cloning again.
             #[cfg(feature = "http3")]
-            Protocol::Http3 => Box::new(Http3Entry {
+            Protocol::Http3 => Box::new(MuxEntry {
                 service: Singleton::new(http3::Connect::new(
                     connect.connector,
                     connect.runtime,
                     self.http3_connect_timeout,
                 )),
                 state,
+                #[cfg(test)]
+                protocol: Protocol::Http3,
             }),
             #[cfg(feature = "http2")]
-            Protocol::Http2 => Box::new(Http2Entry {
+            Protocol::Http2 => Box::new(MuxEntry {
                 service: ServiceBuilder::new()
                     .layer_fn(Singleton::new)
                     .layer(http2::ConnectLayer::new(self.runtime.clone()))
                     .service(connect),
                 state,
+                #[cfg(test)]
+                protocol: Protocol::Http2,
             }),
             #[cfg(not(feature = "http2"))]
             Protocol::Auto => {
@@ -895,12 +860,7 @@ where
                 let upgrade = ServiceBuilder::new()
                     .layer_fn(Singleton::new)
                     .layer(http2::ConnectLayer::new(self.runtime.clone()));
-                let service = negotiate::builder()
-                    .connect(connect)
-                    .inspect(inspect)
-                    .fallback(self.http1_layer(&state))
-                    .upgrade(upgrade)
-                    .build::<PoolTarget>();
+                let service = Negotiate::new(connect, inspect, self.http1_layer(&state), upgrade);
 
                 Box::new(NegotiatedEntry { service, state })
             }
@@ -937,7 +897,7 @@ where
     }
 
     #[cfg(feature = "http2")]
-    fn checkout_made(&self) -> Option<(H2Pooled, Arc<EntryState>)> {
+    fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)> {
         None
     }
 
@@ -977,51 +937,50 @@ where
     }
 }
 
-// ===== impl Http2Entry =====
+// ===== impl MuxEntry =====
 
-#[cfg(feature = "http2")]
-impl<M> Entry for Http2Entry<Singleton<M, PoolTarget>>
+#[cfg(any(feature = "http2", feature = "http3"))]
+impl<M> Entry for MuxEntry<Singleton<M, PoolTarget>>
 where
-    M: Service<PoolTarget, Response = mux::Connection, Error = BoxError, Future = H2MakeFuture>
+    M: Service<PoolTarget, Response = mux::Connection, Error = BoxError, Future = MuxMake>
         + Clone
         + Send
         + 'static,
 {
-    /// Joins the current HTTP/2 generation or starts one when the entry is empty.
+    /// Joins the current generation or starts one when the entry is empty.
     ///
-    /// A fixed HTTP/2 cold start never waits for HTTP/1-style reuse. Every
-    /// participant still carries [`EntryUse`] until singleton checkout finishes.
+    /// The target keeps `wait_for_reuse` unset, so a cold start never waits for
+    /// HTTP/1-style reuse. Every participant carries [`EntryUse`] until singleton
+    /// checkout finishes.
     fn checkout(
         &mut self,
-        mut target: PoolTarget,
+        target: PoolTarget,
         pool_enabled: bool,
     ) -> (Checkout, Option<ConnectionConfig>) {
-        target.wait_for_reuse = false;
         let usage = EntryUse::new(self.state.clone());
         if let Some(future) = self.service.checkout() {
-            return (
-                Checkout::Http2 {
-                    future,
-                    discarded: None,
-                    usage: Some(usage),
-                    pool_enabled,
-                },
-                Some(target.config),
-            );
+            let future = Checkout::Mux {
+                future,
+                discarded: None,
+                usage: Some(usage),
+                pool_enabled,
+            };
+            return (future, Some(target.config));
         }
         let service = self.service.clone();
         let future = Checkout::Service(Box::pin(async move {
             let service = Oneshot::new(service, target).await?;
-            Ok(Pooled::new_h2(service, pool_enabled, usage))
+            Ok(Pooled::new_mux(service, pool_enabled, usage))
         }));
         (future, None)
     }
 
-    fn checkout_made(&self) -> Option<(H2Pooled, Arc<EntryState>)> {
+    #[cfg(feature = "http2")]
+    fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)> {
         Some((self.service.checkout_made()?, self.state.clone()))
     }
 
-    /// Removes a completed HTTP/2 sender when poisoned, closed, or expired idle.
+    /// Removes a completed sender when poisoned, closed, or expired idle.
     ///
     /// Pending singleton creation is left untouched. Active sender checkouts are
     /// kept by [`mux::Connection::is_reusable`].
@@ -1035,7 +994,8 @@ where
 
     /// Returns whether the singleton owns an open, unpoisoned sender.
     ///
-    /// A dead sender must not keep its idle-group LRU slot and displace live groups.
+    /// A peer can close an idle connection before the next sweep; a dead sender
+    /// must not keep its idle-group LRU slot and displace live groups.
     fn is_retained(&self) -> bool {
         self.service.has_service_and(|connection| {
             !connection.connected().poisoned() && !connection.is_closed()
@@ -1060,98 +1020,24 @@ where
         self.state.uses.load(Ordering::Acquire) == 0 && self.service.is_empty()
     }
 
-    /// Identifies the fixed HTTP/2 topology in tests.
+    /// Identifies the fixed HTTP/2 or HTTP/3 topology in tests.
     #[cfg(test)]
     fn protocol(&self) -> Protocol {
-        Protocol::Http2
-    }
-}
-
-// ===== impl Http3Entry =====
-
-#[cfg(feature = "http3")]
-impl<M> Entry for Http3Entry<M>
-where
-    M: Service<PoolTarget, Response = mux::Connection, Error = BoxError, Future = H3MakeFuture>
-        + Clone
-        + Send
-        + 'static,
-{
-    fn checkout(
-        &mut self,
-        mut target: PoolTarget,
-        pool_enabled: bool,
-    ) -> (Checkout, Option<ConnectionConfig>) {
-        target.wait_for_reuse = false;
-        let usage = EntryUse::new(self.state.clone());
-        if let Some(future) = self.service.checkout() {
-            return (
-                Checkout::Http3 {
-                    future,
-                    usage: Some(usage),
-                    pool_enabled,
-                },
-                Some(target.config),
-            );
-        }
-        let service = self.service.clone();
-        let future = Checkout::Service(Box::pin(async move {
-            let service = Oneshot::new(service, target).await?;
-            Ok(Pooled::new_h3(service, pool_enabled, usage))
-        }));
-        (future, None)
-    }
-
-    #[cfg(feature = "http2")]
-    fn checkout_made(&self) -> Option<(H2Pooled, Arc<EntryState>)> {
-        None
-    }
-
-    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
-        let timeout = timeout.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
-        self.service
-            .retain(|connection| connection.is_reusable(now, timeout))
-            .map(defer_drop)
-    }
-
-    /// Returns whether the singleton owns an open, unpoisoned sender.
-    ///
-    /// QUIC can close an idle connection before the next sweep; a dead sender
-    /// must not keep its idle-group LRU slot and displace live groups.
-    fn is_retained(&self) -> bool {
-        self.service.has_service_and(|connection| {
-            !connection.connected().poisoned() && !connection.is_closed()
-        })
-    }
-
-    fn evict_retained(&mut self) -> Option<DeferredDrop> {
-        self.service.take().map(defer_drop)
-    }
-
-    fn matches_identity(&self, state: &Arc<EntryState>) -> bool {
-        Arc::ptr_eq(&self.state, state)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.state.uses.load(Ordering::Acquire) == 0 && self.service.is_empty()
-    }
-
-    #[cfg(test)]
-    fn protocol(&self) -> Protocol {
-        Protocol::Http3
+        self.protocol
     }
 }
 
 // ===== impl NegotiatedEntry =====
 
 #[cfg(feature = "http2")]
-impl<L, R, T> Entry for NegotiatedEntry<L, R, Established<T>>
+impl<L, M, T> Entry for NegotiatedEntry<L, Singleton<M, Established<T>>, Established<T>>
 where
     L: Http1Pool,
     L::Future: Send,
-    R: Http2Pool + Existing<Established<T>, Response = H2Pooled, Future = H2Checkout>,
-    R::Error: Into<BoxError>,
-    R::Future: Send,
+    M: Service<Established<T>, Response = mux::Connection, Error = BoxError, Future = MuxMake>
+        + Clone
+        + Send
+        + 'static,
     T: Send + 'static,
 {
     /// Joins existing upgraded work or checks out through the composed service.
@@ -1163,15 +1049,13 @@ where
         target.wait_for_reuse = pool_enabled && !self.is_empty();
         let usage = EntryUse::new(self.state.clone());
         if let Some((future, discarded)) = self.service.checkout_existing() {
-            return (
-                Checkout::Http2 {
-                    future,
-                    discarded: (!discarded.is_empty()).then(|| defer_drop(discarded)),
-                    usage: Some(usage),
-                    pool_enabled,
-                },
-                Some(target.config),
-            );
+            let future = Checkout::Mux {
+                future,
+                discarded: (!discarded.is_empty()).then(|| defer_drop(discarded)),
+                usage: Some(usage),
+                pool_enabled,
+            };
+            return (future, Some(target.config));
         }
         let service = self.service.clone();
         let future = Checkout::Service(Box::pin(async move {
@@ -1179,21 +1063,21 @@ where
                 .await
                 .map(|service| match service {
                     Negotiated::Left(service) => Pooled::new_h1(service, pool_enabled, usage),
-                    Negotiated::Right(service) => Pooled::new_h2(service, pool_enabled, usage),
+                    Negotiated::Right(service) => Pooled::new_mux(service, pool_enabled, usage),
                 })
         }));
         (future, None)
     }
 
     /// Uses only the upgraded side; HTTP/1 fallback and pending transports stay untouched.
-    fn checkout_made(&self) -> Option<(H2Pooled, Arc<EntryState>)> {
+    fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)> {
         Some((self.service.upgrade().checkout_made()?, self.state.clone()))
     }
 
     /// Cleans pending negotiation results and both protocol pools.
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
         let entry_in_use = self.state.uses.load(Ordering::Acquire) != 0;
-        let pending = if self.service.upgrade().has_service() {
+        let pending = if self.service.upgrade().has_service_and(|_| true) {
             self.service.drain_pending()
         } else if !entry_in_use {
             self.service
@@ -1203,10 +1087,11 @@ where
         };
         let fallback = self.service.fallback_mut().retain_idle(now, timeout);
         // Keep health checks active while another checkout protects against idle expiry.
+        let timeout = timeout.filter(|_| !entry_in_use);
         let upgrade = self
             .service
             .upgrade_mut()
-            .retain_idle(now, timeout.filter(|_| !entry_in_use));
+            .retain(|connection| connection.is_reusable(now, timeout));
 
         (!pending.is_empty() || !fallback.is_empty() || upgrade.is_some())
             .then(|| defer_drop((pending, fallback, upgrade)))
@@ -1216,14 +1101,14 @@ where
     fn is_retained(&self) -> bool {
         !self.service.pending_is_empty()
             || self.service.fallback().has_idle()
-            || self.service.upgrade().has_service()
+            || self.service.upgrade().has_service_and(|_| true)
     }
 
     /// Drains every reusable connection while preserving active HTTP/1 work.
     fn evict_retained(&mut self) -> Option<DeferredDrop> {
         let pending = self.service.drain_pending();
         let fallback = self.service.fallback_mut().drain_idle();
-        let upgrade = self.service.upgrade_mut().take_idle();
+        let upgrade = self.service.upgrade_mut().take();
 
         (!pending.is_empty() || !fallback.is_empty() || upgrade.is_some())
             .then(|| defer_drop((pending, fallback, upgrade)))
@@ -1256,40 +1141,23 @@ impl Future for Checkout {
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         match self.get_mut() {
-            #[cfg(feature = "http2")]
-            Self::Http2 {
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            Self::Mux {
                 future,
                 discarded,
                 usage,
                 pool_enabled,
-                ..
             } => {
                 drop(discarded.take());
-                let result = std::task::ready!(Pin::new(future).poll(cx));
+                let result = std::task::ready!(Pin::new(&mut *future).poll(cx));
                 let Some(usage) = usage.take() else {
                     return Poll::Pending;
                 };
-                // Pooled::new starts H2 accounting before releasing EntryUse and
+                // Pooled::new starts checkout accounting before releasing EntryUse and
                 // may run map maintenance, so it must execute outside the lock.
                 Poll::Ready(
                     result
-                        .map(|service| Pooled::new_h2(service, *pool_enabled, usage))
-                        .map_err(Into::into),
-                )
-            }
-            #[cfg(feature = "http3")]
-            Self::Http3 {
-                future,
-                usage,
-                pool_enabled,
-            } => {
-                let result = std::task::ready!(Pin::new(future).poll(cx));
-                let Some(usage) = usage.take() else {
-                    return Poll::Pending;
-                };
-                Poll::Ready(
-                    result
-                        .map(|service| Pooled::new_h3(service, *pool_enabled, usage))
+                        .map(|service| Pooled::new_mux(service, *pool_enabled, usage))
                         .map_err(Into::into),
                 )
             }
@@ -1329,55 +1197,6 @@ where
     /// Returns whether the cache owns no ready, idle, or active sender.
     fn is_empty(&self) -> bool {
         Cache::is_empty(self)
-    }
-}
-
-// ===== impl Singleton =====
-
-#[cfg(feature = "http2")]
-impl<M, Dst> Http2Pool for Singleton<M, Dst>
-where
-    M: Service<Dst, Response = mux::Connection> + Clone + Send + 'static,
-    M::Future: Send + 'static,
-    Dst: Send + 'static,
-{
-    /// Removes a completed sender only when the pool's health policy rejects it.
-    ///
-    /// A maker generation still in progress is never canceled by maintenance.
-    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Option<mux::Connection> {
-        self.retain(|connection| connection.is_reusable(now, timeout))
-    }
-
-    /// Detaches the completed sender without interrupting an active maker.
-    fn take_idle(&mut self) -> Option<mux::Connection> {
-        self.take()
-    }
-
-    /// Returns whether neither a completed sender nor a maker generation exists.
-    fn is_empty(&self) -> bool {
-        Singleton::is_empty(self)
-    }
-
-    /// Returns whether singleton creation has produced a shared sender.
-    fn has_service(&self) -> bool {
-        self.has_service()
-    }
-}
-
-#[cfg(feature = "http2")]
-impl<M, S> Existing<S> for Singleton<M, S>
-where
-    M: Service<S>,
-    M::Response: Clone,
-    M::Error: Into<BoxError>,
-{
-    /// Joins only existing or in-progress singleton state.
-    fn checkout(&self) -> Option<Self::Future> {
-        Singleton::checkout(self)
-    }
-
-    fn checkout_made(&self) -> Option<Self::Response> {
-        Singleton::checkout_made(self)
     }
 }
 
@@ -1469,14 +1288,14 @@ impl<T> Started for ConnectFuture<T> {
 // ===== impl Pooled =====
 
 impl Pooled {
-    /// Wraps a negotiated sender and registers an HTTP/2 or HTTP/3 checkout when needed.
+    /// Wraps a checked-out sender and takes over entry cleanup from `usage`.
+    ///
+    /// HTTP/2 and HTTP/3 checkout accounting starts first; with pooling enabled the
+    /// entry is then reconciled with empty cleanup and the idle-group LRU.
     fn new(inner: PooledInner, pool_enabled: bool, usage: EntryUse) -> Self {
-        match &inner {
-            PooledInner::Http1(_) => {}
-            #[cfg(feature = "http2")]
-            PooledInner::Http2(service) => service.inner().begin_checkout(),
-            #[cfg(feature = "http3")]
-            PooledInner::Http3(service) => service.inner().begin_checkout(),
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        if let PooledInner::Mux(service) = &inner {
+            service.inner().begin_checkout();
         }
         let cleanup = usage.into_cleanup();
         if pool_enabled {
@@ -1489,28 +1308,23 @@ impl Pooled {
         }
     }
 
+    /// Wraps an HTTP/1 sender, maintaining its entry when pooling is enabled.
     fn new_h1(service: Cached<http1::Connection>, pool_enabled: bool, usage: EntryUse) -> Self {
         Self::new(PooledInner::Http1(service), pool_enabled, usage)
     }
 
-    #[cfg(feature = "http2")]
-    fn new_h2(service: H2Pooled, pool_enabled: bool, usage: EntryUse) -> Self {
-        Self::new(PooledInner::Http2(service), pool_enabled, usage)
-    }
-
-    #[cfg(feature = "http3")]
-    fn new_h3(service: H3Pooled, pool_enabled: bool, usage: EntryUse) -> Self {
-        Self::new(PooledInner::Http3(service), pool_enabled, usage)
+    /// Wraps an HTTP/2 or HTTP/3 sender, maintaining its entry when pooling is enabled.
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    fn new_mux(service: MuxPooled, pool_enabled: bool, usage: EntryUse) -> Self {
+        Self::new(PooledInner::Mux(service), pool_enabled, usage)
     }
 
     /// Returns the HTTP version of this checkout's connection; HTTP/1 reports HTTP/1.1.
     pub(super) fn version(&self) -> Version {
-        match self.inner {
+        match &self.inner {
             PooledInner::Http1(_) => Version::HTTP_11,
-            #[cfg(feature = "http2")]
-            PooledInner::Http2(_) => Version::HTTP_2,
-            #[cfg(feature = "http3")]
-            PooledInner::Http3(_) => Version::HTTP_3,
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            PooledInner::Mux(service) => service.inner().version(),
         }
     }
 
@@ -1520,10 +1334,7 @@ impl Pooled {
     pub(super) fn extended_connect(&self) -> Option<bool> {
         match &self.inner {
             PooledInner::Http1(_) => Some(false),
-            #[cfg(feature = "http2")]
-            PooledInner::Http2(service) => service.inner().extended_connect(),
-            #[cfg(feature = "http3")]
-            PooledInner::Http3(service) => service.inner().extended_connect(),
+            PooledInner::Mux(service) => service.inner().extended_connect(),
         }
     }
 
@@ -1531,10 +1342,8 @@ impl Pooled {
     pub(super) fn is_reused(&self) -> bool {
         match &self.inner {
             PooledInner::Http1(service) => service.is_reused(),
-            #[cfg(feature = "http2")]
-            PooledInner::Http2(service) => service.is_reused(),
-            #[cfg(feature = "http3")]
-            PooledInner::Http3(service) => service.is_reused(),
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            PooledInner::Mux(service) => service.is_reused(),
         }
     }
 
@@ -1547,10 +1356,8 @@ impl Pooled {
     pub(super) fn is_ready(&self) -> bool {
         match &self.inner {
             PooledInner::Http1(service) => service.inner().is_ready(),
-            #[cfg(feature = "http2")]
-            PooledInner::Http2(service) => service.inner().is_ready(),
-            #[cfg(feature = "http3")]
-            PooledInner::Http3(service) => service.inner().is_ready(),
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            PooledInner::Mux(service) => service.inner().is_ready(),
         }
     }
 
@@ -1558,10 +1365,8 @@ impl Pooled {
     pub(super) fn connected(&self) -> &Connected {
         match &self.inner {
             PooledInner::Http1(service) => service.inner().connected(),
-            #[cfg(feature = "http2")]
-            PooledInner::Http2(service) => service.inner().connected(),
-            #[cfg(feature = "http3")]
-            PooledInner::Http3(service) => service.inner().connected(),
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            PooledInner::Mux(service) => service.inner().connected(),
         }
     }
 }
@@ -1574,20 +1379,16 @@ impl Service<Request<Body>> for Pooled {
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         match &mut self.inner {
             PooledInner::Http1(service) => service.poll_ready(cx),
-            #[cfg(feature = "http2")]
-            PooledInner::Http2(service) => service.poll_ready(cx),
-            #[cfg(feature = "http3")]
-            PooledInner::Http3(service) => service.poll_ready(cx),
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            PooledInner::Mux(service) => service.poll_ready(cx),
         }
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         match &mut self.inner {
             PooledInner::Http1(service) => service.call(req),
-            #[cfg(feature = "http2")]
-            PooledInner::Http2(service) => service.call(req),
-            #[cfg(feature = "http3")]
-            PooledInner::Http3(service) => service.call(req),
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            PooledInner::Mux(service) => service.call(req),
         }
     }
 }
@@ -1609,22 +1410,8 @@ impl Drop for Pooled {
                     }
                 }
             }
-            #[cfg(feature = "http2")]
-            PooledInner::Http2(service) => {
-                let discard = {
-                    let connection = service.inner();
-                    connection.finish_checkout();
-                    connection.connected().poisoned() || connection.is_closed()
-                };
-                if discard {
-                    service.discard_shared();
-                }
-                if self.pool_enabled && discard {
-                    self.cleanup.arm();
-                }
-            }
-            #[cfg(feature = "http3")]
-            PooledInner::Http3(service) => {
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            PooledInner::Mux(service) => {
                 let discard = {
                     let connection = service.inner();
                     connection.finish_checkout();
@@ -2072,7 +1859,7 @@ mod tests {
             assert_eq!(calls.load(Ordering::Relaxed), 1);
             let held = if protocol == Protocol::Http2 {
                 let waiter = checkout();
-                assert!(matches!(waiter, Checkout::Http2 { .. }));
+                assert!(matches!(waiter, Checkout::Mux { .. }));
                 let mut waiter = tokio_test::task::spawn(waiter);
                 assert!(waiter.poll().is_pending());
                 drop(driver);
@@ -2096,7 +1883,7 @@ mod tests {
             let mut checkouts = Vec::new();
             for i in 0..100 {
                 let future = checkout();
-                assert!(matches!(future, Checkout::Http2 { .. }));
+                assert!(matches!(future, Checkout::Mux { .. }));
                 if i % 2 == 0 {
                     checkouts.push(future);
                 }
@@ -2488,87 +2275,57 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "http2")]
-    async fn pool_max_size_skips_dead_http2_groups() {
-        let pool = Pool::new(
-            Config {
-                idle_timeout: None,
-                max_size: NonZeroUsize::new(2),
-                ..Config::default()
-            },
-            TestConnector::Http2(Arc::default(), Arc::new(tokio::sync::Semaphore::new(3))),
-            DynRuntime::new(crate::rt::tokio::TokioRuntime),
-            true,
-        );
-        let [live, dead, next] =
-            ["live", "dead", "next"].map(|name| grouped_request(Group::new(name), Protocol::Http2));
-        let (live_key, dead_key, next_key) = (live.key(), dead.key(), next.key());
-        let checkout = |req| pool.checkout(connection_config(req));
-        let retained = |key| {
-            pool.inner
-                .services
-                .lock()
-                .get_mut(key)
-                .is_some_and(|entry| entry.is_retained())
-        };
-
-        // Established HTTP/2 senders stay retained after their checkouts end.
-        drop(checkout(live).await.expect("live checkout"));
-        let pooled = checkout(dead).await.expect("dead checkout");
-        let connected = pooled.connected().clone();
-        drop(pooled);
-        assert!(retained(&dead_key));
-        // Poison the idle MRU sender after its checkout, as Response::forbid_recycle does.
-        connected.poison();
-        assert!(!retained(&dead_key));
-
-        // The full LRU removes the dead group instead of evicting the live one,
-        // even though idle sweeps are disabled.
-        drop(checkout(next).await.expect("next checkout"));
-        assert!(retained(&live_key) && retained(&next_key));
-        let mut services = pool.inner.services.lock();
-        assert!(services.get_mut(&dead_key).is_none());
-        assert_eq!(services.iter_mut().count(), 2);
-    }
-
-    #[tokio::test]
-    #[cfg(feature = "http3")]
-    async fn pool_max_size_skips_dead_http3_groups() {
-        let pool = Pool::new(
-            Config {
-                idle_timeout: None,
-                max_size: NonZeroUsize::new(2),
-                ..Config::default()
-            },
-            http3_connector(),
-            DynRuntime::new(crate::rt::tokio::TokioRuntime),
-            true,
-        );
-        let [live, dead, next] =
-            ["live", "dead", "next"].map(|name| grouped_request(Group::new(name), Protocol::Http3));
-        let (live_key, dead_key, next_key) = (live.key(), dead.key(), next.key());
-        let checkout = |req| pool.checkout(connection_config(req));
-
-        // Established HTTP/3 senders stay retained after their checkouts end.
-        drop(checkout(live).await.expect("live checkout"));
-        let pooled = checkout(dead).await.expect("dead checkout");
-        let connected = pooled.connected().clone();
-        drop(pooled);
-        // Kill the idle MRU sender without a checkout, as a QUIC idle close would.
-        connected.poison();
-
-        // The full LRU removes the dead group instead of evicting the live one,
-        // even though idle sweeps are disabled.
-        drop(checkout(next).await.expect("next checkout"));
-        let mut services = pool.inner.services.lock();
-        for key in [&live_key, &next_key] {
-            assert!(
-                services
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    async fn pool_max_size_skips_dead_mux_groups() {
+        for (protocol, connector) in [
+            #[cfg(feature = "http2")]
+            (
+                Protocol::Http2,
+                TestConnector::Http2(Arc::default(), Arc::new(tokio::sync::Semaphore::new(3))),
+            ),
+            #[cfg(feature = "http3")]
+            (Protocol::Http3, http3_connector()),
+        ] {
+            let pool = Pool::new(
+                Config {
+                    idle_timeout: None,
+                    max_size: NonZeroUsize::new(2),
+                    ..Config::default()
+                },
+                connector,
+                DynRuntime::new(crate::rt::tokio::TokioRuntime),
+                true,
+            );
+            let [live, dead, next] =
+                ["live", "dead", "next"].map(|name| grouped_request(Group::new(name), protocol));
+            let (live_key, dead_key, next_key) = (live.key(), dead.key(), next.key());
+            let checkout = |req| pool.checkout(connection_config(req));
+            let retained = |key| {
+                pool.inner
+                    .services
+                    .lock()
                     .get_mut(key)
                     .is_some_and(|entry| entry.is_retained())
-            );
+            };
+
+            // Established senders stay retained after their checkouts end.
+            drop(checkout(live).await.expect("live checkout"));
+            let pooled = checkout(dead).await.expect("dead checkout");
+            let connected = pooled.connected().clone();
+            drop(pooled);
+            assert!(retained(&dead_key));
+            // Kill the idle MRU sender without a checkout, as Response::forbid_recycle
+            // or a QUIC idle close would.
+            connected.poison();
+            assert!(!retained(&dead_key), "{protocol:?}");
+
+            // The full LRU removes the dead group instead of evicting the live one,
+            // even though idle sweeps are disabled.
+            drop(checkout(next).await.expect("next checkout"));
+            assert!(retained(&live_key) && retained(&next_key), "{protocol:?}");
+            let mut services = pool.inner.services.lock();
+            assert!(services.get_mut(&dead_key).is_none());
+            assert_eq!(services.iter_mut().count(), 2);
         }
-        assert!(services.get_mut(&dead_key).is_none());
-        assert_eq!(services.iter_mut().count(), 2);
     }
 }
