@@ -48,7 +48,7 @@ use futures_util::future::BoxFuture;
 #[cfg(feature = "http3")]
 use futures_util::future::Either;
 use http::{Request, Response, Version};
-use netty::{body::Incoming, conn};
+use netty::body::Incoming;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service, ServiceBuilder, util::Oneshot};
 
@@ -63,7 +63,9 @@ use self::{
 };
 #[cfg(feature = "http3")]
 use super::proto::http3;
-use super::proto::{Established, SendError, http1};
+#[cfg(any(feature = "http2", feature = "http3"))]
+use super::proto::mux;
+use super::proto::{Established, ProtocolBuilders, SendError, http1};
 #[cfg(feature = "http2")]
 use super::proto::{http2, is_expired};
 use crate::{
@@ -259,15 +261,6 @@ pub(super) struct ConnectionConfig {
     pub(super) dedicated: bool,
 }
 
-/// Handshake builders shared by all requests from one client.
-pub(super) struct ProtocolBuilders {
-    pub(super) http1: conn::http1::Builder,
-    #[cfg(feature = "http2")]
-    pub(super) http2: conn::http2::Builder<DynRuntime>,
-    #[cfg(feature = "http3")]
-    pub(super) http3: conn::http3::Builder<DynRuntime>,
-}
-
 /// Factory that creates one protocol-specific service graph per destination group.
 ///
 /// [`Map`] calls this factory on a key miss. Fixed protocol targets receive their
@@ -405,11 +398,10 @@ trait Http1Pool:
 #[cfg(feature = "http2")]
 trait Http2Pool: Clone + Send + 'static {
     /// Removes a closed or expired idle HTTP/2 sender.
-    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>)
-    -> Option<http2::Connection>;
+    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Option<mux::Connection>;
 
     /// Removes the completed shared HTTP/2 sender without canceling its maker.
-    fn take_idle(&mut self) -> Option<http2::Connection>;
+    fn take_idle(&mut self) -> Option<mux::Connection>;
 
     /// Returns whether the HTTP/2 singleton is empty.
     fn is_empty(&self) -> bool;
@@ -419,18 +411,18 @@ trait Http2Pool: Clone + Send + 'static {
 }
 
 #[cfg(feature = "http2")]
-type H2MakeFuture = BoxFuture<'static, Result<http2::Connection, BoxError>>;
+type H2MakeFuture = BoxFuture<'static, Result<mux::Connection, BoxError>>;
 #[cfg(feature = "http2")]
-type H2Pooled = Singled<H2MakeFuture, http2::Connection>;
+type H2Pooled = Singled<H2MakeFuture, mux::Connection>;
 #[cfg(feature = "http2")]
-type H2Checkout = SingletonFuture<H2MakeFuture, http2::Connection>;
+type H2Checkout = SingletonFuture<H2MakeFuture, mux::Connection>;
 
 #[cfg(feature = "http3")]
-type H3MakeFuture = BoxFuture<'static, Result<http3::Connection, BoxError>>;
+type H3MakeFuture = BoxFuture<'static, Result<mux::Connection, BoxError>>;
 #[cfg(feature = "http3")]
-type H3Pooled = Singled<H3MakeFuture, http3::Connection>;
+type H3Pooled = Singled<H3MakeFuture, mux::Connection>;
 #[cfg(feature = "http3")]
-type H3Checkout = SingletonFuture<H3MakeFuture, http3::Connection>;
+type H3Checkout = SingletonFuture<H3MakeFuture, mux::Connection>;
 
 /// Defers checkout completion and resource destruction until the map is unlocked.
 ///
@@ -990,7 +982,7 @@ where
 #[cfg(feature = "http2")]
 impl<M> Entry for Http2Entry<Singleton<M, PoolTarget>>
 where
-    M: Service<PoolTarget, Response = http2::Connection, Error = BoxError, Future = H2MakeFuture>
+    M: Service<PoolTarget, Response = mux::Connection, Error = BoxError, Future = H2MakeFuture>
         + Clone
         + Send
         + 'static,
@@ -1032,7 +1024,7 @@ where
     /// Removes a completed HTTP/2 sender when poisoned, closed, or expired idle.
     ///
     /// Pending singleton creation is left untouched. Active sender checkouts are
-    /// kept by [`http2::Connection::is_reusable`].
+    /// kept by [`mux::Connection::is_reusable`].
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
         // Pending checkouts defer idle expiry, never poison or closure checks.
         let timeout = timeout.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
@@ -1076,7 +1068,7 @@ where
 #[cfg(feature = "http3")]
 impl<M> Entry for Http3Entry<M>
 where
-    M: Service<PoolTarget, Response = http3::Connection, Error = BoxError, Future = H3MakeFuture>
+    M: Service<PoolTarget, Response = mux::Connection, Error = BoxError, Future = H3MakeFuture>
         + Clone
         + Send
         + 'static,
@@ -1341,23 +1333,19 @@ where
 #[cfg(feature = "http2")]
 impl<M, Dst> Http2Pool for Singleton<M, Dst>
 where
-    M: Service<Dst, Response = http2::Connection> + Clone + Send + 'static,
+    M: Service<Dst, Response = mux::Connection> + Clone + Send + 'static,
     M::Future: Send + 'static,
     Dst: Send + 'static,
 {
     /// Removes a completed sender only when the pool's health policy rejects it.
     ///
     /// A maker generation still in progress is never canceled by maintenance.
-    fn retain_idle(
-        &mut self,
-        now: Instant,
-        timeout: Option<Duration>,
-    ) -> Option<http2::Connection> {
+    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Option<mux::Connection> {
         self.retain(|connection| connection.is_reusable(now, timeout))
     }
 
     /// Detaches the completed sender without interrupting an active maker.
-    fn take_idle(&mut self) -> Option<http2::Connection> {
+    fn take_idle(&mut self) -> Option<mux::Connection> {
         self.take()
     }
 
@@ -1577,32 +1565,7 @@ impl Pooled {
 impl Service<Request<Body>> for Pooled {
     type Response = Response<Incoming>;
     type Error = SendError;
-    cfg_select! {
-        all(feature = "http2", feature = "http3") => {
-            type Future = futures_util::future::Either<
-                futures_util::future::Either<
-                    <http1::Connection as Service<Request<Body>>>::Future,
-                    <http2::Connection as Service<Request<Body>>>::Future,
-                >,
-                <http3::Connection as Service<Request<Body>>>::Future,
-            >;
-        }
-        feature = "http2" => {
-            type Future = futures_util::future::Either<
-                <http1::Connection as Service<Request<Body>>>::Future,
-                <http2::Connection as Service<Request<Body>>>::Future,
-            >;
-        }
-        feature = "http3" => {
-            type Future = futures_util::future::Either<
-                <http1::Connection as Service<Request<Body>>>::Future,
-                <http3::Connection as Service<Request<Body>>>::Future,
-            >;
-        }
-        _ => {
-            type Future = <http1::Connection as Service<Request<Body>>>::Future;
-        }
-    }
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         match &mut self.inner {
@@ -1616,23 +1579,11 @@ impl Service<Request<Body>> for Pooled {
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         match &mut self.inner {
-            PooledInner::Http1(service) => {
-                let future = service.call(req);
-                #[cfg(feature = "http2")]
-                let future = futures_util::future::Either::Left(future);
-                #[cfg(feature = "http3")]
-                let future = futures_util::future::Either::Left(future);
-                future
-            }
+            PooledInner::Http1(service) => service.call(req),
             #[cfg(feature = "http2")]
-            PooledInner::Http2(service) => {
-                let future = futures_util::future::Either::Right(service.call(req));
-                #[cfg(feature = "http3")]
-                let future = futures_util::future::Either::Left(future);
-                future
-            }
+            PooledInner::Http2(service) => service.call(req),
             #[cfg(feature = "http3")]
-            PooledInner::Http3(service) => futures_util::future::Either::Right(service.call(req)),
+            PooledInner::Http3(service) => service.call(req),
         }
     }
 }
@@ -1785,6 +1736,7 @@ mod tests {
     use bytes::Bytes;
     #[cfg(feature = "http2")]
     use http_body_util::Empty;
+    use netty::conn;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;

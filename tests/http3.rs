@@ -167,6 +167,13 @@ async fn http3_requests_share_one_connection() {
         check(client.get(&url).send().await.unwrap()).await;
     }
     assert_eq!(server.connections(), 1);
+
+    // A poisoned connection is not reused; the next request dials a new one.
+    let response = client.get(&url).send().await.unwrap();
+    response.forbid_recycle();
+    check(response).await;
+    check(client.get(&url).send().await.unwrap()).await;
+    assert_eq!(server.connections(), 2);
 }
 
 #[tokio::test]

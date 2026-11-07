@@ -6,27 +6,31 @@
 //!
 //! A successful handshake starts the protocol driver and returns a sender with
 //! the connection metadata needed by request preparation and pool health checks.
+//! HTTP/2 and HTTP/3 share one multiplexed sender type in `mux`.
 
 pub(super) mod http1;
 #[cfg(feature = "http2")]
 pub(super) mod http2;
 #[cfg(feature = "http3")]
 pub(super) mod http3;
-
 #[cfg(any(feature = "http2", feature = "http3"))]
-use std::sync::atomic::{AtomicUsize, Ordering};
+pub(super) mod mux;
+
 use std::time::{Duration, Instant};
 
 use http::Request;
-use netty::conn::TrySendError;
+use netty::conn::{self, TrySendError};
 
 use super::{
     error::{Error, ErrorKind},
     pool::ConnectionConfig,
 };
 #[cfg(any(feature = "http2", feature = "http3"))]
-use crate::sync::Mutex;
-use crate::{Body, conn::Connected};
+use crate::rt::DynRuntime;
+use crate::{
+    Body,
+    conn::{Connected, request::ConnectRequest},
+};
 
 /// Physical transport and request-specific protocol configuration.
 ///
@@ -42,6 +46,16 @@ pub(super) struct Established<T> {
     idle_at: Instant,
 }
 
+/// Handshake builders shared by all requests from one client.
+/// Each handshake applies its request's protocol options to a copy.
+pub(super) struct ProtocolBuilders {
+    pub(super) http1: conn::http1::Builder,
+    #[cfg(feature = "http2")]
+    pub(super) http2: conn::http2::Builder<DynRuntime>,
+    #[cfg(feature = "http3")]
+    pub(super) http3: conn::http3::Builder<DynRuntime>,
+}
+
 /// Error returned while preparing or dispatching a protocol request.
 ///
 /// Local failures, including HTTP/1 request preparation and sender readiness,
@@ -52,86 +66,6 @@ pub(super) struct Established<T> {
 pub enum SendError {
     Request(Error),
     Protocol(Box<TrySendError<Request<Body>>>),
-}
-
-/// Shared checkout state for one HTTP/2 or HTTP/3 connection.
-/// Accounting ends at response headers or checkout cancellation, not stream end.
-/// Bodies and extended `CONNECT` upgrades do not hold this checkout state.
-#[cfg(any(feature = "http2", feature = "http3"))]
-struct ConnectionState {
-    checkouts: AtomicUsize,
-    idle_at: Mutex<Instant>,
-}
-
-// ===== impl ConnectionState =====
-
-#[cfg(any(feature = "http2", feature = "http3"))]
-impl ConnectionState {
-    /// Creates idle checkout state for a newly established connection.
-    pub(super) fn new(idle_at: Instant) -> Self {
-        Self {
-            checkouts: AtomicUsize::new(0),
-            idle_at: Mutex::new(idle_at),
-        }
-    }
-
-    /// Registers one sender checkout.
-    pub(super) fn acquire(&self) {
-        let _ = self
-            .checkouts
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                Some(count.saturating_add(1))
-            });
-    }
-
-    /// Releases one checkout and records the final release time.
-    pub(super) fn release(&self, now: Instant) -> bool {
-        let mut checkouts = self.checkouts.load(Ordering::Acquire);
-
-        loop {
-            match checkouts {
-                0 => return false,
-                1 => {
-                    let mut idle_at = self.idle_at.lock();
-                    match self.checkouts.compare_exchange_weak(
-                        1,
-                        0,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    ) {
-                        Ok(_) => {
-                            // Cleanup that observes zero must also observe this timestamp.
-                            *idle_at = now;
-                            return true;
-                        }
-                        Err(actual) => {
-                            drop(idle_at);
-                            checkouts = actual;
-                        }
-                    }
-                }
-                count => match self.checkouts.compare_exchange_weak(
-                    count,
-                    count - 1,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                ) {
-                    Ok(_) => return false,
-                    Err(actual) => checkouts = actual,
-                },
-            }
-        }
-    }
-
-    /// Returns whether no sender checkout is active.
-    pub(super) fn is_idle(&self) -> bool {
-        self.checkouts.load(Ordering::Acquire) == 0
-    }
-
-    /// Returns the last time the final checkout was released.
-    pub(super) fn idle_at(&self) -> Instant {
-        *self.idle_at.lock()
-    }
 }
 
 // ===== impl Established =====
@@ -163,6 +97,39 @@ impl<T> Established<T> {
     #[cfg(feature = "http2")]
     pub(super) fn idle_at(&self) -> Instant {
         self.idle_at
+    }
+}
+
+// ===== impl ProtocolBuilders =====
+
+impl ProtocolBuilders {
+    /// Returns the HTTP/1 builder with the request's HTTP/1 options applied.
+    fn http1_for(&self, req: &ConnectRequest) -> conn::http1::Builder {
+        req.config_override::<netty::http1::Http1Options>()
+            .map_or_else(
+                || self.http1.clone(),
+                |options| self.http1.clone().options(options.clone()),
+            )
+    }
+
+    /// Returns the HTTP/2 builder with the request's HTTP/2 options applied.
+    #[cfg(feature = "http2")]
+    fn http2_for(&self, req: &ConnectRequest) -> conn::http2::Builder<DynRuntime> {
+        req.config_override::<netty::http2::Http2Options>()
+            .map_or_else(
+                || self.http2.clone(),
+                |options| self.http2.clone().options(options.clone()),
+            )
+    }
+
+    /// Returns the HTTP/3 builder with the request's HTTP/3 options applied.
+    #[cfg(feature = "http3")]
+    fn http3_for(&self, req: &ConnectRequest) -> conn::http3::Builder<DynRuntime> {
+        req.config_override::<netty::http3::Http3Options>()
+            .map_or_else(
+                || self.http3.clone(),
+                |options| self.http3.clone().options(options.clone()),
+            )
     }
 }
 

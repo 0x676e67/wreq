@@ -1,40 +1,23 @@
-//! HTTP/3 handshake, sender, and pooled connection lifecycle.
+//! HTTP/3 connection service for the pool's shared singleton.
 
 use std::{
     pin::pin,
-    sync::Arc,
     task::{self, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use futures_util::{
-    TryFutureExt,
-    future::{self, BoxFuture, Either},
-};
-use http::{Request, Response};
-use netty::{body::Incoming, conn, rt::quic::Compat};
+use futures_util::future::{self, BoxFuture, Either};
+use netty::rt::quic::Compat;
 use tower::{BoxError, Service, ServiceExt};
 
-use super::{ConnectionState, SendError, is_expired};
+use super::mux::{Connection, Sender};
 use crate::{
     Body,
-    client::{
-        error::Error,
-        pool::{PoolTarget, TransportConnector},
-    },
-    conn::{Conn, Connected},
+    client::pool::{PoolTarget, TransportConnector},
+    conn::Conn,
     error::TimedOut,
     rt::{DynRuntime, Timer as _},
 };
-
-/// Shared request sender for one HTTP/3 connection.
-#[derive(Clone)]
-pub struct Connection {
-    tx: conn::http3::SendRequest<Body>,
-    state: Arc<ConnectionState>,
-    connected: Connected,
-    runtime: DynRuntime,
-}
 
 /// Establishes HTTP/3 connections for the pool's shared singleton.
 /// One connect timeout covers the QUIC connection and the HTTP/3 handshake.
@@ -73,14 +56,7 @@ where
         let mut connector = self.connector.clone();
         let runtime = self.runtime.clone();
         let timeout = self.timeout;
-        let builder = target
-            .config
-            .req
-            .config_override::<netty::http3::Http3Options>()
-            .map_or_else(
-                || target.config.proto.http3.clone(),
-                |options| target.config.proto.http3.clone().options(options.clone()),
-            );
+        let builder = target.config.proto.http3_for(&target.config.req);
 
         Box::pin(async move {
             // As for the connector's own timeout, readiness waits such as concurrency admission
@@ -116,72 +92,7 @@ where
             }));
             tx.ready().await?;
 
-            Ok(Connection {
-                tx,
-                state: Arc::new(ConnectionState::new(runtime.now())),
-                connected,
-                runtime,
-            })
+            Ok(Connection::new(Sender::Http3(tx), connected, runtime))
         })
-    }
-}
-
-// ===== impl Connection =====
-
-impl Connection {
-    pub fn connected(&self) -> &Connected {
-        &self.connected
-    }
-
-    pub fn is_ready(&self) -> bool {
-        self.tx.is_ready()
-    }
-
-    pub fn is_closed(&self) -> bool {
-        self.tx.is_closed()
-    }
-
-    /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS.
-    pub fn extended_connect(&self) -> Option<bool> {
-        self.tx.is_extended_connect_protocol_enabled()
-    }
-
-    pub fn begin_checkout(&self) {
-        self.state.acquire();
-    }
-
-    pub fn finish_checkout(&self) {
-        let _ = self.state.release(self.runtime.now());
-    }
-
-    pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
-        !self.connected.poisoned()
-            && !self.tx.is_closed()
-            && (!self.state.is_idle() || !is_expired(self.state.idle_at(), now, timeout))
-    }
-}
-
-impl Service<Request<Body>> for Connection {
-    type Response = Response<Incoming>;
-    type Error = SendError;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        let ready = self
-            .tx
-            .poll_ready(cx)
-            .map_err(|error| SendError::Request(Error::closed(error)));
-        if matches!(ready, Poll::Ready(Err(_))) {
-            self.connected.poison();
-        }
-        ready
-    }
-
-    fn call(&mut self, request: Request<Body>) -> Self::Future {
-        Box::pin(
-            self.tx
-                .try_send_request(request)
-                .map_err(SendError::protocol),
-        )
     }
 }

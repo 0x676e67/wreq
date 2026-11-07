@@ -6,7 +6,6 @@
 //! <https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2>
 
 use std::{
-    fmt,
     future::Future,
     marker::PhantomData,
     pin::Pin,
@@ -16,7 +15,7 @@ use std::{
 
 use futures_util::{
     TryFutureExt,
-    future::{self, BoxFuture, Either, Ready},
+    future::{self, BoxFuture},
 };
 use http::{
     HeaderValue, Method, Request, Response, Uri,
@@ -82,7 +81,7 @@ pub struct Connect<S> {
 pub struct ConnectFuture<F, T> {
     state: ConnectState<F>,
     set_host: bool,
-    runtime: Option<DynRuntime>,
+    runtime: DynRuntime,
     _io: PhantomData<fn(T)>,
 }
 
@@ -95,12 +94,6 @@ enum ConnectState<F> {
     /// Future has completed and owns no reusable state.
     Done,
 }
-
-/// Reports a consumed HTTP/1 handshake state.
-/// Returned if the connect future no longer owns its runtime.
-/// Carries no transport; the failed future releases its connection state.
-#[derive(Debug)]
-struct HandshakeStateError;
 
 // ===== impl ConnectLayer =====
 
@@ -142,7 +135,7 @@ where
     fn call(&mut self, target: Dst) -> Self::Future {
         ConnectFuture {
             state: ConnectState::Connecting(self.service.call(target)),
-            runtime: Some(self.runtime.clone()),
+            runtime: self.runtime.clone(),
             set_host: self.set_host,
             _io: PhantomData,
         }
@@ -169,14 +162,9 @@ where
                             return Poll::Ready(Err(error));
                         }
                     };
-                    let Some(runtime) = self.runtime.take() else {
-                        self.state = ConnectState::Done;
-                        return Poll::Ready(Err(HandshakeStateError.into()));
-                    };
-
                     self.state = ConnectState::Handshaking(Box::pin(Connection::handshake(
                         established,
-                        runtime,
+                        self.runtime.clone(),
                         self.set_host,
                     )));
                 }
@@ -225,13 +213,7 @@ impl Connection {
             ..
         } = established;
 
-        let builder = config
-            .req
-            .config_override::<netty::http1::Http1Options>()
-            .map_or_else(
-                || config.proto.http1.clone(),
-                |options| config.proto.http1.clone().options(options.clone()),
-            );
+        let builder = config.proto.http1_for(&config.req);
         drop(config);
 
         let (mut tx, connection) = builder.handshake(io).await?;
@@ -290,10 +272,7 @@ impl Connection {
 impl Service<Request<Body>> for Connection {
     type Response = Response<Incoming>;
     type Error = SendError;
-    type Future = Either<
-        BoxFuture<'static, Result<Self::Response, Self::Error>>,
-        Ready<Result<Self::Response, Self::Error>>,
-    >;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.tx
@@ -327,23 +306,12 @@ impl Service<Request<Body>> for Connection {
         };
 
         match result {
-            Ok(()) => Either::Left(Box::pin(
-                self.tx.try_send_request(req).map_err(SendError::protocol),
-            )),
-            Err(error) => Either::Right(future::err(error.into())),
+            Ok(()) => Box::pin(self.tx.try_send_request(req).map_err(SendError::protocol)),
+            // Boxing this rare local error lets every pooled sender share one future type.
+            Err(error) => Box::pin(future::err(error.into())),
         }
     }
 }
-
-// ===== impl HandshakeStateError =====
-
-impl fmt::Display for HandshakeStateError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("HTTP/1 handshake state was already consumed")
-    }
-}
-
-impl std::error::Error for HandshakeStateError {}
 
 /// Converts an absolute URI to origin-form while preserving path and query.
 fn origin_form(uri: &mut Uri) -> Result<(), Error> {

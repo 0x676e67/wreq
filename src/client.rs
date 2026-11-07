@@ -1723,7 +1723,7 @@ mod sealed {
         runtime: DynRuntime,
 
         /// Client handshake configuration for each HTTP version.
-        proto: pool::ProtocolBuilders,
+        proto: proto::ProtocolBuilders,
 
         /// Protocol, options and socket bindings that requests inherit.
         defaults: svc::ClientDefaults,
@@ -1742,7 +1742,7 @@ mod sealed {
         /// Creates a builder using `runtime` for protocol drivers and pool tasks.
         pub fn new(runtime: DynRuntime) -> Self {
             Self {
-                proto: pool::ProtocolBuilders {
+                proto: proto::ProtocolBuilders {
                     http1: conn::http1::Builder::default(),
                     #[cfg(feature = "http2")]
                     http2: conn::http2::Builder::new(runtime.clone()).timer(runtime.clone()),

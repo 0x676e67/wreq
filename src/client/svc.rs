@@ -35,6 +35,7 @@ use {
 use super::{
     error::{Error, ErrorKind},
     pool::{self, ConnectionConfig, TransportConnector},
+    proto::ProtocolBuilders,
     request::RequestVersion,
 };
 #[cfg(feature = "http3")]
@@ -64,7 +65,7 @@ pub struct Stack<S, B> {
         reason = "Keep the concrete Tower stack local without another alias"
     )]
     inner: MapErr<RetryUnsent<S>, fn(DispatchError<B>) -> BoxError>,
-    proto: Arc<pool::ProtocolBuilders>,
+    proto: Arc<ProtocolBuilders>,
     defaults: Arc<ClientDefaults>,
 }
 
@@ -176,7 +177,7 @@ pub enum DispatchError<B> {
 /// clones. Tower maps terminal dispatch errors only after retry classification,
 /// preserving ownership of any request returned before encoding.
 pub fn layer<S, B>(
-    proto: Arc<pool::ProtocolBuilders>,
+    proto: Arc<ProtocolBuilders>,
     defaults: Arc<ClientDefaults>,
     retry_unsent: bool,
 ) -> impl Layer<S, Service = Stack<S, B>> + Clone {
@@ -834,7 +835,7 @@ mod tests {
 
     /// Wraps `service` in the request stack of a client without options.
     fn stack<S, B>(service: S, protocol: Protocol, retry_unsent: bool) -> Stack<S, B> {
-        let proto = pool::ProtocolBuilders {
+        let proto = ProtocolBuilders {
             http1: conn::http1::Builder::default(),
             #[cfg(feature = "http2")]
             http2: conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
