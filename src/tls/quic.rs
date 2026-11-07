@@ -572,4 +572,166 @@ mod tests {
             .unwrap();
         assert_eq!(hellos.lock().unwrap().len(), attempts);
     }
+
+    #[tokio::test]
+    async fn tcp_client_hello_follows_shared_options() {
+        use std::{pin::Pin, sync::Mutex, time::Duration};
+
+        use btls::ssl::{ClientHello, ExtensionType, SelectCertError, Ssl};
+        use quic::crypto::btls::QuicServerConfig;
+
+        use super::*;
+        use crate::tls::{
+            EchGrease, EchGreaseAead, Tls13Cipher, TlsOptions,
+            compress::{CertificateCompressionAlgorithm, CertificateCompressor, Codec},
+        };
+
+        /// Advertises Brotli; no certificate is ever compressed.
+        #[derive(Debug)]
+        struct Compressor;
+        impl CertificateCompressor for Compressor {
+            fn algorithm(&self) -> CertificateCompressionAlgorithm {
+                CertificateCompressionAlgorithm::BROTLI
+            }
+            fn compress(&self) -> Codec {
+                Codec::Pointer(|_, _| Err(std::io::ErrorKind::Unsupported.into()))
+            }
+            fn decompress(&self) -> Codec {
+                self.compress()
+            }
+        }
+
+        // Both builders name the shared options alike. The permutation options only reorder
+        // extensions, so they are left out.
+        macro_rules! shared {
+            ($builder:expr) => {
+                $builder
+                    .ech_grease(EchGrease::Aead(EchGreaseAead::CHACHA20_POLY1305))
+                    .enable_ocsp_stapling(true)
+                    .enable_signed_cert_timestamps(true)
+                    .psk_dhe_ke(false)
+                    .grease_enabled(true)
+                    .grease_sigalgs_enabled(true)
+                    .curves_list("P-256:X25519")
+                    .sigalgs_list("ecdsa_secp256r1_sha256:rsa_pss_rsae_sha256")
+                    .tls13_cipher_list(&[
+                        Tls13Cipher::CHACHA20_POLY1305_SHA256,
+                        Tls13Cipher::AES_128_GCM_SHA256,
+                    ])
+                    .certificate_compressors(vec![&Compressor as &dyn CertificateCompressor])
+                    .delegated_credentials("ecdsa_secp256r1_sha256")
+                    .record_size_limit(0x4001)
+                    .trust_anchors(b"\x02\x01\x02")
+                    .build()
+            };
+        }
+
+        /// The TLS 1.3 suites, then the extensions that the shared options set.
+        fn shared(hello: &ClientHello<'_>) -> Vec<Option<Vec<u8>>> {
+            // GREASE values are random per handshake (RFC 8701); keep only their positions.
+            let degrease = |list: &[u8]| {
+                list.as_chunks::<2>()
+                    .0
+                    .iter()
+                    .flat_map(|&[hi, lo]| {
+                        if hi == lo && hi & 0x0f == 0x0a {
+                            [0x0a; 2]
+                        } else {
+                            [hi, lo]
+                        }
+                    })
+                    .collect()
+            };
+            let ciphers = hello.ciphers().as_chunks::<2>().0.iter();
+            let tls13 = ciphers.filter(|[hi, _]| *hi == 0x13).flatten().copied();
+            [
+                Some(tls13.collect()),
+                hello
+                    .get_extension(ExtensionType::ENCRYPTED_CLIENT_HELLO)
+                    .map(|ech| ech[..5].to_vec()),
+                hello
+                    .get_extension(ExtensionType::SUPPORTED_GROUPS)
+                    .map(degrease),
+                hello
+                    .get_extension(ExtensionType::SIGNATURE_ALGORITHMS)
+                    .map(degrease),
+            ]
+            .into_iter()
+            .chain(
+                [
+                    ExtensionType::STATUS_REQUEST,
+                    ExtensionType::CERTIFICATE_TIMESTAMP,
+                    ExtensionType::PSK_KEY_EXCHANGE_MODES,
+                    ExtensionType::CERT_COMPRESSION,
+                    ExtensionType::DELEGATED_CREDENTIAL,
+                    ExtensionType::RECORD_SIZE_LIMIT,
+                    ExtensionType::TRUST_ANCHORS,
+                ]
+                .map(|extension| hello.get_extension(extension).map(<[u8]>::to_vec)),
+            )
+            .collect()
+        }
+
+        let hellos = Arc::new(Mutex::new(Vec::new()));
+        let server = || {
+            let hellos = hellos.clone();
+            let mut server = SslContextBuilder::new(SslMethod::tls()).unwrap();
+            server.set_select_certificate_callback(move |hello| {
+                hellos.lock().unwrap().push(shared(&hello));
+                Err(SelectCertError::ERROR)
+            });
+            server
+        };
+        let tcp = server().build();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let tcp_url = format!("https://{}/", listener.local_addr().unwrap());
+        let tcp_server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (socket, _) = listener.accept().await.unwrap();
+                let ssl = Ssl::new(&tcp).unwrap();
+                let mut stream = tokio_btls::SslStream::new(ssl, socket).unwrap();
+                assert!(Pin::new(&mut stream).accept().await.is_err());
+            }
+        });
+        let quic = QuicServerConfig::try_from(server()).unwrap();
+        let quic = quic::ServerConfig::with_crypto(Arc::new(quic));
+        let endpoint = quic::Endpoint::server(quic, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let quic_url = format!("https://{}/", endpoint.local_addr().unwrap());
+        let quic_server =
+            tokio::spawn(async move { assert!(endpoint.accept().await.unwrap().await.is_err()) });
+
+        let client = || {
+            crate::Client::builder(crate::rt::tokio::TokioRuntime)
+                .no_proxy()
+                .tls_sni(false)
+                .timeout(Duration::from_secs(5))
+        };
+        for client in [
+            client(),
+            client().tls_options(shared!(TlsOptions::builder())),
+        ] {
+            let client = client.build().unwrap();
+            assert!(client.get(&tcp_url).send().await.is_err());
+        }
+        let client = client()
+            .http3_only()
+            .quic_options(shared!(QuicOptions::builder()))
+            .build()
+            .unwrap();
+        assert!(client.get(&quic_url).send().await.is_err());
+        for server in [tcp_server, quic_server] {
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+
+        let hellos = std::mem::take(&mut *hellos.lock().unwrap());
+        let [default, tcp, quic] = <[_; 3]>::try_from(hellos).unwrap();
+        // Every shared item follows the options on TCP, as it does on QUIC.
+        for (configured, default) in tcp.iter().zip(&default) {
+            assert_ne!(configured, default);
+        }
+        assert_eq!(tcp, quic);
+    }
 }

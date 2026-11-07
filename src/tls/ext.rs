@@ -102,87 +102,13 @@ pub(super) trait SslContextBuilderExt {
 
 impl SslContextBuilderExt for SslContextBuilder {
     fn set_tls_options(&mut self, options: &TlsOptions) -> crate::Result<()> {
-        set_ech_grease_policy(self, options.ech_grease);
-        set_bool!(options, enable_ocsp_stapling, self, enable_ocsp_stapling);
-        set_bool!(
-            options,
-            enable_signed_cert_timestamps,
-            self,
-            enable_signed_cert_timestamps
-        );
-
-        set_option!(options, !session_ticket, self, SslOptions::NO_TICKET);
-        set_option!(options, !psk_dhe_ke, self, SslOptions::NO_PSK_DHE_KE);
-        set_option!(options, !renegotiation, self, SslOptions::NO_RENEGOTIATION);
-        set_option!(options, grease_enabled, self, set_grease_enabled);
-        set_option!(
-            options,
-            grease_sigalgs_enabled,
-            self,
-            set_grease_sigalgs_enabled
-        );
-        set_option!(options, permute_extensions, self, set_permute_extensions);
-        set_option_ref_try!(options, curves_list, self, set_curves_list);
-        set_option_ref_try!(options, sigalgs_list, self, set_sigalgs_list);
-        set_option_ref_try!(options, cipher_list, self, set_cipher_list);
-        set_option_ref_try!(options, tls13_cipher_list, self, set_tls13_ciphers);
-        set_option_ref_try!(options, certificate_compressors, self, set_cert_compressors);
-        set_option_ref_try!(
-            options,
-            delegated_credentials,
-            self,
-            set_delegated_credentials
-        );
-        set_option!(options, record_size_limit, self, set_record_size_limit);
-        // An empty requested list differs from omitting the extension.
-        set_option_ref_try!(options, trust_anchors, self, set_requested_trust_anchors);
-        set_option_ref_try!(
-            options,
-            extension_permutation,
-            self,
-            set_extension_permutation
-        );
+        set_hello_options!(tcp, options, self);
         Ok(())
     }
 
     #[cfg(feature = "http3")]
     fn set_quic_options(&mut self, options: &QuicOptions) -> crate::Result<()> {
-        set_ech_grease_policy(self, options.ech_grease);
-        set_bool!(options, enable_ocsp_stapling, self, enable_ocsp_stapling);
-        set_bool!(
-            options,
-            enable_signed_cert_timestamps,
-            self,
-            enable_signed_cert_timestamps
-        );
-        set_option!(options, !psk_dhe_ke, self, SslOptions::NO_PSK_DHE_KE);
-        set_option!(options, grease_enabled, self, set_grease_enabled);
-        set_option!(
-            options,
-            grease_sigalgs_enabled,
-            self,
-            set_grease_sigalgs_enabled
-        );
-        set_option!(options, permute_extensions, self, set_permute_extensions);
-        set_option_ref_try!(options, curves_list, self, set_curves_list);
-        set_option_ref_try!(options, sigalgs_list, self, set_sigalgs_list);
-        set_option_ref_try!(options, tls13_cipher_list, self, set_tls13_ciphers);
-        set_option_ref_try!(options, certificate_compressors, self, set_cert_compressors);
-        set_option_ref_try!(
-            options,
-            delegated_credentials,
-            self,
-            set_delegated_credentials
-        );
-        set_option!(options, record_size_limit, self, set_record_size_limit);
-        // An empty requested list differs from omitting the extension.
-        set_option_ref_try!(options, trust_anchors, self, set_requested_trust_anchors);
-        set_option_ref_try!(
-            options,
-            extension_permutation,
-            self,
-            set_extension_permutation
-        );
+        set_hello_options!(quic, options, self);
         Ok(())
     }
 
