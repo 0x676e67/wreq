@@ -1033,9 +1033,13 @@ where
             .map(defer_drop)
     }
 
-    /// Returns whether the singleton owns a completed reusable sender.
+    /// Returns whether the singleton owns an open, unpoisoned sender.
+    ///
+    /// A dead sender must not keep its idle-group LRU slot and displace live groups.
     fn is_retained(&self) -> bool {
-        self.service.has_service()
+        self.service.has_service_and(|connection| {
+            !connection.connected().poisoned() && !connection.is_closed()
+        })
     }
 
     /// Detaches the completed sender selected by the global retained-group LRU.
@@ -2481,6 +2485,50 @@ mod tests {
         let mut services = pool.inner.services.lock();
         assert!(services.get_mut(&first_key).is_some());
         assert!(services.get_mut(&second_key).is_none());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "http2")]
+    async fn pool_max_size_skips_dead_http2_groups() {
+        let pool = Pool::new(
+            Config {
+                idle_timeout: None,
+                max_size: NonZeroUsize::new(2),
+                ..Config::default()
+            },
+            TestConnector::Http2(Arc::default(), Arc::new(tokio::sync::Semaphore::new(3))),
+            DynRuntime::new(crate::rt::tokio::TokioRuntime),
+            true,
+        );
+        let [live, dead, next] =
+            ["live", "dead", "next"].map(|name| grouped_request(Group::new(name), Protocol::Http2));
+        let (live_key, dead_key, next_key) = (live.key(), dead.key(), next.key());
+        let checkout = |req| pool.checkout(connection_config(req));
+        let retained = |key| {
+            pool.inner
+                .services
+                .lock()
+                .get_mut(key)
+                .is_some_and(|entry| entry.is_retained())
+        };
+
+        // Established HTTP/2 senders stay retained after their checkouts end.
+        drop(checkout(live).await.expect("live checkout"));
+        let pooled = checkout(dead).await.expect("dead checkout");
+        let connected = pooled.connected().clone();
+        drop(pooled);
+        assert!(retained(&dead_key));
+        // Poison the idle MRU sender after its checkout, as Response::forbid_recycle does.
+        connected.poison();
+        assert!(!retained(&dead_key));
+
+        // The full LRU removes the dead group instead of evicting the live one,
+        // even though idle sweeps are disabled.
+        drop(checkout(next).await.expect("next checkout"));
+        assert!(retained(&live_key) && retained(&next_key));
+        let mut services = pool.inner.services.lock();
+        assert!(services.get_mut(&dead_key).is_none());
+        assert_eq!(services.iter_mut().count(), 2);
     }
 
     #[tokio::test]

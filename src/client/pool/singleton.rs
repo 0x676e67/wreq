@@ -117,7 +117,6 @@ where
     }
 
     /// Returns whether a completed shared service exists and satisfies `predicate`.
-    #[cfg(feature = "http3")]
     pub(super) fn has_service_and<F>(&self, predicate: F) -> bool
     where
         F: FnOnce(&M::Response) -> bool,
