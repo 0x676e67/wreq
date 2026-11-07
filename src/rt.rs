@@ -24,7 +24,7 @@ use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::future::BoxFuture;
 use pin_project_lite::pin_project;
 
-pub(crate) use self::handle::RuntimeHandle;
+pub(crate) use self::handle::DynRuntime;
 use crate::dns::Resolve;
 
 /// Runtime facilities selected when constructing a client.

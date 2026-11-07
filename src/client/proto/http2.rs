@@ -19,7 +19,7 @@ use super::{ConnectionState, Established, SendError, is_expired};
 use crate::{
     client::error::Error,
     conn::Connected,
-    rt::{RuntimeHandle, Timer as _},
+    rt::{DynRuntime, Timer as _},
 };
 
 /// Cloneable request-side handle for one HTTP/2 connection.
@@ -30,8 +30,8 @@ use crate::{
 pub struct Connection<B> {
     tx: conn::http2::SendRequest<B>,
     state: Arc<ConnectionState>,
-    conn_info: Connected,
-    runtime: RuntimeHandle,
+    connected: Connected,
+    runtime: DynRuntime,
 }
 
 /// Layers HTTP/2 handshaking over an established-transport service.
@@ -41,7 +41,7 @@ pub struct Connection<B> {
 /// pool's singleton service.
 #[derive(Clone)]
 pub struct ConnectLayer<B> {
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     _body: PhantomData<fn(B)>,
 }
 
@@ -52,7 +52,7 @@ pub struct ConnectLayer<B> {
 /// shared sender stored by the singleton pool.
 pub struct Connect<S, B> {
     service: S,
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     _body: PhantomData<fn(B)>,
 }
 
@@ -60,7 +60,7 @@ pub struct Connect<S, B> {
 
 impl<B> ConnectLayer<B> {
     /// Creates an HTTP/2 handshake layer for pooled connections.
-    pub fn new(runtime: RuntimeHandle) -> Self {
+    pub fn new(runtime: DynRuntime) -> Self {
         Self {
             runtime,
             _body: PhantomData,
@@ -122,7 +122,7 @@ impl<B> Clone for Connection<B> {
     fn clone(&self) -> Self {
         Self {
             tx: self.tx.clone(),
-            conn_info: self.conn_info.clone(),
+            connected: self.connected.clone(),
             state: self.state.clone(),
             runtime: self.runtime.clone(),
         }
@@ -135,7 +135,7 @@ where
 {
     /// Awaits a transport and returns a handshaken HTTP/2 sender.
     /// Starts the connection driver before waiting for sender readiness.
-    async fn handshake<F, T>(established: F, runtime: RuntimeHandle) -> Result<Self, BoxError>
+    async fn handshake<F, T>(established: F, runtime: DynRuntime) -> Result<Self, BoxError>
     where
         F: Future<Output = Result<Established<T>, BoxError>>,
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -169,15 +169,15 @@ where
 
         Ok(Self {
             tx,
-            conn_info: connected,
+            connected,
             state: Arc::new(ConnectionState::new(runtime.now())),
             runtime,
         })
     }
 
     /// Returns metadata for the underlying transport.
-    pub fn conn_info(&self) -> &Connected {
-        &self.conn_info
+    pub fn connected(&self) -> &Connected {
+        &self.connected
     }
 
     /// Returns whether the protocol sender is immediately ready.
@@ -216,7 +216,7 @@ where
         // after netty can observe both request and response endpoints,
         // including HTTP/2 extended CONNECT. Peer max-stream counts alone do
         // not expose local occupancy: https://github.com/hyperium/hyper/issues/3623
-        !self.conn_info.poisoned()
+        !self.connected.poisoned()
             && !self.tx.is_closed()
             && (!self.is_idle() || !is_expired(self.state.idle_at(), now, timeout))
     }
@@ -236,7 +236,7 @@ where
             .poll_ready(cx)
             .map_err(|error| SendError::Request(Error::closed(error)));
         if matches!(ready, Poll::Ready(Err(_))) {
-            self.conn_info.poison();
+            self.connected.poison();
         }
         ready
     }

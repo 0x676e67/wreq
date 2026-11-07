@@ -275,7 +275,7 @@ pub(super) enum SingletonFuture<F, S> {
     /// Participates in the current creation batch.
     Participating {
         /// Identifier used for cancellation and driver handoff.
-        id: WaiterId,
+        id: ParticipantId,
         /// Creation generation this participant belongs to.
         generation: Arc<()>,
         /// Shared singleton state.
@@ -351,7 +351,7 @@ pub(super) struct Batch<F, S> {
     generation: Arc<()>,
 
     /// Wrapping participant identifier source.
-    next_id: WaiterId,
+    next_id: ParticipantId,
 
     /// Participant currently responsible for polling the maker.
     driver: Option<Driver>,
@@ -365,16 +365,16 @@ pub(super) struct Batch<F, S> {
 /// The counter wraps explicitly and is scoped to a single [`Batch`]. It is used
 /// to transfer the driver role and remove canceled waiters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct WaiterId(usize);
+pub(super) struct ParticipantId(usize);
 
 /// Participant currently responsible for polling the shared maker future.
 ///
 /// The driver stores no task handle. Ownership is represented by its
-/// [`WaiterId`], which lets any matching checkout take the pinned future from
+/// [`ParticipantId`], which lets any matching checkout take the pinned future from
 /// the batch for one poll.
 struct Driver {
     /// Driver participant identifier.
-    id: WaiterId,
+    id: ParticipantId,
 }
 
 /// Non-driver participant waiting for the shared result.
@@ -383,7 +383,7 @@ struct Driver {
 /// sends a clone of the shared service or of the maker's failure.
 struct Waiter<S> {
     /// Waiter participant identifier.
-    id: WaiterId,
+    id: ParticipantId,
     /// Delivers the shared result; closing it signals driver promotion.
     sender: oneshot::Sender<Result<S, SingletonError>>,
 }
@@ -667,28 +667,28 @@ impl<F, S> Batch<F, S> {
         Self {
             future: None,
             generation: Arc::new(()),
-            next_id: WaiterId(0),
+            next_id: ParticipantId(0),
             driver: None,
             waiters: Vec::new(),
         }
     }
 
     /// Allocates the next participant identifier.
-    fn next_id(&mut self) -> WaiterId {
+    fn next_id(&mut self) -> ParticipantId {
         let id = self.next_id;
         self.next_id.0 = self.next_id.0.wrapping_add(1);
         id
     }
 
     /// Registers the first participant as the maker driver.
-    fn register_driver(&mut self) -> WaiterId {
+    fn register_driver(&mut self) -> ParticipantId {
         let id = self.next_id();
         self.driver = Some(Driver { id });
         id
     }
 
     /// Registers a participant waiting for the shared result.
-    fn register_waiter(&mut self) -> (WaiterId, oneshot::Receiver<Result<S, SingletonError>>) {
+    fn register_waiter(&mut self) -> (ParticipantId, oneshot::Receiver<Result<S, SingletonError>>) {
         let id = self.next_id();
         let (sender, receiver) = oneshot::channel();
         self.waiters.push(Waiter { id, sender });
@@ -697,7 +697,7 @@ impl<F, S> Batch<F, S> {
 
     /// Removes a participant and reports whether the batch became empty.
     /// If the driver leaves, one remaining waiter takes over the same maker.
-    fn remove(&mut self, id: WaiterId) -> ParticipantRemoval<F, S> {
+    fn remove(&mut self, id: ParticipantId) -> ParticipantRemoval<F, S> {
         if let Some(index) = self.waiters.iter().position(|waiter| waiter.id == id) {
             return ParticipantRemoval {
                 batch_empty: false,
@@ -732,7 +732,7 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Takes the maker only for the participant currently acting as driver.
-    fn take_future(&mut self, id: WaiterId) -> Option<Pin<Box<F>>> {
+    fn take_future(&mut self, id: ParticipantId) -> Option<Pin<Box<F>>> {
         self.driver
             .as_ref()
             .is_some_and(|driver| driver.id == id)
@@ -741,7 +741,11 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Restores a pending maker when the same participant remains the driver.
-    fn restore_future(&mut self, id: WaiterId, future: Pin<Box<F>>) -> Result<(), Pin<Box<F>>> {
+    fn restore_future(
+        &mut self,
+        id: ParticipantId,
+        future: Pin<Box<F>>,
+    ) -> Result<(), Pin<Box<F>>> {
         if self.driver.as_ref().is_some_and(|driver| driver.id == id) && self.future.is_none() {
             self.future = Some(future);
             Ok(())

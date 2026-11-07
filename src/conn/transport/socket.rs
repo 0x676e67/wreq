@@ -17,17 +17,18 @@ use tower::{Service, ServiceExt, util::Oneshot};
 use super::UnixConnector;
 use super::{BindOptions, ConnectError, TcpConnector};
 #[cfg(unix)]
-use crate::rt::RuntimeHandle;
+use crate::rt::DynRuntime;
 use crate::{dns::DynResolver, error::BoxError, rt::BoxConnection};
 
 #[cfg(unix)]
-type Connecting = Either<
+type SocketConnectorFuture = Either<
     MapErr<Oneshot<TcpConnector<DynResolver>, Uri>, fn(ConnectError) -> BoxError>,
     MapErr<Oneshot<UnixConnector, Uri>, fn(io::Error) -> BoxError>,
 >;
 
 #[cfg(not(unix))]
-type Connecting = MapErr<Oneshot<TcpConnector<DynResolver>, Uri>, fn(ConnectError) -> BoxError>;
+type SocketConnectorFuture =
+    MapErr<Oneshot<TcpConnector<DynResolver>, Uri>, fn(ConnectError) -> BoxError>;
 
 /// A physical socket target and the request's binding policy.
 /// Secure connections temporarily disable Nagle during the handshake.
@@ -36,7 +37,7 @@ pub struct SocketRequest {
     pub(crate) uri: Uri,
     #[cfg(unix)]
     pub(crate) unix: Option<Arc<Path>>,
-    pub(crate) options: Option<Arc<BindOptions>>,
+    pub(crate) bind_options: Option<Arc<BindOptions>>,
     pub(crate) secure: bool,
 }
 
@@ -44,12 +45,12 @@ pub struct SocketRequest {
 #[derive(Clone)]
 pub(crate) struct SocketConnector {
     #[cfg(unix)]
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     tcp: TcpConnector<DynResolver>,
 }
 
 impl SocketConnector {
-    pub(crate) fn new(#[cfg(unix)] runtime: RuntimeHandle, tcp: TcpConnector<DynResolver>) -> Self {
+    pub(crate) fn new(#[cfg(unix)] runtime: DynRuntime, tcp: TcpConnector<DynResolver>) -> Self {
         Self {
             #[cfg(unix)]
             runtime,
@@ -61,7 +62,7 @@ impl SocketConnector {
 impl Service<SocketRequest> for SocketConnector {
     type Response = BoxConnection;
     type Error = BoxError;
-    type Future = Connecting;
+    type Future = SocketConnectorFuture;
 
     #[inline]
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -88,8 +89,8 @@ impl Service<SocketRequest> for SocketConnector {
             tcp = tcp.set_nodelay(true);
         }
 
-        if let Some(options) = &req.options {
-            tcp = tcp.set_bind_options(options);
+        if let Some(bind_options) = &req.bind_options {
+            tcp = tcp.set_bind_options(bind_options);
         }
 
         let connecting = tcp

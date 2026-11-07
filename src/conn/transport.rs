@@ -76,7 +76,7 @@ pub(crate) struct BindOptions {
 
 /// Owns the pending candidates and active attempts for one connection race.
 /// Dropping it cancels every unfinished attempt, including after a winner is selected.
-struct Connecting<F> {
+struct Race<F> {
     addr_families: (SocketAddrs, SocketAddrs),
     next_fallback: bool,
     attempts: VecDeque<Attempt<F>>,
@@ -149,7 +149,7 @@ impl ConnectOptions {
     pub(super) async fn connect<C, F, S>(
         self,
         addrs: SocketAddrs,
-        bindings: &BindOptions,
+        bind_options: &BindOptions,
         mut start: impl FnMut(SocketAddr) -> Result<F, ConnectError>,
         sleep: impl Fn(Duration) -> S,
     ) -> Result<C, ConnectError>
@@ -157,7 +157,7 @@ impl ConnectOptions {
         F: Future<Output = Result<C, ConnectError>> + Unpin,
         S: Future<Output = ()>,
     {
-        let addrs = match (bindings.ipv4_address, bindings.ipv6_address) {
+        let addrs = match (bind_options.ipv4_address, bind_options.ipv6_address) {
             (Some(_), None) => addrs.filter(SocketAddr::is_ipv4),
             (None, Some(_)) => addrs.filter(SocketAddr::is_ipv6),
             _ => addrs,
@@ -187,7 +187,7 @@ impl ConnectOptions {
             return connect_with_timeout(fut, timeout).await;
         }
 
-        let mut connecting = Connecting {
+        let mut race = Race {
             addr_families: addrs.split_by_preference(None, None),
             next_fallback: false,
             attempts: VecDeque::with_capacity(MAX_PARALLEL_CONNECT_ATTEMPTS),
@@ -195,7 +195,7 @@ impl ConnectOptions {
             first_error: None,
         };
         connect_with_timeout(
-            connecting.connect(self.happy_eyeballs_timeout, &mut start, sleep),
+            race.connect(self.happy_eyeballs_timeout, &mut start, sleep),
             timeout,
         )
         .await
@@ -271,9 +271,9 @@ impl BindOptions {
     }
 }
 
-// ===== impl Connecting =====
+// ===== impl Race =====
 
-impl<C, F> Connecting<F>
+impl<C, F> Race<F>
 where
     F: Future<Output = Result<C, ConnectError>> + Unpin,
 {

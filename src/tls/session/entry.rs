@@ -1,7 +1,7 @@
-//! Ticket state for one TLS session-cache key.
+//! Ticket state for one TLS session-store key.
 //!
 //! [`SessionEntry`] owns the two ticket slots for one full session key. The
-//! parent cache serializes state changes and drops retired values outside its lock.
+//! parent store serializes state changes and drops retired values outside its lock.
 
 use btls::ssl::SslSessionRef;
 
@@ -16,7 +16,7 @@ pub(in crate::tls) struct SessionEntry {
     tickets: TicketSlots<Ticket>,
 }
 
-/// Two ordered TLS session tickets belonging to one cache entry.
+/// Two ordered TLS session tickets belonging to one store entry.
 ///
 /// The first slot is preferred. The second only holds a former primary already
 /// classified as single-use, and cannot exist without the first. Reusable
@@ -41,7 +41,7 @@ impl SessionEntry {
     }
 
     /// Inserts a newly issued ticket and returns any displaced ticket.
-    /// The parent cache drops the returned value after releasing its lock.
+    /// The parent store drops the returned value after releasing its lock.
     pub(in crate::tls) fn push(&mut self, ticket: Ticket) -> Option<Ticket> {
         self.tickets
             .push(ticket, |ticket| ticket.session().should_be_single_use())
@@ -55,7 +55,7 @@ impl SessionEntry {
     }
 
     /// Removes expired tickets and returns them for destruction outside the
-    /// parent cache lock.
+    /// parent store lock.
     ///
     /// A missing time or expired primary clears both slots. Otherwise only the
     /// fallback is checked; expiration never promotes it.
@@ -115,7 +115,7 @@ impl<T> TicketSlots<T> {
         }
     }
 
-    /// Applies the cache's expiration policy and returns removed tickets.
+    /// Applies the store's expiration policy and returns removed tickets.
     ///
     /// A missing or expired primary clears both slots without checking the
     /// fallback. Otherwise only an expired fallback is removed. Returned

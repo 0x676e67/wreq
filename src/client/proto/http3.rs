@@ -22,22 +22,22 @@ use crate::{
     client::{error::Error, pool::PoolTarget},
     conn::{Conn, Connected, request::ConnectRequest},
     error::TimedOut,
-    rt::{RuntimeHandle, Timer as _},
+    rt::{DynRuntime, Timer as _},
 };
 
 /// Shared request sender for one HTTP/3 connection.
 pub struct Connection<B> {
     tx: conn::http3::SendRequest<B>,
     state: Arc<ConnectionState>,
-    conn_info: Connected,
-    runtime: RuntimeHandle,
+    connected: Connected,
+    runtime: DynRuntime,
 }
 
 /// Establishes HTTP/3 connections for the pool's shared singleton.
 /// One connect timeout covers the QUIC connection and the HTTP/3 handshake.
 pub struct Connect<C, B> {
     connector: C,
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     timeout: Option<Duration>,
     _body: PhantomData<fn(B)>,
 }
@@ -45,7 +45,7 @@ pub struct Connect<C, B> {
 // ===== impl Connect =====
 
 impl<C, B> Connect<C, B> {
-    pub fn new(connector: C, runtime: RuntimeHandle, timeout: Option<Duration>) -> Self {
+    pub fn new(connector: C, runtime: DynRuntime, timeout: Option<Duration>) -> Self {
         Self {
             connector,
             runtime,
@@ -87,19 +87,12 @@ where
         let runtime = self.runtime.clone();
         let timeout = self.timeout;
         let builder = target
-            .connection
+            .config
             .req
             .config_override::<netty::http3::Http3Options>()
             .map_or_else(
-                || target.connection.proto.http3.clone(),
-                |options| {
-                    target
-                        .connection
-                        .proto
-                        .http3
-                        .clone()
-                        .options(options.clone())
-                },
+                || target.config.proto.http3.clone(),
+                |options| target.config.proto.http3.clone().options(options.clone()),
             );
 
         Box::pin(async move {
@@ -110,19 +103,16 @@ where
             // A peer that withholds stream credit stalls the handshake after the QUIC connection
             // is up, so the deadline also covers opening the control and QPACK streams.
             let handshake = async {
-                let Conn {
-                    inner,
-                    connected: conn_info,
-                } = connector.call(target.connection.req).await?;
+                let Conn { inner, connected } = connector.call(target.config.req).await?;
                 let Either::Right((quic, endpoint)) = inner else {
                     return Err::<_, BoxError>("QUIC connection returned a stream".into());
                 };
                 let transport = Compat::new(http3_quic::Connection::new(quic));
-                let (tx, driver) = builder.handshake::<_, B>(transport).await?;
-                Ok((tx, driver, endpoint, conn_info))
+                let (tx, connection) = builder.handshake::<_, B>(transport).await?;
+                Ok((tx, connection, endpoint, connected))
             };
 
-            let (mut tx, driver, endpoint, conn_info) =
+            let (mut tx, connection, endpoint, connected) =
                 match timeout.map(|timeout| runtime.sleep(timeout)) {
                     Some(deadline) => match future::select(pin!(handshake), deadline).await {
                         Either::Left((result, _)) => result?,
@@ -133,7 +123,7 @@ where
 
             runtime.execute(Box::pin(async move {
                 let _endpoint = endpoint;
-                if let Err(_error) = driver.await {
+                if let Err(_error) = connection.await {
                     debug!("client connection error: {_error}");
                 }
             }));
@@ -142,7 +132,7 @@ where
             Ok(Connection {
                 tx,
                 state: Arc::new(ConnectionState::new(runtime.now())),
-                conn_info,
+                connected,
                 runtime,
             })
         })
@@ -156,15 +146,15 @@ impl<B> Clone for Connection<B> {
         Self {
             tx: self.tx.clone(),
             state: self.state.clone(),
-            conn_info: self.conn_info.clone(),
+            connected: self.connected.clone(),
             runtime: self.runtime.clone(),
         }
     }
 }
 
 impl<B> Connection<B> {
-    pub fn conn_info(&self) -> &Connected {
-        &self.conn_info
+    pub fn connected(&self) -> &Connected {
+        &self.connected
     }
 
     pub fn is_ready(&self) -> bool {
@@ -189,7 +179,7 @@ impl<B> Connection<B> {
     }
 
     pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
-        !self.conn_info.poisoned()
+        !self.connected.poisoned()
             && !self.tx.is_closed()
             && (!self.state.is_idle() || !is_expired(self.state.idle_at(), now, timeout))
     }
@@ -209,7 +199,7 @@ where
             .poll_ready(cx)
             .map_err(|error| SendError::Request(Error::closed(error)));
         if matches!(ready, Poll::Ready(Err(_))) {
-            self.conn_info.poison();
+            self.connected.poison();
         }
         ready
     }

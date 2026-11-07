@@ -82,10 +82,10 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
-    rt::{IntoRuntime, RuntimeHandle},
+    rt::{DynRuntime, IntoRuntime},
     tls::{
         TlsOptions, TlsVersion,
-        config::TlsConnectorBuilder,
+        config::TlsBuilder,
         keylog::KeyLog,
         session::{IntoTlsSessionStore, TlsSessionStore},
         trust::{CertStore, Identity},
@@ -151,7 +151,7 @@ pub struct Client(Arc<Either<ClientService, BoxedClientService>>);
 #[must_use]
 pub struct ClientBuilder {
     config: Config,
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
 }
 
 /// Configuration collected before the client service stack is built.
@@ -295,7 +295,7 @@ impl Client {
                 tls_session_store: None,
                 config_set: ConfigSet::default(),
             },
-            runtime: RuntimeHandle::new(runtime),
+            runtime: DynRuntime::new(runtime),
         }
     }
 
@@ -514,7 +514,7 @@ impl ClientBuilder {
                 );
 
             let connector = {
-                let tls = TlsConnectorBuilder::new()
+                let tls = TlsBuilder::new()
                     .protocol(self.config.protocol)
                     .keylog(self.config.tls_keylog)
                     .cert_store(self.config.tls_cert_store)
@@ -1743,18 +1743,18 @@ mod sealed {
         config: svc::Config,
 
         /// Runtime used by protocol drivers and pool maintenance.
-        runtime: RuntimeHandle,
+        runtime: DynRuntime,
 
         /// Client HTTP/1 handshake configuration.
         h1_builder: conn::http1::Builder,
 
         /// Client HTTP/2 handshake configuration.
         #[cfg(feature = "http2")]
-        h2_builder: conn::http2::Builder<RuntimeHandle>,
+        h2_builder: conn::http2::Builder<DynRuntime>,
 
         /// Client HTTP/3 handshake configuration.
         #[cfg(feature = "http3")]
-        h3_builder: conn::http3::Builder<RuntimeHandle>,
+        h3_builder: conn::http3::Builder<DynRuntime>,
 
         /// Connection-pool reuse and retention policy.
         pool_config: pool::Config,
@@ -1838,7 +1838,7 @@ mod sealed {
 
     impl Builder {
         /// Creates a builder using `runtime` for protocol drivers and pool tasks.
-        pub fn new(runtime: RuntimeHandle) -> Self {
+        pub fn new(runtime: DynRuntime) -> Self {
             Self {
                 config: svc::Config {
                     retry_unsent: true,
@@ -1856,7 +1856,7 @@ mod sealed {
                 pool_config: pool::Config {
                     idle_timeout: Some(Duration::from_secs(90)),
                     max_idle_per_host: usize::MAX,
-                    max_pool_size: None,
+                    max_size: None,
                     ..pool::Config::default()
                 },
                 config_set: ConfigSet::default(),
@@ -1892,7 +1892,7 @@ mod sealed {
         /// connections. The default is `None`.
         #[inline]
         pub fn pool_max_size(mut self, max_size: impl Into<Option<NonZeroUsize>>) -> Self {
-            self.pool_config.max_pool_size = max_size.into();
+            self.pool_config.max_size = max_size.into();
             self
         }
 
@@ -1916,7 +1916,7 @@ mod sealed {
         ) -> Self {
             #[cfg(feature = "http3")]
             {
-                self.pool_config.connect_timeout = timeout;
+                self.pool_config.http3_connect_timeout = timeout;
             }
             self
         }

@@ -45,7 +45,7 @@ use crate::{
     error::ProxyConnect,
     ext::UriExt,
     proxy::matcher::Intercept,
-    rt::RuntimeHandle,
+    rt::DynRuntime,
     sync::{Mutex, MutexGuard},
 };
 
@@ -75,7 +75,7 @@ struct Shared {
 /// Dropping the tunnel aborts CONNECT-UDP before the outer connection is closed.
 struct State {
     tunnel: Option<UdpTunnel>,
-    _driver: netty::conn::http3::Connection<Connection, Body, RuntimeHandle>,
+    _driver: netty::conn::http3::Connection<OuterConnection, Body, DynRuntime>,
     _endpoint: Endpoint,
 }
 
@@ -89,7 +89,7 @@ struct SocketSender {
 struct SendWake(Arc<Notify>);
 
 /// Owns the outer connection's stream readers and hands out its datagram reader once.
-struct Connection {
+struct OuterConnection {
     inner: Compat<http3_quic::Connection>,
     datagrams: Option<::quic::Connection>,
 }
@@ -102,13 +102,13 @@ struct Receiver(BoxStream<'static, Result<Bytes, ::quic::ConnectionError>>);
 
 /// Opens CONNECT-UDP and authenticates the target; its endpoint retains the outer connection.
 pub(super) async fn connect(
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     mut inner: QuicConnector,
     request: ConnectRequest,
     proxy: Intercept,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
-    let tls = inner.tunnel_config(&request)?;
+    let config = inner.tunnel_config(&request)?;
 
     // This scope classifies proxy setup failures separately from target TLS errors.
     let connect_proxy = async {
@@ -122,7 +122,7 @@ pub(super) async fn connect(
             .await?;
         let remote = connection.remote_address();
         let (sender, driver) = http3::Builder::new(runtime)
-            .handshake_with_datagrams::<_, Body>(Connection::new(connection))
+            .handshake_with_datagrams::<_, Body>(OuterConnection::new(connection))
             .await?;
 
         // ConnectUdp obtains its sender from a service; reuse this outer connection.
@@ -154,7 +154,7 @@ pub(super) async fn connect(
     let (socket, remote) = connect_proxy.await.map_err(ProxyConnect::Source)?;
     let ended = socket.shared.ended.clone();
     inner
-        .finish_tunnel(&request, &tls, socket, remote, ended)
+        .finish_tunnel(&request, &config, socket, remote, ended)
         .await
 }
 
@@ -174,7 +174,7 @@ fn udp_target(uri: &Uri) -> Result<Uri, BoxError> {
 impl Socket {
     fn new(
         tunnel: UdpTunnel,
-        driver: netty::conn::http3::Connection<Connection, Body, RuntimeHandle>,
+        driver: netty::conn::http3::Connection<OuterConnection, Body, DynRuntime>,
         endpoint: Endpoint,
         remote: SocketAddr,
     ) -> io::Result<Self> {
@@ -395,9 +395,9 @@ impl Wake for SendWake {
     }
 }
 
-// ===== impl Connection =====
+// ===== impl OuterConnection =====
 
-impl Connection {
+impl OuterConnection {
     /// Takes an authenticated connection with no other active datagram reader.
     fn new(connection: ::quic::Connection) -> Self {
         Self {
@@ -407,7 +407,7 @@ impl Connection {
     }
 }
 
-impl<B: Buf> rt::Connection<B> for Connection {
+impl<B: Buf> rt::Connection<B> for OuterConnection {
     type RecvStream = Compat<http3_quic::RecvStream>;
     type OpenStreams = Compat<http3_quic::OpenStreams>;
 
@@ -430,7 +430,7 @@ impl<B: Buf> rt::Connection<B> for Connection {
     }
 }
 
-impl<B: Buf> rt::OpenStreams<B> for Connection {
+impl<B: Buf> rt::OpenStreams<B> for OuterConnection {
     type SendStream = Compat<http3_quic::SendStream<B>>;
     type BidiStream = Compat<http3_quic::BidiStream<B>>;
 
@@ -453,7 +453,7 @@ impl<B: Buf> rt::OpenStreams<B> for Connection {
     }
 }
 
-impl DatagramConnection for Connection {
+impl DatagramConnection for OuterConnection {
     type Sender = Sender;
     type Receiver = Receiver;
 

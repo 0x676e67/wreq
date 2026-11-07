@@ -135,12 +135,12 @@ impl SessionStore {
     }
 
     fn put(&self, key: Key, ticket: Ticket) {
-        if let Some(store) = &self.tls_session_store {
+        if let Some(tls_session_store) = &self.tls_session_store {
             let session = TlsSession {
                 ticket,
                 key: key.clone(),
             };
-            guarded(|| store.put(key, session));
+            guarded(|| tls_session_store.put(key, session));
             return;
         }
 
@@ -158,8 +158,8 @@ impl SessionStore {
     /// Takes a ticket only for its complete connection identity; results with another key or
     /// an expired lifetime are dropped.
     fn pop(&self, key: &Key) -> Option<Ticket> {
-        if let Some(store) = &self.tls_session_store {
-            let session = guarded(|| store.pop(key)).flatten()?;
+        if let Some(tls_session_store) = &self.tls_session_store {
+            let session = guarded(|| tls_session_store.pop(key)).flatten()?;
             return (session.key == *key
                 && !entry::is_expired(session.ticket.session(), unix_time()))
             .then_some(session.ticket);

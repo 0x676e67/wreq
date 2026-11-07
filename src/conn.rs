@@ -55,8 +55,8 @@ use crate::{
     dns::DynResolver,
     error::map_timeout_to_connector_error,
     proxy::{Matcher as ProxyMatcher, matcher::Intercept},
-    rt::RuntimeHandle,
-    tls::{AlpnProtocol, TlsInfo, config::TlsConnectorBuilder, connector::MaybeHttpsStream},
+    rt::DynRuntime,
+    tls::{AlpnProtocol, TlsInfo, config::TlsBuilder, connector::MaybeHttpsStream},
 };
 
 /// Concrete stream path; [`Connector`] wraps both transports in any user layers.
@@ -97,15 +97,15 @@ pub(crate) enum Connector {
 #[must_use]
 pub(crate) struct ConnectorBuilder {
     config: Config,
-    runtime: RuntimeHandle,
-    tls: TlsConnectorBuilder,
-    timeout: Option<Duration>,
+    runtime: DynRuntime,
+    tls: TlsBuilder,
+    connect_timeout: Option<Duration>,
     bind_options: BindOptions,
     layers: Vec<BoxedConnectorLayer>,
 }
 
 /// Drives one selected transport or the shared middleware stack without extra boxing.
-pub(crate) enum Connecting {
+pub(crate) enum ConnectorFuture {
     Stream {
         future: <Stack as Service<ConnectRequest>>::Future,
     },
@@ -123,15 +123,15 @@ pub(crate) enum Connecting {
 impl Connector {
     /// Starts configuring both transports with common runtime, TLS and connection policy.
     pub(crate) fn builder(
-        runtime: RuntimeHandle,
-        tls: TlsConnectorBuilder,
+        runtime: DynRuntime,
+        tls: TlsBuilder,
         config: Config,
     ) -> ConnectorBuilder {
         ConnectorBuilder {
             runtime,
             tls,
             config,
-            timeout: None,
+            connect_timeout: None,
             bind_options: BindOptions::default(),
             layers: Vec::new(),
         }
@@ -141,7 +141,7 @@ impl Connector {
 impl Service<ConnectRequest> for Connector {
     type Response = Conn;
     type Error = BoxError;
-    type Future = Connecting;
+    type Future = ConnectorFuture;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self {
@@ -169,24 +169,24 @@ impl Service<ConnectRequest> for Connector {
             } => {
                 #[cfg(feature = "http3")]
                 if request.resolved_protocol() == Protocol::Http3 {
-                    return Connecting::Quic {
+                    return ConnectorFuture::Quic {
                         future: quic.call(request),
                     };
                 }
-                Connecting::Stream {
+                ConnectorFuture::Stream {
                     future: stream.call(request),
                 }
             }
-            Self::Layered(service) => Connecting::Layered {
+            Self::Layered(service) => ConnectorFuture::Layered {
                 future: service.call(Unnameable(request)),
             },
         }
     }
 }
 
-// ===== impl Connecting =====
+// ===== impl ConnectorFuture =====
 
-impl Future for Connecting {
+impl Future for ConnectorFuture {
     type Output = Result<Conn, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -205,7 +205,7 @@ impl ConnectorBuilder {
     /// Sets the connection deadline for both transport paths.
     #[inline]
     pub(crate) fn connect_timeout(mut self, timeout: Option<Duration>) -> Self {
-        self.timeout = timeout;
+        self.connect_timeout = timeout;
         self
     }
 
@@ -233,10 +233,14 @@ impl ConnectorBuilder {
         config_set: ConfigSet,
     ) -> Result<(Connector, BindOptions), crate::Error> {
         // With user layers, one outer timeout covers the complete middleware call.
-        let transport_timeout = self.layers.is_empty().then_some(self.timeout).flatten();
+        let transport_timeout = self
+            .layers
+            .is_empty()
+            .then_some(self.connect_timeout)
+            .flatten();
         let tcp = tcp
             .enforce_http(false)
-            .set_connect_timeout(self.timeout)
+            .set_connect_timeout(self.connect_timeout)
             .set_bind_options(&self.bind_options)
             .build(resolver.clone());
 
@@ -302,7 +306,7 @@ impl ConnectorBuilder {
 
         // Keep the built-in timeout outside user layers so it covers their work too.
         // The final mapping also handles a tower timeout supplied by the caller.
-        let service = TimeoutLayer::new(self.runtime, self.timeout)
+        let service = TimeoutLayer::new(self.runtime, self.connect_timeout)
             .layer(service)
             .map_err(map_timeout_to_connector_error);
 

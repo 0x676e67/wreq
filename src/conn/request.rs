@@ -51,11 +51,11 @@ impl ConnectRequest {
     pub(crate) fn new(
         uri: &Uri,
         protocol: Option<Protocol>,
-        client: Protocol,
+        client_protocol: Protocol,
         config_set: ConfigSet,
         client_config_set: &ConfigSet,
         bind_options: Option<Arc<BindOptions>>,
-        base_bind_options: &BindOptions,
+        client_bind_options: &BindOptions,
     ) -> Result<Self, BoxError> {
         let origin = Uri::builder()
             .scheme(uri.scheme().ok_or("URI missing scheme")?.clone())
@@ -66,12 +66,12 @@ impl ConnectRequest {
             key: ConnectionKey::new(
                 origin,
                 protocol,
-                client,
+                client_protocol,
                 config_set,
                 client_config_set,
-                bind_options.filter(|options| options.as_ref() != base_bind_options),
+                bind_options.filter(|options| options.as_ref() != client_bind_options),
             ),
-            resolved_protocol: protocol.unwrap_or(client),
+            resolved_protocol: protocol.unwrap_or(client_protocol),
             route_uri: None,
         })
     }
@@ -132,14 +132,14 @@ impl ConnectRequest {
     pub(crate) fn key_with_protocol(
         &self,
         protocol: Option<Protocol>,
-        client: Protocol,
+        client_protocol: Protocol,
         client_config_set: &ConfigSet,
     ) -> ConnectionKey {
         let config_set = self.key.overrides.config_set().clone();
         ConnectionKey::new(
             self.key.origin.clone(),
             protocol,
-            client,
+            client_protocol,
             config_set,
             client_config_set,
             self.key.bind_options.clone(),
@@ -168,13 +168,16 @@ impl ConnectionKey {
     fn new(
         origin: Uri,
         protocol: Option<Protocol>,
-        client: Protocol,
+        client_protocol: Protocol,
         config_set: ConfigSet,
         client_config_set: &ConfigSet,
         bind_options: Option<Arc<BindOptions>>,
     ) -> Self {
-        let overrides =
-            Overrides::for_pool(config_set, client_config_set, protocol.unwrap_or(client));
+        let overrides = Overrides::for_pool(
+            config_set,
+            client_config_set,
+            protocol.unwrap_or(client_protocol),
+        );
         let hash = HASHER.hash_one((&origin, protocol, &bind_options, overrides.hash()));
         Self {
             origin,
@@ -399,7 +402,7 @@ mod tests {
             #[cfg(feature = "http3")]
             Some(Protocol::Http3),
         ] {
-            let request = |bind_options, base_bind_options| {
+            let request = |bind_options, client_bind_options| {
                 ConnectRequest::new(
                     &uri,
                     protocol,
@@ -407,7 +410,7 @@ mod tests {
                     ConfigSet::default(),
                     &client_config_set,
                     bind_options,
-                    base_bind_options,
+                    client_bind_options,
                 )
                 .unwrap()
             };

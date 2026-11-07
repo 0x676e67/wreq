@@ -27,7 +27,7 @@ use crate::{
         request::{ConnectRequest, ConnectionKey},
     },
     dns::{DynResolver, SocketAddrs},
-    rt::{RuntimeHandle, Timer},
+    rt::{DynRuntime, Timer},
     sync::Mutex,
     tls::quic::{QuicConfig, TlsConfig},
 };
@@ -37,7 +37,7 @@ use crate::{
 /// bindings retain their endpoints with the resulting pooled connection.
 #[derive(Clone)]
 pub(crate) struct QuicConnector {
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     resolver: DynResolver,
     tls: TlsConfig,
     tls_info: bool,
@@ -51,7 +51,7 @@ pub(crate) struct QuicConnector {
 /// Building creates shared endpoint and token stores without opening sockets.
 #[must_use]
 pub(crate) struct QuicConnectorBuilder {
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     tls: TlsConfig,
     tls_info: bool,
     bind_options: BindOptions,
@@ -92,7 +92,7 @@ const TOKENS_PER_KEY: usize = 2;
 impl QuicConnector {
     /// Starts configuring a transport with its runtime, TLS and connection policy.
     pub(crate) fn builder(
-        runtime: RuntimeHandle,
+        runtime: DynRuntime,
         tls: TlsConfig,
         tls_info: bool,
     ) -> QuicConnectorBuilder {
@@ -106,11 +106,15 @@ impl QuicConnector {
     }
 
     /// Opens a UDP endpoint for the address family of `remote`.
-    fn open(&self, options: &BindOptions, remote: SocketAddr) -> Result<Endpoint, ConnectError> {
+    fn open(
+        &self,
+        bind_options: &BindOptions,
+        remote: SocketAddr,
+    ) -> Result<Endpoint, ConnectError> {
         Endpoint::new(
             EndpointConfig::default(),
             None,
-            self.bind_socket(options, remote)?,
+            self.bind_socket(bind_options, remote)?,
             self.runtime.quic(),
         )
         .map_err(ConnectError::m("quic endpoint error"))
@@ -119,16 +123,18 @@ impl QuicConnector {
     /// Binds the physical socket before registering it with the selected runtime.
     fn bind_socket(
         &self,
-        options: &BindOptions,
+        bind_options: &BindOptions,
         remote: SocketAddr,
     ) -> Result<UdpSocket, ConnectError> {
         let address = match remote {
-            SocketAddr::V4(_) => {
-                SocketAddr::from((options.ipv4_address.unwrap_or(Ipv4Addr::UNSPECIFIED), 0))
-            }
-            SocketAddr::V6(_) => {
-                SocketAddr::from((options.ipv6_address.unwrap_or(Ipv6Addr::UNSPECIFIED), 0))
-            }
+            SocketAddr::V4(_) => SocketAddr::from((
+                bind_options.ipv4_address.unwrap_or(Ipv4Addr::UNSPECIFIED),
+                0,
+            )),
+            SocketAddr::V6(_) => SocketAddr::from((
+                bind_options.ipv6_address.unwrap_or(Ipv6Addr::UNSPECIFIED),
+                0,
+            )),
         };
         let socket = Socket::new(
             Domain::for_address(address),
@@ -156,7 +162,7 @@ impl QuicConnector {
             target_os = "visionos",
             target_os = "watchos",
         ))]
-        if let Some(interface) = &options.interface {
+        if let Some(interface) = &bind_options.interface {
             super::bind_interface(&socket, address, interface)
                 .map_err(ConnectError::m("quic bind interface error"))?;
         }
@@ -173,25 +179,25 @@ impl QuicConnector {
         request: &ConnectRequest,
         remote: SocketAddr,
     ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-        let options = self.bind_options(request);
+        let bind_options = self.merged_bind_options(request);
         if matches!(
-            (options.ipv4_address, options.ipv6_address, remote),
+            (bind_options.ipv4_address, bind_options.ipv6_address, remote),
             (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
         ) {
             return Err("relay address does not match local bindings".into());
         }
         Ok(self
             .runtime
-            .udp_socket(self.bind_socket(&options, remote)?)?)
+            .udp_socket(self.bind_socket(&bind_options, remote)?)?)
     }
 
     /// Merges request bindings over the client's per field, as TCP connections do.
-    fn bind_options(&self, request: &ConnectRequest) -> BindOptions {
-        let mut options = self.bind_options.clone();
-        if let Some(request) = request.bind_options() {
-            options.merge(request);
+    fn merged_bind_options(&self, request: &ConnectRequest) -> BindOptions {
+        let mut bind_options = self.bind_options.clone();
+        if let Some(overrides) = request.bind_options() {
+            bind_options.merge(overrides);
         }
-        options
+        bind_options
     }
 
     /// Opens one authenticated connection and retains its UDP endpoint.
@@ -200,8 +206,8 @@ impl QuicConnector {
     async fn connect_addr(
         &self,
         endpoints: &Endpoints,
-        options: &BindOptions,
-        tls: &QuicConfig,
+        bind_options: &BindOptions,
+        config: &QuicConfig,
         address: SocketAddr,
         host: &str,
     ) -> Result<(Connection, Endpoint), ConnectError> {
@@ -210,18 +216,18 @@ impl QuicConnector {
         } else {
             &endpoints.ipv6
         };
-        let mut endpoint = self.endpoint(slot, options, address)?;
+        let mut endpoint = self.endpoint(slot, bind_options, address)?;
         // The attempt takes its own ticket before entering the endpoint's lock. A retry after
         // a stopped driver offers it again, since that driver never sent it.
-        let client = tls.client();
+        let client = config.client();
         let connect = |endpoint: &Endpoint| endpoint.connect_with(client.clone(), address, host);
         let mut connecting = connect(&endpoint);
-        if driver_stopped(&connecting, tls) {
+        if driver_stopped(&connecting, config) {
             (endpoint, connecting) =
-                self.reconnect(slot, &endpoint, options, tls, address, connect)?;
+                self.reconnect(slot, &endpoint, bind_options, config, address, connect)?;
         }
         let connection = connecting
-            .map_err(|error| ConnectError::new("quic connect error", session_error(error, tls)))?
+            .map_err(|error| ConnectError::new("quic connect error", session_error(error, config)))?
             .await
             .map_err(ConnectError::m("quic handshake error"))?;
         Ok((connection, endpoint))
@@ -236,8 +242,8 @@ impl QuicConnector {
         &self,
         slot: &Mutex<Option<Endpoint>>,
         stale: &Endpoint,
-        options: &BindOptions,
-        tls: &QuicConfig,
+        bind_options: &BindOptions,
+        config: &QuicConfig,
         address: SocketAddr,
         connect: impl Fn(&Endpoint) -> Result<Connecting, ::quic::ConnectError>,
     ) -> Result<(Endpoint, Result<Connecting, ::quic::ConnectError>), ConnectError> {
@@ -246,13 +252,13 @@ impl QuicConnector {
             && !same_socket(current, stale)
         {
             let connecting = connect(current);
-            if !driver_stopped(&connecting, tls) {
+            if !driver_stopped(&connecting, config) {
                 return Ok((current.clone(), connecting));
             }
         }
-        let fresh = self.open(options, address)?;
+        let fresh = self.open(bind_options, address)?;
         let connecting = connect(&fresh);
-        if !driver_stopped(&connecting, tls) {
+        if !driver_stopped(&connecting, config) {
             *slot = Some(fresh.clone());
         }
         Ok((fresh, connecting))
@@ -262,14 +268,14 @@ impl QuicConnector {
     fn endpoint(
         &self,
         slot: &Mutex<Option<Endpoint>>,
-        options: &BindOptions,
+        bind_options: &BindOptions,
         remote: SocketAddr,
     ) -> Result<Endpoint, ConnectError> {
         let mut slot = slot.lock();
         if let Some(endpoint) = slot.as_ref() {
             return Ok(endpoint.clone());
         }
-        let endpoint = self.open(options, remote)?;
+        let endpoint = self.open(bind_options, remote)?;
         *slot = Some(endpoint.clone());
         Ok(endpoint)
     }
@@ -279,15 +285,15 @@ impl QuicConnector {
         request: ConnectRequest,
         timer: &dyn Timer,
     ) -> Result<Conn, BoxError> {
-        let tls = self.config(&request, None)?;
-        let options = self.bind_options(&request);
+        let config = self.config(&request, None)?;
+        let bind_options = self.merged_bind_options(&request);
         let (connection, endpoint) = self
             .dial(
                 request.route_uri(),
-                &options,
-                &tls,
+                &bind_options,
+                &config,
                 timer,
-                options == self.bind_options,
+                bind_options == self.bind_options,
             )
             .await?;
         self.connection(connection, endpoint)
@@ -301,12 +307,12 @@ impl QuicConnector {
         uri: &Uri,
         timer: &dyn Timer,
     ) -> Result<(Connection, Endpoint), BoxError> {
-        let mut tls = self
+        let mut config = self
             .tls
             .config(&request.clone().with_route_uri(uri.clone()), None)?;
-        tls.transport_config(self.tls.proxy_transport(request)?);
-        let options = self.bind_options(request);
-        self.dial(uri, &options, &tls, timer, false).await
+        config.transport_config(self.tls.proxy_transport(request)?);
+        let bind_options = self.merged_bind_options(request);
+        self.dial(uri, &bind_options, &config, timer, false).await
     }
 
     /// Returns the target's configuration over a tunnel, built before the tunnel so a local
@@ -324,7 +330,7 @@ impl QuicConnector {
     pub(crate) async fn finish_tunnel(
         &self,
         request: &ConnectRequest,
-        tls: &QuicConfig,
+        config: &QuicConfig,
         socket: impl AsyncUdpSocket,
         remote: SocketAddr,
         ended: Arc<Notify>,
@@ -339,8 +345,8 @@ impl QuicConnector {
             request.route_uri().host().ok_or("HTTP/3 URI has no host")?,
         );
         let connecting = endpoint
-            .connect_with(tls.client(), remote, host)
-            .map_err(|error| session_error(error, tls))?;
+            .connect_with(config.client(), remote, host)
+            .map_err(|error| session_error(error, config))?;
 
         // Started once the connection exists, so the endpoint is not idle before it ends.
         let watched = endpoint.clone();
@@ -361,8 +367,8 @@ impl QuicConnector {
     async fn dial(
         &mut self,
         uri: &Uri,
-        options: &BindOptions,
-        tls: &QuicConfig,
+        bind_options: &BindOptions,
+        config: &QuicConfig,
         timer: &dyn Timer,
         shared: bool,
     ) -> Result<(Connection, Endpoint), BoxError> {
@@ -395,10 +401,10 @@ impl QuicConnector {
         Ok(policy
             .connect(
                 addresses,
-                options,
+                bind_options,
                 |address| {
                     let attempt: BoxFuture<'_, _> =
-                        Box::pin(self.connect_addr(endpoints, options, tls, address, host));
+                        Box::pin(self.connect_addr(endpoints, bind_options, config, address, host));
                     Ok(attempt)
                 },
                 |duration| timer.sleep(duration),
@@ -412,12 +418,12 @@ impl QuicConnector {
         request: &ConnectRequest,
         tunnel_mtu: Option<u16>,
     ) -> Result<QuicConfig, BoxError> {
-        let mut tls = self.tls.config(request, tunnel_mtu)?;
-        tls.token_store(Arc::new(ScopedTokens {
+        let mut config = self.tls.config(request, tunnel_mtu)?;
+        config.token_store(Arc::new(ScopedTokens {
             tokens: self.tokens.clone(),
             key: request.key(),
         }));
-        Ok(tls)
+        Ok(config)
     }
 
     fn connection(&self, connection: Connection, endpoint: Endpoint) -> Result<Conn, BoxError> {
@@ -444,13 +450,16 @@ fn same_socket(left: &Endpoint, right: &Endpoint) -> bool {
 
 /// Whether `connecting` failed because the endpoint's driver stopped.
 /// A session the SSL callback rejected fails the same way; its recorded error tells them apart.
-fn driver_stopped(connecting: &Result<Connecting, ::quic::ConnectError>, tls: &QuicConfig) -> bool {
-    matches!(connecting, Err(::quic::ConnectError::EndpointStopping)) && tls.rejected().is_none()
+fn driver_stopped(
+    connecting: &Result<Connecting, ::quic::ConnectError>,
+    config: &QuicConfig,
+) -> bool {
+    matches!(connecting, Err(::quic::ConnectError::EndpointStopping)) && config.rejected().is_none()
 }
 
 /// Reports a session the SSL callback rejected with its TLS error, as TCP connections do.
-fn session_error(error: ::quic::ConnectError, tls: &QuicConfig) -> BoxError {
-    match tls.rejected() {
+fn session_error(error: ::quic::ConnectError, config: &QuicConfig) -> BoxError {
+    match config.rejected() {
         Some(rejected) if error == ::quic::ConnectError::EndpointStopping => {
             Box::new(rejected.clone())
         }
@@ -543,7 +552,7 @@ mod tests {
         },
         dns::{Addrs, Name, Resolve, Resolving},
         rt::tokio::TokioRuntime,
-        tls::{config::TlsConnectorBuilder, trust::CertStore},
+        tls::{config::TlsBuilder, trust::CertStore},
     };
 
     struct Resolver {
@@ -622,11 +631,11 @@ mod tests {
 
     /// Returns a connector trusting `cert` that resolves names through `resolver`.
     fn connector(resolver: Arc<dyn Resolve>, cert: &[u8]) -> QuicConnector {
-        let tls = TlsConnectorBuilder::new()
+        let tls = TlsBuilder::new()
             .cert_store(CertStore::from_der_certs([cert]).unwrap())
             .build_quic(ConfigSet::default())
             .unwrap();
-        QuicConnector::builder(RuntimeHandle::new(TokioRuntime), tls, false)
+        QuicConnector::builder(DynRuntime::new(TokioRuntime), tls, false)
             .build(DynResolver::new(resolver))
     }
 

@@ -33,7 +33,7 @@ use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 use tower::Service;
 
-use crate::sync::Mutex;
+use crate::{rt::DynRuntime, sync::Mutex};
 
 /// Reports whether a raced maker future has begun work worth completing.
 ///
@@ -69,7 +69,7 @@ where
     M: Service<Dst>,
 {
     /// Creates a service when no reusable service wins the race.
-    connector: M,
+    maker: M,
 
     /// State shared by every cache clone and checked-out service.
     shared: Arc<Mutex<Shared<M::Response>>>,
@@ -92,8 +92,8 @@ where
 
 /// Configures idle capacity and handling for maker futures that lose to reuse.
 ///
-/// Without an executor, a maker that loses the race is canceled. Supplying an
-/// executor allows useful work to finish in the background, while `max_idle`
+/// Without a runtime, a maker that loses the race is canceled. Supplying a
+/// runtime allows useful work to finish in the background, while `max_idle`
 /// bounds results that have no waiting checkout.
 #[derive(Debug)]
 pub(super) struct Builder<Ev> {
@@ -240,14 +240,11 @@ struct CancelResult<S> {
 // ===== impl Builder =====
 
 impl<Ev> Builder<Ev> {
-    /// Completes useful maker work in the supplied executor after reuse wins.
-    pub(super) fn executor(
-        self,
-        executor: crate::rt::RuntimeHandle,
-    ) -> Builder<events::WithExecutor> {
+    /// Completes useful maker work on the supplied runtime after reuse wins.
+    pub(super) fn runtime(self, runtime: DynRuntime) -> Builder<events::WithRuntime> {
         Builder {
-            events: events::WithExecutor {
-                executor,
+            events: events::WithRuntime {
+                runtime,
                 on_complete: None,
             },
             max_idle: self.max_idle,
@@ -260,14 +257,14 @@ impl<Ev> Builder<Ev> {
         self
     }
 
-    /// Builds a cache around `connector`.
-    pub(super) fn build<M, Dst>(self, connector: M) -> Cache<M, Dst, Ev>
+    /// Builds a cache around `maker`.
+    pub(super) fn build<M, Dst>(self, maker: M) -> Cache<M, Dst, Ev>
     where
         M: Service<Dst>,
     {
         let (shutdown, _) = watch::channel(());
         Cache {
-            connector,
+            maker,
             events: self.events,
             ready: Ready::None,
             ready_waiter: None,
@@ -285,7 +282,7 @@ impl<Ev> Builder<Ev> {
     }
 }
 
-impl Builder<events::WithExecutor> {
+impl Builder<events::WithRuntime> {
     /// Runs `callback` after useful lost maker work finishes.
     pub(super) fn on_background_complete<F>(mut self, callback: F) -> Self
     where
@@ -378,7 +375,7 @@ where
             return Poll::Ready(Ok(()));
         }
 
-        match self.connector.poll_ready(cx) {
+        match self.maker.poll_ready(cx) {
             Poll::Ready(result) => {
                 if let Some(id) = self.ready_waiter.take() {
                     let result = self.shared.lock().cancel_waiter(id);
@@ -479,7 +476,7 @@ where
         CacheFuture::Racing {
             shared: self.shared.clone(),
             waiter,
-            future: Some(self.connector.call(target)),
+            future: Some(self.maker.call(target)),
             events: self.events.clone(),
             active: self.active.clone(),
         }
@@ -493,7 +490,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            connector: self.connector.clone(),
+            maker: self.maker.clone(),
             shared: self.shared.clone(),
             events: self.events.clone(),
             ready: Ready::None,
@@ -1269,24 +1266,24 @@ mod tests {
 pub(super) mod events {
     use std::sync::Arc;
 
-    use super::Started;
+    use super::{DynRuntime, Started};
 
     /// Policy that cancels maker futures after another service wins the race.
     ///
     /// This is useful when finishing the work would provide no value or when no
-    /// executor is available for detached connection work.
+    /// runtime is available for detached connection work.
     #[derive(Clone, Debug)]
     pub struct Ignore;
 
-    /// Policy that completes useful lost maker futures on an executor.
+    /// Policy that completes useful lost maker futures on a runtime.
     ///
     /// Futures that have only waited for reuse are still canceled.
-    /// Once physical connection work starts, the executor can finish it and put
+    /// Once physical connection work starts, the runtime can finish it and put
     /// a successful service into the cache for a later checkout.
     #[derive(Clone)]
-    pub struct WithExecutor {
+    pub struct WithRuntime {
         /// Runtime used to finish a connection attempt.
-        pub(super) executor: crate::rt::RuntimeHandle,
+        pub(super) runtime: DynRuntime,
         /// Optional maintenance callback invoked after completion.
         pub(super) on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
     }
@@ -1304,9 +1301,9 @@ pub(super) mod events {
         fn on_race_lost(&self, _future: F) {}
     }
 
-    // ===== impl WithExecutor =====
+    // ===== impl WithRuntime =====
 
-    impl<F> Events<F> for WithExecutor
+    impl<F> Events<F> for WithRuntime
     where
         F: Started<Output = ()> + Send + 'static,
     {
@@ -1314,7 +1311,7 @@ pub(super) mod events {
         fn on_race_lost(&self, future: F) {
             if future.started() {
                 let on_complete = self.on_complete.clone();
-                self.executor.execute(Box::pin(async move {
+                self.runtime.execute(Box::pin(async move {
                     future.await;
                     if let Some(on_complete) = on_complete {
                         on_complete();

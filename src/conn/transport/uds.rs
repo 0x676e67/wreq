@@ -10,17 +10,17 @@ use std::{
 use http::Uri;
 use tower::Service;
 
-use crate::rt::{BoxConnection, Connecting, RuntimeHandle};
+use crate::rt::{BoxConnection, Connecting, DynRuntime};
 
 /// Connects a Unix socket through the runtime selected by the client.
 #[derive(Clone)]
 pub struct UnixConnector {
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     path: Arc<Path>,
 }
 
 impl UnixConnector {
-    pub(crate) fn new(path: Arc<Path>, runtime: RuntimeHandle) -> Self {
+    pub(crate) fn new(path: Arc<Path>, runtime: DynRuntime) -> Self {
         Self { path, runtime }
     }
 }

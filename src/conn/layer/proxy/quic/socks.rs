@@ -108,7 +108,7 @@ pub(super) async fn connect(
     proxy: Intercept,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
-    let tls = inner.tunnel_config(&request)?;
+    let config = inner.tunnel_config(&request)?;
     let uri = request.route_uri();
     let host = crate::util::strip_ipv6_brackets(uri.host().ok_or(URI_MISSING_HOST)?);
     let port = uri.port_u16().unwrap_or(443);
@@ -118,7 +118,9 @@ pub(super) async fn connect(
             Ok(ip) => Address::Ip((ip, port).into()),
             Err(_) => Address::Domain(host.into(), port),
         };
-        return Ok(connect_target(&inner, tcp, &resolver, &request, &proxy, &tls, target).await?);
+        return Ok(
+            connect_target(&inner, tcp, &resolver, &request, &proxy, &config, target).await?,
+        );
     }
 
     let addresses = transport::resolve(&mut resolver, host, port, uri.port().is_some()).await?;
@@ -136,7 +138,7 @@ pub(super) async fn connect(
                     &resolver,
                     &request,
                     &proxy,
-                    &tls,
+                    &config,
                     target,
                 ));
                 Ok(attempt)
@@ -154,7 +156,7 @@ async fn connect_target(
     resolver: &DynResolver,
     request: &ConnectRequest,
     proxy: &Intercept,
-    tls: &QuicConfig,
+    config: &QuicConfig,
     target: Address,
 ) -> Result<Conn, ConnectError> {
     let io = tcp
@@ -262,7 +264,7 @@ async fn connect_target(
     let ended = socket.shared.ended.clone();
 
     inner
-        .finish_tunnel(request, tls, socket, relay, ended)
+        .finish_tunnel(request, config, socket, relay, ended)
         .await
         .map_err(ConnectError::m(TARGET_HANDSHAKE_ERROR))
 }

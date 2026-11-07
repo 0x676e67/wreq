@@ -20,13 +20,13 @@ use crate::{
     conn::{Conn, request::ConnectRequest, transport::QuicConnector},
     error::{ProxyConnect, ProxyMismatch},
     proxy::{Intercepted, Matcher, quic_port},
-    rt::RuntimeHandle,
+    rt::DynRuntime,
 };
 
 /// Stores the client proxy rules and runtime used to build the QUIC proxy service.
 #[derive(Clone)]
 pub(crate) struct QuicProxyLayer {
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     proxies: Arc<Vec<Matcher>>,
     #[cfg(feature = "socks")]
     tcp: TcpConnector<DynResolver>,
@@ -40,7 +40,7 @@ pub(crate) struct QuicProxyLayer {
 #[derive(Clone)]
 pub(crate) struct QuicProxyConnector {
     inner: QuicConnector,
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     proxies: Arc<Vec<Matcher>>,
     #[cfg(feature = "socks")]
     tcp: TcpConnector<DynResolver>,
@@ -53,7 +53,7 @@ pub(crate) struct QuicProxyConnector {
 impl QuicProxyLayer {
     /// Uses `runtime` to drive proxy HTTP/3 connections and `proxies` as client rules.
     pub(crate) fn new(
-        runtime: RuntimeHandle,
+        runtime: DynRuntime,
         proxies: Arc<Vec<Matcher>>,
         #[cfg(feature = "socks")] tcp: TcpConnector<DynResolver>,
         #[cfg(feature = "socks")] resolver: DynResolver,
@@ -105,8 +105,8 @@ impl Service<ConnectRequest> for QuicProxyConnector {
             {
                 let inner = self.inner.clone();
                 let mut tcp = self.tcp.clone();
-                if let Some(options) = request.bind_options() {
-                    tcp = tcp.set_bind_options(options);
+                if let Some(bind_options) = request.bind_options() {
+                    tcp = tcp.set_bind_options(bind_options);
                 }
                 let resolver = self.resolver.clone();
                 let timer = self.runtime.timer();

@@ -43,7 +43,7 @@ use crate::{
     config::RequestConfig,
     conn::{Conn, config::ConfigSet, request::ConnectRequest, transport::BindOptions},
     ext::UriExt,
-    rt::RuntimeHandle,
+    rt::DynRuntime,
 };
 
 /// Request and dispatch options distributed across the service stack at construction.
@@ -101,10 +101,10 @@ struct Http1Upgrade {
 /// Dispatch returns this value only when the original body has not been sent.
 pub struct PoolRequest<B> {
     request: Request<B>,
-    connection: ConnectionConfig,
+    config: ConnectionConfig,
     /// Default-group key whose established sender may carry this WebSocket.
     #[cfg(feature = "http2")]
-    extended_connect: Option<crate::conn::request::ConnectionKey>,
+    extended_connect_key: Option<crate::conn::request::ConnectionKey>,
 }
 
 /// Retries canceled checkouts and unsent requests on reused connections.
@@ -152,7 +152,7 @@ where
     pool: pool::Pool<C, B>,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
 }
 
 /// Failure from one pool checkout and send attempt.
@@ -176,8 +176,8 @@ pub enum DispatchError<B> {
 /// preserving ownership of any request returned before encoding.
 pub fn layer<S, B>(
     h1_builder: conn::http1::Builder,
-    #[cfg(feature = "http2")] h2_builder: conn::http2::Builder<RuntimeHandle>,
-    #[cfg(feature = "http3")] h3_builder: conn::http3::Builder<RuntimeHandle>,
+    #[cfg(feature = "http2")] h2_builder: conn::http2::Builder<DynRuntime>,
+    #[cfg(feature = "http3")] h3_builder: conn::http3::Builder<DynRuntime>,
     retry_unsent: bool,
     protocol: Protocol,
     config_set: ConfigSet,
@@ -264,19 +264,19 @@ impl<S, B> Stack<S, B> {
 
         // Only clients that may negotiate HTTP/2 have a default group to probe.
         #[cfg(feature = "http2")]
-        let extended_connect = (dedicated.is_some_and(|d| d.extended_connect)
+        let extended_connect_key = (dedicated.is_some_and(|d| d.extended_connect)
             && matches!(self.protocol, Protocol::Auto | Protocol::Http2))
         .then(|| req.key_with_protocol(None, self.protocol, &self.config_set));
 
         Ok(PoolRequest {
             request,
-            connection: ConnectionConfig {
+            config: ConnectionConfig {
                 req,
                 proto: self.proto.clone(),
                 dedicated: dedicated.is_some(),
             },
             #[cfg(feature = "http2")]
-            extended_connect,
+            extended_connect_key,
         })
     }
 }
@@ -484,16 +484,15 @@ where
         feature = "http3" => extensions.get::<netty::http3::Protocol>().is_some(),
         _ => false,
     };
-    let matched =
-        cfg_select! {
-            feature = "http3" => (http2 && pooled.is_http2()) || (http3 && pooled.is_http3()),
-            _ => http2 && pooled.is_http2(),
-        };
+    let matched = cfg_select! {
+        feature = "http3" => (http2 && pooled.is_http2()) || (http3 && pooled.is_http3()),
+        _ => http2 && pooled.is_http2(),
+    };
     if (http2 || http3) && !matched {
         warn!("extended CONNECT protocol does not match the connection's HTTP version");
         return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
             .with_context("extended CONNECT protocol does not match the connection's HTTP version")
-            .with_connect_info(pooled.conn_info().clone()));
+            .with_connect_info(pooled.connected().clone()));
     }
     Ok(matched)
 }
@@ -509,7 +508,7 @@ where
     warn!("peer did not enable extended CONNECT");
     Error::from_kind(ErrorKind::UserUnsupportedVersion)
         .with_context("peer did not enable extended CONNECT")
-        .with_connect_info(pooled.conn_info().clone())
+        .with_connect_info(pooled.connected().clone())
 }
 
 /// Adds the scheme's default port to a plain CONNECT target that elides it, since
@@ -569,7 +568,7 @@ where
         pool_config: pool::Config,
         connector: C,
         config: Config,
-        runtime: RuntimeHandle,
+        runtime: DynRuntime,
     ) -> Self {
         Self {
             pool: pool::Pool::new(pool_config, connector, runtime.clone(), config.set_host),
@@ -619,20 +618,19 @@ where
         Box::pin(async move {
             let PoolRequest {
                 mut request,
-                connection,
+                config,
                 #[cfg(feature = "http2")]
-                extended_connect,
+                extended_connect_key,
             } = request;
 
             // RFC 8441 §3: extended CONNECT only after the peer enabled it. A miss keeps
             // the dedicated HTTP/1.1 upgrade, so no HTTP/2 connection is opened for it.
-            let reused: Option<pool::Pooled<B>> =
-                cfg_select! {
-                    feature = "http2" => extended_connect
-                        .as_ref()
-                        .and_then(|key| this.pool.checkout_extended_connect(key)),
-                    _ => None,
-                };
+            let reused: Option<pool::Pooled<B>> = cfg_select! {
+                feature = "http2" => extended_connect_key
+                    .as_ref()
+                    .and_then(|key| this.pool.checkout_extended_connect(key)),
+                _ => None,
+            };
             #[cfg(feature = "http2")]
             let upgrade = reused
                 .is_some()
@@ -641,17 +639,17 @@ where
             let mut pooled = match reused {
                 Some(pooled) => pooled,
                 None => {
-                    let protocol = connection.req.resolved_protocol();
-                    match this.pool.checkout(connection.clone(), protocol).await {
+                    let protocol = config.req.resolved_protocol();
+                    match this.pool.checkout(config.clone(), protocol).await {
                         Ok(pooled) => pooled,
                         Err(error) if pool::is_canceled(&*error) => {
                             return Err(DispatchError::CheckoutCanceled {
                                 error: Error::new(ErrorKind::Connect, error),
                                 request: Box::new(PoolRequest {
                                     request,
-                                    connection,
+                                    config,
                                     #[cfg(feature = "http2")]
-                                    extended_connect,
+                                    extended_connect_key,
                                 }),
                             });
                         }
@@ -682,7 +680,7 @@ where
             #[cfg(not(any(feature = "http2", feature = "http3")))]
             let extended = false;
 
-            if connection.req.protocol() == Some(Protocol::Auto) {
+            if config.req.protocol() == Some(Protocol::Auto) {
                 // Resolve the wire version on every attempt: an unsent retry may
                 // select a different protocol, but retains the original preference.
                 *request.version_mut() = if pooled.is_http2() {
@@ -699,7 +697,7 @@ where
                 );
                 return Err(DispatchError::Terminal(
                     Error::from_kind(ErrorKind::UserUnsupportedVersion)
-                        .with_connect_info(pooled.conn_info().clone()),
+                        .with_connect_info(pooled.connected().clone()),
                 ));
             }
 
@@ -734,9 +732,9 @@ where
                 Ok(response) => response,
                 Err(mut error) => {
                     let connection_reused = pooled.is_reused();
-                    let connect_info = pooled.conn_info().clone();
+                    let connect_info = pooled.connected().clone();
                     let unnegotiated_h2 = pooled.is_http2()
-                        && connection.req.uri().is_https()
+                        && config.req.uri().is_https()
                         && !connect_info.is_negotiated_h2();
                     // A returned request was not sent; only protocol rejections are final,
                     // since they repeat on the same connection.
@@ -755,9 +753,9 @@ where
                                 .with_connect_info(connect_info),
                             request: Box::new(PoolRequest {
                                 request,
-                                connection,
+                                config,
                                 #[cfg(feature = "http2")]
-                                extended_connect,
+                                extended_connect_key,
                             }),
                             connection_reused,
                         });
@@ -779,8 +777,8 @@ where
                 store_response_cookies(&response, cookie_store.as_ref(), &uri);
             }
 
-            pooled.conn_info().set_extras(response.extensions_mut());
-            response.extensions_mut().insert(pooled.conn_info().clone());
+            pooled.connected().set_extras(response.extensions_mut());
+            response.extensions_mut().insert(pooled.connected().clone());
 
             // Multiplexed senders are shared, so only HTTP/1 waits to become ready again.
             if !pooled.is_http1() || !pooled.is_pool_enabled() || pooled.is_ready() {
@@ -903,9 +901,9 @@ mod tests {
             let mut stack = layer(
                 conn::http1::Builder::default(),
                 #[cfg(feature = "http2")]
-                conn::http2::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                 #[cfg(feature = "http3")]
-                conn::http3::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                 true,
                 protocol,
                 ConfigSet::default(),
@@ -921,7 +919,7 @@ mod tests {
                     #[cfg(feature = "cookies")]
                     cookie_store: None,
                 },
-                RuntimeHandle::new(crate::rt::tokio::TokioRuntime),
+                DynRuntime::new(crate::rt::tokio::TokioRuntime),
             ));
             for (attempt, (strict, id)) in [
                 (false, "0"),
@@ -1029,9 +1027,9 @@ mod tests {
                 .layer(layer(
                     conn::http1::Builder::default(),
                     #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     true,
                     Protocol::Auto,
                     ConfigSet::default(),
@@ -1143,9 +1141,9 @@ mod tests {
                 .layer(layer(
                     conn::http1::Builder::default(),
                     #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     true,
                     client,
                     ConfigSet::default(),
@@ -1155,9 +1153,9 @@ mod tests {
                 .oneshot(request)
                 .await
                 .unwrap();
-            assert_eq!(request.connection.req.protocol(), expected);
+            assert_eq!(request.config.req.protocol(), expected);
             assert_eq!(
-                request.connection.req.bind_options().as_deref(),
+                request.config.req.bind_options().as_deref(),
                 Some(bind_options.as_ref())
             );
             assert!(
@@ -1170,10 +1168,10 @@ mod tests {
             assert_eq!(request.request.version(), wire.unwrap_or(Version::HTTP_11));
             assert!(RequestConfig::<RequestVersion>::get(request.request.extensions()).is_none());
             assert_eq!(
-                request.connection.req.config_set().get::<crate::Group>(),
+                request.config.req.config_set().get::<crate::Group>(),
                 Some(&crate::Group::new("seven"))
             );
-            keys.push(request.connection.req.key());
+            keys.push(request.config.req.key());
         }
         assert_eq!(
             keys[0], keys[1],
@@ -1228,9 +1226,9 @@ mod tests {
                 .layer(layer(
                     conn::http1::Builder::default(),
                     #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     true,
                     client,
                     ConfigSet::default(),
@@ -1245,13 +1243,13 @@ mod tests {
                 .await
                 .unwrap();
             let plain = stack.oneshot(request(None)).await.unwrap();
-            assert!(websocket.connection.dedicated);
-            assert_eq!(websocket.connection.req.protocol(), Some(Protocol::Http1));
+            assert!(websocket.config.dedicated);
+            assert_eq!(websocket.config.req.protocol(), Some(Protocol::Http1));
             // The probe targets the group ordinary requests use; those never probe.
-            assert!(plain.extended_connect.is_none());
+            assert!(plain.extended_connect_key.is_none());
             assert_eq!(
-                websocket.extended_connect,
-                probes.then(|| plain.connection.req.key())
+                websocket.extended_connect_key,
+                probes.then(|| plain.config.req.key())
             );
         }
 
@@ -1293,14 +1291,14 @@ mod tests {
         ] {
             let calls = Arc::new(AtomicUsize::new(0));
             let attempts = calls.clone();
-            let mut connection = None;
+            let mut config = None;
             let service = tower::service_fn(move |mut request: PoolRequest<Vec<u8>>| {
                 assert_eq!(request.request.uri(), "http://localhost/upload?part=1");
                 assert_eq!(request.request.body(), b"payload");
-                assert_eq!(request.connection.req.uri(), "http://localhost/");
+                assert_eq!(request.config.req.uri(), "http://localhost/");
 
                 let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 && unsent {
-                    connection = Some(request.connection.clone());
+                    config = Some(request.config.clone());
                     *request.request.uri_mut() = Uri::from_static("/upload?part=1");
                     Err(DispatchError::Unsent {
                         error: Error::new(ErrorKind::Canceled, std::io::Error::other("unsent")),
@@ -1308,9 +1306,9 @@ mod tests {
                         connection_reused: reused,
                     })
                 } else {
-                    if let Some(connection) = &connection {
-                        assert_eq!(connection.req.key(), request.connection.req.key());
-                        assert!(Arc::ptr_eq(&connection.proto, &request.connection.proto));
+                    if let Some(config) = &config {
+                        assert_eq!(config.req.key(), request.config.req.key());
+                        assert!(Arc::ptr_eq(&config.proto, &request.config.proto));
                     }
                     Ok(())
                 };
@@ -1321,9 +1319,9 @@ mod tests {
                 .layer(layer(
                     conn::http1::Builder::default(),
                     #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     enabled,
                     Protocol::Auto,
                     ConfigSet::default(),
@@ -1376,9 +1374,9 @@ mod tests {
                 .layer(layer(
                     conn::http1::Builder::default(),
                     #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     true,
                     Protocol::Auto,
                     ConfigSet::default(),
@@ -1413,9 +1411,9 @@ mod tests {
                 .layer(layer(
                     conn::http1::Builder::default(),
                     #[cfg(feature = "http2")]
-                    conn::http2::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http2::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     #[cfg(feature = "http3")]
-                    conn::http3::Builder::new(RuntimeHandle::new(crate::rt::tokio::TokioRuntime)),
+                    conn::http3::Builder::new(DynRuntime::new(crate::rt::tokio::TokioRuntime)),
                     true,
                     Protocol::Auto,
                     ConfigSet::default(),

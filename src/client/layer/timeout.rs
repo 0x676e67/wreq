@@ -15,7 +15,7 @@ use tower::{BoxError, Layer, Service};
 use self::{body::TimeoutBody, future::ResponseFuture};
 use crate::{
     config::RequestConfig,
-    rt::{RuntimeHandle, Timer},
+    rt::{DynRuntime, Timer},
 };
 
 /// Options for configuring timeouts.
@@ -53,7 +53,7 @@ pub struct TimeoutLayer {
 
 impl TimeoutLayer {
     /// Create a new [`TimeoutLayer`].
-    pub fn new(runtime: RuntimeHandle, options: TimeoutOptions) -> Self {
+    pub fn new(runtime: DynRuntime, options: TimeoutOptions) -> Self {
         TimeoutLayer {
             timer: runtime.timer(),
             timeout: RequestConfig::new(Some(options)),

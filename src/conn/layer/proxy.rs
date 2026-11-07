@@ -26,7 +26,7 @@ use crate::{
     ext::UriExt,
     proxy::{Intercepted, Matcher, matcher::Intercept},
     rt::BoxConnection,
-    tls::connector::{HttpsConnector, MaybeHttpsStream, TlsConnector},
+    tls::connector::{HttpsConnector, HttpsLayer, MaybeHttpsStream},
 };
 
 /// Adds proxy selection and handshakes around a socket service.
@@ -34,7 +34,7 @@ use crate::{
 #[derive(Clone)]
 pub(crate) struct ProxyLayer {
     proxies: Arc<Vec<Matcher>>,
-    tls: TlsConnector,
+    tls: HttpsLayer,
     resolver: DynResolver,
 }
 
@@ -44,7 +44,7 @@ pub(crate) struct ProxyLayer {
 pub(crate) struct ProxyConnector<S> {
     inner: S,
     proxies: Arc<Vec<Matcher>>,
-    tls: TlsConnector,
+    tls: HttpsLayer,
     #[cfg_attr(
         not(feature = "socks"),
         expect(
@@ -105,11 +105,7 @@ fn proxy_hop<S>(
 // ===== impl ProxyLayer =====
 
 impl ProxyLayer {
-    pub(crate) fn new(
-        proxies: Arc<Vec<Matcher>>,
-        tls: TlsConnector,
-        resolver: DynResolver,
-    ) -> Self {
+    pub(crate) fn new(proxies: Arc<Vec<Matcher>>, tls: HttpsLayer, resolver: DynResolver) -> Self {
         Self {
             proxies,
             tls,
@@ -159,7 +155,7 @@ where
             let intercepted = intercept(&req, &proxies);
             let uri = req.uri().clone();
             let secure = uri.is_https();
-            let bindings = req.bind_options().clone();
+            let bind_options = req.bind_options().clone();
 
             #[cfg(unix)]
             let unix = match &intercepted {
@@ -170,7 +166,7 @@ where
             let inner = inner.map_request(move |uri: Uri| SocketRequest {
                 secure: secure || uri.is_https(),
                 uri,
-                options: bindings.clone(),
+                bind_options: bind_options.clone(),
                 #[cfg(unix)]
                 unix: unix.clone(),
             });

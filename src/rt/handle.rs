@@ -1,6 +1,6 @@
 //! Shared runtime ownership and private protocol runtime adapters.
 //!
-//! [`RuntimeHandle`] connects the public [`Runtime`] contract to the executor and
+//! [`DynRuntime`] connects the public [`Runtime`] contract to the executor and
 //! timer traits required by the protocol implementation and, with HTTP/3, to the
 //! QUIC runtime. Generic protocol tasks are boxed at this boundary; protocol timers
 //! reuse the [`BoxSleep`] allocation, and each QUIC connection boxes its one timer.
@@ -21,14 +21,14 @@ use super::{BoxSleep, IntoRuntime, Runtime, Timer};
 
 /// Shares one selected runtime across connection, protocol and pool services.
 ///
-/// Created with the client builder, this handle keeps the runtime alive while
-/// services or background tasks retain a clone. Clones share the same `Arc`.
+/// Created with the client builder, this runtime stays alive while services or
+/// background tasks retain a clone. Clones share the same `Arc`.
 ///
 /// [`Deref`] exposes the runtime's capabilities, and timer operations forward to it.
 #[derive(Clone, Debug)]
-pub(crate) struct RuntimeHandle(Arc<dyn Runtime>);
+pub(crate) struct DynRuntime(Arc<dyn Runtime>);
 
-impl RuntimeHandle {
+impl DynRuntime {
     /// Shares a runtime value or reuses an existing `Arc` through [`IntoRuntime`].
     #[inline]
     pub(crate) fn new(runtime: impl IntoRuntime) -> Self {
@@ -42,14 +42,14 @@ impl RuntimeHandle {
     }
 
     /// Submits an already boxed task to the selected runtime.
-    /// Forwards ownership without another allocation or a handle clone.
+    /// Forwards ownership without another allocation or a runtime clone.
     #[inline]
     #[track_caller]
     pub(crate) fn execute(&self, fut: BoxFuture<'static, ()>) {
         self.0.execute(fut);
     }
 
-    /// Shares this handle as the runtime of a QUIC endpoint.
+    /// Shares this runtime with a QUIC endpoint.
     #[cfg(feature = "http3")]
     #[inline]
     pub(crate) fn quic(&self) -> Arc<dyn ::quic::Runtime> {
@@ -57,7 +57,7 @@ impl RuntimeHandle {
     }
 }
 
-impl Deref for RuntimeHandle {
+impl Deref for DynRuntime {
     type Target = dyn Runtime;
 
     #[inline]
@@ -66,7 +66,7 @@ impl Deref for RuntimeHandle {
     }
 }
 
-impl Timer for RuntimeHandle {
+impl Timer for DynRuntime {
     #[inline]
     fn sleep(&self, duration: Duration) -> BoxSleep {
         self.0.sleep(duration)
@@ -83,7 +83,7 @@ impl Timer for RuntimeHandle {
     }
 }
 
-impl<F> rt::Executor<F> for RuntimeHandle
+impl<F> rt::Executor<F> for DynRuntime
 where
     F: Future<Output = ()> + Send + 'static,
 {
@@ -93,7 +93,7 @@ where
     }
 }
 
-impl rt::Timer for RuntimeHandle {
+impl rt::Timer for DynRuntime {
     #[inline]
     fn sleep(&self, duration: Duration) -> Pin<Box<dyn rt::Sleep>> {
         Timer::sleep(self, duration).into_inner()
@@ -116,7 +116,7 @@ impl rt::Timer for RuntimeHandle {
 }
 
 #[cfg(feature = "http3")]
-impl ::quic::Runtime for RuntimeHandle {
+impl ::quic::Runtime for DynRuntime {
     #[inline]
     fn new_timer(&self, deadline: Instant) -> Pin<Box<dyn ::quic::AsyncTimer>> {
         Box::pin(Timer::sleep_until(self, deadline))

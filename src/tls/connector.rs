@@ -43,7 +43,7 @@ const URI_MISSING_HOST: &str = "URI missing host";
 /// Clones share the client policy and its compiled context.
 /// Different request context options are compiled for each connection attempt.
 #[derive(Clone)]
-pub struct TlsConnector {
+pub struct HttpsLayer {
     inner: Arc<Inner>,
 }
 
@@ -61,7 +61,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct HttpsConnector<T> {
     inner: T,
-    tls: TlsConnector,
+    tls: HttpsLayer,
     context: SslConnector,
     alpn_enabled: bool,
 }
@@ -82,9 +82,9 @@ pub struct EstablishedConn<IO> {
     req: ConnectRequest,
 }
 
-// ===== impl TlsConnector =====
+// ===== impl HttpsLayer =====
 
-impl TlsConnector {
+impl HttpsLayer {
     /// Compiles the client's TLS context while preserving the shared session scope.
     pub(super) fn new(config: Config, config_set: ConfigSet) -> crate::Result<Self> {
         let options = config_set.get_arc::<TlsOptions>();
@@ -114,7 +114,7 @@ impl TlsConnector {
             .or(inner.options.as_deref());
         let mut cfg = context.configure()?;
 
-        cfg.set_use_server_name_indication(inner.config.tls_sni);
+        cfg.set_use_server_name_indication(inner.config.sni);
         cfg.set_verify_hostname(inner.config.verify_hostname);
 
         if let Some(options) = options
@@ -183,16 +183,16 @@ impl TlsConnector {
         }
 
         if options.is_some_and(|options| options.pre_shared_key) {
-            let store = &inner.config.session;
+            let session_store = &inner.config.session_store;
             let target = SessionTarget::new(
                 &req,
                 &inner.config_set,
                 SessionTransport::Stream,
                 conn.remote_addr().map(|addr| addr.ip()),
-                store.session_id_context()?,
+                session_store.session_id_context()?,
             );
 
-            if let Some(session) = store.pop_stream(&target) {
+            if let Some(session) = session_store.pop_stream(&target) {
                 // The key covers the TLS peer, request TLS options, proxy, and socket bindings;
                 // btls checks the domain and client scope. HTTP-only options and ALPN do not
                 // affect resumption without early data, which is never enabled.
@@ -234,7 +234,7 @@ impl TlsConnector {
     }
 }
 
-impl<S> Layer<S> for TlsConnector {
+impl<S> Layer<S> for HttpsLayer {
     type Service = HttpsConnector<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
@@ -498,12 +498,12 @@ fn compile(config: &Config, opts: Option<&TlsOptions>) -> crate::Result<SslConne
         config.enable_resumption(&mut builder)?;
         builder
             .set_session_cache_mode(SslSessionCacheMode::CLIENT | SslSessionCacheMode::NO_INTERNAL);
-        let store = Arc::downgrade(&config.session);
+        let session_store = Arc::downgrade(&config.session_store);
         builder.set_client_session_callback(move |ssl, session| {
-            if let Some(store) = store.upgrade()
+            if let Some(session_store) = session_store.upgrade()
                 && let Ok(Some(target)) = target_index().map(|idx| ssl.ex_data(idx))
             {
-                store.insert_stream(target, session);
+                session_store.insert_stream(target, session);
             }
         });
     }

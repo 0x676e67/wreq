@@ -13,7 +13,7 @@ use tower::{BoxError, Layer, Service};
 
 use crate::{
     error::TimedOut,
-    rt::{BoxSleep, RuntimeHandle, Timer},
+    rt::{BoxSleep, DynRuntime, Timer},
 };
 
 /// Adds a connection timeout using the client's timer provider.
@@ -48,7 +48,7 @@ pin_project! {
 // ===== impl TimeoutLayer =====
 
 impl TimeoutLayer {
-    pub(in crate::conn) fn new(runtime: RuntimeHandle, timeout: Option<Duration>) -> Self {
+    pub(in crate::conn) fn new(runtime: DynRuntime, timeout: Option<Duration>) -> Self {
         Self {
             timer: runtime.timer(),
             timeout,

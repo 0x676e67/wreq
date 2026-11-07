@@ -23,7 +23,7 @@ use std::{
 
 use tokio::sync::watch;
 
-use crate::rt::{BoxSleep, RuntimeHandle, Timer as _};
+use crate::rt::{BoxSleep, DynRuntime, Timer as _};
 
 /// Inspects retained state owned by an expiration target.
 ///
@@ -54,12 +54,12 @@ pub(super) struct Expire<T> {
     shutdown: watch::Sender<()>,
 
     /// Runtime used to execute the watcher.
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
 }
 
 impl<T> Expire<T> {
     /// Creates an expiration component around `target`.
-    pub(super) fn new(target: Weak<T>, runtime: RuntimeHandle) -> Self {
+    pub(super) fn new(target: Weak<T>, runtime: DynRuntime) -> Self {
         let (shutdown, _) = watch::channel(());
 
         Self {
@@ -249,7 +249,7 @@ mod tests {
         let expire = runtime.block_on(async {
             let expire = Expire::new(
                 Arc::downgrade(&target),
-                RuntimeHandle::new(crate::rt::tokio::TokioRuntime),
+                DynRuntime::new(crate::rt::tokio::TokioRuntime),
             );
             expire.schedule(Some(Duration::from_secs(60)));
             // Only a polled task claims the watcher, so one a runtime hands back never
@@ -273,7 +273,7 @@ mod tests {
         });
         let expire = Expire::new(
             Arc::downgrade(&target),
-            RuntimeHandle::new(crate::rt::tokio::TokioRuntime),
+            DynRuntime::new(crate::rt::tokio::TokioRuntime),
         );
 
         expire.schedule(Some(Duration::from_millis(100)));

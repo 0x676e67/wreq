@@ -21,10 +21,10 @@ pub(super) struct Config {
     pub(super) protocol: Protocol,
     pub(super) max_version: Option<TlsVersion>,
     pub(super) min_version: Option<TlsVersion>,
-    pub(super) tls_sni: bool,
+    pub(super) sni: bool,
     pub(super) verify_hostname: bool,
     pub(super) cert_verification: bool,
-    pub(super) session: Arc<SessionStore>,
+    pub(super) session_store: Arc<SessionStore>,
     keylog: Option<KeyLog>,
     identity: Option<Identity>,
     cert_store: Option<CertStore>,
@@ -33,7 +33,7 @@ pub(super) struct Config {
 /// Configures client TLS settings before compiling TCP/Unix or QUIC contexts.
 /// Clones retain one client session scope across both transports.
 #[derive(Clone)]
-pub(crate) struct TlsConnectorBuilder {
+pub(crate) struct TlsBuilder {
     config: Config,
 }
 
@@ -69,7 +69,10 @@ impl Config {
             });
             builder.set_reverify_on_resume(true);
         }
-        let scope = self.session.session_id_context().map_err(Error::tls)?;
+        let scope = self
+            .session_store
+            .session_id_context()
+            .map_err(Error::tls)?;
         builder.set_session_id_context(&scope).map_err(Error::tls)?;
         // This limits TLS 1.2 sessions; TLS 1.3 also obeys the server's ticket lifetime.
         builder.set_session_timeout(60 * 60);
@@ -77,9 +80,9 @@ impl Config {
     }
 }
 
-// ===== impl TlsConnectorBuilder =====
+// ===== impl TlsBuilder =====
 
-impl TlsConnectorBuilder {
+impl TlsBuilder {
     /// Starts configuring the client-wide TLS policy.
     pub(crate) fn new() -> Self {
         Self {
@@ -88,12 +91,12 @@ impl TlsConnectorBuilder {
                 min_version: None,
                 max_version: None,
                 identity: None,
-                tls_sni: true,
+                sni: true,
                 verify_hostname: true,
                 cert_store: None,
                 cert_verification: true,
                 keylog: None,
-                session: Arc::new(SessionStore::new(None)),
+                session_store: Arc::new(SessionStore::new(None)),
             },
         }
     }
@@ -167,7 +170,7 @@ impl TlsConnectorBuilder {
     /// Sets the Server Name Indication (SNI) flag.
     #[inline]
     pub fn sni(mut self, enabled: bool) -> Self {
-        self.config.tls_sni = enabled;
+        self.config.sni = enabled;
         self
     }
 
@@ -181,8 +184,8 @@ impl TlsConnectorBuilder {
     /// Sets the shared TLS session store.
     #[inline]
     pub fn session_store(mut self, tls_session_store: Option<Arc<dyn TlsSessionStore>>) -> Self {
-        if let Some(store) = tls_session_store {
-            self.config.session = Arc::new(SessionStore::new(Some(store)));
+        if let Some(tls_session_store) = tls_session_store {
+            self.config.session_store = Arc::new(SessionStore::new(Some(tls_session_store)));
         }
         self
     }
@@ -190,8 +193,8 @@ impl TlsConnectorBuilder {
     /// Compiles the client's context from its TLS options and consumes this builder.
     /// Missing options leave TLS customization to the backend's defaults; the client-wide
     /// trust, version, and ALPN policy still applies.
-    pub fn build(self, config_set: ConfigSet) -> crate::Result<connector::TlsConnector> {
-        connector::TlsConnector::new(self.config, config_set)
+    pub fn build(self, config_set: ConfigSet) -> crate::Result<connector::HttpsLayer> {
+        connector::HttpsLayer::new(self.config, config_set)
     }
 
     /// Compiles the client's QUIC context from its QUIC options and consumes this builder.

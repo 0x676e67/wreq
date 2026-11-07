@@ -37,7 +37,7 @@ use crate::{
         pool::cache::Started,
     },
     conn::Connected,
-    rt::{RuntimeHandle, Timer as _},
+    rt::{DynRuntime, Timer as _},
 };
 
 /// Prepares and sends requests over one reusable HTTP/1 connection.
@@ -46,10 +46,10 @@ use crate::{
 /// it becomes ready again; a busy sender is held by a readiness task.
 pub struct Connection<B> {
     tx: conn::http1::SendRequest<B>,
-    conn_info: Connected,
+    connected: Connected,
     set_host: bool,
     idle_at: Instant,
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
 }
 
 /// Layers HTTP/1 handshaking over a transport-producing service.
@@ -59,7 +59,7 @@ pub struct Connection<B> {
 #[derive(Clone)]
 pub struct ConnectLayer<B> {
     set_host: bool,
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     _body: PhantomData<fn(B)>,
 }
 
@@ -71,7 +71,7 @@ pub struct ConnectLayer<B> {
 pub struct Connect<S, B> {
     service: S,
     set_host: bool,
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
     _body: PhantomData<fn(B)>,
 }
 
@@ -83,7 +83,7 @@ pub struct Connect<S, B> {
 pub struct ConnectFuture<F, T, B> {
     state: ConnectState<F, B>,
     set_host: bool,
-    runtime: Option<RuntimeHandle>,
+    runtime: Option<DynRuntime>,
     _io: PhantomData<fn(T)>,
 }
 
@@ -107,7 +107,7 @@ struct HandshakeStateError;
 
 impl<B> ConnectLayer<B> {
     /// Creates an HTTP/1 handshake layer for pooled connections.
-    pub fn new(runtime: RuntimeHandle, set_host: bool) -> Self {
+    pub fn new(runtime: DynRuntime, set_host: bool) -> Self {
         Self {
             runtime,
             set_host,
@@ -243,7 +243,7 @@ where
     /// the sender closes during setup.
     async fn handshake<T>(
         established: Established<T>,
-        runtime: RuntimeHandle,
+        runtime: DynRuntime,
         set_host: bool,
     ) -> Result<Self, BoxError>
     where
@@ -286,7 +286,7 @@ where
 
         Ok(Self {
             tx,
-            conn_info: connected,
+            connected,
             set_host,
             idle_at: runtime.now(),
             runtime,
@@ -294,8 +294,8 @@ where
     }
 
     /// Returns metadata for the underlying transport.
-    pub fn conn_info(&self) -> &Connected {
-        &self.conn_info
+    pub fn connected(&self) -> &Connected {
+        &self.connected
     }
 
     /// Returns whether the protocol sender is immediately ready.
@@ -310,7 +310,7 @@ where
 
     /// Returns whether the exclusive sender can safely re-enter the cache.
     pub fn is_open(&self) -> bool {
-        !self.conn_info().poisoned() && self.is_ready()
+        !self.connected().poisoned() && self.is_ready()
     }
 
     /// Returns whether the sender is healthy and within its idle timeout.
@@ -349,13 +349,13 @@ where
 
         let result = if req.method() == Method::CONNECT {
             authority_form(req.uri_mut())
-        } else if self.conn_info.is_proxied() {
-            if let Some(auth) = self.conn_info.proxy_auth() {
+        } else if self.connected.is_proxied() {
+            if let Some(auth) = self.connected.proxy_auth() {
                 req.headers_mut()
                     .entry(PROXY_AUTHORIZATION)
                     .or_insert_with(|| auth.clone());
             }
-            if let Some(headers) = self.conn_info.proxy_headers() {
+            if let Some(headers) = self.connected.proxy_headers() {
                 crate::util::replace_headers(req.headers_mut(), headers.clone());
             }
             Ok(())

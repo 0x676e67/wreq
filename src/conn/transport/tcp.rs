@@ -18,7 +18,7 @@ use super::{BindOptions, ConnectError, ConnectOptions, resolve};
 use crate::{
     conn::{Connected, Connection, HttpInfo, TlsInfoFactory},
     dns::{self, DnsResolver},
-    rt::{BoxConnection, Connecting, RuntimeHandle, Timer as _},
+    rt::{BoxConnection, Connecting, DynRuntime, Timer as _},
 };
 
 static INVALID_NOT_HTTP: &str = "invalid URI, scheme is not http";
@@ -33,13 +33,13 @@ static INVALID_MISSING_HOST: &str = "invalid URI, host is missing";
 pub(crate) struct TcpConnector<R> {
     options: Arc<TcpOptions>,
     resolver: R,
-    runtime: RuntimeHandle,
+    runtime: DynRuntime,
 }
 
 #[derive(Clone)]
 pub(crate) struct TcpOptions {
     pub enforce_http: bool,
-    pub connect: ConnectOptions,
+    pub connect_options: ConnectOptions,
     pub nodelay: bool,
     pub reuse_address: bool,
     pub linger: Option<Duration>,
@@ -57,11 +57,11 @@ pub(crate) struct TcpOptions {
 
 impl TcpConnector<()> {
     /// Starts configuring a TCP connector using the shared runtime.
-    pub(crate) fn new(runtime: RuntimeHandle) -> Self {
+    pub(crate) fn new(runtime: DynRuntime) -> Self {
         Self {
             options: Arc::new(TcpOptions {
                 enforce_http: true,
-                connect: ConnectOptions::default(),
+                connect_options: ConnectOptions::default(),
                 nodelay: false,
                 reuse_address: false,
                 linger: None,
@@ -91,7 +91,7 @@ impl TcpConnector<()> {
 }
 
 impl<R> TcpConnector<R> {
-    fn config_mut(&mut self) -> &mut TcpOptions {
+    fn options_mut(&mut self) -> &mut TcpOptions {
         // Keep existing clones unchanged when updating socket settings.
         Arc::make_mut(&mut self.options)
     }
@@ -104,42 +104,42 @@ impl<R> TcpConnector<R> {
     /// Requires the `http` URI scheme when enabled, as it is by default.
     #[inline]
     pub(crate) fn enforce_http(mut self, is_enforced: bool) -> Self {
-        self.config_mut().enforce_http = is_enforced;
+        self.options_mut().enforce_http = is_enforced;
         self
     }
 
     /// Sets `TCP_NODELAY` on each socket. Defaults to `false`.
     #[inline]
     pub(crate) fn set_nodelay(mut self, nodelay: bool) -> Self {
-        self.config_mut().nodelay = nodelay;
+        self.options_mut().nodelay = nodelay;
         self
     }
 
     /// Sets the socket send buffer size (`SO_SNDBUF`).
     #[inline]
     pub(crate) fn set_send_buffer_size(mut self, size: Option<usize>) -> Self {
-        self.config_mut().send_buffer_size = size;
+        self.options_mut().send_buffer_size = size;
         self
     }
 
     /// Sets the socket receive buffer size (`SO_RCVBUF`).
     #[inline]
     pub(crate) fn set_recv_buffer_size(mut self, size: Option<usize>) -> Self {
-        self.config_mut().recv_buffer_size = size;
+        self.options_mut().recv_buffer_size = size;
         self
     }
 
     /// Sets `SO_REUSEADDR` on each socket. Defaults to `false`.
     #[inline]
     pub(crate) fn set_reuse_address(mut self, reuse_address: bool) -> Self {
-        self.config_mut().reuse_address = reuse_address;
+        self.options_mut().reuse_address = reuse_address;
         self
     }
 
     /// Sets `SO_LINGER`. The default, `None`, leaves the socket option unchanged.
     #[inline]
     pub(crate) fn set_linger(mut self, linger: Option<Duration>) -> Self {
-        self.config_mut().linger = linger;
+        self.options_mut().linger = linger;
         self
     }
 
@@ -158,7 +158,7 @@ impl<R> TcpConnector<R> {
     ) -> Self {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         {
-            self.config_mut().tcp_user_timeout = time;
+            self.options_mut().tcp_user_timeout = time;
         }
         self
     }
@@ -167,7 +167,7 @@ impl<R> TcpConnector<R> {
     /// Defaults to `None`; the outer connector also applies its overall connection timeout.
     #[inline]
     pub(crate) fn set_connect_timeout(mut self, dur: Option<Duration>) -> Self {
-        self.config_mut().connect.timeout = dur;
+        self.options_mut().connect_options.timeout = dur;
         self
     }
 
@@ -176,7 +176,7 @@ impl<R> TcpConnector<R> {
     /// See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305.html#section-5).
     #[inline]
     pub(crate) fn set_happy_eyeballs_timeout(mut self, dur: Option<Duration>) -> Self {
-        self.config_mut().connect.happy_eyeballs_timeout = dur;
+        self.options_mut().connect_options.happy_eyeballs_timeout = dur;
         self
     }
 
@@ -184,28 +184,28 @@ impl<R> TcpConnector<R> {
     /// Defaults to `None`; any keepalive option supported by the platform enables `SO_KEEPALIVE`.
     #[inline]
     pub(crate) fn set_keepalive(mut self, time: Option<Duration>) -> Self {
-        self.config_mut().keepalive = time;
+        self.options_mut().keepalive = time;
         self
     }
 
     /// Sets the interval between unanswered TCP keepalive probes.
     #[inline]
     pub(crate) fn set_keepalive_interval(mut self, interval: Option<Duration>) -> Self {
-        self.config_mut().keepalive_interval = interval;
+        self.options_mut().keepalive_interval = interval;
         self
     }
 
     /// Sets how many unanswered TCP keepalive probes cause the connection to fail.
     #[inline]
     pub(crate) fn set_keepalive_retries(mut self, retries: Option<u32>) -> Self {
-        self.config_mut().keepalive_retries = retries;
+        self.options_mut().keepalive_retries = retries;
         self
     }
 
     /// Applies local addresses and interface, preserving unspecified bindings.
     #[inline]
-    pub(crate) fn set_bind_options(mut self, options: &BindOptions) -> Self {
-        self.config_mut().bind_options.merge(options);
+    pub(crate) fn set_bind_options(mut self, bind_options: &BindOptions) -> Self {
+        self.options_mut().bind_options.merge(bind_options);
         self
     }
 }
@@ -286,16 +286,16 @@ fn get_host_port<'u>(options: &TcpOptions, dst: &'u Uri) -> Result<(&'u str, u16
 /// Connects resolved candidates using the shared network policy.
 async fn connect(
     addrs: dns::SocketAddrs,
-    config: &TcpOptions,
-    runtime: RuntimeHandle,
+    options: &TcpOptions,
+    runtime: DynRuntime,
 ) -> Result<BoxConnection, ConnectError> {
-    config
-        .connect
+    options
+        .connect_options
         .connect(
             addrs,
-            &config.bind_options,
+            &options.bind_options,
             |addr| {
-                connect_socket(&addr, config, &runtime)
+                connect_socket(&addr, options, &runtime)
                     .map(|future| future.map_err(ConnectError::m("tcp connect error")))
             },
             |duration| runtime.sleep(duration),
@@ -333,8 +333,8 @@ fn bind_local_address(
 
 fn connect_socket(
     addr: &SocketAddr,
-    config: &TcpOptions,
-    runtime: &RuntimeHandle,
+    options: &TcpOptions,
+    runtime: &DynRuntime,
 ) -> Result<Connecting, ConnectError> {
     use socket2::{Domain, Protocol, Socket, Type};
 
@@ -347,7 +347,7 @@ fn connect_socket(
         .set_nonblocking(true)
         .map_err(ConnectError::m("tcp set_nonblocking error"))?;
 
-    if let Some(tcp_keepalive) = &config.tcp_keepalive()
+    if let Some(tcp_keepalive) = &options.tcp_keepalive()
         && let Err(_e) = socket.set_tcp_keepalive(tcp_keepalive)
     {
         warn!("tcp set_keepalive error: {_e}");
@@ -365,13 +365,13 @@ fn connect_socket(
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    if let Some(interface) = &config.bind_options.interface {
+    if let Some(interface) = &options.bind_options.interface {
         super::bind_interface(&socket, *addr, interface)
             .map_err(ConnectError::m("tcp bind interface error"))?;
     }
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    if let Some(tcp_user_timeout) = &config.tcp_user_timeout
+    if let Some(tcp_user_timeout) = &options.tcp_user_timeout
         && let Err(_e) = socket.set_tcp_user_timeout(Some(*tcp_user_timeout))
     {
         warn!("tcp set_tcp_user_timeout error: {_e}");
@@ -380,36 +380,36 @@ fn connect_socket(
     bind_local_address(
         &socket,
         addr,
-        &config.bind_options.ipv4_address,
-        &config.bind_options.ipv6_address,
+        &options.bind_options.ipv4_address,
+        &options.bind_options.ipv6_address,
     )
     .map_err(ConnectError::m("tcp bind local error"))?;
 
-    if config.reuse_address
+    if options.reuse_address
         && let Err(_e) = socket.set_reuse_address(true)
     {
         warn!("tcp set_reuse_address error: {_e}");
     }
 
-    if let Some(linger) = config.linger
+    if let Some(linger) = options.linger
         && let Err(_e) = socket.set_linger(Some(linger))
     {
         warn!("tcp set_linger error: {_e}");
     }
 
-    if let Some(size) = config.send_buffer_size
+    if let Some(size) = options.send_buffer_size
         && let Err(_e) = socket.set_send_buffer_size(size)
     {
         warn!("tcp set_buffer_size error: {_e}");
     }
 
-    if let Some(size) = config.recv_buffer_size
+    if let Some(size) = options.recv_buffer_size
         && let Err(_e) = socket.set_recv_buffer_size(size)
     {
         warn!("tcp set_recv_buffer_size error: {_e}");
     }
 
-    if let Err(_e) = socket.set_tcp_nodelay(config.nodelay) {
+    if let Err(_e) = socket.set_tcp_nodelay(options.nodelay) {
         warn!("tcp set_tcp_nodelay error: {_e}");
     }
 

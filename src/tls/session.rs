@@ -1,7 +1,7 @@
 //! TLS session storage for ticket-based connection resumption.
 //!
-//! The built-in cache is bounded and in-memory. Applications can provide a
-//! session cache when they need a different ticket retention policy.
+//! The built-in store is bounded and in-memory. Applications can provide a
+//! session store when they need a different ticket retention policy.
 
 pub(super) mod entry;
 pub(super) mod store;
@@ -40,10 +40,10 @@ const SESSION_ID_CONTEXT_LENGTH: usize = 32;
 // Bounds the session keys kept by the built-in and default LRU stores.
 const SESSION_ENTRY_CAPACITY: usize = 1024;
 
-/// An opaque key identifying a TLS session cache entry.
+/// An opaque key identifying a TLS session store entry.
 ///
 /// It contains the client session scope and the connection's TLS identity. This
-/// prevents a cache shared by multiple clients from returning a foreign ticket.
+/// prevents a store shared by multiple clients from returning a foreign ticket.
 /// Sessions using TLS 1.2 RSA key exchange also carry the remote socket's IP address, which is
 /// the proxy's for tunneled connections.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -87,9 +87,9 @@ pub(crate) enum SessionTransport {
     Quic,
 }
 
-/// A TLS session that can be stored and retrieved from a session cache.
+/// A TLS session that can be stored and retrieved from a session store.
 ///
-/// The originating key is retained so sessions returned by configured caches can
+/// The originating key is retained so sessions returned by configured stores can
 /// be validated before resumption.
 #[derive(Clone)]
 pub struct TlsSession {
@@ -134,7 +134,7 @@ pub trait TlsSessionStore: Send + Sync {
 }
 
 impl_into_shared!(
-    /// Converts a session cache into a shared trait object.
+    /// Converts a session store into a shared trait object.
     pub trait IntoTlsSessionStore => TlsSessionStore
 );
 
@@ -222,7 +222,7 @@ impl SessionTarget {
         })
     }
 
-    /// Returns the cache key for a session using key exchange `kx`, or `None` when the session
+    /// Returns the store key for a session using key exchange `kx`, or `None` when the session
     /// must not be cached.
     fn key_for(&self, kx: Option<Nid>) -> Option<Key> {
         if kx == Some(Nid::KX_RSA) {
@@ -307,7 +307,7 @@ impl Ticket {
 // ===== impl LruTlsSessionStore =====
 
 impl LruTlsSessionStore {
-    /// Creates a cache retaining up to `per_key_capacity` sessions for each key.
+    /// Creates a store retaining up to `per_key_capacity` sessions for each key.
     /// A zero capacity disables storage. Storage grows as sessions arrive.
     pub fn new(per_key_capacity: usize) -> Self {
         Self {

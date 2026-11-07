@@ -68,7 +68,7 @@ struct Handshake {
 
 /// The client's session store and the session key of one connection.
 struct Resumption {
-    store: Arc<SessionStore>,
+    session_store: Arc<SessionStore>,
     key: Key,
 }
 
@@ -166,16 +166,16 @@ impl TlsConfig {
         });
 
         let resumption = if resumption {
-            let store = inner.config.session.clone();
+            let session_store = inner.config.session_store.clone();
             let target = SessionTarget::new(
                 request,
                 &inner.config_set,
                 SessionTransport::Quic,
                 None,
-                store.session_id_context().map_err(Error::tls)?,
+                session_store.session_id_context().map_err(Error::tls)?,
             );
             Some(Arc::new(Resumption {
-                store,
+                session_store,
                 key: target.into_key(),
             }))
         } else {
@@ -256,7 +256,11 @@ impl QuicConfig {
         let verify_peer = self.handshake.verify_peer;
         let attempt = Arc::new(Attempt {
             resumption: resumption.clone(),
-            ticket: Mutex::new(resumption.store.pop_quic(&resumption.key, verify_peer)),
+            ticket: Mutex::new(
+                resumption
+                    .session_store
+                    .pop_quic(&resumption.key, verify_peer),
+            ),
             not_after: OnceLock::new(),
         });
         let mut crypto = (*self.crypto).clone();
@@ -340,7 +344,7 @@ fn compile(config: &Config, options: Option<&QuicOptions>) -> Result<QuicClientC
         .set_alpn_protos(&AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP3]))
         .map_err(Error::tls)?;
     let mut tls = QuicClientConfig::try_from(builder).map_err(Error::tls)?;
-    tls.set_server_name_indication(config.tls_sni);
+    tls.set_server_name_indication(config.sni);
     tls.set_verify_hostname(config.verify_hostname);
     // A connection-scoped adapter is installed only when resumption is enabled.
     tls.set_session_cache(Arc::new(NoSessionCache));
@@ -418,8 +422,8 @@ impl SessionCache for Attempt {
             .get()
             .copied()
             .or_else(|| session.peer_chain_not_after());
-        let Resumption { store, key } = &*self.resumption;
-        store.insert_quic(key.clone(), session, value, not_after);
+        let Resumption { session_store, key } = &*self.resumption;
+        session_store.insert_quic(key.clone(), session, value, not_after);
     }
 
     fn take(&self, _key: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
