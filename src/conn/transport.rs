@@ -14,6 +14,8 @@ mod quic;
 mod socket;
 mod tcp;
 
+#[cfg(all(test, feature = "http3"))]
+pub(crate) use quic::test_server_config;
 #[cfg(feature = "http3")]
 pub(crate) use quic::{QuicConnector, TUNNEL_MTU};
 pub(crate) use socket::{SocketConnector, SocketRequest};

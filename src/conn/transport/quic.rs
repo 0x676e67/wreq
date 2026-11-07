@@ -112,7 +112,7 @@ impl QuicConnector {
         remote: SocketAddr,
     ) -> Result<Endpoint, ConnectError> {
         Endpoint::new(
-            EndpointConfig::default(),
+            endpoint_config(),
             None,
             self.bind_socket(bind_options, remote)?,
             self.runtime.quic(),
@@ -336,7 +336,7 @@ impl QuicConnector {
         ended: Arc<Notify>,
     ) -> Result<Conn, BoxError> {
         let endpoint = Endpoint::new_with_abstract_socket(
-            EndpointConfig::default(),
+            endpoint_config(),
             None,
             Box::new(socket),
             self.runtime.quic(),
@@ -443,6 +443,12 @@ impl QuicConnector {
     }
 }
 
+/// Endpoint settings with a BoringSSL stateless-reset key. `EndpointConfig::default` would pick
+/// another crypto provider that feature unification enables, as dev-dependencies do in tests.
+fn endpoint_config() -> EndpointConfig {
+    EndpointConfig::new(Arc::new(::quic::crypto::btls::HmacKey::sha256()))
+}
+
 /// Compares local addresses; a replacement binds a new port while the old socket is alive.
 fn same_socket(left: &Endpoint, right: &Endpoint) -> bool {
     matches!((left.local_addr(), right.local_addr()), (Ok(left), Ok(right)) if left == right)
@@ -532,6 +538,36 @@ impl TokenStore for ScopedTokens {
     }
 }
 
+/// Returns a QUIC server configuration for `localhost` and the loopback addresses, with its
+/// certificate in DER.
+#[cfg(test)]
+pub(crate) fn test_server_config() -> (::quic::ServerConfig, Vec<u8>) {
+    use ::quic::crypto::rustls::QuicServerConfig;
+
+    let cert = rcgen::generate_simple_self_signed(vec![
+        "localhost".into(),
+        "127.0.0.1".into(),
+        "::ffff:127.0.0.1".into(),
+        "::1".into(),
+    ])
+    .unwrap();
+    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![cert.cert.der().clone()],
+        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+    )
+    .unwrap();
+    tls.alpn_protocols = vec![b"h3".to_vec()];
+    let config =
+        ::quic::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls).unwrap()));
+    (config, cert.cert.der().to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -540,7 +576,6 @@ mod tests {
         time::Duration,
     };
 
-    use ::quic::crypto::rustls::QuicServerConfig;
     use http::Uri;
     use tower::{Layer, ServiceExt};
 
@@ -603,32 +638,6 @@ mod tests {
         (connection, endpoint, peer)
     }
 
-    /// Returns a QUIC server configuration for `localhost` and its certificate in DER.
-    fn server_config() -> (::quic::ServerConfig, Vec<u8>) {
-        let cert = rcgen::generate_simple_self_signed(vec![
-            "localhost".into(),
-            "127.0.0.1".into(),
-            "::ffff:127.0.0.1".into(),
-            "::1".into(),
-        ])
-        .unwrap();
-        let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(
-            vec![cert.cert.der().clone()],
-            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
-        )
-        .unwrap();
-        tls.alpn_protocols = vec![b"h3".to_vec()];
-        let config =
-            ::quic::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls).unwrap()));
-        (config, cert.cert.der().to_vec())
-    }
-
     /// Returns a connector trusting `cert` that resolves names through `resolver`.
     fn connector(resolver: Arc<dyn Resolve>, cert: &[u8]) -> QuicConnector {
         let tls = TlsBuilder::new()
@@ -675,7 +684,7 @@ mod tests {
 
     #[tokio::test]
     async fn races_families_and_cancels_the_losing_handshake() {
-        let (server_config, cert) = server_config();
+        let (server_config, cert) = test_server_config();
         let server4 =
             ::quic::Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         let addr4 = server4.local_addr().unwrap();
@@ -711,7 +720,7 @@ mod tests {
 
     #[tokio::test]
     async fn reuses_family_endpoints_and_isolates_request_bindings() {
-        let (server_config, cert) = server_config();
+        let (server_config, cert) = test_server_config();
         for address in [
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             IpAddr::V6(Ipv6Addr::LOCALHOST),
@@ -768,7 +777,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_handshakes_keep_the_shared_endpoint() {
-        let (server_config, cert) = server_config();
+        let (server_config, cert) = test_server_config();
         let server4 =
             ::quic::Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         let addr4 = server4.local_addr().unwrap();
@@ -851,7 +860,7 @@ mod tests {
 
         // An endpoint's driver runs on the runtime that opened it; a client outliving that
         // runtime must open a new endpoint instead of failing every later connection.
-        let (config, cert) = server_config();
+        let (config, cert) = test_server_config();
         let (addresses, address) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -904,7 +913,7 @@ mod tests {
                 hidden.clone(),
             );
             Endpoint::new_with_abstract_socket(
-                EndpointConfig::default(),
+                endpoint_config(),
                 None,
                 Box::new(socket),
                 connector.runtime.quic(),
@@ -937,7 +946,7 @@ mod tests {
             }
         }
 
-        let (mut config, cert) = server_config();
+        let (mut config, cert) = test_server_config();
         let mut validation = ::quic::ValidationTokenConfig::default();
         validation
             .sent(TOKENS_PER_KEY as u32)
@@ -986,7 +995,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_unsupported_proxy_routes_before_dns() {
         let resolver = resolving(Vec::new());
-        let transport = connector(resolver.clone(), &server_config().1);
+        let transport = connector(resolver.clone(), &test_server_config().1);
         let proxy = || {
             crate::Proxy::all("http://proxy:8080")
                 .unwrap()
@@ -1025,7 +1034,7 @@ mod tests {
 
     #[tokio::test]
     async fn applies_request_transport_options() {
-        let (config, cert) = server_config();
+        let (config, cert) = test_server_config();
         let server = ::quic::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         let mut connector = connector(resolving(vec![server.local_addr().unwrap()]), &cert);
 

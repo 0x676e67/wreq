@@ -28,14 +28,14 @@ async fn main() -> wreq::Result<()> {
     background_threadpool::init_background_runtime();
 
     let mut args = std::env::args().skip(1);
-    let first = args.next();
-    let (http3, url) = match first.as_deref() {
-        Some("--http3") => (true, args.next()),
-        _ => (false, first),
-    };
+    let url = args.next();
     let builder = Client::builder_tokio()
         .connector_layer(background_threadpool::BackgroundProcessorLayer::new());
-    let builder = if http3 { builder.http3_only() } else { builder };
+    #[cfg(feature = "http3")]
+    let (builder, url) = match url.as_deref() {
+        Some("--http3") => (builder.http3_only(), args.next()),
+        _ => (builder, url),
+    };
     let client = builder
         .build()
         .expect("should be able to build wreq client");

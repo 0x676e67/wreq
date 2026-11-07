@@ -113,3 +113,108 @@ impl<T: Into<Emulation>> IntoEmulation for T {
         self.into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+    };
+
+    use super::*;
+    use crate::{
+        Client, Group, Proxy, config::RequestConfig, conn::transport::BindOptions, proxy::Matcher,
+        rt::tokio::TokioRuntime, tls::TlsVersion,
+    };
+
+    #[test]
+    fn profiles_replace_protocol_options_and_preserve_request_settings() {
+        let tls = TlsOptions::builder()
+            .min_tls_version(TlsVersion::TLS_1_2)
+            .build();
+        let http1 = Http1Options::builder().max_headers(32).build();
+        #[cfg(feature = "http2")]
+        let http2 = Http2Options::builder().header_table_size(4096).build();
+        let headers =
+            HeaderMap::from_iter([("x-profile".parse().unwrap(), "first".parse().unwrap())]);
+        let mut orig_headers = OrigHeaderMap::new();
+        orig_headers.insert("X-Profile");
+        let profile = Emulation::builder()
+            .headers(headers)
+            .orig_headers(orig_headers.clone())
+            .config(tls.clone())
+            .config(http1.clone());
+        #[cfg(feature = "http2")]
+        let profile = profile.config(http2.clone());
+        let profile = profile.build();
+
+        // An empty profile keeps what the client already has.
+        for client in [
+            Client::builder(TokioRuntime).emulation(profile.clone()),
+            Client::builder(TokioRuntime)
+                .emulation(profile.clone())
+                .emulation(Emulation::builder().build()),
+        ] {
+            let config = &client.config;
+            assert_eq!(config.config_set.get::<TlsOptions>(), Some(&tls));
+            assert_eq!(config.config_set.get::<Http1Options>(), Some(&http1));
+            #[cfg(feature = "http2")]
+            assert_eq!(config.config_set.get::<Http2Options>(), Some(&http2));
+            assert_eq!(config.headers["x-profile"], "first");
+            assert_eq!(config.orig_headers, orig_headers);
+        }
+
+        let client = Client::builder(TokioRuntime).build().unwrap();
+        let group = Group::new("profile");
+        let base = client
+            .get("https://localhost/")
+            .group(group.clone())
+            .version(http::Version::HTTP_11)
+            .local_address(IpAddr::V4(Ipv4Addr::LOCALHOST))
+            .proxy(Proxy::http("http://localhost:8080").unwrap())
+            .emulation(profile.clone());
+        let request = base.try_clone().unwrap().build().unwrap();
+        let config_set = request.extensions().get::<ConfigSet>().unwrap();
+        assert_eq!(config_set.get::<TlsOptions>(), Some(&tls));
+        assert_eq!(config_set.get::<Http1Options>(), Some(&http1));
+        #[cfg(feature = "http2")]
+        assert_eq!(config_set.get::<Http2Options>(), Some(&http2));
+        assert_eq!(
+            RequestConfig::<OrigHeaderMap>::get(request.extensions()),
+            Some(&orig_headers)
+        );
+
+        // A partial profile replaces matching types and keeps the other request settings. Its
+        // empty header order keeps the existing one.
+        let replacement = Http1Options::builder().max_headers(64).build();
+        let replaced = base
+            .emulation(Emulation::builder().config(replacement.clone()).build())
+            .build()
+            .unwrap();
+        let replaced_set = replaced.extensions().get::<ConfigSet>().unwrap();
+        assert_eq!(replaced_set.get::<TlsOptions>(), Some(&tls));
+        #[cfg(feature = "http2")]
+        assert_eq!(replaced_set.get::<Http2Options>(), Some(&http2));
+        assert_eq!(replaced_set.get::<Http1Options>(), Some(&replacement));
+        assert_eq!(replaced_set.get::<Group>(), Some(&group));
+        assert_eq!(replaced_set.get::<Matcher>(), config_set.get::<Matcher>());
+        assert_eq!(
+            replaced.extensions().get::<Arc<BindOptions>>(),
+            request.extensions().get::<Arc<BindOptions>>()
+        );
+        assert_eq!(replaced.version(), request.version());
+        assert_eq!(replaced.headers()["x-profile"], "first");
+        assert_eq!(
+            RequestConfig::<OrigHeaderMap>::get(replaced.extensions()),
+            Some(&orig_headers)
+        );
+        assert_eq!(config_set.get::<Http1Options>(), Some(&http1));
+        assert_eq!(profile.2.get::<TlsOptions>(), Some(&tls));
+
+        // Headers and their order do not partition protocol configuration identity.
+        let same_options = Emulation::builder().config(tls).config(http1);
+        #[cfg(feature = "http2")]
+        let same_options = same_options.config(http2);
+        assert_eq!(profile.2, same_options.build().2);
+    }
+}

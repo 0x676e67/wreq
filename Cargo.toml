@@ -182,7 +182,7 @@ libc = "0.2.186"
 
 [dev-dependencies]
 quic = { version = "=0.12.2", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
-http3 = "=0.2.0"
+http3 = { version = "=0.2.0", features = ["unstable"] }
 rcgen = "=0.14.9"
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
 tokio = { version = "1.0", default-features = false, features = [
@@ -341,7 +341,7 @@ required-features = ["form", "tokio-rt"]
 [[example]]
 name = "connect_via_lower_priority_tokio_runtime"
 path = "examples/connect_via_lower_priority_tokio_runtime.rs"
-required-features = ["http3", "tokio-rt", "tracing"]
+required-features = ["tokio-rt", "tracing"]
 
 [[example]]
 name = "emulate"

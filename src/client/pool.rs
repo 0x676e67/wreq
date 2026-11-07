@@ -1944,7 +1944,7 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     #[cfg(feature = "http3")]
-    use ::quic::crypto::rustls::{QuicClientConfig, QuicServerConfig};
+    use ::quic::crypto::rustls::QuicClientConfig;
     #[cfg(feature = "http2")]
     use bytes::Bytes;
     #[cfg(feature = "http2")]
@@ -1954,6 +1954,8 @@ mod tests {
     use super::*;
     #[cfg(feature = "http2")]
     use crate::conn::config::{ConfigScope, ConnectConfig};
+    #[cfg(feature = "http3")]
+    use crate::conn::transport::test_server_config;
     use crate::{conn::config::ConfigSet, group::Group};
 
     /// Connector behavior used to exercise unsuccessful checkout cleanup.
@@ -2124,35 +2126,19 @@ mod tests {
     /// The server keeps every accepted connection open until the test runtime ends.
     #[cfg(feature = "http3")]
     fn http3_connector() -> TestConnector {
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-        let mut server_tls = rustls::ServerConfig::builder_with_provider(provider.clone())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![cert.cert.der().clone()],
-                rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der())
-                    .into(),
-            )
-            .unwrap();
-        server_tls.alpn_protocols = vec![b"h3".to_vec()];
+        let (config, cert) = test_server_config();
         let mut roots = rustls::RootCertStore::empty();
-        roots.add(cert.cert.der().clone()).unwrap();
-        let mut client_tls = rustls::ClientConfig::builder_with_provider(provider)
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        client_tls.alpn_protocols = vec![b"h3".to_vec()];
+        roots.add(cert.into()).unwrap();
+        let mut tls = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        tls.alpn_protocols = vec![b"h3".to_vec()];
 
-        let server = ::quic::Endpoint::server(
-            ::quic::ServerConfig::with_crypto(Arc::new(
-                QuicServerConfig::try_from(server_tls).unwrap(),
-            )),
-            (Ipv4Addr::LOCALHOST, 0).into(),
-        )
-        .unwrap();
+        let server = ::quic::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         let address = server.local_addr().unwrap();
         tokio::spawn(async move {
             let mut peers = Vec::new();
@@ -2162,7 +2148,7 @@ mod tests {
         });
         TestConnector::Http3(
             address,
-            ::quic::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_tls).unwrap())),
+            ::quic::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls).unwrap())),
         )
     }
 

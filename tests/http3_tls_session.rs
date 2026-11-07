@@ -1,5 +1,7 @@
 #![cfg(all(feature = "http3", feature = "tokio-rt"))]
 
+mod support;
+
 use std::{
     net::{Ipv4Addr, UdpSocket},
     sync::{
@@ -14,6 +16,7 @@ use rustls::{
     server::{ClientHello, ResolvesServerCert},
     sign::CertifiedKey,
 };
+use support::h3;
 use wreq::{
     Client, Group,
     quic::QuicOptions,
@@ -72,24 +75,13 @@ fn certified(cert: &rcgen::Certificate, key: &rcgen::KeyPair) -> Arc<CertifiedKe
 
 /// An HTTP/3 server issuing `tickets` TLS 1.3 tickets per connection.
 fn server(certificates: Arc<Certificates>, tickets: usize) -> quic::Endpoint {
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let mut tls = rustls::ServerConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_no_client_auth()
-        .with_cert_resolver(certificates);
-    tls.alpn_protocols = vec![b"h3".to_vec()];
+    let mut tls = h3::tls(certificates);
     tls.send_tls13_tickets = tickets;
-    let config = quic::ServerConfig::with_crypto(Arc::new(
-        quic::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
-    ));
-    quic::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap()
+    h3::endpoint(tls, None)
 }
 
 /// Answers one request on `connection` with `ok`.
-async fn respond(
-    connection: quic::Connection,
-) -> http3::server::Connection<http3_quic::Connection, Bytes> {
+async fn respond(connection: quic::Connection) -> h3::Connection {
     let mut server = http3::server::builder()
         .build::<_, Bytes>(http3_quic::Connection::new(connection))
         .await

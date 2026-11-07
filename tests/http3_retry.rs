@@ -1,5 +1,7 @@
 #![cfg(all(feature = "http3", feature = "tokio-rt"))]
 
+mod support;
+
 use std::{
     sync::{
         Arc, Mutex,
@@ -11,46 +13,25 @@ use std::{
 use bytes::{Buf, Bytes};
 use http::{Method, Response, StatusCode, Version, header::LOCATION};
 use http3::error::Code;
-use quic::crypto::rustls::QuicServerConfig;
+use support::h3;
 use wreq::{Body, Client, redirect, retry::Policy, tls::trust::CertStore};
 
 /// Binds an HTTP/3 endpoint for `localhost` and returns the client trust store for it.
 fn endpoint() -> (quic::Endpoint, CertStore) {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .unwrap()
-    .with_no_client_auth()
-    .with_single_cert(
-        vec![cert.cert.der().clone()],
-        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
-    )
-    .unwrap();
-    tls.alpn_protocols = vec![b"h3".to_vec()];
-    let config =
-        quic::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls).unwrap()));
-    (
-        quic::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap(),
-        CertStore::from_der_certs([cert.cert.der().as_ref()]).unwrap(),
-    )
+    let certificate = h3::Certificate::new("localhost");
+    (h3::endpoint(&certificate, None), certificate.cert_store())
 }
 
 /// Rejects the first `rejections` POSTs with `code`, then answers. Returns whether the request
 /// succeeded and how many attempts reached the server.
 async fn post(code: Code, rejections: usize, body: Body, retry: Option<Policy>) -> (bool, usize) {
     let (endpoint, cert_store) = endpoint();
-    let port = endpoint.local_addr().unwrap().port();
+    let addr = endpoint.local_addr().unwrap();
     let count = Arc::new(AtomicUsize::new(0));
     let received = count.clone();
     let (release, mut released) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(async move {
-        let connection = endpoint.accept().await.unwrap().await.unwrap();
-        let mut server = http3::server::builder()
-            .build::<_, Bytes>(http3_quic::Connection::new(connection))
-            .await
-            .unwrap();
+        let (_, mut server) = h3::accept(&endpoint).await;
         loop {
             let next = tokio::select! {
                 _ = &mut released => break,
@@ -77,6 +58,7 @@ async fn post(code: Code, rejections: usize, body: Body, retry: Option<Policy>) 
     let mut builder = Client::builder_tokio()
         .no_proxy()
         .http3_only()
+        .resolve("localhost", addr)
         .tls_cert_store(cert_store);
     if let Some(retry) = retry {
         builder = builder.retry(retry);
@@ -85,7 +67,7 @@ async fn post(code: Code, rejections: usize, body: Body, retry: Option<Policy>) 
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         client
-            .post(format!("https://localhost:{port}/"))
+            .post(format!("https://localhost:{}/", addr.port()))
             .body(body)
             .send(),
     )
@@ -150,16 +132,12 @@ async fn http3_respects_disabled_retries_and_the_retry_limit() {
 #[tokio::test]
 async fn http3_goaway_replays_only_the_redirected_hop() {
     let (endpoint, cert_store) = endpoint();
-    let port = endpoint.local_addr().unwrap().port();
+    let addr = endpoint.local_addr().unwrap();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let record = seen.clone();
     let (release, released) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(async move {
-        let first = endpoint.accept().await.unwrap().await.unwrap();
-        let mut server = http3::server::builder()
-            .build::<_, Bytes>(http3_quic::Connection::new(first.clone()))
-            .await
-            .unwrap();
+        let (first, mut server) = h3::accept(&endpoint).await;
         let (head, mut stream) = server
             .accept()
             .await
@@ -196,11 +174,7 @@ async fn http3_goaway_replays_only_the_redirected_hop() {
         };
 
         let retried = async {
-            let second = endpoint.accept().await.unwrap().await.unwrap();
-            let mut server = http3::server::builder()
-                .build::<_, Bytes>(http3_quic::Connection::new(second))
-                .await
-                .unwrap();
+            let (_, mut server) = h3::accept(&endpoint).await;
             let (head, mut stream) = server
                 .accept()
                 .await
@@ -227,13 +201,14 @@ async fn http3_goaway_replays_only_the_redirected_hop() {
         .no_proxy()
         .http3_only()
         .redirect(redirect::Policy::default())
+        .resolve("localhost", addr)
         .tls_cert_store(cert_store)
         .build()
         .unwrap();
     let response = tokio::time::timeout(
         Duration::from_secs(10),
         client
-            .post(format!("https://localhost:{port}/form"))
+            .post(format!("https://localhost:{}/form", addr.port()))
             .body("form")
             .send(),
     )

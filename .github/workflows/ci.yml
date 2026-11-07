@@ -127,6 +127,7 @@ jobs:
         with:
           toolchain: stable
           override: true
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-go@v7
         if: matrix.feature-set == '--all-features'
@@ -137,9 +138,9 @@ jobs:
         with:
           tool: cargo-nextest
       # Test builds also enable dev-dependency features such as Tokio `net` and QUIC
-      # `runtime-tokio`, so check the library alone to catch a missing cfg.
-      - name: Check library (${{ matrix.feature-set }})
-        run: cargo check --lib ${{ matrix.feature-set }}
+      # `runtime-tokio`, so lint the library alone to catch a missing cfg or dead code.
+      - name: Lint library (${{ matrix.feature-set }})
+        run: cargo clippy --lib ${{ matrix.feature-set }} -- -D warnings
       # The emulation tests reach tls.browserleaks.com.
       - name: Run tests (${{ matrix.feature-set }})
         run: cargo nextest run --workspace ${{ matrix.feature-set }} ${{ !matrix.public-network && '-E "not binary_id(wreq::emulate)"' || '' }}

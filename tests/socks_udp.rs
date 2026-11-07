@@ -1,5 +1,7 @@
 #![cfg(all(feature = "http3", feature = "socks", feature = "tokio-rt"))]
 
+mod support;
+
 use std::{
     error::Error as StdError,
     io,
@@ -13,25 +15,21 @@ use std::{
 
 use bytes::Bytes;
 use http::{Request, Response, Version, header::PROXY_AUTHORIZATION};
-use quic::crypto::rustls::QuicServerConfig;
+use support::h3;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
-use wreq::{
-    Client, ClientBuilder, Proxy, dns,
-    tls::{TlsVersion, trust::CertStore},
-};
+use wreq::{Client, ClientBuilder, Proxy, dns, tls::TlsVersion};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 struct Origin {
-    endpoint: quic::Endpoint,
-    certificate: Vec<u8>,
+    server: h3::Server,
+    certificate: h3::Certificate,
     requests: mpsc::UnboundedReceiver<Request<()>>,
-    task: JoinHandle<()>,
 }
 
 struct SocksProxy {
@@ -138,37 +136,12 @@ async fn read_address(stream: &mut TcpStream) {
 
 impl Origin {
     fn new() -> Self {
-        let mut params = rcgen::CertificateParams::new(vec!["origin.test".into()]).unwrap();
-        params
-            .distinguished_name
-            .push(rcgen::DnType::CommonName, "origin.test");
-        let key = rcgen::KeyPair::generate().unwrap();
-        let certificate = params.self_signed(&key).unwrap();
-        let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(
-            vec![certificate.der().clone()],
-            rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
-        )
-        .unwrap();
-        tls.alpn_protocols = vec![b"h3".to_vec()];
-        let config =
-            quic::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls).unwrap()));
-        let endpoint = quic::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
-        let incoming = endpoint.clone();
+        let certificate = h3::Certificate::new("origin.test");
         let (sender, requests) = mpsc::unbounded_channel();
-        let task = tokio::spawn(async move {
-            let connection = incoming.accept().await.unwrap().await.unwrap();
-            let mut server = http3::server::builder()
-                .build::<_, Bytes>(http3_quic::Connection::new(connection))
-                .await
-                .unwrap();
-            while let Ok(Some(request)) = server.accept().await {
-                let (request, mut stream) = request.resolve_request().await.unwrap();
+        let endpoint = h3::endpoint(&certificate, None);
+        let server = h3::Server::serve(endpoint, false, move |request, mut stream| {
+            let sender = sender.clone();
+            async move {
                 let stall = request.uri().path() == "/stall";
                 sender.send(request).unwrap();
                 if stall {
@@ -183,26 +156,18 @@ impl Origin {
             }
         });
         Self {
-            endpoint,
-            certificate: certificate.der().to_vec(),
+            server,
+            certificate,
             requests,
-            task,
         }
     }
 
     fn addr(&self) -> SocketAddr {
-        self.endpoint.local_addr().unwrap()
+        self.server.addr()
     }
 
     fn url(&self) -> String {
         format!("https://origin.test:{}/", self.addr().port())
-    }
-}
-
-impl Drop for Origin {
-    fn drop(&mut self) {
-        self.endpoint.close(0u32.into(), b"done");
-        self.task.abort();
     }
 }
 
@@ -332,7 +297,7 @@ impl SocksProxy {
                 remote,
                 relay: RelayLookup::Resolve,
             })
-            .tls_cert_store(CertStore::from_der_certs([&origin.certificate]).unwrap())
+            .tls_cert_store(origin.certificate.cert_store())
             .proxy(
                 Proxy::all(format!("{scheme}://proxy.test:{}", self.addr.port()))
                     .unwrap()
@@ -415,6 +380,7 @@ async fn socks_udp_authentication_dns_and_pool_reuse() {
             assert_eq!(request.uri().host(), Some("origin.test"));
             assert!(!request.headers().contains_key(PROXY_AUTHORIZATION));
         }
+        assert_eq!(origin.server.connections(), 1);
         next(&mut proxy.associated).await;
         assert!(proxy.associated.try_recv().is_err());
         let mut actual = lookups.lock().unwrap().clone();

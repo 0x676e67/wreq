@@ -1,5 +1,7 @@
 #![cfg(all(feature = "http3", feature = "tokio-rt"))]
 
+mod support;
+
 use std::{
     io,
     net::SocketAddr,
@@ -14,8 +16,8 @@ use bytes::{Buf, Bytes, BytesMut};
 use http::{
     HeaderMap, Method, Request, Response, StatusCode, Version, header::PROXY_AUTHORIZATION,
 };
-use quic::crypto::rustls::QuicServerConfig;
-use tokio::{io::AsyncReadExt, net::UdpSocket, sync::mpsc, task::JoinHandle};
+use support::h3;
+use tokio::{io::AsyncReadExt, net::UdpSocket, sync::mpsc};
 use wreq::{Client, ClientBuilder, Proxy, dns, tls::trust::CertStore};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -23,9 +25,8 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 const ORIGIN_URL: &str = "https://origin.test/";
 
 struct Server {
-    endpoint: quic::Endpoint,
-    certificate: Vec<u8>,
-    task: JoinHandle<()>,
+    server: h3::Server,
+    certificate: h3::Certificate,
     requests: mpsc::UnboundedReceiver<Request<()>>,
 }
 
@@ -37,33 +38,6 @@ enum Mode {
 }
 
 struct ProxyResolver(SocketAddr);
-
-fn endpoint(host: &str) -> (quic::Endpoint, Vec<u8>) {
-    let mut params = rcgen::CertificateParams::new(vec![host.into()]).unwrap();
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, host);
-    let key = rcgen::KeyPair::generate().unwrap();
-    let certificate = params.self_signed(&key).unwrap();
-    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .unwrap()
-    .with_no_client_auth()
-    .with_single_cert(
-        vec![certificate.der().clone()],
-        rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
-    )
-    .unwrap();
-    tls.alpn_protocols = vec![b"h3".to_vec()];
-    let config =
-        quic::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls).unwrap()));
-    (
-        quic::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap(),
-        certificate.der().to_vec(),
-    )
-}
 
 async fn next<T>(receiver: &mut mpsc::UnboundedReceiver<T>) -> T {
     tokio::time::timeout(TIMEOUT, receiver.recv())
@@ -109,17 +83,12 @@ fn capsule(buffer: &mut BytesMut) -> Option<(u64, Bytes)> {
 
 impl Server {
     fn origin() -> Self {
-        let (endpoint, certificate) = endpoint("origin.test");
-        let incoming = endpoint.clone();
+        let certificate = h3::Certificate::new("origin.test");
         let (sender, requests) = mpsc::unbounded_channel();
-        let task = tokio::spawn(async move {
-            let connection = incoming.accept().await.unwrap().await.unwrap();
-            let mut server = http3::server::builder()
-                .build::<_, Bytes>(http3_quic::Connection::new(connection))
-                .await
-                .unwrap();
-            while let Ok(Some(request)) = server.accept().await {
-                let (request, mut stream) = request.resolve_request().await.unwrap();
+        let endpoint = h3::endpoint(&certificate, None);
+        let server = h3::Server::serve(endpoint, false, move |request, mut stream| {
+            let sender = sender.clone();
+            async move {
                 let stall = request.uri().path() == "/stall";
                 sender.send(request).unwrap();
                 if stall {
@@ -134,19 +103,19 @@ impl Server {
             }
         });
         Self {
-            endpoint,
+            server,
             certificate,
-            task,
             requests,
         }
     }
 
     fn proxy(mode: Mode) -> (Self, mpsc::UnboundedReceiver<()>) {
-        let (endpoint, certificate) = endpoint("proxy.test");
+        let certificate = h3::Certificate::new("proxy.test");
+        let endpoint = h3::endpoint(&certificate, None);
         let incoming = endpoint.clone();
         let (sender, requests) = mpsc::unbounded_channel();
         let (closed, receiver) = mpsc::unbounded_channel();
-        let task = tokio::spawn(async move {
+        let server = h3::Server::spawn(endpoint, async move {
             let connection = incoming.accept().await.unwrap().await.unwrap();
             let mut server = http3::server::builder()
                 .enable_extended_connect(!matches!(mode, Mode::Unsupported))
@@ -271,9 +240,8 @@ impl Server {
         });
         (
             Self {
-                endpoint,
+                server,
                 certificate,
-                task,
                 requests,
             },
             receiver,
@@ -281,7 +249,7 @@ impl Server {
     }
 
     fn addr(&self) -> SocketAddr {
-        self.endpoint.local_addr().unwrap()
+        self.server.addr()
     }
 
     fn client(&self, origin: &Self, password: &str) -> ClientBuilder {
@@ -293,7 +261,8 @@ impl Server {
             .retry(wreq::retry::Policy::never())
             .dns_resolver(ProxyResolver(self.addr()))
             .tls_cert_store(
-                CertStore::from_der_certs([&self.certificate, &origin.certificate]).unwrap(),
+                CertStore::from_der_certs([self.certificate.der(), origin.certificate.der()])
+                    .unwrap(),
             )
             .proxy(
                 Proxy::all(format!("QuIc://proxy.test:{}", self.addr().port()))
@@ -302,13 +271,6 @@ impl Server {
                     .custom_http_headers(headers),
             )
             .timeout(TIMEOUT)
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.endpoint.close(0u32.into(), b"done");
-        self.task.abort();
     }
 }
 
@@ -354,6 +316,7 @@ async fn masque_authentication_remote_dns_and_pool_reuse() {
             assert!(!request.headers().contains_key(PROXY_AUTHORIZATION));
             assert!(!request.headers().contains_key("x-proxy-only"));
         }
+        assert_eq!(origin.server.connections(), 1);
         let request = next(&mut proxy.requests).await;
         assert_eq!(request.method(), "CONNECT");
         assert_eq!(
@@ -376,7 +339,10 @@ async fn masque_authentication_remote_dns_and_pool_reuse() {
             result = &mut request => panic!("stalled request completed early (datagrams={datagrams}): {result:?}"),
         };
         assert_eq!(received.uri().path(), "/stall");
-        proxy.endpoint.close(0u32.into(), b"proxy shutdown");
+        proxy
+            .server
+            .endpoint()
+            .close(0u32.into(), b"proxy shutdown");
         next(&mut closed).await;
         let error = request.await.unwrap().unwrap_err();
         assert!(!error.is_timeout(), "{error:?}");
@@ -438,27 +404,22 @@ async fn masque_connect_timeout_and_cancellation_close_the_proxy_connection() {
 #[tokio::test]
 async fn connect_sends_only_the_marker_of_the_connection_protocol() {
     for extended in [true, false] {
-        let (endpoint, certificate) = endpoint("localhost");
-        let port = endpoint.local_addr().unwrap().port();
+        let certificate = h3::Certificate::new("localhost");
         let (sender, mut requests) = mpsc::unbounded_channel();
-        let server = tokio::spawn(async move {
-            let connection = endpoint.accept().await.unwrap().await.unwrap();
-            let mut server = http3::server::builder()
-                .enable_extended_connect(extended)
-                .build::<_, Bytes>(http3_quic::Connection::new(connection))
-                .await
-                .unwrap();
-            while let Ok(Some(request)) = server.accept().await {
-                let (request, mut stream) = request.resolve_request().await.unwrap();
+        let endpoint = h3::endpoint(&certificate, None);
+        let server = h3::Server::serve(endpoint, extended, move |request, mut stream| {
+            let sender = sender.clone();
+            async move {
                 sender.send(request).unwrap();
                 stream.send_response(Response::new(())).await.unwrap();
                 let _ = stream.finish().await;
             }
         });
+        let port = server.addr().port();
         let client = Client::builder_tokio()
             .no_proxy()
             .http3_only()
-            .tls_cert_store(CertStore::from_der_certs([&certificate]).unwrap())
+            .tls_cert_store(certificate.cert_store())
             .timeout(TIMEOUT)
             .build()
             .unwrap();
@@ -517,7 +478,7 @@ async fn connect_sends_only_the_marker_of_the_connection_protocol() {
             );
         }
         drop(client);
-        server.abort();
+        drop(server);
     }
 
     // HTTP/1 has no extended CONNECT, so the HTTP/3 marker fails before any byte is sent.

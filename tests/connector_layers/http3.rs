@@ -11,23 +11,20 @@ use std::{
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use http::Version;
-use quic::crypto::rustls::QuicServerConfig;
 use tokio::{
     runtime::{Handle, Runtime},
     sync::{Semaphore, mpsc, oneshot},
-    task::JoinHandle,
 };
 use tower::{BoxError, Layer, Service, limit::ConcurrencyLimitLayer, timeout::TimeoutLayer};
-use wreq::{Client, tls::trust::CertStore};
+use wreq::Client;
 
-use super::support::{layer::DelayLayer, server};
+use super::support::{h3, layer::DelayLayer, server};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct Http3Server {
-    endpoint: quic::Endpoint,
-    certificate: Vec<u8>,
-    task: JoinHandle<()>,
+    server: h3::Server,
+    certificate: h3::Certificate,
 }
 
 struct BackgroundRuntime(Option<Runtime>);
@@ -61,64 +58,29 @@ struct Background<S> {
 
 impl Http3Server {
     fn new() -> Self {
-        let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-        let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(
-            vec![certificate.cert.der().clone()],
-            rustls::pki_types::PrivatePkcs8KeyDer::from(certificate.signing_key.serialize_der())
-                .into(),
-        )
-        .unwrap();
-        tls.alpn_protocols = vec![b"h3".to_vec()];
-        let config =
-            quic::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls).unwrap()));
-        let endpoint = quic::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
-        let incoming = endpoint.clone();
-        let task = tokio::spawn(async move {
-            let connection = incoming.accept().await.unwrap().await.unwrap();
-            let mut server = ::http3::server::builder()
-                .build::<_, Bytes>(http3_quic::Connection::new(connection))
-                .await
-                .unwrap();
-            while let Ok(Some(request)) = server.accept().await {
-                let (_, mut stream) = request.resolve_request().await.unwrap();
-                stream.send_response(http::Response::new(())).await.unwrap();
-                stream.send_data(Bytes::from_static(b"ok")).await.unwrap();
-                stream.finish().await.unwrap();
-            }
+        let certificate = h3::Certificate::new("localhost");
+        let endpoint = h3::endpoint(&certificate, None);
+        let server = h3::Server::serve(endpoint, false, |_, mut stream| async move {
+            stream.send_response(http::Response::new(())).await.unwrap();
+            stream.send_data(Bytes::from_static(b"ok")).await.unwrap();
+            stream.finish().await.unwrap();
         });
         Self {
-            endpoint,
-            certificate: certificate.cert.der().to_vec(),
-            task,
+            server,
+            certificate,
         }
     }
 
     fn url(&self) -> String {
-        format!(
-            "https://localhost:{}/",
-            self.endpoint.local_addr().unwrap().port()
-        )
+        format!("https://localhost:{}/", self.server.addr().port())
     }
 
     fn client(&self) -> wreq::ClientBuilder {
         Client::builder_tokio()
             .no_proxy()
-            .resolve("localhost", self.endpoint.local_addr().unwrap())
-            .tls_cert_store(CertStore::from_der_certs([&self.certificate]).unwrap())
+            .resolve("localhost", self.server.addr())
+            .tls_cert_store(self.certificate.cert_store())
             .timeout(TEST_TIMEOUT)
-    }
-}
-
-impl Drop for Http3Server {
-    fn drop(&mut self) {
-        self.endpoint.close(0u32.into(), b"done");
-        self.task.abort();
     }
 }
 
