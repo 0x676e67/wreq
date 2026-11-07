@@ -484,10 +484,11 @@ where
         feature = "http3" => extensions.get::<netty::http3::Protocol>().is_some(),
         _ => false,
     };
-    let matched = cfg_select! {
-        feature = "http3" => (http2 && pooled.is_http2()) || (http3 && pooled.is_http3()),
-        _ => http2 && pooled.is_http2(),
-    };
+    let matched =
+        cfg_select! {
+            feature = "http3" => (http2 && pooled.is_http2()) || (http3 && pooled.is_http3()),
+            _ => http2 && pooled.is_http2(),
+        };
     if (http2 || http3) && !matched {
         warn!("extended CONNECT protocol does not match the connection's HTTP version");
         return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
@@ -625,12 +626,13 @@ where
 
             // RFC 8441 §3: extended CONNECT only after the peer enabled it. A miss keeps
             // the dedicated HTTP/1.1 upgrade, so no HTTP/2 connection is opened for it.
-            let reused: Option<pool::Pooled<B>> = cfg_select! {
-                feature = "http2" => extended_connect
-                    .as_ref()
-                    .and_then(|key| this.pool.checkout_extended_connect(key)),
-                _ => None,
-            };
+            let reused: Option<pool::Pooled<B>> =
+                cfg_select! {
+                    feature = "http2" => extended_connect
+                        .as_ref()
+                        .and_then(|key| this.pool.checkout_extended_connect(key)),
+                    _ => None,
+                };
             #[cfg(feature = "http2")]
             let upgrade = reused
                 .is_some()

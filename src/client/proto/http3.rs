@@ -19,7 +19,7 @@ use tower::{BoxError, Service, ServiceExt};
 
 use super::{ConnectionState, SendError, is_expired};
 use crate::{
-    client::pool::PoolTarget,
+    client::{error::Error, pool::PoolTarget},
     conn::{Conn, Connected, request::ConnectRequest},
     error::TimedOut,
     rt::{RuntimeHandle, Timer as _},
@@ -207,7 +207,7 @@ where
         let ready = self
             .tx
             .poll_ready(cx)
-            .map_err(|error| SendError::Request(crate::client::error::Error::closed(error)));
+            .map_err(|error| SendError::Request(Error::closed(error)));
         if matches!(ready, Poll::Ready(Err(_))) {
             self.conn_info.poison();
         }

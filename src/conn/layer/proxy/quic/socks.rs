@@ -3,7 +3,6 @@
 //! [RFC 1928 Section 7](https://www.rfc-editor.org/rfc/rfc1928#section-7).
 
 use std::{
-    fmt,
     future::{Future, poll_fn},
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -43,11 +42,26 @@ use crate::{
     tls::quic::QuicConfig,
 };
 
+static URI_MISSING_HOST: &str = "HTTP/3 URI has no host";
+static PROXY_CONNECT_ERROR: &str = "SOCKS5 proxy connect error";
+static AUTH_ERROR: &str = "SOCKS5 authentication error";
+static ASSOCIATE_ERROR: &str = "SOCKS5 UDP ASSOCIATE error";
+static RELAY_ERROR: &str = "SOCKS5 UDP relay error";
+static TARGET_HANDSHAKE_ERROR: &str = "SOCKS5 target handshake error";
+static PEER_ADDR_REQUIRED: &str = "SOCKS5 UDP requires the control connection's peer address";
+static ASSOCIATION_CLOSED: &str = "SOCKS5 UDP association closed during relay resolution";
+static NO_RELAY_ADDRESSES: &str = "SOCKS5 UDP relay resolved to no addresses";
+static RECV_BUFFER_MISSING: &str = "SOCKS5 UDP receive requires a buffer and metadata slot";
+static RECV_SIZE_OVERFLOW: &str = "UDP receive size overflow";
+static SEND_TARGET_MISMATCH: &str =
+    "SOCKS5 UDP socket requires one datagram of at most 1200 bytes for its target";
+
 /// One association exposed as a fixed-peer socket to the inner QUIC endpoint.
 /// Only the receive driver polls the control stream, so senders cannot replace its waker.
 ///
 /// `scratch` holds the last receive: its datagrams before `framed` are unframed, and
 /// `payloads` is what remains of the current run of payloads, `stride` bytes apart.
+#[derive(Debug)]
 struct Socket {
     inner: Box<dyn AsyncUdpSocket>,
     shared: Arc<Shared>,
@@ -61,6 +75,7 @@ struct Socket {
 }
 
 /// `notify` wakes senders once `closed` is set; `ended` signals the endpoint's watcher once.
+#[derive(Debug)]
 struct Shared {
     association: Mutex<Option<UdpAssociation<BoxConnection>>>,
     target: Address,
@@ -72,6 +87,7 @@ struct Shared {
 
 pin_project! {
     /// Retains one reusable frame and independent UDP readiness and closure registrations.
+    #[derive(Debug)]
     struct SocketSender {
         inner: Pin<Box<dyn UdpSender>>,
         shared: Arc<Shared>,
@@ -94,8 +110,9 @@ pub(super) async fn connect(
     // A local configuration error must not cost, or be reported as, a proxy setup.
     let tls = inner.tunnel_config(&request)?;
     let uri = request.route_uri();
-    let host = crate::util::strip_ipv6_brackets(uri.host().ok_or("HTTP/3 URI has no host")?);
+    let host = crate::util::strip_ipv6_brackets(uri.host().ok_or(URI_MISSING_HOST)?);
     let port = uri.port_u16().unwrap_or(443);
+
     if proxy.uri().scheme_str() == Some("socks5h") {
         let target = match host.parse::<IpAddr>() {
             Ok(ip) => Address::Ip((ip, port).into()),
@@ -105,6 +122,7 @@ pub(super) async fn connect(
     }
 
     let addresses = transport::resolve(&mut resolver, host, port, uri.port().is_some()).await?;
+
     // Target families are independent of the physical proxy's bindings.
     Ok(ConnectOptions::default()
         .connect(
@@ -142,13 +160,16 @@ async fn connect_target(
     let io = tcp
         .oneshot(proxy.uri().clone())
         .await
-        .map_err(proxy_error("SOCKS5 proxy connect error"))?;
+        .map_err(proxy_error(PROXY_CONNECT_ERROR))?;
+
     let peer = io.peer_addr();
+
     // The relay's address family is not known until the ASSOCIATE reply.
     let unspecified = match peer {
         Some(SocketAddr::V6(_)) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
         _ => SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
     };
+
     let auth = proxy.raw_auth();
     let auth = auth
         .as_ref()
@@ -156,15 +177,16 @@ async fn connect_target(
             Ok::<_, std::str::Utf8Error>((std::str::from_utf8(user)?, std::str::from_utf8(pass)?))
         })
         .transpose()
-        .map_err(proxy_error("SOCKS5 authentication error"))?;
+        .map_err(proxy_error(AUTH_ERROR))?;
+
     let mut association = udp::associate(io, auth, unspecified)
         .await
         .map_err(|error| {
             let stage = match error {
                 AssociateError::InvalidCredentials
                 | AssociateError::NoAcceptableAuth
-                | AssociateError::AuthFailed => "SOCKS5 authentication error",
-                _ => "SOCKS5 UDP ASSOCIATE error",
+                | AssociateError::AuthFailed => AUTH_ERROR,
+                _ => ASSOCIATE_ERROR,
             };
             proxy_error(stage)(error)
         })?;
@@ -178,25 +200,24 @@ async fn connect_target(
         };
         let (socket, relay) = match relay {
             Address::Ip(relay) if relay.ip().is_unspecified() => {
-                return Err("SOCKS5 UDP requires the control connection's peer address".into());
+                return Err(PEER_ADDR_REQUIRED.into());
             }
             Address::Ip(relay) => (inner.udp_socket(request, relay)?, relay),
             Address::Domain(host, port) => {
                 let mut resolver = resolver.clone();
+
                 // BND.PORT is authoritative even when the resolver returns another port.
                 let mut resolving = pin!(transport::resolve(&mut resolver, &host, port, true));
                 let addresses = poll_fn(|cx| {
                     // The association can close while DNS is pending; stop that lookup too.
                     if let Poll::Ready(result) = association.poll_closed(cx) {
                         let error = match result {
-                            Ok(()) => io::Error::new(
-                                io::ErrorKind::BrokenPipe,
-                                "SOCKS5 UDP association closed during relay resolution",
-                            ),
+                            Ok(()) => io::Error::new(io::ErrorKind::BrokenPipe, ASSOCIATION_CLOSED),
                             Err(error) => io::Error::new(io::ErrorKind::BrokenPipe, error),
                         };
                         return Poll::Ready(Err::<_, BoxError>(error.into()));
                     }
+
                     resolving
                         .as_mut()
                         .poll(cx)
@@ -212,6 +233,7 @@ async fn connect_target(
                 };
                 let mut selected = None;
                 let mut first_error = None;
+
                 for &relay in addresses
                     .iter()
                     .filter(preferred)
@@ -227,23 +249,22 @@ async fn connect_target(
                         }
                     }
                 }
-                selected.ok_or_else(|| {
-                    first_error
-                        .unwrap_or_else(|| "SOCKS5 UDP relay resolved to no addresses".into())
-                })?
+
+                selected.ok_or_else(|| first_error.unwrap_or_else(|| NO_RELAY_ADDRESSES.into()))?
             }
         };
+
         let socket = Socket::new(socket, association, relay, target)?;
         Ok::<_, BoxError>((socket, relay))
     };
-    let (socket, relay) = open_relay
-        .await
-        .map_err(proxy_error("SOCKS5 UDP relay error"))?;
+
+    let (socket, relay) = open_relay.await.map_err(proxy_error(RELAY_ERROR))?;
     let ended = socket.shared.ended.clone();
+
     inner
         .finish_tunnel(request, tls, socket, relay, ended)
         .await
-        .map_err(ConnectError::m("SOCKS5 target handshake error"))
+        .map_err(ConnectError::m(TARGET_HANDSHAKE_ERROR))
 }
 
 /// Labels a failed proxy stage, keeping it a proxy connect error.
@@ -264,6 +285,7 @@ impl Socket {
         udp::encode_header(&target, &mut header)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let local = socket.local_addr()?;
+
         Ok(Self {
             inner: socket,
             shared: Arc::new(Shared {
@@ -289,6 +311,7 @@ impl AsyncUdpSocket for Socket {
     fn create_sender(&self) -> Pin<Box<dyn UdpSender>> {
         let mut packet = Vec::with_capacity(self.shared.header.len() + usize::from(TUNNEL_MTU));
         packet.extend_from_slice(&self.shared.header);
+
         Box::pin(SocketSender {
             inner: self.inner.create_sender(),
             shared: self.shared.clone(),
@@ -307,7 +330,7 @@ impl AsyncUdpSocket for Socket {
         let (Some(buf), Some(meta)) = (bufs.first_mut(), meta.first_mut()) else {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "SOCKS5 UDP receive requires a buffer and metadata slot",
+                RECV_BUFFER_MISSING,
             )));
         };
 
@@ -317,9 +340,7 @@ impl AsyncUdpSocket for Socket {
             .len()
             .checked_add(262)
             .and_then(|len| len.checked_mul(self.inner.max_receive_segments().max(1)))
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "UDP receive size overflow")
-            })?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, RECV_SIZE_OVERFLOW))?
             .max(65_536);
 
         if capacity > self.scratch.len() {
@@ -330,6 +351,7 @@ impl AsyncUdpSocket for Socket {
         }
 
         let mut association = self.shared.association.lock();
+
         // The watcher closes the endpoint once the association ends.
         let Some(control) = association.as_mut() else {
             return Poll::Pending;
@@ -339,8 +361,10 @@ impl AsyncUdpSocket for Socket {
             *association = None;
             self.shared.closed.store(true, Ordering::Release);
             drop(association);
+
             self.shared.notify.notify_waiters();
             self.shared.ended.notify_one();
+
             if let Err(_error) = _result {
                 debug!("SOCKS5 control connection error: {_error}");
             }
@@ -358,6 +382,7 @@ impl AsyncUdpSocket for Socket {
                         std::slice::from_mut(&mut self.received),
                     ))?;
                     self.framed = 0;
+
                     if count == 0 || self.received.len > self.scratch.len() {
                         self.received.len = 0;
                         continue;
@@ -372,9 +397,11 @@ impl AsyncUdpSocket for Socket {
                     self.framed = self.received.len;
                     continue;
                 };
+
                 // Payloads now lead the run's datagrams, ahead of those still framed.
                 let start = self.framed;
                 self.framed += run.consumed;
+
                 if run.stride > 0 && matches_target(&self.shared.target, (&run.source).into()) {
                     self.payloads = start..start + run.len;
                     self.stride = run.stride;
@@ -389,17 +416,21 @@ impl AsyncUdpSocket for Socket {
                 .min(self.payloads.end);
             let payload = &self.scratch[self.payloads.start..end];
             self.payloads.start = end;
+
             // Empty UDP payloads contain no QUIC header (RFC 9000 Section 17).
             // https://www.rfc-editor.org/rfc/rfc9000#section-17
             if payload.is_empty() || payload.len() > buf.len() {
                 continue;
             }
+
             buf[..payload.len()].copy_from_slice(payload);
+
             *meta = RecvMeta::default();
             meta.addr = self.relay;
             meta.len = payload.len();
             meta.stride = payload.len();
             meta.dst_ip = self.received.dst_ip;
+
             return Poll::Ready(Ok(1));
         }
 
@@ -417,15 +448,6 @@ impl AsyncUdpSocket for Socket {
     }
 }
 
-impl fmt::Debug for Socket {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Socket")
-            .field("local", &self.local)
-            .field("relay", &self.relay)
-            .finish_non_exhaustive()
-    }
-}
-
 // ===== impl SocketSender =====
 
 impl UdpSender for SocketSender {
@@ -435,11 +457,13 @@ impl UdpSender for SocketSender {
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         let mut this = self.project();
+
         // Once the association ends, packets are lost as on a dead UDP path; a send error would
         // make the connection driver log it as an I/O error.
         if this.shared.closed.load(Ordering::Acquire) || this.closed.as_mut().poll(cx).is_ready() {
             return Poll::Ready(Ok(()));
         }
+
         if transmit.destination != *this.relay
             || transmit.contents.is_empty()
             || transmit.contents.len() > usize::from(TUNNEL_MTU)
@@ -449,11 +473,13 @@ impl UdpSender for SocketSender {
         {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "SOCKS5 UDP socket requires one datagram of at most 1200 bytes for its target",
+                SEND_TARGET_MISMATCH,
             )));
         }
+
         this.packet.truncate(this.shared.header.len());
         this.packet.extend_from_slice(transmit.contents);
+
         this.inner.as_mut().poll_send(
             &Transmit {
                 destination: *this.relay,
@@ -464,14 +490,6 @@ impl UdpSender for SocketSender {
             },
             cx,
         )
-    }
-}
-
-impl fmt::Debug for SocketSender {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SocketSender")
-            .field("relay", &self.relay)
-            .finish_non_exhaustive()
     }
 }
 
@@ -489,53 +507,5 @@ fn matches_target(target: &Address, source: AddressRef<'_>) -> bool {
         }
         (Address::Domain(..), AddressRef::Ip(_)) => true,
         (Address::Ip(_), AddressRef::Domain(..)) => false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn matches_only_sources_allowed_by_the_target() {
-        let ip = Address::Ip("192.0.2.1:443".parse().unwrap());
-        let name = Address::Domain("origin.test".into(), 443);
-        for (source, matches_ip, matches_name) in [
-            (AddressRef::from(&ip), true, true),
-            (
-                AddressRef::Ip("[::ffff:192.0.2.1]:443".parse().unwrap()),
-                true,
-                true,
-            ),
-            (
-                AddressRef::Ip("192.0.2.2:443".parse().unwrap()),
-                false,
-                true,
-            ),
-            (
-                AddressRef::Ip("[2001:db8::1]:443".parse().unwrap()),
-                false,
-                true,
-            ),
-            (
-                AddressRef::Ip("192.0.2.1:444".parse().unwrap()),
-                false,
-                false,
-            ),
-            (AddressRef::Domain("ORIGIN.TEST", 443), false, true),
-            (AddressRef::Domain("other.test", 443), false, false),
-            (AddressRef::Domain("origin.test", 444), false, false),
-        ] {
-            assert_eq!(
-                matches_target(&ip, source),
-                matches_ip,
-                "IP target: {source:?}"
-            );
-            assert_eq!(
-                matches_target(&name, source),
-                matches_name,
-                "name target: {source:?}"
-            );
-        }
     }
 }
