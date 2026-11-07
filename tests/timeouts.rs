@@ -87,6 +87,62 @@ async fn connect_timeout() {
     assert!(err.is_timeout());
 }
 
+/// The connect timeout also covers opening the HTTP/3 control and QPACK streams, which needs
+/// the server's unidirectional stream credit
+/// ([RFC 9114 Section 6.2](https://www.rfc-editor.org/rfc/rfc9114.html#section-6.2)).
+#[cfg(feature = "http3")]
+#[tokio::test]
+async fn connect_timeout_covers_http3_setup() {
+    use std::sync::Arc;
+
+    let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
+    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![cert.cert.der().clone()],
+        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+    )
+    .unwrap();
+    tls.alpn_protocols = vec![b"h3".to_vec()];
+    let mut config = quic::ServerConfig::with_crypto(Arc::new(
+        quic::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
+    ));
+    let mut transport = quic::TransportConfig::default();
+    transport.max_concurrent_uni_streams(0u32.into());
+    config.transport_config(Arc::new(transport));
+    let endpoint = quic::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+    let addr = endpoint.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let connection = endpoint.accept().await.unwrap().await.unwrap();
+        connection.closed().await
+    });
+
+    let client = Client::builder_tokio()
+        .no_proxy()
+        .http3_only()
+        .tls_cert_verification(false)
+        .connect_timeout(Duration::from_millis(500))
+        .build()
+        .unwrap();
+    let err = tokio::time::timeout(
+        Duration::from_secs(10),
+        client.get(format!("https://{addr}/")).send(),
+    )
+    .await
+    .expect("the connect timeout must end HTTP/3 setup")
+    .unwrap_err();
+    assert!(err.is_connect() && err.is_timeout(), "{err:?}");
+    // The QUIC handshake completed; dropping the stalled setup closes the connection.
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
 #[tokio::test]
 async fn connect_many_timeout_succeeds() {
     let _ = env_logger::try_init();

@@ -1,11 +1,21 @@
 #![cfg(all(feature = "http3", feature = "tokio-rt"))]
 
-use std::{io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    io,
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use bytes::{Buf, Bytes, BytesMut};
-use http::{HeaderMap, Request, Response, StatusCode, Version, header::PROXY_AUTHORIZATION};
+use http::{
+    HeaderMap, Method, Request, Response, StatusCode, Version, header::PROXY_AUTHORIZATION,
+};
 use quic::crypto::rustls::QuicServerConfig;
-use tokio::{net::UdpSocket, sync::mpsc, task::JoinHandle};
+use tokio::{io::AsyncReadExt, net::UdpSocket, sync::mpsc, task::JoinHandle};
 use wreq::{Client, ClientBuilder, Proxy, dns, tls::trust::CertStore};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -318,6 +328,19 @@ impl dns::Resolve for ProxyResolver {
 
 #[tokio::test]
 async fn masque_authentication_remote_dns_and_pool_reuse() {
+    // A proxy ending the tunnel is routine and must not be logged as an I/O error. The test
+    // runtime drives every task on this thread.
+    let errors = Arc::new(AtomicUsize::new(0));
+    let counter = errors.clone();
+    let _logs = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                io::sink()
+            })
+            .finish(),
+    );
     for datagrams in [true, false] {
         let mut origin = Server::origin();
         let (mut proxy, mut closed) = Server::proxy(Mode::Relay(origin.addr(), datagrams));
@@ -358,6 +381,7 @@ async fn masque_authentication_remote_dns_and_pool_reuse() {
         let error = request.await.unwrap().unwrap_err();
         assert!(!error.is_timeout(), "{error:?}");
     }
+    assert_eq!(errors.load(Ordering::Relaxed), 0);
 }
 
 #[tokio::test]
@@ -409,4 +433,123 @@ async fn masque_connect_timeout_and_cancellation_close_the_proxy_connection() {
         }
         next(&mut closed).await;
     }
+}
+
+#[tokio::test]
+async fn connect_sends_only_the_marker_of_the_connection_protocol() {
+    for extended in [true, false] {
+        let (endpoint, certificate) = endpoint("localhost");
+        let port = endpoint.local_addr().unwrap().port();
+        let (sender, mut requests) = mpsc::unbounded_channel();
+        let server = tokio::spawn(async move {
+            let connection = endpoint.accept().await.unwrap().await.unwrap();
+            let mut server = http3::server::builder()
+                .enable_extended_connect(extended)
+                .build::<_, Bytes>(http3_quic::Connection::new(connection))
+                .await
+                .unwrap();
+            while let Ok(Some(request)) = server.accept().await {
+                let (request, mut stream) = request.resolve_request().await.unwrap();
+                sender.send(request).unwrap();
+                stream.send_response(Response::new(())).await.unwrap();
+                let _ = stream.finish().await;
+            }
+        });
+        let client = Client::builder_tokio()
+            .no_proxy()
+            .http3_only()
+            .tls_cert_store(CertStore::from_der_certs([&certificate]).unwrap())
+            .timeout(TIMEOUT)
+            .build()
+            .unwrap();
+        let connect = |path: &str| {
+            client
+                .request(Method::CONNECT, format!("https://localhost:{port}{path}"))
+                .build()
+                .unwrap()
+        };
+
+        // HTTP/3 ignores the HTTP/2 marker, which would leave an ordinary CONNECT.
+        #[cfg(feature = "http2")]
+        {
+            let mut request = connect("/h2");
+            request
+                .extensions_mut()
+                .insert(http2::ext::Protocol::from_static("websocket"));
+            let error = client.execute(request).await.unwrap_err();
+            assert!(
+                format!("{error:?}").contains("does not match the connection's HTTP version"),
+                "{error:?}"
+            );
+        }
+
+        // Without a marker, HTTP/3 sends an ordinary CONNECT naming only the authority.
+        assert_eq!(
+            client.execute(connect("/")).await.unwrap().status(),
+            StatusCode::OK
+        );
+        let request = next(&mut requests).await;
+        assert_eq!(request.method(), Method::CONNECT);
+        assert_eq!(
+            request.uri().authority().unwrap().as_str(),
+            format!("localhost:{port}")
+        );
+        assert!(request.extensions().get::<http3::ext::Protocol>().is_none());
+
+        let mut request = connect("/chat");
+        request
+            .extensions_mut()
+            .insert(wreq::http3::Protocol::WEBSOCKET);
+        let result = client.execute(request).await;
+        if extended {
+            assert_eq!(result.unwrap().status(), StatusCode::OK);
+            let request = next(&mut requests).await;
+            assert_eq!(request.uri().path(), "/chat");
+            assert_eq!(
+                request.extensions().get::<http3::ext::Protocol>(),
+                Some(&http3::ext::Protocol::WEBSOCKET)
+            );
+        } else {
+            let error = result.unwrap_err();
+            assert!(
+                format!("{error:?}").contains("peer did not enable extended CONNECT"),
+                "{error:?}"
+            );
+        }
+        drop(client);
+        server.abort();
+    }
+
+    // HTTP/1 has no extended CONNECT, so the HTTP/3 marker fails before any byte is sent.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let accepted = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream.read(&mut [0; 1]).await.unwrap_or_default()
+    });
+    let client = Client::builder_tokio()
+        .no_proxy()
+        .timeout(TIMEOUT)
+        .build()
+        .unwrap();
+    let mut request = client
+        .request(Method::CONNECT, format!("http://{addr}/chat"))
+        .build()
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(wreq::http3::Protocol::WEBSOCKET);
+    let error = client.execute(request).await.unwrap_err();
+    assert!(
+        format!("{error:?}").contains("does not match the connection's HTTP version"),
+        "{error:?}"
+    );
+    drop(client);
+    assert_eq!(
+        tokio::time::timeout(TIMEOUT, accepted)
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
 }

@@ -29,9 +29,8 @@ use std::{
 
 use futures_util::future::{Either as FutureEither, Ready, err as future_err};
 use http::{
-    Request as HttpRequest, Response as HttpResponse, Uri, Version,
+    Request as HttpRequest, Response as HttpResponse, Version,
     header::{HeaderMap, HeaderValue, USER_AGENT},
-    uri::{PathAndQuery, Scheme},
 };
 use http_body::Body as HttpBody;
 use netty::{body::Incoming, conn};
@@ -111,7 +110,7 @@ cfg_select! {
 
 type ClientService = Timeout<
     ConfigService<
-        MaybeDecompression<Retry<RetryPolicy, FollowRedirect<sealed::Client<Connector, Body>>>>,
+        MaybeDecompression<FollowRedirect<Retry<RetryPolicy, sealed::Client<Connector, Body>>>>,
     >,
 >;
 
@@ -473,6 +472,10 @@ impl ClientBuilder {
         if let Some(err) = self.config.error {
             return Err(err);
         }
+        #[cfg(feature = "http3")]
+        if let Some(options) = self.config.config_set.get::<netty::http3::Http3Options>() {
+            proto::http3::check_options(options)?;
+        }
 
         // Prepare proxies
         if self.config.auto_sys_proxy {
@@ -547,19 +550,24 @@ impl ClientBuilder {
                 .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
                 .pool_max_size(self.config.pool_max_size)
                 .pool_strategy(self.config.pool_strategy)
+                .http3_connect_timeout(
+                    #[cfg(feature = "http3")]
+                    self.config.connect_timeout,
+                )
                 .build(connector)
         };
 
         // Configured client service with layers
         let client = {
+            // Retries sit below redirects, so a rejected hop replays itself, not the first request.
             let service = ServiceBuilder::new()
-                .layer(RetryLayer::new(RetryPolicy::new(self.config.retry_policy)))
                 .layer({
                     let policy = FollowRedirectPolicy::new(self.config.redirect_policy)
                         .with_referer(self.config.referer)
                         .with_https_only(self.config.https_only);
                     FollowRedirectLayer::with_policy(policy)
                 })
+                .layer(RetryLayer::new(RetryPolicy::new(self.config.retry_policy)))
                 .service(service);
 
             #[cfg(any(
@@ -976,9 +984,11 @@ impl ClientBuilder {
     /// Set a timeout for only the connect phase of a `Client`.
     ///
     /// The timeout covers DNS resolution, the complete TCP address race,
-    /// proxy tunneling, and the TLS handshake.
+    /// proxy tunneling, and the TLS handshake. For HTTP/3 it covers the QUIC
+    /// handshake and opening the HTTP/3 control and QPACK streams.
     ///
-    /// Default is `None`.
+    /// Default is `None`, which leaves these steps without a deadline: an HTTP/3 server that
+    /// withholds stream credit can then stall a new connection and the requests waiting for it.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.connect_timeout = Some(timeout);
@@ -1348,6 +1358,10 @@ impl ClientBuilder {
     /// Note that connections will fail if the provided interface name is not a
     /// network interface that currently exists when a connection is established.
     ///
+    /// HTTP/3 connections share one UDP socket per address family, bound to the interface
+    /// when the first one opens. If the interface is removed and re-created, that socket
+    /// keeps the old one, so rebuild the client to use HTTP/3 over the new interface.
+    ///
     /// # Example
     ///
     /// ```
@@ -1673,6 +1687,7 @@ impl ClientBuilder {
 /// Low-level Tower client and builder used by the public client.
 mod sealed {
     use super::*;
+    use crate::ext::UriExt;
 
     /// Tower service beneath [`crate::Client`] that validates and sends HTTP requests.
     /// Applies request configuration, cancellation retries, pool checkout and protocol dispatch.
@@ -1751,9 +1766,8 @@ mod sealed {
         }
 
         fn call(&mut self, mut req: HttpRequest<B>) -> Self::Future {
-            let is_http_connect = req.method() == Method::CONNECT;
             match req.version() {
-                Version::HTTP_10 if is_http_connect => {
+                Version::HTTP_10 if req.method() == Method::CONNECT => {
                     warn!("CONNECT is not allowed for HTTP/1.0");
                     let error =
                         error::Error::from_kind(error::ErrorKind::UserUnsupportedRequestMethod);
@@ -1771,7 +1785,7 @@ mod sealed {
                 }
             }
 
-            match normalize_uri(&mut req, is_http_connect) {
+            match normalize_uri(&mut req) {
                 Ok(()) => FutureEither::Left(self.inner.call(req)),
                 Err(error) => FutureEither::Right(future_err(error.into())),
             }
@@ -1866,6 +1880,24 @@ mod sealed {
             self
         }
 
+        /// Sets the deadline covering an HTTP/3 connection and its handshake.
+        /// The connector bounds only the QUIC part; the default is `None`.
+        #[inline]
+        pub fn http3_connect_timeout(
+            #[cfg_attr(
+                not(feature = "http3"),
+                expect(unused_mut, reason = "Only the http3 feature mutates this builder")
+            )]
+            mut self,
+            #[cfg(feature = "http3")] timeout: Option<Duration>,
+        ) -> Self {
+            #[cfg(feature = "http3")]
+            {
+                self.pool_config.connect_timeout = timeout;
+            }
+            self
+        }
+
         /// Shares the client's protocol selection with the request stack and pool.
         #[inline]
         pub fn protocol(mut self, protocol: Protocol) -> Self {
@@ -1947,55 +1979,33 @@ mod sealed {
         }
     }
 
-    /// Prepares a request URI for the client service stack.
+    /// Checks that the request target is absolute and strips its userinfo.
     ///
-    /// URIs with both a scheme and authority pass through unchanged. An
-    /// authority-form `CONNECT` target is converted to an internal absolute URI
-    /// using `https` for port 443 and `http` otherwise, allowing connection
-    /// selection to use the same URI shape as other requests. HTTP/1 target handling
-    /// converts it back to authority-form before encoding, as required by RFC 9112
-    /// section 3.2.3:
-    /// <https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.3>
+    /// Every target, including a redirect location, loses its userinfo, which senders
+    /// must not generate (RFC 9110 section 4.2.4):
+    /// <https://www.rfc-editor.org/rfc/rfc9110.html#section-4.2.4>
     ///
     /// # Errors
     ///
-    /// Returns an error when the request target is neither absolute nor a valid
-    /// authority-form `CONNECT` target, or when the normalized URI cannot be built.
-    fn normalize_uri<B>(
-        req: &mut HttpRequest<B>,
-        is_http_connect: bool,
-    ) -> Result<(), error::Error> {
-        match (req.uri().scheme(), req.uri().authority()) {
-            (Some(_), Some(_)) => Ok(()),
-            (None, Some(authority)) if is_http_connect => {
-                let scheme = match authority.port_u16() {
-                    Some(443) => Scheme::HTTPS,
-                    _ => Scheme::HTTP,
-                };
-                set_scheme(req.uri_mut(), scheme)
-            }
-            _ => {
-                debug!(
-                    "Client requires absolute-form URIs, received: {:?}",
-                    req.uri()
-                );
-                Err(error::Error::from_kind(
-                    error::ErrorKind::UserAbsoluteUriRequired,
-                ))
-            }
+    /// Returns an error when the request target is not absolute.
+    fn normalize_uri<B>(req: &mut HttpRequest<B>) -> Result<(), error::Error> {
+        if req.uri().scheme().is_none() || req.uri().authority().is_none() {
+            debug!(
+                "Client requires absolute-form URIs, received: {:?}",
+                req.uri()
+            );
+            return Err(error::Error::from_kind(
+                error::ErrorKind::UserAbsoluteUriRequired,
+            ));
         }
-    }
 
-    /// Adds a scheme and `/` path to an authority-form URI.
-    /// Returns an error if these parts cannot form an absolute URI.
-    fn set_scheme(uri: &mut Uri, scheme: Scheme) -> Result<(), error::Error> {
-        let old = std::mem::take(uri);
-        let mut parts: http::uri::Parts = old.into();
-        parts.scheme = Some(scheme);
-        parts.path_and_query = Some(PathAndQuery::from_static("/"));
-        *uri = Uri::from_parts(parts).map_err(|source| {
-            error::Error::new(error::ErrorKind::UserAbsoluteUriRequired, source)
-        })?;
+        if req
+            .uri()
+            .authority()
+            .is_some_and(|authority| authority.as_str().contains('@'))
+        {
+            req.uri_mut().set_userinfo("", None);
+        }
         Ok(())
     }
 }

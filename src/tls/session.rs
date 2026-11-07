@@ -108,7 +108,7 @@ pub(super) enum Ticket {
         session: SslSession,
         /// Encoded state the QUIC stack resumes from, with the server's transport parameters.
         state: Arc<Zeroizing<Vec<u8>>>,
-        /// Earliest expiry in the peer certificate chain, as POSIX time.
+        /// Earliest expiry on the verified certificate path, as POSIX time.
         not_after: Option<i64>,
     },
 }
@@ -128,8 +128,8 @@ pub trait TlsSessionStore: Send + Sync {
     /// [`TlsSession::should_be_single_use`] returns `true`. This prevents one
     /// TLS 1.3 ticket from being used by concurrent handshakes, as recommended
     /// by [RFC 8446 Appendix C.4](https://datatracker.ietf.org/doc/html/rfc8446#appendix-C.4).
-    /// Called during handshake setup when resumption is enabled, inside the endpoint's lock
-    /// for QUIC. Return quickly; a panic counts as a miss.
+    /// Called during handshake setup when resumption is enabled, once for each QUIC connection
+    /// attempt. Return quickly; a panic counts as a miss.
     fn pop(&self, key: &Key) -> Option<TlsSession>;
 }
 

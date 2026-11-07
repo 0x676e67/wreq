@@ -22,7 +22,7 @@ use tower::{BoxError, Layer, Service, ServiceExt, util::MapRequest};
 use crate::{
     conn::{request::ConnectRequest, transport::SocketRequest},
     dns::DynResolver,
-    error::ProxyConnect,
+    error::{ProxyConnect, ProxyMismatch},
     ext::UriExt,
     proxy::{Intercepted, Matcher, matcher::Intercept},
     rt::BoxConnection,
@@ -188,9 +188,7 @@ where
                 Some(Intercepted::Proxy(proxy)) => {
                     let proxy_uri = proxy.uri().clone();
                     if proxy_uri.scheme_str() == Some("quic") {
-                        return Err(
-                            ProxyConnect::Message("QUIC proxies require HTTP/3".into()).into()
-                        );
+                        return Err(ProxyMismatch("QUIC proxies require HTTP/3").into());
                     }
                     #[cfg(feature = "socks")]
                     if let Some((version, dns)) = match proxy_uri.scheme_str() {

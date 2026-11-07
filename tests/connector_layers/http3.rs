@@ -331,3 +331,39 @@ async fn http3_connection_timeouts_cover_user_layers() {
         assert!(error.is_connect() && error.is_timeout(), "{error:?}");
     }
 }
+
+#[tokio::test]
+async fn http3_connect_timeout_starts_after_admission() {
+    let server = Http3Server::new();
+    let runtime = BackgroundRuntime::new();
+    let (layer, mut events) = runtime.layer();
+    let client = server
+        .client()
+        .http3_only()
+        .connect_timeout(Duration::from_millis(500))
+        .connector_layer(layer.clone())
+        .connector_layer(ConcurrencyLimitLayer::new(1))
+        .build()
+        .unwrap();
+
+    // Another origin keeps the only permit until its connect timeout ends it.
+    let first = tokio::spawn(client.get("https://127.0.0.1:1/").send());
+    assert!(matches!(event(&mut events).await, Event::Entered(0, _)));
+    let second = tokio::spawn(client.get(server.url()).send());
+    let error = first.await.unwrap().unwrap_err();
+    assert!(error.is_connect() && error.is_timeout(), "{error:?}");
+
+    // The waiting connection gets its whole deadline once admitted.
+    let mut dropped = false;
+    let mut entered = false;
+    while !dropped || !entered {
+        match event(&mut events).await {
+            Event::Dropped(0) => dropped = true,
+            Event::Entered(1, _) => entered = true,
+            event => panic!("unexpected connector event: {event:?}"),
+        }
+    }
+    layer.gate.add_permits(1);
+    let response = second.await.unwrap().unwrap();
+    assert_eq!(response.version(), Version::HTTP_3);
+}

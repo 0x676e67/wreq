@@ -3,12 +3,14 @@
 use std::sync::{Arc, OnceLock};
 
 use btls::{
+    asn1::{Asn1Time, TimeDiff},
     error::ErrorStack,
     ssl::{SslContextBuilder, SslMethod, SslRef, SslSession, SslVerifyMode},
+    x509::{X509Ref, X509StoreContextRef},
 };
 use bytes::Bytes;
 use quic::{
-    TransportConfig,
+    TokenStore, TransportConfig,
     crypto::btls::{NoSessionCache, QuicClientConfig, SessionCache, Zeroizing},
 };
 
@@ -26,6 +28,7 @@ use crate::{
         transport::TUNNEL_MTU,
     },
     quic::QuicOptions,
+    sync::Mutex,
 };
 
 /// Builds per-connection QUIC configurations from shared client TLS policy.
@@ -43,15 +46,42 @@ struct Inner {
     proxy_transport: Arc<TransportConfig>,
 }
 
-/// Adapts one connection's session key to the QUIC stack's hostname-keyed cache.
-/// Tickets are taken before the handshake; the server's transport parameters travel with them.
+/// The QUIC configuration of one connection, shared by its address race.
+/// Each handshake attempt starts from its own [`client`](Self::client) configuration.
+pub(crate) struct QuicConfig {
+    crypto: Arc<QuicClientConfig>,
+    handshake: Arc<Handshake>,
+    resumption: Option<Arc<Resumption>>,
+    transport: Arc<TransportConfig>,
+    tokens: Option<Arc<dyn TokenStore>>,
+}
+
+/// The settings the SSL callback applies to each handshake of one connection.
+///
+/// The QUIC stack reports a session its SSL callback rejected as `EndpointStopping`, as it does
+/// for a stopped endpoint driver, so the callback's first error is kept to tell them apart.
+struct Handshake {
+    verify_peer: bool,
+    options: Option<Arc<QuicOptions>>,
+    rejected: OnceLock<ErrorStack>,
+}
+
+/// The client's session store and the session key of one connection.
 struct Resumption {
     store: Arc<SessionStore>,
     key: Key,
-    verify_peer: bool,
-    /// Ticket taken from the store on the first lookup and shared by the address race.
-    /// Later lookups clone this ticket without consuming more from the store.
-    ticket: OnceLock<Option<Zeroizing<Vec<u8>>>>,
+}
+
+/// Adapts one handshake attempt to the QUIC stack's hostname-keyed cache.
+///
+/// It holds the ticket taken for this attempt until the handshake takes it, so concurrent
+/// attempts never offer the same one
+/// ([RFC 8446 Appendix C.4](https://www.rfc-editor.org/rfc/rfc8446#appendix-C.4)). New tickets
+/// go to the store with the expiry of the certificate path the handshake verified.
+struct Attempt {
+    resumption: Arc<Resumption>,
+    ticket: Mutex<Option<Zeroizing<Vec<u8>>>>,
+    not_after: OnceLock<i64>,
 }
 
 // ===== impl TlsConfig =====
@@ -99,7 +129,7 @@ impl TlsConfig {
         &self,
         request: &ConnectRequest,
         tunnel_mtu: Option<u16>,
-    ) -> Result<quic::ClientConfig> {
+    ) -> Result<QuicConfig> {
         let inner = &*self.0;
         if inner
             .config
@@ -122,21 +152,20 @@ impl TlsConfig {
 
         let requested = request.config_override_arc::<QuicOptions>();
         let options = requested.clone().or_else(|| inner.options.clone());
-        let verify_peer = inner.config.cert_verification;
         let resumption = options
             .as_ref()
             .is_some_and(|options| options.pre_shared_key);
-        crypto.set_ssl_callback(move |ssl, server_name| {
-            if options
-                .as_ref()
-                .is_some_and(|options| options.ech_grease.is_some())
-            {
-                set_ech_grease_host(ssl, server_name.len())?;
-            }
-            configure_connection(ssl, verify_peer, options.as_deref())
+        let handshake = Arc::new(Handshake {
+            verify_peer: inner.config.cert_verification,
+            options,
+            rejected: OnceLock::new(),
+        });
+        crypto.set_ssl_callback({
+            let handshake = handshake.clone();
+            move |ssl, server_name| handshake.configure(ssl, server_name)
         });
 
-        if resumption {
+        let resumption = if resumption {
             let store = inner.config.session.clone();
             let target = SessionTarget::new(
                 request,
@@ -145,13 +174,13 @@ impl TlsConfig {
                 None,
                 store.session_id_context().map_err(Error::tls)?,
             );
-            crypto.set_session_cache(Arc::new(Resumption {
+            Some(Arc::new(Resumption {
                 store,
                 key: target.into_key(),
-                verify_peer,
-                ticket: OnceLock::new(),
-            }));
-        }
+            }))
+        } else {
+            None
+        };
 
         let transport = if let Some(mtu) = tunnel_mtu {
             let mut transport = requested
@@ -173,9 +202,97 @@ impl TlsConfig {
                 (None, _) => inner.transport.clone(),
             }
         };
-        let mut client = quic::ClientConfig::new(Arc::new(crypto));
-        client.transport_config(transport);
-        Ok(client)
+        Ok(QuicConfig {
+            crypto: Arc::new(crypto),
+            handshake,
+            resumption,
+            transport,
+            tokens: None,
+        })
+    }
+}
+
+// ===== impl QuicConfig =====
+
+impl QuicConfig {
+    /// Returns the configuration of one handshake attempt.
+    ///
+    /// With resumption, the attempt takes its own ticket here, before the QUIC endpoint's lock
+    /// is held, so a slow session store stalls only this connection.
+    pub(crate) fn client(&self) -> quic::ClientConfig {
+        let crypto = match &self.resumption {
+            Some(resumption) => Arc::new(self.attempt(resumption)),
+            None => self.crypto.clone(),
+        };
+        let mut client = quic::ClientConfig::new(crypto);
+        client.transport_config(self.transport.clone());
+        if let Some(tokens) = &self.tokens {
+            client.token_store(tokens.clone());
+        }
+        client
+    }
+
+    /// Sets the transport configuration of every attempt.
+    #[inline]
+    pub(crate) fn transport_config(&mut self, transport: Arc<TransportConfig>) {
+        self.transport = transport;
+    }
+
+    /// Sets the address validation token store of every attempt.
+    #[inline]
+    pub(crate) fn token_store(&mut self, tokens: Arc<dyn TokenStore>) {
+        self.tokens = Some(tokens);
+    }
+
+    /// Returns the SSL callback's error once it rejected a session.
+    #[inline]
+    pub(crate) fn rejected(&self) -> Option<&ErrorStack> {
+        self.handshake.rejected.get()
+    }
+
+    /// Builds the TLS configuration of one attempt around a ticket of its own. A verifying
+    /// handshake also reports the expiry of the path it verified.
+    fn attempt(&self, resumption: &Arc<Resumption>) -> QuicClientConfig {
+        let verify_peer = self.handshake.verify_peer;
+        let attempt = Arc::new(Attempt {
+            resumption: resumption.clone(),
+            ticket: Mutex::new(resumption.store.pop_quic(&resumption.key, verify_peer)),
+            not_after: OnceLock::new(),
+        });
+        let mut crypto = (*self.crypto).clone();
+        crypto.set_ssl_callback({
+            let handshake = self.handshake.clone();
+            let attempt = attempt.clone();
+            move |ssl, server_name| {
+                handshake.configure(ssl, server_name)?;
+                if verify_peer {
+                    let attempt = attempt.clone();
+                    ssl.set_verify_callback(SslVerifyMode::PEER, move |ok, ctx| {
+                        attempt.verified(ok, ctx);
+                        ok
+                    });
+                }
+                Ok(())
+            }
+        });
+        crypto.set_session_cache(attempt);
+        crypto
+    }
+}
+
+// ===== impl Handshake =====
+
+impl Handshake {
+    /// Configures one handshake, keeping the first error.
+    fn configure(
+        &self,
+        ssl: &mut SslRef,
+        server_name: &str,
+    ) -> std::result::Result<(), ErrorStack> {
+        configure_connection(ssl, server_name, self.verify_peer, self.options.as_deref())
+            .inspect_err(|error| {
+                let _ = self.rejected.set(error.clone());
+            })
     }
 }
 
@@ -183,19 +300,27 @@ impl TlsConfig {
 /// AEAD tag (16), DATAGRAM frame (9), Quarter Stream ID (8) and Context ID (1), at most.
 const PROXY_MTU: u16 = TUNNEL_MTU + 59;
 
+/// Smallest frame limit a MASQUE proxy connection keeps. The QUIC stack also bounds buffered
+/// datagrams by this limit, so it must hold a burst of tunnel packets, not one or two.
+const PROXY_DATAGRAM_BUFFER: u64 = 16 * PROXY_MTU as u64;
+
 /// Builds a MASQUE proxy transport from client options. Its Datagrams carry the tunnel and
-/// cannot be fragmented, so a frame limit or initial MTU too small for one is raised
-/// ([RFC 9298 Section 6.1](https://www.rfc-editor.org/rfc/rfc9298.html#section-6.1)).
+/// cannot be fragmented, so the path MTU starts at and never drops below one that fits them,
+/// even after a black hole reset
+/// ([RFC 9298 Section 6.1](https://www.rfc-editor.org/rfc/rfc9298.html#section-6.1)); a frame
+/// limit too small for a burst of them falls back to the default.
 fn proxy_transport(options: Option<&QuicOptions>) -> Result<TransportConfig> {
     let mut options = options.cloned().unwrap_or_default();
     if options
         .max_datagram_frame_size
-        .is_some_and(|size| size < u64::from(PROXY_MTU))
+        .is_some_and(|size| size < PROXY_DATAGRAM_BUFFER)
     {
         options.max_datagram_frame_size = None;
     }
-    options.initial_mtu = Some(options.initial_mtu.unwrap_or_default().max(PROXY_MTU));
-    options.transport()
+    let mut transport = options.transport()?;
+    // The initial MTU is raised to this floor as well.
+    transport.min_mtu(PROXY_MTU);
+    Ok(transport)
 }
 
 /// Compiles a QUIC context from the client policy and the context options of `options`.
@@ -225,6 +350,7 @@ fn compile(config: &Config, options: Option<&QuicOptions>) -> Result<QuicClientC
 /// Applies the client's verification policy and per-connection [`QuicOptions`] to one handshake.
 fn configure_connection(
     ssl: &mut SslRef,
+    server_name: &str,
     verify_peer: bool,
     options: Option<&QuicOptions>,
 ) -> std::result::Result<(), ErrorStack> {
@@ -236,6 +362,10 @@ fn configure_connection(
     let Some(options) = options else {
         return Ok(());
     };
+
+    if options.ech_grease.is_some() {
+        set_ech_grease_host(ssl, server_name.len())?;
+    }
 
     set_option_ref_try!(
         options,
@@ -253,32 +383,82 @@ fn configure_connection(
     Ok(())
 }
 
-// ===== impl Resumption =====
+/// Returns the earliest expiry among `certs`, as POSIX time.
+fn earliest_not_after<'a>(certs: impl IntoIterator<Item = &'a X509Ref>) -> Option<i64> {
+    let epoch = Asn1Time::from_unix(0).ok()?;
+    certs
+        .into_iter()
+        .filter_map(|cert| {
+            let TimeDiff { days, secs } = epoch.diff(cert.not_after()).ok()?;
+            Some(i64::from(days) * 86_400 + i64::from(secs))
+        })
+        .min()
+}
 
-impl SessionCache for Resumption {
+// ===== impl Attempt =====
+
+impl Attempt {
+    /// Records the expiry of the path BoringSSL verified once it accepts the leaf, which it
+    /// checks last. Certificates the server sent off that path do not count.
+    fn verified(&self, ok: bool, ctx: &X509StoreContextRef) {
+        if ok
+            && ctx.error_depth() == 0
+            && let Some(not_after) = ctx.chain().and_then(earliest_not_after)
+        {
+            let _ = self.not_after.set(not_after);
+        }
+    }
+}
+
+impl SessionCache for Attempt {
     fn put(&self, _key: Bytes, value: Zeroizing<Vec<u8>>, session: SslSession) {
-        self.store.insert_quic(self.key.clone(), session, value);
+        // Without a verified path every certificate the server sent counts.
+        let not_after = self
+            .not_after
+            .get()
+            .copied()
+            .or_else(|| session.peer_chain_not_after());
+        let Resumption { store, key } = &*self.resumption;
+        store.insert_quic(key.clone(), session, value, not_after);
     }
 
     fn take(&self, _key: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
-        self.ticket
-            .get_or_init(|| self.store.pop_quic(&self.key, self.verify_peer))
-            .clone()
+        self.ticket.lock().take()
     }
 
     fn remove(&self, _key: &[u8]) {
-        // `take` already consumed the ticket of a failed handshake; the others belong to later
-        // handshakes.
+        // `take` already consumed the ticket of a failed handshake; the others stay in the
+        // client's store.
     }
 
     fn clear(&self) {
-        // The adapter only keeps this connection's ticket; new tickets go straight to the
+        // The adapter holds at most this attempt's ticket; new tickets go straight to the
         // client's store.
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn proxy_transport_keeps_room_for_tunnel_datagrams() {
+        use super::*;
+
+        // The frame limit is advertised as is; only one too small for a burst is replaced.
+        for (size, advertised) in [(1500, 1_250_000), (65_536, 65_536)] {
+            let options = QuicOptions::builder().max_datagram_frame_size(size).build();
+            let transport = format!("{:?}", proxy_transport(Some(&options)).unwrap());
+            assert!(
+                transport.contains(&format!("datagram_receive_buffer_size: Some({advertised})")),
+                "{transport}"
+            );
+            // A black hole reset keeps the path MTU large enough for a tunnel packet.
+            assert!(
+                transport.contains(&format!("min_mtu: {PROXY_MTU},")),
+                "{transport}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn client_hello_extensions_follow_quic_options() {
         use std::{sync::Mutex, time::Duration};

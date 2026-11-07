@@ -99,6 +99,47 @@ async fn http2_upgrade() {
     assert_eq!(buf, b"bar=foo");
 }
 
+#[tokio::test]
+async fn connect_target_names_default_port() {
+    let server = server::http(|req| async move {
+        assert_eq!(req.method(), http::Method::CONNECT);
+        http::Response::builder()
+            .header("x-target", req.uri().to_string())
+            .header("x-host", req.headers()[http::header::HOST].clone())
+            .body(wreq::Body::default())
+            .unwrap()
+    });
+    // A forward proxy receives the CONNECT target, which must name the elided port.
+    let proxy = wreq::Proxy::http(format!("http://{}", server.addr())).unwrap();
+    for (builder, version) in [
+        (Client::builder_tokio(), http::Version::HTTP_11),
+        #[cfg(feature = "http2")]
+        (Client::builder_tokio().http2_only(), http::Version::HTTP_2),
+    ] {
+        let client = builder.proxy(proxy.clone()).build().unwrap();
+        // `Uri` accepts a port a u16 cannot hold, which is not an elided one.
+        for (authority, target) in [
+            ("connect.test", "connect.test:80"),
+            ("connect.test:65536", "connect.test:65536"),
+        ] {
+            let res = client
+                .request(http::Method::CONNECT, format!("http://{authority}/"))
+                .header(http::header::HOST, authority)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(res.version(), version);
+            assert_eq!(res.headers()["x-target"], target);
+            // HTTP/1 keeps the caller's Host; multiplexed versions align it with `:authority`.
+            let host = match version {
+                http::Version::HTTP_2 => target,
+                _ => authority,
+            };
+            assert_eq!(res.headers()["x-host"], host);
+        }
+    }
+}
+
 #[cfg(feature = "ws")]
 #[tokio::test]
 async fn websocket_uses_dedicated_http1_connection() {

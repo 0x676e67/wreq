@@ -18,7 +18,7 @@ use tower::{BoxError, Layer, Service};
 use crate::{conn::transport::TcpConnector, dns::DynResolver};
 use crate::{
     conn::{Conn, request::ConnectRequest, transport::QuicConnector},
-    error::ProxyConnect,
+    error::{ProxyConnect, ProxyMismatch},
     proxy::{Intercepted, Matcher, quic_port},
     rt::RuntimeHandle,
 };
@@ -114,8 +114,8 @@ impl Service<ConnectRequest> for QuicProxyConnector {
             }
             Some(Intercepted::Proxy(proxy)) if proxy.uri().scheme_str() == Some("quic") => proxy,
             Some(_) => {
-                return Box::pin(ready(Err(ProxyConnect::Message(
-                    "HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature".into(),
+                return Box::pin(ready(Err(ProxyMismatch(
+                    "HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature",
                 )
                 .into())));
             }
@@ -123,7 +123,7 @@ impl Service<ConnectRequest> for QuicProxyConnector {
 
         // Environment proxy entries reach this layer without builder validation.
         if let Err(message) = quic_port(proxy.uri()) {
-            return Box::pin(ready(Err(ProxyConnect::Message(message.into()).into())));
+            return Box::pin(ready(Err(ProxyConnect::Message(message).into())));
         }
 
         // The concrete transport has no readiness reservation to transfer to its clone.

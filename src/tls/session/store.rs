@@ -99,10 +99,16 @@ impl SessionStore {
             .or_else(|| self.pop(&target.rsa_key()?).and_then(stream))
     }
 
-    /// Stores a QUIC session with the encoded state the QUIC stack resumes from.
+    /// Stores a QUIC session with the encoded state the QUIC stack resumes from and the
+    /// expiry of its verified certificate path.
     #[cfg(feature = "http3")]
-    pub(crate) fn insert_quic(&self, key: Key, session: SslSession, state: Zeroizing<Vec<u8>>) {
-        let not_after = session.peer_chain_not_after();
+    pub(crate) fn insert_quic(
+        &self,
+        key: Key,
+        session: SslSession,
+        state: Zeroizing<Vec<u8>>,
+        not_after: Option<i64>,
+    ) {
         let ticket = Ticket::Quic {
             session,
             state: Arc::new(state),
@@ -113,8 +119,8 @@ impl SessionStore {
 
     /// Takes the encoded state of a QUIC session for `key`.
     ///
-    /// With `verify_peer`, a session whose certificate chain has expired is dropped: resumption
-    /// re-verifies the chain and would fail the handshake. btls applies the same check to TCP.
+    /// With `verify_peer`, a session whose verified certificate path has expired is dropped:
+    /// resumption re-verifies the path and would fail the handshake.
     #[cfg(feature = "http3")]
     pub(crate) fn pop_quic(&self, key: &Key, verify_peer: bool) -> Option<Zeroizing<Vec<u8>>> {
         let Ticket::Quic {
@@ -241,8 +247,8 @@ fn guarded<T>(callback: impl FnOnce() -> T) -> Option<T> {
     match catch_unwind(AssertUnwindSafe(callback)) {
         Ok(value) => Some(value),
         Err(payload) => {
-            // Dropping an arbitrary panic payload may itself panic. Store callbacks run inside
-            // BoringSSL callbacks and endpoint locks, so leak this exceptional value instead.
+            // Dropping an arbitrary panic payload may itself panic. Store callbacks may run
+            // inside BoringSSL callbacks, so leak this exceptional value instead.
             std::mem::forget(payload);
             None
         }

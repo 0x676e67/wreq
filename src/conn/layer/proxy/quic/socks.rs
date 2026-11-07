@@ -7,6 +7,7 @@ use std::{
     future::{Future, poll_fn},
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    ops::Range,
     pin::{Pin, pin},
     sync::{
         Arc,
@@ -20,7 +21,7 @@ use ::quic::{
     udp::{RecvMeta, Transmit},
 };
 use futures_util::future::BoxFuture;
-use netty::proxy::socks::udp::{self, Address, AddressRef, UdpAssociation};
+use netty::proxy::socks::udp::{self, Address, AddressRef, AssociateError, UdpAssociation};
 use pin_project_lite::pin_project;
 use tokio::sync::{Notify, futures::OwnedNotified};
 use tower::{BoxError, ServiceExt};
@@ -39,10 +40,14 @@ use crate::{
     proxy::matcher::Intercept,
     rt::{BoxConnection, Timer},
     sync::Mutex,
+    tls::quic::QuicConfig,
 };
 
 /// One association exposed as a fixed-peer socket to the inner QUIC endpoint.
 /// Only the receive driver polls the control stream, so senders cannot replace its waker.
+///
+/// `scratch` holds the last receive: its datagrams before `framed` are unframed, and
+/// `payloads` is what remains of the current run of payloads, `stride` bytes apart.
 struct Socket {
     inner: Box<dyn AsyncUdpSocket>,
     shared: Arc<Shared>,
@@ -50,15 +55,19 @@ struct Socket {
     relay: SocketAddr,
     scratch: Vec<u8>,
     received: RecvMeta,
-    offset: usize,
+    framed: usize,
+    payloads: Range<usize>,
+    stride: usize,
 }
 
+/// `notify` wakes senders once `closed` is set; `ended` signals the endpoint's watcher once.
 struct Shared {
     association: Mutex<Option<UdpAssociation<BoxConnection>>>,
     target: Address,
     header: Vec<u8>,
     closed: AtomicBool,
     notify: Arc<Notify>,
+    ended: Arc<Notify>,
 }
 
 pin_project! {
@@ -82,6 +91,8 @@ pub(super) async fn connect(
     request: ConnectRequest,
     proxy: Intercept,
 ) -> Result<Conn, BoxError> {
+    // A local configuration error must not cost, or be reported as, a proxy setup.
+    let tls = inner.tunnel_config(&request)?;
     let uri = request.route_uri();
     let host = crate::util::strip_ipv6_brackets(uri.host().ok_or("HTTP/3 URI has no host")?);
     let port = uri.port_u16().unwrap_or(443);
@@ -90,7 +101,7 @@ pub(super) async fn connect(
             Ok(ip) => Address::Ip((ip, port).into()),
             Err(_) => Address::Domain(host.into(), port),
         };
-        return connect_target(&inner, tcp, &resolver, &request, &proxy, target).await;
+        return Ok(connect_target(&inner, tcp, &resolver, &request, &proxy, &tls, target).await?);
     }
 
     let addresses = transport::resolve(&mut resolver, host, port, uri.port().is_some()).await?;
@@ -100,16 +111,16 @@ pub(super) async fn connect(
             addresses,
             &BindOptions::default(),
             |address| {
-                let tcp = tcp.clone();
-                let inner = &inner;
-                let resolver = &resolver;
-                let request = &request;
-                let proxy = &proxy;
-                let attempt: BoxFuture<'_, _> = Box::pin(async move {
-                    connect_target(inner, tcp, resolver, request, proxy, Address::Ip(address))
-                        .await
-                        .map_err(ConnectError::m("SOCKS5 target handshake error"))
-                });
+                let target = Address::Ip(address);
+                let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
+                    &inner,
+                    tcp.clone(),
+                    &resolver,
+                    &request,
+                    &proxy,
+                    &tls,
+                    target,
+                ));
                 Ok(attempt)
             },
             |duration| timer.sleep(duration),
@@ -118,45 +129,58 @@ pub(super) async fn connect(
 }
 
 /// Each candidate owns its association; cancellation closes the control stream and UDP socket.
+/// Errors name the stage that failed; those of the proxy's stages are proxy connect errors.
 async fn connect_target(
     inner: &QuicConnector,
     tcp: TcpConnector<DynResolver>,
     resolver: &DynResolver,
     request: &ConnectRequest,
     proxy: &Intercept,
+    tls: &QuicConfig,
     target: Address,
-) -> Result<Conn, BoxError> {
-    let connect_proxy = async {
-        let io = tcp.oneshot(proxy.uri().clone()).await?;
-        let peer = io.peer_addr();
-        // The relay's address family is not known until the ASSOCIATE reply.
-        let unspecified = match peer {
-            Some(SocketAddr::V6(_)) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
-            _ => SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+) -> Result<Conn, ConnectError> {
+    let io = tcp
+        .oneshot(proxy.uri().clone())
+        .await
+        .map_err(proxy_error("SOCKS5 proxy connect error"))?;
+    let peer = io.peer_addr();
+    // The relay's address family is not known until the ASSOCIATE reply.
+    let unspecified = match peer {
+        Some(SocketAddr::V6(_)) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
+        _ => SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+    };
+    let auth = proxy.raw_auth();
+    let auth = auth
+        .as_ref()
+        .map(|(user, pass)| {
+            Ok::<_, std::str::Utf8Error>((std::str::from_utf8(user)?, std::str::from_utf8(pass)?))
+        })
+        .transpose()
+        .map_err(proxy_error("SOCKS5 authentication error"))?;
+    let mut association = udp::associate(io, auth, unspecified)
+        .await
+        .map_err(|error| {
+            let stage = match error {
+                AssociateError::InvalidCredentials
+                | AssociateError::NoAcceptableAuth
+                | AssociateError::AuthFailed => "SOCKS5 authentication error",
+                _ => "SOCKS5 UDP ASSOCIATE error",
+            };
+            proxy_error(stage)(error)
+        })?;
+
+    let open_relay = async {
+        // An unspecified BND.ADDR names the control peer, whose IPv6 scope a link-local relay
+        // needs too.
+        let relay = match peer {
+            Some(peer) => association.relay_addr(peer),
+            None => association.bound_addr().clone(),
         };
-        let auth = proxy.raw_auth();
-        let auth = auth
-            .as_ref()
-            .map(|(user, pass)| {
-                Ok::<_, std::str::Utf8Error>((
-                    std::str::from_utf8(user)?,
-                    std::str::from_utf8(pass)?,
-                ))
-            })
-            .transpose()?;
-        let mut association = udp::associate(io, auth, unspecified).await?;
-        let (socket, relay) = match association.bound_addr().clone() {
-            Address::Ip(bound) => {
-                let mut relay = SocketAddr::new(bound.ip().to_canonical(), bound.port());
-                if relay.ip().is_unspecified() {
-                    relay.set_ip(
-                        peer.ok_or("SOCKS5 UDP requires the control connection's peer address")?
-                            .ip()
-                            .to_canonical(),
-                    );
-                }
-                (inner.udp_socket(request, relay)?, relay)
+        let (socket, relay) = match relay {
+            Address::Ip(relay) if relay.ip().is_unspecified() => {
+                return Err("SOCKS5 UDP requires the control connection's peer address".into());
             }
+            Address::Ip(relay) => (inner.udp_socket(request, relay)?, relay),
             Address::Domain(host, port) => {
                 let mut resolver = resolver.clone();
                 // BND.PORT is authoritative even when the resolver returns another port.
@@ -212,8 +236,19 @@ async fn connect_target(
         let socket = Socket::new(socket, association, relay, target)?;
         Ok::<_, BoxError>((socket, relay))
     };
-    let (socket, relay) = connect_proxy.await.map_err(ProxyConnect::Source)?;
-    inner.finish_tunnel(request, socket, relay).await
+    let (socket, relay) = open_relay
+        .await
+        .map_err(proxy_error("SOCKS5 UDP relay error"))?;
+    let ended = socket.shared.ended.clone();
+    inner
+        .finish_tunnel(request, tls, socket, relay, ended)
+        .await
+        .map_err(ConnectError::m("SOCKS5 target handshake error"))
+}
+
+/// Labels a failed proxy stage, keeping it a proxy connect error.
+fn proxy_error<E: Into<BoxError>>(stage: &'static str) -> impl FnOnce(E) -> ConnectError {
+    move |error| ConnectError::new(stage, ProxyConnect::Source(error.into()))
 }
 
 // ===== impl Socket =====
@@ -237,12 +272,15 @@ impl Socket {
                 header,
                 closed: AtomicBool::new(false),
                 notify: Arc::new(Notify::new()),
+                ended: Arc::new(Notify::new()),
             }),
             local,
             relay,
             scratch: Vec::new(),
             received: RecvMeta::default(),
-            offset: 0,
+            framed: 0,
+            payloads: 0..0,
+            stride: 0,
         })
     }
 }
@@ -292,59 +330,68 @@ impl AsyncUdpSocket for Socket {
         }
 
         let mut association = self.shared.association.lock();
+        // The watcher closes the endpoint once the association ends.
         let Some(control) = association.as_mut() else {
-            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+            return Poll::Pending;
         };
 
-        if let Poll::Ready(result) = control.poll_closed(cx) {
+        if let Poll::Ready(_result) = control.poll_closed(cx) {
             *association = None;
             self.shared.closed.store(true, Ordering::Release);
             drop(association);
             self.shared.notify.notify_waiters();
-            // QUIC ignores ConnectionReset, so closing the association must be terminal.
-            return Poll::Ready(Err(match result {
-                Ok(()) => {
-                    io::Error::new(io::ErrorKind::BrokenPipe, "SOCKS5 UDP association closed")
-                }
-                Err(error) => io::Error::new(io::ErrorKind::BrokenPipe, error),
-            }));
+            self.shared.ended.notify_one();
+            if let Err(_error) = _result {
+                debug!("SOCKS5 control connection error: {_error}");
+            }
+            return Poll::Pending;
         }
         drop(association);
 
         for _ in 0..32 {
-            if self.offset >= self.received.len {
-                self.received = RecvMeta::default();
-                let count = ready!(self.inner.poll_recv(
-                    cx,
-                    &mut [IoSliceMut::new(&mut self.scratch)],
-                    std::slice::from_mut(&mut self.received),
-                ))?;
-                self.offset = 0;
-                if count == 0
-                    || self.received.len == 0
-                    || self.received.len > self.scratch.len()
-                    || self.received.stride == 0
-                    || self.received.addr.port() != self.relay.port()
-                    || self.received.addr.ip().to_canonical() != self.relay.ip().to_canonical()
-                {
-                    self.received.len = 0;
-                    continue;
+            if self.payloads.is_empty() {
+                if self.framed >= self.received.len {
+                    self.received = RecvMeta::default();
+                    let count = ready!(self.inner.poll_recv(
+                        cx,
+                        &mut [IoSliceMut::new(&mut self.scratch)],
+                        std::slice::from_mut(&mut self.received),
+                    ))?;
+                    self.framed = 0;
+                    if count == 0 || self.received.len > self.scratch.len() {
+                        self.received.len = 0;
+                        continue;
+                    }
                 }
+
+                // Drops the rest of a receive that bypassed the relay or holds no datagram.
+                let framed = &mut self.scratch[self.framed..self.received.len];
+                let Some(run) =
+                    udp::unframe(self.relay, self.received.addr, framed, self.received.stride)
+                else {
+                    self.framed = self.received.len;
+                    continue;
+                };
+                // Payloads now lead the run's datagrams, ahead of those still framed.
+                let start = self.framed;
+                self.framed += run.consumed;
+                if run.stride > 0 && matches_target(&self.shared.target, (&run.source).into()) {
+                    self.payloads = start..start + run.len;
+                    self.stride = run.stride;
+                }
+                continue;
             }
 
             let end = self
-                .offset
-                .saturating_add(self.received.stride)
-                .min(self.received.len);
-            let datagram = &self.scratch[self.offset..end];
-            self.offset = end;
-            let Ok((source, payload)) = udp::decode_header(datagram) else {
-                continue;
-            };
-            if !matches_target(&self.shared.target, source)
-                || payload.is_empty()
-                || payload.len() > buf.len()
-            {
+                .payloads
+                .start
+                .saturating_add(self.stride)
+                .min(self.payloads.end);
+            let payload = &self.scratch[self.payloads.start..end];
+            self.payloads.start = end;
+            // Empty UDP payloads contain no QUIC header (RFC 9000 Section 17).
+            // https://www.rfc-editor.org/rfc/rfc9000#section-17
+            if payload.is_empty() || payload.len() > buf.len() {
                 continue;
             }
             buf[..payload.len()].copy_from_slice(payload);
@@ -388,8 +435,10 @@ impl UdpSender for SocketSender {
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         let mut this = self.project();
+        // Once the association ends, packets are lost as on a dead UDP path; a send error would
+        // make the connection driver log it as an I/O error.
         if this.shared.closed.load(Ordering::Acquire) || this.closed.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+            return Poll::Ready(Ok(()));
         }
         if transmit.destination != *this.relay
             || transmit.contents.is_empty()

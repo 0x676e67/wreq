@@ -34,6 +34,11 @@ use crate::{
 
 /// Runtime that uses Tokio for task execution, timers, DNS and socket I/O.
 /// DNS uses Hickory with `hickory-dns` (unless `compio-rt` is enabled), else the system resolver.
+///
+/// Tasks and sockets use the Tokio runtime current at each call. With HTTP/3, a client's
+/// connections share one QUIC endpoint per address family, driven on the runtime of the first
+/// HTTP/3 connection. Keep that runtime running while other runtimes open HTTP/3 connections (a
+/// `current_thread` runtime runs only inside `block_on`), or use one client per runtime.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TokioRuntime;
 

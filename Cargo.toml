@@ -391,16 +391,20 @@ required-features = ["http2", "tokio-rt"]
 
 [patch.crates-io]
 # Remove once an http3 release includes the connection-wide pseudo-header order, the
-# SETTINGS value checks and RFC 9218 PRIORITY_UPDATE. Its QUIC adapter and Datagram crates
-# must match its revision.
-http3 = { git = "https://github.com/0x676e67/http3", rev = "96443870515f1e3e3189771c3442576db18226ed" }
-http3-datagram = { git = "https://github.com/0x676e67/http3", rev = "96443870515f1e3e3189771c3442576db18226ed" }
-http3-quic = { git = "https://github.com/0x676e67/http3", rev = "96443870515f1e3e3189771c3442576db18226ed" }
+# SETTINGS order builders and the SETTINGS value checks. Its QUIC adapter and Datagram
+# crates must match its revision.
+http3 = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
+http3-datagram = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
+http3-quic = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
 quic = { git = "https://github.com/0x676e67/quic", rev = "b3d74044e874c5e785f462e3032faaf021cb6958" }
-netty = { git = "https://github.com/0x676e67/netty", rev = "1d7d65e62e43fb1f7e1a47015a02d60f91a0c431" }
-# Match netty until an http2 release includes the preface PING, `headers_priority` and the
-# frame caps it uses.
-http2 = { git = "https://github.com/0x676e67/http2", rev = "4735acb476bb58af19d91c4082feab7e77d14c0e" }
+netty = { git = "https://github.com/0x676e67/netty", rev = "d2f797b7c244f792f549fc6f37071f642253b06f" }
+# Remove once an http2 release includes `Connection::extended_connect_protocol`, ignores
+# content-length on 1xx responses and on 2xx responses to CONNECT, adds the preface PING and
+# its timeout, custom PING payloads, read activity, client GOAWAY,
+# `Builder::headers_priority`, the DATA and header frame caps and one frame per write, keeps
+# reading while control frames or a GOAWAY wait to be written, limits only consecutive empty
+# DATA frames, and keeps an error GOAWAY reason when closing on idle.
+http2 = { git = "https://github.com/0x676e67/http2", rev = "328f5c3245df5af3b0fbcd5ae4054ed77c55d8ef" }
 btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
 btls-sys = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
 tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }

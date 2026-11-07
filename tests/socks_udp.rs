@@ -1,9 +1,13 @@
 #![cfg(all(feature = "http3", feature = "socks", feature = "tokio-rt"))]
 
 use std::{
+    error::Error as StdError,
     io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -16,7 +20,10 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
-use wreq::{Client, ClientBuilder, Proxy, dns, tls::trust::CertStore};
+use wreq::{
+    Client, ClientBuilder, Proxy, dns,
+    tls::{TlsVersion, trust::CertStore},
+};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -92,6 +99,27 @@ fn address(bytes: &[u8]) -> (String, u16, usize) {
         u16::from_be_bytes([bytes[end], bytes[end + 1]]),
         end + 2,
     )
+}
+
+/// Display messages of `error` and its sources.
+fn messages(error: &(dyn StdError + 'static)) -> Vec<String> {
+    std::iter::successors(Some(error), |&error| error.source())
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Counts ERROR events on this thread, which a current-thread test runtime drives.
+fn count_errors() -> (Arc<AtomicUsize>, tracing::subscriber::DefaultGuard) {
+    let errors = Arc::new(AtomicUsize::new(0));
+    let counter = errors.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::ERROR)
+        .with_writer(move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+            io::sink()
+        })
+        .finish();
+    (errors, tracing::subscriber::set_default(subscriber))
 }
 
 async fn read_address(stream: &mut TcpStream) {
@@ -360,6 +388,8 @@ impl dns::Resolve for Resolver {
 
 #[tokio::test]
 async fn socks_udp_authentication_dns_and_pool_reuse() {
+    // A proxy closing the association is routine and must not be logged as an I/O error.
+    let (errors, _logs) = count_errors();
     for (remote, address) in [
         (false, RelayAddress::Mapped),
         (true, RelayAddress::Wildcard),
@@ -412,6 +442,7 @@ async fn socks_udp_authentication_dns_and_pool_reuse() {
         let error = request.await.unwrap().unwrap_err();
         assert!(!error.is_timeout(), "{error:?}");
     }
+    assert_eq!(errors.load(Ordering::Relaxed), 0);
 }
 
 #[tokio::test]
@@ -427,9 +458,71 @@ async fn socks_udp_authentication_rejection_closes_the_control_connection() {
         .await
         .unwrap_err();
     assert!(error.is_proxy_connect() && !error.is_timeout(), "{error:?}");
+    assert!(messages(&error).contains(&"SOCKS5 authentication error".into()));
     next(&mut proxy.closed).await;
     (&mut proxy.task).await.unwrap();
     assert!(proxy.associated.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn proxied_http3_errors_name_the_failed_stage() {
+    // Nothing listens on this port, so the proxy refuses connections.
+    let port = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    for scheme in ["socks5", "socks5h", "quic"] {
+        let lookups = Arc::new(Mutex::new(Vec::new()));
+        let client = |builder: ClientBuilder| {
+            builder
+                .no_proxy()
+                .http3_only()
+                .retry(wreq::retry::Policy::never())
+                .dns_resolver(Resolver {
+                    lookups: lookups.clone(),
+                    remote: scheme != "socks5",
+                    relay: RelayLookup::Resolve,
+                })
+                .proxy(Proxy::all(format!("{scheme}://proxy.test:{port}")).unwrap())
+                .timeout(TIMEOUT)
+                .build()
+                .unwrap()
+        };
+
+        // A local configuration error the connector finds costs no proxy setup and is not a
+        // proxy error. HTTP/3 requires TLS 1.3, which only the connector checks.
+        let error = client(Client::builder_tokio().tls_max_version(TlsVersion::TLS_1_2))
+            .get("https://origin.test/")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(
+            error.is_connect() && !error.is_proxy_connect(),
+            "{scheme}: {error:?}"
+        );
+        assert!(lookups.lock().unwrap().is_empty(), "{scheme}");
+
+        // A refused proxy is not reported as a failed target handshake.
+        if scheme != "quic" {
+            let error = client(Client::builder_tokio())
+                .get("https://origin.test/")
+                .send()
+                .await
+                .unwrap_err();
+            let messages = messages(&error);
+            assert!(error.is_proxy_connect(), "{scheme}: {error:?}");
+            assert!(
+                messages.contains(&"SOCKS5 proxy connect error".into()),
+                "{scheme}: {messages:?}"
+            );
+            assert!(
+                !messages.iter().any(|message| message.contains("handshake")),
+                "{scheme}: {messages:?}"
+            );
+        }
+    }
 }
 
 #[tokio::test]

@@ -52,6 +52,10 @@ pub trait Runtime: Timer + Send + Sync + Debug + 'static {
     /// Registers a bound, nonblocking UDP socket for HTTP/3 over QUIC.
     /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error, which fails
     /// HTTP/3 connections without affecting HTTP/1 or HTTP/2.
+    ///
+    /// A client reuses the socket for later HTTP/3 connections, so the task it then spawns with
+    /// [`execute`](Self::execute) to receive on the socket must keep running while the client
+    /// opens them.
     #[cfg(feature = "http3")]
     fn udp_socket(
         &self,

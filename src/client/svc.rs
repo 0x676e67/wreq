@@ -16,10 +16,10 @@ use std::{
 use futures_util::future::{self, BoxFuture, Either, Ready};
 #[cfg(feature = "http2")]
 use http::{
-    HeaderMap, Method,
+    HeaderMap,
     header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
 };
-use http::{Request, Response, Uri, Version};
+use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST, uri::Authority};
 use http_body::Body;
 use netty::{body::Incoming, conn};
 use pin_project_lite::pin_project;
@@ -241,6 +241,16 @@ impl<S, B> Stack<S, B> {
             None => None,
         };
 
+        // HTTP/3 has no cleartext form; an https-to-http redirect also ends here:
+        // https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1
+        #[cfg(feature = "http3")]
+        if protocol.unwrap_or(self.protocol) == Protocol::Http3 && !uri.is_https() {
+            warn!("HTTP/3 requires an https URI");
+            return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
+                .with_context("HTTP/3 requires an https URI")
+                .into());
+        }
+
         let req = ConnectRequest::new(
             uri,
             protocol,
@@ -448,6 +458,45 @@ fn with_h2_alpn_context(error: Error, unnegotiated_h2: bool) -> Error {
     }
 }
 
+/// Returns whether the request uses extended CONNECT on this connection.
+/// HTTP/2 takes `:protocol` from `http2::ext::Protocol` ([RFC 8441 §4]) and HTTP/3 from
+/// `netty::http3::Protocol` ([RFC 9220 §3]); a marker the connection would ignore fails
+/// instead of sending a plain CONNECT tunnel.
+///
+/// [RFC 8441 §4]: https://www.rfc-editor.org/rfc/rfc8441#section-4
+/// [RFC 9220 §3]: https://www.rfc-editor.org/rfc/rfc9220#section-3
+#[cfg(any(feature = "http2", feature = "http3"))]
+fn matched_extended_connect<B>(
+    request: &Request<B>,
+    pooled: &pool::Pooled<B>,
+) -> Result<bool, Error>
+where
+    B: Body + Send + Unpin + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+{
+    let extensions = request.extensions();
+    let http2 = cfg_select! {
+        feature = "http2" => extensions.get::<http2::ext::Protocol>().is_some(),
+        _ => false,
+    };
+    let http3 = cfg_select! {
+        feature = "http3" => extensions.get::<netty::http3::Protocol>().is_some(),
+        _ => false,
+    };
+    let matched = cfg_select! {
+        feature = "http3" => (http2 && pooled.is_http2()) || (http3 && pooled.is_http3()),
+        _ => http2 && pooled.is_http2(),
+    };
+    if (http2 || http3) && !matched {
+        warn!("extended CONNECT protocol does not match the connection's HTTP version");
+        return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
+            .with_context("extended CONNECT protocol does not match the connection's HTTP version")
+            .with_connect_info(pooled.conn_info().clone()));
+    }
+    Ok(matched)
+}
+
 /// Rejects extended CONNECT unless the peer enabled it (RFC 8441 §3, RFC 9220 §3).
 #[cfg(any(feature = "http2", feature = "http3"))]
 fn extended_connect_disabled<B>(pooled: &pool::Pooled<B>) -> Error
@@ -460,6 +509,48 @@ where
     Error::from_kind(ErrorKind::UserUnsupportedVersion)
         .with_context("peer did not enable extended CONNECT")
         .with_connect_info(pooled.conn_info().clone())
+}
+
+/// Adds the scheme's default port to a plain CONNECT target that elides it, since
+/// CONNECT has no default port and HTTP/1, HTTP/2 and HTTP/3 send the authority as is
+/// ([RFC 9110 §9.3.6](https://www.rfc-editor.org/rfc/rfc9110#section-9.3.6)).
+///
+/// On HTTP/2 and HTTP/3, a Host header equal to the old authority is updated with it,
+/// since Host must not differ from `:authority`
+/// ([RFC 9113 §8.3.1](https://www.rfc-editor.org/rfc/rfc9113#section-8.3.1),
+/// [RFC 9114 §4.3.1](https://www.rfc-editor.org/rfc/rfc9114#section-4.3.1)).
+fn connect_target_port<B>(request: &mut Request<B>, multiplexed: bool) -> Result<(), Error> {
+    let uri = request.uri();
+    let Some(authority) = uri.authority() else {
+        return Ok(());
+    };
+    // `Uri` also accepts ports a u16 cannot hold; only an absent or empty port is elided.
+    let port = authority
+        .as_str()
+        .rsplit('@')
+        .next()
+        .and_then(|host_port| host_port.strip_prefix(authority.host()));
+    if !matches!(port, Some("" | ":")) {
+        return Ok(());
+    }
+    let target = format!("{}:{}", authority.host(), uri.port_or_default())
+        .parse::<Authority>()
+        .map_err(|error| Error::new(ErrorKind::SendRequest, error))?;
+    if multiplexed
+        && request
+            .headers()
+            .get(HOST)
+            .is_some_and(|host| host == authority.as_str())
+    {
+        let host = HeaderValue::from_str(target.as_str())
+            .map_err(|error| Error::new(ErrorKind::SendRequest, error))?;
+        request.headers_mut().insert(HOST, host);
+    }
+    let mut parts = mem::take(request.uri_mut()).into_parts();
+    parts.authority = Some(target);
+    *request.uri_mut() =
+        Uri::from_parts(parts).map_err(|error| Error::new(ErrorKind::SendRequest, error))?;
+    Ok(())
 }
 
 // ===== impl Dispatch =====
@@ -549,12 +640,6 @@ where
                 Some(pooled) => pooled,
                 None => {
                     let protocol = connection.req.resolved_protocol();
-                    #[cfg(feature = "http3")]
-                    if protocol == Protocol::Http3 && !connection.req.uri().is_https() {
-                        return Err(DispatchError::Terminal(Error::from_kind(
-                            ErrorKind::UserUnsupportedVersion,
-                        )));
-                    }
                     match this.pool.checkout(connection.clone(), protocol).await {
                         Ok(pooled) => pooled,
                         Err(error) if pool::is_canceled(&*error) => {
@@ -583,33 +668,17 @@ where
                 *request.version_mut() = Version::HTTP_3;
             }
 
-            #[cfg(feature = "http2")]
-            let extended = request.extensions().get::<http2::ext::Protocol>().is_some();
-            #[cfg(all(not(feature = "http2"), feature = "http3"))]
-            let extended = false;
-            #[cfg(feature = "http3")]
-            let extended = extended
-                || (pooled.is_http3()
-                    && request
-                        .extensions()
-                        .get::<netty::http3::Protocol>()
-                        .is_some());
             #[cfg(any(feature = "http2", feature = "http3"))]
-            if extended {
-                // Extended CONNECT needs HTTP/2 (RFC 8441) or HTTP/3 (RFC 9220).
-                // Over HTTP/1 it would be an ordinary tunnel request:
-                // https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6
-                if pooled.is_http1() {
-                    warn!("Connection is HTTP/1, but extended CONNECT requires HTTP/2 or HTTP/3");
-                    return Err(DispatchError::Terminal(
-                        Error::from_kind(ErrorKind::UserUnsupportedVersion)
-                            .with_connect_info(pooled.conn_info().clone()),
-                    ));
-                }
-                if pooled.extended_connect() == Some(false) {
-                    return Err(DispatchError::Terminal(extended_connect_disabled(&pooled)));
-                }
+            let extended = match matched_extended_connect(&request, &pooled) {
+                Ok(extended) => extended,
+                Err(error) => return Err(DispatchError::Terminal(error)),
+            };
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            if extended && pooled.extended_connect() == Some(false) {
+                return Err(DispatchError::Terminal(extended_connect_disabled(&pooled)));
             }
+            #[cfg(not(any(feature = "http2", feature = "http3")))]
+            let extended = false;
 
             if connection.req.protocol() == Some(Protocol::Auto) {
                 // Resolve the wire version on every attempt: an unsent retry may
@@ -649,6 +718,14 @@ where
                     Version::HTTP_3
                 };
                 apply_request_cookies(&mut request, cookie_store.as_ref(), &uri, version);
+            }
+
+            // Only the wire target changes; cookies keep the request URI.
+            if request.method() == Method::CONNECT
+                && !extended
+                && let Err(error) = connect_target_port(&mut request, !pooled.is_http1())
+            {
+                return Err(DispatchError::Terminal(error));
             }
 
             let mut response = match pooled.call(request).await {

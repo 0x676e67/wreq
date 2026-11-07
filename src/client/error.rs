@@ -5,7 +5,10 @@ use std::{error::Error as StdError, fmt};
 use netty::proxy;
 use tower::BoxError;
 
-use crate::{conn::Connected, error::ProxyConnect};
+use crate::{
+    conn::Connected,
+    error::{ProxyConnect, ProxyMismatch},
+};
 
 /// A client service failure, classified by stage.
 /// Retains the source error and connection metadata when available.
@@ -79,11 +82,7 @@ impl Error {
         E: Into<BoxError>,
     {
         let error = error.into();
-        let kind = if is_proxy_connect_error(&*error) {
-            ErrorKind::ProxyConnect
-        } else {
-            kind
-        };
+        let kind = proxy_kind(&*error).unwrap_or(kind);
 
         Self {
             kind,
@@ -129,10 +128,14 @@ impl Error {
     }
 }
 
-/// Returns whether any error in the source chain came from proxy setup.
-fn is_proxy_connect_error(error: &(dyn StdError + 'static)) -> bool {
+/// Classifies the first proxy failure in the source chain.
+/// A proxy that cannot carry the request's HTTP version is a configuration error.
+fn proxy_kind(error: &(dyn StdError + 'static)) -> Option<ErrorKind> {
     let mut current = Some(error);
     while let Some(error) = current {
+        if error.is::<ProxyMismatch>() {
+            return Some(ErrorKind::UserUnsupportedVersion);
+        }
         if error.is::<proxy::tunnel::TunnelError>()
             || error.is::<ProxyConnect>()
             || cfg_select! {
@@ -140,11 +143,11 @@ fn is_proxy_connect_error(error: &(dyn StdError + 'static)) -> bool {
                 _ => false,
             }
         {
-            return true;
+            return Some(ErrorKind::ProxyConnect);
         }
         current = error.source();
     }
-    false
+    None
 }
 
 #[cfg(test)]
@@ -175,5 +178,10 @@ mod tests {
 
         assert!(error.is_proxy_connect());
         assert!(!error.is_connect());
+
+        let error = WrappedError(Box::new(ProxyMismatch("QUIC proxies require HTTP/3")));
+        let error = Error::new(ErrorKind::Connect, error);
+        assert!(matches!(error.kind, ErrorKind::UserUnsupportedVersion));
+        assert!(!error.is_proxy_connect());
     }
 }

@@ -1,9 +1,10 @@
 #![cfg(all(feature = "http3", feature = "tokio-rt"))]
 
 use std::{
+    net::{Ipv4Addr, UdpSocket},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime},
 };
@@ -69,8 +70,8 @@ fn certified(cert: &rcgen::Certificate, key: &rcgen::KeyPair) -> Arc<CertifiedKe
     Arc::new(CertifiedKey::from_der(vec![cert.der().clone()], key, &provider).unwrap())
 }
 
-/// An HTTP/3 server issuing one TLS 1.3 ticket per connection.
-fn server(certificates: Arc<Certificates>) -> quic::Endpoint {
+/// An HTTP/3 server issuing `tickets` TLS 1.3 tickets per connection.
+fn server(certificates: Arc<Certificates>, tickets: usize) -> quic::Endpoint {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let mut tls = rustls::ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS13])
@@ -78,7 +79,7 @@ fn server(certificates: Arc<Certificates>) -> quic::Endpoint {
         .with_no_client_auth()
         .with_cert_resolver(certificates);
     tls.alpn_protocols = vec![b"h3".to_vec()];
-    tls.send_tls13_tickets = 1;
+    tls.send_tls13_tickets = tickets;
     let config = quic::ServerConfig::with_crypto(Arc::new(
         quic::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
     ));
@@ -119,7 +120,7 @@ async fn http3_tickets_resume_across_contexts_and_preserve_client_scope() {
             first: certified(&cert.cert, &cert.signing_key),
             second: certified(&other.cert, &other.signing_key),
         });
-        let endpoint = server(certificates.clone());
+        let endpoint = server(certificates.clone(), 1);
         let address = endpoint.local_addr().unwrap();
         let url = format!("https://localhost:{}/", address.port());
         let (release, mut released) = tokio::sync::mpsc::channel(1);
@@ -228,7 +229,7 @@ async fn http3_skips_tickets_whose_certificate_chain_expired() {
         first: certified(&expiring, &expiring_key),
         second: certified(&renewed, &renewed_key),
     });
-    let endpoint = server(certificates.clone());
+    let endpoint = server(certificates.clone(), 1);
     let address = endpoint.local_addr().unwrap();
     let (release, mut released) = tokio::sync::mpsc::channel(1);
     let server = tokio::spawn(async move {
@@ -283,9 +284,107 @@ async fn http3_skips_tickets_whose_certificate_chain_expired() {
 }
 
 #[tokio::test]
+async fn http3_race_attempts_resume_with_their_own_tickets() {
+    /// Keeps every ticket and counts the ones it hands out.
+    #[derive(Default)]
+    struct Stack {
+        tickets: Mutex<Vec<TlsSession>>,
+        taken: AtomicUsize,
+    }
+
+    impl TlsSessionStore for Stack {
+        fn put(&self, _key: Key, session: TlsSession) {
+            self.tickets.lock().unwrap().push(session);
+        }
+
+        fn pop(&self, _key: &Key) -> Option<TlsSession> {
+            let ticket = self.tickets.lock().unwrap().pop();
+            self.taken
+                .fetch_add(usize::from(ticket.is_some()), Ordering::SeqCst);
+            ticket
+        }
+    }
+
+    let issue = |name: &str, validity: Option<(SystemTime, SystemTime)>| {
+        let mut params = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, name);
+        if let Some((not_before, not_after)) = validity {
+            params.not_before = not_before.into();
+            params.not_after = not_after.into();
+        }
+        let key = rcgen::KeyPair::generate().unwrap();
+        (params.self_signed(&key).unwrap(), key)
+    };
+    let day = Duration::from_secs(24 * 60 * 60);
+    let now = SystemTime::now();
+    let (trusted, trusted_key) = issue("trusted", None);
+    // Sent after the trusted leaf but off the verified path, like a stale cross-sign.
+    let (stale, _) = issue("stale", Some((now - 2 * day, now - day)));
+    let (other, other_key) = issue("other", None);
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let key = rustls::pki_types::PrivatePkcs8KeyDer::from(trusted_key.serialize_der()).into();
+    let chain = vec![trusted.der().clone(), stale.der().clone()];
+    let certificates = Arc::new(Certificates {
+        rotated: AtomicBool::new(false),
+        first: Arc::new(CertifiedKey::from_der(chain, key, &provider).unwrap()),
+        second: certified(&other, &other_key),
+    });
+    let endpoint = server(certificates.clone(), 2);
+    let address = endpoint.local_addr().unwrap();
+    let (done, finished) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let mut connections = Vec::new();
+        for _ in 0..2 {
+            let connection = endpoint.accept().await.unwrap().await.unwrap();
+            connections.push(respond(connection).await);
+        }
+        finished.await.unwrap();
+    });
+
+    // The first address never answers, so each connection races two attempts.
+    let blackhole = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let tickets = Arc::new(Stack::default());
+    let client = Client::builder_tokio()
+        .no_proxy()
+        .http3_only()
+        .resolve_to_addrs("localhost", [blackhole.local_addr().unwrap(), address])
+        .pool_max_idle_per_host(0)
+        .timeout(Duration::from_secs(5))
+        .tls_cert_store(CertStore::from_der_certs([trusted.der().as_ref()]).unwrap())
+        .tls_session_store(tickets.clone())
+        .quic_options(QuicOptions::builder().pre_shared_key(true).build())
+        .build()
+        .unwrap();
+
+    let response = client.get("https://localhost/").send().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while tickets.tickets.lock().unwrap().len() < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(response.bytes().await.unwrap(), "ok");
+
+    // Only resumption passes trust now. It needs a ticket the expired certificate does not
+    // spoil, and each attempt must consume a ticket of its own.
+    certificates.rotated.store(true, Ordering::Release);
+    let response = client.get("https://localhost/").send().await.unwrap();
+    assert_eq!(response.bytes().await.unwrap(), "ok");
+    assert_eq!(tickets.taken.load(Ordering::SeqCst), 2);
+    done.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
 async fn http3_survives_a_panicking_session_store() {
-    // QUIC looks tickets up inside the shared endpoint's lock; a panic there must count as a
-    // miss instead of poisoning the endpoint for later connections.
+    // A panic in the caller's store must count as a miss instead of failing the connection or
+    // the shared endpoint that later connections use.
     struct Panicking;
 
     impl TlsSessionStore for Panicking {
@@ -298,11 +397,14 @@ async fn http3_survives_a_panicking_session_store() {
 
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = certified(&cert.cert, &cert.signing_key);
-    let endpoint = server(Arc::new(Certificates {
-        rotated: AtomicBool::new(false),
-        first: key.clone(),
-        second: key,
-    }));
+    let endpoint = server(
+        Arc::new(Certificates {
+            rotated: AtomicBool::new(false),
+            first: key.clone(),
+            second: key,
+        }),
+        1,
+    );
     let address = endpoint.local_addr().unwrap();
     let (done, finished) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(async move {

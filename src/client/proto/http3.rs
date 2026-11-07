@@ -2,6 +2,7 @@
 
 use std::{
     marker::PhantomData,
+    pin::pin,
     sync::Arc,
     task::{self, Poll},
     time::{Duration, Instant},
@@ -9,17 +10,18 @@ use std::{
 
 use futures_util::{
     TryFutureExt,
-    future::{BoxFuture, Either},
+    future::{self, BoxFuture, Either},
 };
 use http::{Request, Response};
 use http_body::Body;
-use netty::{body::Incoming, conn, rt::quic::Compat};
+use netty::{body::Incoming, conn, http3::Http3Options, rt::quic::Compat};
 use tower::{BoxError, Service, ServiceExt};
 
 use super::{ConnectionState, SendError, is_expired};
 use crate::{
     client::pool::PoolTarget,
     conn::{Conn, Connected, request::ConnectRequest},
+    error::TimedOut,
     rt::{RuntimeHandle, Timer as _},
 };
 
@@ -32,19 +34,75 @@ pub struct Connection<B> {
 }
 
 /// Establishes HTTP/3 connections for the pool's shared singleton.
+/// One connect timeout covers the QUIC connection and the HTTP/3 handshake.
 pub struct Connect<C, B> {
     connector: C,
     runtime: RuntimeHandle,
+    timeout: Option<Duration>,
     _body: PhantomData<fn(B)>,
+}
+
+/// Rejects [`Http3Options`] that the HTTP/3 handshake refuses, before any connection exists.
+/// Only SETTINGS values that are sent must fit a QUIC varint
+/// ([RFC 9114 Section 7.2.4](https://www.rfc-editor.org/rfc/rfc9114.html#section-7.2.4)).
+pub(crate) fn check_options(options: &Http3Options) -> crate::Result<()> {
+    use netty::http3::SettingId;
+
+    if options.max_concurrent_requests == 0 {
+        return Err(crate::Error::builder(
+            "HTTP/3 option max_concurrent_requests must not be zero",
+        ));
+    }
+    let sent = |id: SettingId| {
+        options
+            .settings_order
+            .as_ref()
+            .is_none_or(|order| order.into_iter().any(|sent| *sent == id))
+    };
+    let varint = ::quic::VarInt::MAX.into_inner();
+    // The QPACK decoder also keeps its table capacity in a `usize`.
+    let capacity = u64::try_from(usize::MAX).map_or(varint, |max| max.min(varint));
+    let settings = [
+        (
+            "max_field_section_size",
+            SettingId::MAX_HEADER_LIST_SIZE,
+            Some(options.max_field_section_size),
+            varint,
+        ),
+        (
+            "qpack_max_table_capacity",
+            SettingId::QPACK_MAX_TABLE_CAPACITY,
+            options.qpack_max_table_capacity,
+            capacity,
+        ),
+        (
+            "qpack_blocked_streams",
+            SettingId::QPACK_MAX_BLOCKED_STREAMS,
+            options.qpack_blocked_streams,
+            varint,
+        ),
+    ];
+    for (name, id, value, max) in settings {
+        if let Some(value) = value
+            && value > max
+            && sent(id)
+        {
+            return Err(crate::Error::builder(format!(
+                "HTTP/3 option {name} out of range: {value}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 // ===== impl Connect =====
 
 impl<C, B> Connect<C, B> {
-    pub fn new(connector: C, runtime: RuntimeHandle) -> Self {
+    pub fn new(connector: C, runtime: RuntimeHandle, timeout: Option<Duration>) -> Self {
         Self {
             connector,
             runtime,
+            timeout,
             _body: PhantomData,
         }
     }
@@ -55,6 +113,7 @@ impl<C: Clone, B> Clone for Connect<C, B> {
         Self {
             connector: self.connector.clone(),
             runtime: self.runtime.clone(),
+            timeout: self.timeout,
             _body: PhantomData,
         }
     }
@@ -77,8 +136,9 @@ where
     }
 
     fn call(&mut self, target: PoolTarget) -> Self::Future {
-        let connector = self.connector.clone();
+        let mut connector = self.connector.clone();
         let runtime = self.runtime.clone();
+        let timeout = self.timeout;
         let builder = target
             .connection
             .req
@@ -96,15 +156,33 @@ where
             );
 
         Box::pin(async move {
-            let Conn {
-                inner,
-                connected: conn_info,
-            } = connector.oneshot(target.connection.req).await?;
-            let Either::Right((quic, endpoint)) = inner else {
-                return Err("QUIC connection returned a stream".into());
+            // As for the connector's own timeout, readiness waits such as concurrency admission
+            // come before the deadline.
+            connector.ready().await?;
+            // A peer that withholds stream credit stalls the handshake after the QUIC connection
+            // is up, so the deadline also covers opening the control and QPACK streams.
+            let deadline = timeout.map(|timeout| runtime.sleep(timeout));
+            let connecting = connector.call(target.connection.req);
+            let handshake = async {
+                let Conn {
+                    inner,
+                    connected: conn_info,
+                } = connecting.await?;
+                let Either::Right((quic, endpoint)) = inner else {
+                    return Err::<_, BoxError>("QUIC connection returned a stream".into());
+                };
+                let transport = Compat::new(http3_quic::Connection::new(quic));
+                let (tx, driver) = builder.handshake::<_, B>(transport).await?;
+                Ok((tx, driver, endpoint, conn_info))
             };
-            let transport = Compat::new(http3_quic::Connection::new(quic));
-            let (mut tx, driver) = builder.handshake::<_, B>(transport).await?;
+            let (mut tx, driver, endpoint, conn_info) = match deadline {
+                // A connection ready at the deadline wins the tie.
+                Some(deadline) => match future::select(pin!(handshake), deadline).await {
+                    Either::Left((result, _)) => result?,
+                    Either::Right(((), _)) => return Err(Box::new(TimedOut) as BoxError),
+                },
+                None => handshake.await?,
+            };
             runtime.execute(Box::pin(async move {
                 let _endpoint = endpoint;
                 if let Err(_error) = driver.await {

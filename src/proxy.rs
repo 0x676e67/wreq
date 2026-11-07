@@ -79,8 +79,9 @@ use crate::{IntoUri, ext::UriExt};
 /// `https://host:port/.well-known/masque/udp/{target_host}/{target_port}/`.
 /// Proxy credentials and custom headers are sent in the CONNECT-UDP request.
 /// HTTP/1 and HTTP/2 requests through this proxy return an error.
-/// The outer connection uses the request's QUIC options with Datagrams enabled, starting at an
-/// MTU that fits 1200-byte UDP payloads; a tunnel that cannot carry them fails the connection.
+/// The outer connection uses the request's QUIC options with Datagrams enabled. Its MTU never
+/// drops below one that fits 1200-byte UDP payloads, and a `max_datagram_frame_size` too small
+/// to buffer 16 of them uses the default. A tunnel that cannot carry them fails the connection.
 #[derive(Clone, Debug)]
 pub struct Proxy {
     extra: Extra,

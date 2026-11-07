@@ -772,6 +772,16 @@ async fn error_has_url() {
         Some(u),
         "{err:?}"
     );
+
+    // Authority-form CONNECT targets are unsupported and fail before connecting.
+    let target = "localhost:1";
+    let request = wreq::Request::new(http::Method::CONNECT, target.parse().unwrap());
+    let err = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+        .execute(request)
+        .await
+        .unwrap_err();
+    assert!(err.is_builder() && !err.is_connect(), "{err:?}");
+    assert_eq!(err.uri().map(ToString::to_string).as_deref(), Some(target));
 }
 
 #[tokio::test]
@@ -866,8 +876,12 @@ async fn request_version_configuration_survives_clone_and_conversion() {
         *cloned.version_mut() = version;
         let converted = http::Request::<wreq::Body>::from(cloned);
         assert_eq!(converted.version(), version.unwrap_or(Version::HTTP_11));
-        let converted = wreq::Request::from(converted);
+        let mut converted = wreq::Request::from(converted);
         assert_eq!(converted.version(), version);
+        // Clearing the preference leaves no stale wire version behind.
+        *converted.version_mut() = None;
+        let converted = http::Request::<wreq::Body>::from(converted);
+        assert_eq!(converted.version(), Version::HTTP_11);
     }
 
     let server = server::http(|_| async { http::Response::default() });
@@ -938,6 +952,11 @@ async fn request_version_configuration_survives_clone_and_conversion() {
         .unwrap_err();
     assert!(err.is_request());
     assert!(!err.is_connect());
+    #[cfg(feature = "http3")]
+    assert!(
+        format!("{err:?}").contains("HTTP/3 requires an https URI"),
+        "{err:?}"
+    );
 
     // HTTP/1 connections reject a non-HTTP/1 wire version instead of encoding it.
     #[cfg(feature = "http3")]
@@ -961,6 +980,67 @@ async fn request_version_configuration_survives_clone_and_conversion() {
             format!("{err:?}").contains("UserUnsupportedVersion"),
             "{err:?}"
         );
+    }
+}
+
+#[cfg(feature = "http3")]
+#[test]
+fn http3_options_fail_when_set() {
+    use std::error::Error as _;
+
+    use wreq::{
+        Emulation,
+        http3::{Http3Options, SettingId, SettingsOrder},
+        quic::QuicOptions,
+    };
+
+    let source = |error: wreq::Error| {
+        assert!(error.is_builder() && !error.is_connect(), "{error:?}");
+        error.source().map(ToString::to_string).unwrap_or_default()
+    };
+    // Client options fail the build instead of every later handshake.
+    let error = Client::builder_tokio()
+        .http3_options(Http3Options::builder().max_concurrent_requests(0).build())
+        .build()
+        .err()
+        .unwrap();
+    assert!(source(error).contains("max_concurrent_requests"));
+
+    // A setting left out of SETTINGS is never sent, so its value is not limited.
+    let unsent = Http3Options::builder()
+        .max_field_section_size(u64::MAX)
+        .settings_order(
+            SettingsOrder::builder()
+                .push(SettingId::QPACK_MAX_TABLE_CAPACITY)
+                .build(),
+        )
+        .build();
+    let client = Client::builder_tokio()
+        .http3_options(unsent)
+        .build()
+        .unwrap();
+
+    // Request options fail when attached, before any connection exists.
+    for (emulation, field) in [
+        (
+            Emulation::from(QuicOptions::builder().initial_max_streams_uni(2).build()),
+            "initial_max_streams_uni",
+        ),
+        (
+            Emulation::from(
+                Http3Options::builder()
+                    .qpack_blocked_streams(Some(1 << 62))
+                    .build(),
+            ),
+            "qpack_blocked_streams",
+        ),
+    ] {
+        let error = client
+            .get("https://localhost/")
+            .emulation(emulation)
+            .build()
+            .unwrap_err();
+        assert!(source(error).contains(field));
     }
 }
 

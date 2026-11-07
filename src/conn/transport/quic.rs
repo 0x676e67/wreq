@@ -6,18 +6,18 @@ use std::{
     collections::VecDeque,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     num::NonZeroUsize,
+    pin::pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
-use ::quic::{
-    AsyncUdpSocket, ClientConfig, Connecting, Connection, Endpoint, EndpointConfig, TokenStore,
-};
+use ::quic::{AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokenStore};
 use bytes::Bytes;
-use futures_util::future::{BoxFuture, Either};
+use futures_util::future::{self, BoxFuture, Either};
 use http::Uri;
 use lru::LruCache;
 use socket2::{Domain, Protocol, Socket, Type};
+use tokio::sync::Notify;
 use tower::{BoxError, Service};
 
 use super::{BindOptions, ConnectError, ConnectOptions, resolve};
@@ -26,10 +26,10 @@ use crate::{
         Conn, Connected, HttpInfo, TlsInfoFactory,
         request::{ConnectRequest, ConnectionKey},
     },
-    dns::DynResolver,
+    dns::{DynResolver, SocketAddrs},
     rt::{RuntimeHandle, Timer},
     sync::Mutex,
-    tls::quic::TlsConfig,
+    tls::quic::{QuicConfig, TlsConfig},
 };
 
 /// Connects one HTTP/3 origin using the selected runtime and TLS policy.
@@ -201,7 +201,7 @@ impl QuicConnector {
         &self,
         endpoints: &Endpoints,
         options: &BindOptions,
-        tls: &ClientConfig,
+        tls: &QuicConfig,
         address: SocketAddr,
         host: &str,
     ) -> Result<(Connection, Endpoint), ConnectError> {
@@ -211,46 +211,48 @@ impl QuicConnector {
             &endpoints.ipv6
         };
         let mut endpoint = self.endpoint(slot, options, address)?;
-        let connecting = match endpoint.connect_with(tls.clone(), address, host) {
-            Err(::quic::ConnectError::EndpointStopping) => {
-                let (replacement, connecting) =
-                    self.reconnect(slot, &endpoint, options, tls, address, host)?;
-                endpoint = replacement;
-                connecting
-            }
-            connecting => connecting,
-        };
+        // The attempt takes its own ticket before entering the endpoint's lock. A retry after
+        // a stopped driver offers it again, since that driver never sent it.
+        let client = tls.client();
+        let connect = |endpoint: &Endpoint| endpoint.connect_with(client.clone(), address, host);
+        let mut connecting = connect(&endpoint);
+        if driver_stopped(&connecting, tls) {
+            (endpoint, connecting) =
+                self.reconnect(slot, &endpoint, options, tls, address, connect)?;
+        }
         let connection = connecting
-            .map_err(ConnectError::m("quic connect error"))?
+            .map_err(|error| ConnectError::new("quic connect error", session_error(error, tls)))?
             .await
             .map_err(ConnectError::m("quic handshake error"))?;
         Ok((connection, endpoint))
     }
 
-    /// Retries on another endpoint after `stale` reported `EndpointStopping`.
+    /// Retries on another endpoint after the driver of `stale` stopped.
     ///
-    /// Either its driver stopped, or the TLS configuration could not start a session. A fresh
-    /// endpoint tells them apart and replaces `stale` only in the first case. The slot stays
-    /// locked, so concurrent retries share one replacement.
+    /// Uses the slot's endpoint unless it is `stale` or reports a stopped driver too, and
+    /// otherwise replaces it with a fresh one. The slot stays locked, so concurrent retries
+    /// share one replacement.
     fn reconnect(
         &self,
         slot: &Mutex<Option<Endpoint>>,
         stale: &Endpoint,
         options: &BindOptions,
-        tls: &ClientConfig,
+        tls: &QuicConfig,
         address: SocketAddr,
-        host: &str,
+        connect: impl Fn(&Endpoint) -> Result<Connecting, ::quic::ConnectError>,
     ) -> Result<(Endpoint, Result<Connecting, ::quic::ConnectError>), ConnectError> {
         let mut slot = slot.lock();
         if let Some(current) = slot.as_ref()
             && !same_socket(current, stale)
         {
-            let connecting = current.connect_with(tls.clone(), address, host);
-            return Ok((current.clone(), connecting));
+            let connecting = connect(current);
+            if !driver_stopped(&connecting, tls) {
+                return Ok((current.clone(), connecting));
+            }
         }
         let fresh = self.open(options, address)?;
-        let connecting = fresh.connect_with(tls.clone(), address, host);
-        if connecting.is_ok() {
+        let connecting = connect(&fresh);
+        if !driver_stopped(&connecting, tls) {
             *slot = Some(fresh.clone());
         }
         Ok((fresh, connecting))
@@ -307,15 +309,26 @@ impl QuicConnector {
         self.dial(uri, &options, &tls, timer, false).await
     }
 
+    /// Returns the target's configuration over a tunnel, built before the tunnel so a local
+    /// configuration error costs no proxy setup.
+    pub(crate) fn tunnel_config(&self, request: &ConnectRequest) -> Result<QuicConfig, BoxError> {
+        self.config(request, Some(TUNNEL_MTU))
+    }
+
     /// Authenticates the target over an established UDP tunnel and retains its endpoint.
     /// The virtual peer address is local to this endpoint; the tunnel owns UDP routing.
+    ///
+    /// Once the tunnel ends, the socket signals `ended`, drops sends and leaves receives pending:
+    /// a socket error would stop the endpoint driver, which logs it at ERROR. A watcher task
+    /// closes the endpoint instead; it exits on its own once the endpoint is idle.
     pub(crate) async fn finish_tunnel(
         &self,
         request: &ConnectRequest,
+        tls: &QuicConfig,
         socket: impl AsyncUdpSocket,
         remote: SocketAddr,
+        ended: Arc<Notify>,
     ) -> Result<Conn, BoxError> {
-        let tls = self.config(request, Some(TUNNEL_MTU))?;
         let endpoint = Endpoint::new_with_abstract_socket(
             EndpointConfig::default(),
             None,
@@ -325,7 +338,22 @@ impl QuicConnector {
         let host = crate::util::strip_ipv6_brackets(
             request.route_uri().host().ok_or("HTTP/3 URI has no host")?,
         );
-        let connection = endpoint.connect_with(tls, remote, host)?.await?;
+        let connecting = endpoint
+            .connect_with(tls.client(), remote, host)
+            .map_err(|error| session_error(error, tls))?;
+
+        // Started once the connection exists, so the endpoint is not idle before it ends.
+        let watched = endpoint.clone();
+        self.runtime.execute(Box::pin(async move {
+            let idle = watched.wait_idle();
+            if let Either::Left(_) = future::select(pin!(ended.notified()), pin!(idle)).await {
+                // H3_NO_ERROR: the tunnel ended without a protocol error.
+                // https://www.rfc-editor.org/rfc/rfc9114#section-8.1
+                watched.close(0x100u32.into(), b"proxy tunnel closed");
+            }
+        }));
+
+        let connection = connecting.await?;
         self.connection(connection, endpoint)
     }
 
@@ -334,7 +362,7 @@ impl QuicConnector {
         &mut self,
         uri: &Uri,
         options: &BindOptions,
-        tls: &ClientConfig,
+        tls: &QuicConfig,
         timer: &dyn Timer,
         shared: bool,
     ) -> Result<(Connection, Endpoint), BoxError> {
@@ -346,6 +374,13 @@ impl QuicConnector {
             uri.port().is_some(),
         )
         .await?;
+        // The IPv6 endpoint is V6ONLY and cannot reach a v4-mapped address, so such an address
+        // dials, filters and races as IPv4.
+        let addresses = SocketAddrs::new(
+            addresses
+                .map(|address| SocketAddr::new(address.ip().to_canonical(), address.port()))
+                .collect(),
+        );
         let local_endpoints = Endpoints::default();
         let endpoints = if shared {
             &*self.endpoints
@@ -376,7 +411,7 @@ impl QuicConnector {
         &self,
         request: &ConnectRequest,
         tunnel_mtu: Option<u16>,
-    ) -> Result<ClientConfig, BoxError> {
+    ) -> Result<QuicConfig, BoxError> {
         let mut tls = self.tls.config(request, tunnel_mtu)?;
         tls.token_store(Arc::new(ScopedTokens {
             tokens: self.tokens.clone(),
@@ -405,6 +440,22 @@ impl QuicConnector {
 /// Compares local addresses; a replacement binds a new port while the old socket is alive.
 fn same_socket(left: &Endpoint, right: &Endpoint) -> bool {
     matches!((left.local_addr(), right.local_addr()), (Ok(left), Ok(right)) if left == right)
+}
+
+/// Whether `connecting` failed because the endpoint's driver stopped.
+/// A session the SSL callback rejected fails the same way; its recorded error tells them apart.
+fn driver_stopped(connecting: &Result<Connecting, ::quic::ConnectError>, tls: &QuicConfig) -> bool {
+    matches!(connecting, Err(::quic::ConnectError::EndpointStopping)) && tls.rejected().is_none()
+}
+
+/// Reports a session the SSL callback rejected with its TLS error, as TCP connections do.
+fn session_error(error: ::quic::ConnectError, tls: &QuicConfig) -> BoxError {
+    match tls.rejected() {
+        Some(rejected) if error == ::quic::ConnectError::EndpointStopping => {
+            Box::new(rejected.clone())
+        }
+        _ => Box::new(error),
+    }
 }
 
 impl Service<ConnectRequest> for QuicConnector {
@@ -548,6 +599,7 @@ mod tests {
         let cert = rcgen::generate_simple_self_signed(vec![
             "localhost".into(),
             "127.0.0.1".into(),
+            "::ffff:127.0.0.1".into(),
             "::1".into(),
         ])
         .unwrap();
@@ -676,6 +728,16 @@ mod tests {
             assert_eq!(first_peer.remote_address(), second_peer.remote_address());
             assert_eq!(resolver.calls.load(Ordering::SeqCst), 1);
 
+            // The IPv6 socket is V6ONLY, so a v4-mapped address must use the IPv4 one.
+            if let IpAddr::V4(ipv4) = address {
+                let mapped = SocketAddr::new(ipv4.to_ipv6_mapped().into(), remote.port());
+                let (mapped, reused, _peer) =
+                    connect(&mut connector, literal(mapped), &server).await;
+                assert_eq!(mapped.remote_address(), remote);
+                assert_eq!(reused.local_addr().unwrap(), local);
+                mapped.close(0u32.into(), b"done");
+            }
+
             let mut bindings = BindOptions::default();
             bindings.set_local_address(address);
             let localhost = request(Uri::from_static("https://localhost/"), Some(bindings));
@@ -705,12 +767,26 @@ mod tests {
         let (first, endpoint4, _first_peer) =
             connect(&mut connector, literal(addr4), &server4).await;
 
-        // Invalid key shares fail before sending a packet and must not replace the socket.
+        // Invalid key shares fail in the SSL callback, which the QUIC stack reports like a
+        // stopped driver. The TLS error must surface without opening another socket, which a
+        // TEST-NET binding refuses (https://www.rfc-editor.org/rfc/rfc5737).
         let invalid = crate::quic::QuicOptions::builder()
             .curves_list("X25519")
             .key_shares(vec![crate::tls::KeyShare::P256])
             .build();
-        assert!(connector.call(configured(invalid)).await.is_err());
+        connector
+            .bind_options
+            .set_local_address(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)));
+        let error = connector.call(configured(invalid)).await.err().unwrap();
+        connector.bind_options = BindOptions::default();
+        let mut chain = std::iter::successors(
+            Some(&*error as &(dyn std::error::Error + 'static)),
+            |error| error.source(),
+        );
+        assert!(
+            chain.any(|error| error.is::<btls::error::ErrorStack>()),
+            "{error:?}"
+        );
         assert!(same_socket(&current(&connector.endpoints.ipv4), &endpoint4));
 
         let blackhole = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -736,6 +812,34 @@ mod tests {
 
     #[test]
     fn replaces_an_endpoint_whose_runtime_stopped() {
+        /// Hides its address once `hidden` is set, as a custom runtime's socket may after its
+        /// reactor stops.
+        #[derive(Debug)]
+        struct Hidden(Box<dyn AsyncUdpSocket>, Arc<std::sync::atomic::AtomicBool>);
+
+        impl AsyncUdpSocket for Hidden {
+            fn create_sender(&self) -> std::pin::Pin<Box<dyn ::quic::UdpSender>> {
+                self.0.create_sender()
+            }
+
+            fn poll_recv(
+                &mut self,
+                cx: &mut Context<'_>,
+                bufs: &mut [std::io::IoSliceMut<'_>],
+                meta: &mut [::quic::udp::RecvMeta],
+            ) -> Poll<std::io::Result<usize>> {
+                self.0.poll_recv(cx, bufs, meta)
+            }
+
+            fn local_addr(&self) -> std::io::Result<SocketAddr> {
+                if self.1.load(Ordering::SeqCst) {
+                    Err(std::io::ErrorKind::NotConnected.into())
+                } else {
+                    self.0.local_addr()
+                }
+            }
+        }
+
         // An endpoint's driver runs on the runtime that opened it; a client outliving that
         // runtime must open a new endpoint instead of failing every later connection.
         let (config, cert) = server_config();
@@ -749,17 +853,20 @@ mod tests {
                 let server =
                     ::quic::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
                 addresses.send(server.local_addr().unwrap()).unwrap();
-                for _ in 0..2 {
+                for _ in 0..3 {
                     server.accept().await.unwrap().await.unwrap();
                 }
             });
         });
         let connector = connector(resolving(vec![address.recv().unwrap()]), &cert);
-        let local = [(); 2].map(|()| {
-            let runtime = tokio::runtime::Builder::new_current_thread()
+        let runtime = || {
+            tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap();
+                .unwrap()
+        };
+        let connect = || {
+            let runtime = runtime();
             let mut connector = connector.clone();
             let request = request(Uri::from_static("https://localhost/"), None);
             let Conn { inner, .. } = runtime
@@ -770,11 +877,37 @@ mod tests {
             };
             connection.close(0u32.into(), b"done");
             endpoint.local_addr().unwrap()
-        });
+        };
+        let local = [connect(), connect()];
         assert_ne!(local[0], local[1]);
         assert_eq!(
             current(&connector.endpoints.ipv4).local_addr().unwrap(),
             local[1]
+        );
+
+        // The comparison with the slot's endpoint cannot tell a stale endpoint without an
+        // address apart, so it must still be replaced rather than retried forever.
+        let hidden = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stale = runtime().block_on(async {
+            let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap();
+            let socket = Hidden(
+                connector.runtime.udp_socket(socket).unwrap(),
+                hidden.clone(),
+            );
+            Endpoint::new_with_abstract_socket(
+                EndpointConfig::default(),
+                None,
+                Box::new(socket),
+                connector.runtime.quic(),
+            )
+            .unwrap()
+        });
+        hidden.store(true, Ordering::SeqCst);
+        *connector.endpoints.ipv4.lock() = Some(stale);
+        let replaced = connect();
+        assert_eq!(
+            current(&connector.endpoints.ipv4).local_addr().unwrap(),
+            replaced
         );
         server.join().unwrap();
     }
@@ -872,9 +1005,10 @@ mod tests {
                 .await
                 .err()
                 .expect("QUIC must reject a proxy route");
+            assert!(error.is::<crate::error::ProxyMismatch>());
             assert_eq!(
                 error.to_string(),
-                "proxy connect error: HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature"
+                "HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature"
             );
         }
         assert_eq!(resolver.calls.load(Ordering::SeqCst), 0);

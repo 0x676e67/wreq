@@ -32,7 +32,8 @@ async fn quic_proxy_rejects_stream_requests_before_dns() {
             .unwrap();
         for target in ["http://origin.invalid/", "https://origin.invalid/"] {
             let error = client.get(target).send().await.unwrap_err();
-            assert!(error.is_proxy_connect(), "{error:?}");
+            // A route that can never carry HTTP/1 is a configuration error, not a proxy outage.
+            assert!(error.is_request() && !error.is_proxy_connect(), "{error:?}");
             assert!(!error.is_dns(), "{error:?}");
             assert!(
                 support::error::inspect(error)

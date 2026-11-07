@@ -1,4 +1,4 @@
-use std::{borrow::Cow, error::Error as StdError, fmt, io};
+use std::{error::Error as StdError, fmt, io};
 
 use http::Uri;
 use netty::ext::ReasonPhrase;
@@ -419,9 +419,16 @@ pub(crate) struct BadScheme;
 
 #[derive(Debug)]
 pub(crate) enum ProxyConnect {
-    Message(Cow<'static, str>),
+    /// Only QUIC proxy validation fails without a source.
+    #[cfg(feature = "http3")]
+    Message(&'static str),
     Source(BoxError),
 }
+
+/// A proxy route that cannot carry the request's HTTP version.
+/// The request fails the same way on every attempt, so it is not a proxy outage.
+#[derive(Debug)]
+pub(crate) struct ProxyMismatch(pub(crate) &'static str);
 
 #[derive(Debug)]
 pub(crate) struct DnsError(pub(crate) BoxError);
@@ -452,6 +459,7 @@ impl StdError for ProxyConnect {
     #[inline]
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
+            #[cfg(feature = "http3")]
             Self::Message(_) => None,
             Self::Source(error) => Some(&**error),
         }
@@ -462,9 +470,20 @@ impl fmt::Display for ProxyConnect {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("proxy connect error: ")?;
         match self {
+            #[cfg(feature = "http3")]
             Self::Message(message) => f.write_str(message),
             Self::Source(error) => fmt::Display::fmt(error, f),
         }
+    }
+}
+
+// ==== impl ProxyMismatch ====
+
+impl StdError for ProxyMismatch {}
+
+impl fmt::Display for ProxyMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(self.0)
     }
 }
 

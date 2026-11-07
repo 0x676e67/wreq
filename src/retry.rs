@@ -145,7 +145,8 @@ impl Policy {
 
     /// Set the max retries allowed per request.
     ///
-    /// For each logical (initial) request, only retry up to `max` times.
+    /// Each request sent, including each redirect hop, is retried up to `max` times.
+    /// A retry replays that hop rather than the request that started the redirect chain.
     ///
     /// This value is used in combination with a token budget that is applied
     /// to all requests. Even if the budget would allow more requests, this

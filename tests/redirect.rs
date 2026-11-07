@@ -758,3 +758,45 @@ async fn test_redirect_location_is_encoded() {
     assert_eq!(res.uri(), dst.as_str());
     assert_eq!(res.status(), StatusCode::OK);
 }
+
+#[cfg(feature = "http2")]
+#[tokio::test]
+async fn test_redirect_userinfo_never_reaches_the_wire() {
+    let server = server::http(move |req| async move {
+        // HTTP/2 carries the target authority, which must omit userinfo (RFC 9113 §8.3.1).
+        let authority = req.uri().authority().unwrap().clone();
+        if authority.as_str().contains('@') {
+            return http::Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::default())
+                .unwrap();
+        }
+        if req.uri().path() == "/start" {
+            http::Response::builder()
+                .status(302)
+                .header(header::LOCATION, format!("http://user:pw@{authority}/end"))
+                .body(Body::default())
+                .unwrap()
+        } else {
+            http::Response::default()
+        }
+    });
+
+    // Neither entry point passes through the builder that moves userinfo into Authorization.
+    let request = wreq::Request::new(
+        http::Method::GET,
+        format!("http://user:pw@{}/start", server.addr())
+            .parse()
+            .unwrap(),
+    );
+    let response = Client::builder_tokio()
+        .http2_only()
+        .redirect(Policy::default())
+        .build()
+        .unwrap()
+        .execute(request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.uri().path(), "/end");
+}

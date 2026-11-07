@@ -38,7 +38,9 @@ pub struct QuicOptionsBuilder {
 pub struct QuicOptions {
     /// Closes the connection after this much inactivity, advertised as `max_idle_timeout`
     /// ([RFC 9000 Section 10.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-10.1)).
-    /// Zero omits the parameter, leaving only the server's limit.
+    /// Zero omits the parameter, leaving only the server's limit. The handshake then has no idle
+    /// timeout before the server's parameters arrive, so only
+    /// [`connect_timeout`](crate::ClientBuilder::connect_timeout) ends one that gets no reply.
     ///
     /// **Default:** `None` (30 seconds).
     #[deftly(config_key(transport))]
@@ -81,7 +83,8 @@ pub struct QuicOptions {
 
     /// Largest DATAGRAM frame the server may send, advertised as `max_datagram_frame_size`
     /// ([RFC 9221 Section 3](https://www.rfc-editor.org/rfc/rfc9221.html#section-3)).
-    /// It also bounds buffered datagrams; zero disables them.
+    /// It also bounds buffered datagrams; zero disables them. A `quic://` proxy connection uses
+    /// the default instead of a value that buffers fewer than 16 tunneled packets (about 20 KB).
     ///
     /// **Default:** `None` (1,250,000).
     #[deftly(config_key(transport))]
@@ -453,12 +456,15 @@ impl QuicOptions {
         // The backend reserves every allowed stream when a connection starts.
         const MAX_STREAMS: u64 = u16::MAX as u64;
 
-        let var = |value: u64, min: u64, max: u64| {
+        let out_of_range = |name: &str, value: &dyn std::fmt::Debug| {
+            Error::builder(format!("QUIC option {name} out of range: {value:?}"))
+        };
+        let var = |name: &str, value: u64, min: u64, max: u64| {
             (min..=max)
                 .contains(&value)
                 .then(|| VarInt::from_u64(value).ok())
                 .flatten()
-                .ok_or_else(|| Error::builder("QUIC option out of range"))
+                .ok_or_else(|| out_of_range(name, &value))
         };
         let mut transport = TransportConfig::default();
         if let Some(timeout) = self.max_idle_timeout {
@@ -467,32 +473,49 @@ impl QuicOptions {
                 Duration::ZERO => timeout,
                 timeout => timeout.max(Duration::from_millis(1)),
             };
-            let timeout = IdleTimeout::try_from(timeout).map_err(Error::builder)?;
+            let timeout = IdleTimeout::try_from(timeout)
+                .map_err(|_| out_of_range("max_idle_timeout", &timeout))?;
             transport.max_idle_timeout(Some(timeout));
         }
         if let Some(interval) = self.keep_alive_interval {
             if interval.is_zero() || IdleTimeout::try_from(interval).is_err() {
-                return Err(Error::builder("QUIC keep-alive interval out of range"));
+                return Err(out_of_range("keep_alive_interval", &interval));
             }
             transport.keep_alive_interval(Some(interval));
         }
         if let Some(limit) = self.initial_max_data {
-            transport.receive_window(var(limit, 1, VarInt::MAX.into_inner())?);
+            transport.receive_window(var("initial_max_data", limit, 1, VarInt::MAX.into_inner())?);
         }
         if let Some(limit) = self.initial_max_stream_data {
-            transport.stream_receive_window(var(limit, 1024, VarInt::MAX.into_inner())?);
+            transport.stream_receive_window(var(
+                "initial_max_stream_data",
+                limit,
+                1024,
+                VarInt::MAX.into_inner(),
+            )?);
         }
         if let Some(count) = self.initial_max_streams_bidi {
-            transport.max_concurrent_bidi_streams(var(count, 0, MAX_STREAMS)?);
+            transport.max_concurrent_bidi_streams(var(
+                "initial_max_streams_bidi",
+                count,
+                0,
+                MAX_STREAMS,
+            )?);
         }
         if let Some(count) = self.initial_max_streams_uni {
-            transport.max_concurrent_uni_streams(var(count, 3, MAX_STREAMS)?);
+            transport.max_concurrent_uni_streams(var(
+                "initial_max_streams_uni",
+                count,
+                3,
+                MAX_STREAMS,
+            )?);
         }
         if let Some(size) = self.max_datagram_frame_size {
             let size = (size != 0)
                 .then(|| {
-                    let size = var(size, 1, VarInt::MAX.into_inner())?.into_inner();
-                    usize::try_from(size).map_err(Error::builder)
+                    let name = "max_datagram_frame_size";
+                    let size = var(name, size, 1, VarInt::MAX.into_inner())?.into_inner();
+                    usize::try_from(size).map_err(|_| out_of_range(name, &size))
                 })
                 .transpose()?;
             transport.datagram_receive_buffer_size(size);
@@ -525,18 +548,46 @@ mod tests {
             .build();
         assert!(valid.transport().is_ok());
 
+        let builder = QuicOptions::builder;
         let invalid = [
-            QuicOptions::builder().keep_alive_interval(Duration::ZERO),
-            QuicOptions::builder().keep_alive_interval(Duration::MAX),
-            QuicOptions::builder().initial_max_data(0),
-            QuicOptions::builder().initial_max_data(u64::MAX),
-            QuicOptions::builder().initial_max_stream_data(1023),
-            QuicOptions::builder().initial_max_streams_bidi(1 << 16),
-            QuicOptions::builder().initial_max_streams_uni(2),
-            QuicOptions::builder().max_datagram_frame_size(u64::MAX),
+            (
+                builder().max_idle_timeout(Duration::MAX),
+                "max_idle_timeout",
+            ),
+            (
+                builder().keep_alive_interval(Duration::ZERO),
+                "keep_alive_interval",
+            ),
+            (
+                builder().keep_alive_interval(Duration::MAX),
+                "keep_alive_interval",
+            ),
+            (builder().initial_max_data(0), "initial_max_data"),
+            (builder().initial_max_data(u64::MAX), "initial_max_data"),
+            (
+                builder().initial_max_stream_data(1023),
+                "initial_max_stream_data",
+            ),
+            (
+                builder().initial_max_streams_bidi(1 << 16),
+                "initial_max_streams_bidi",
+            ),
+            (
+                builder().initial_max_streams_uni(2),
+                "initial_max_streams_uni",
+            ),
+            (
+                builder().max_datagram_frame_size(u64::MAX),
+                "max_datagram_frame_size",
+            ),
         ];
-        for options in invalid {
-            assert!(options.build().transport().is_err());
+        for (options, name) in invalid {
+            let error = options.build().transport().unwrap_err();
+            let message = std::error::Error::source(&error).map(ToString::to_string);
+            assert!(
+                message.is_some_and(|message| message.contains(name)),
+                "{error:?}"
+            );
         }
     }
 

@@ -22,7 +22,6 @@ use bytes::{Buf, Bytes};
 use futures_util::{
     StreamExt,
     stream::{self, BoxStream},
-    task::AtomicWaker,
 };
 use http::Uri;
 use netty::{
@@ -47,7 +46,7 @@ use crate::{
     ext::UriExt,
     proxy::matcher::Intercept,
     rt::RuntimeHandle,
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
 };
 
 /// One CONNECT-UDP tunnel used as an inner QUIC endpoint's socket.
@@ -58,11 +57,13 @@ struct Socket {
     remote: SocketAddr,
 }
 
+/// Send readiness is broadcast through `ready`; the end of the tunnel is signalled once
+/// through `ended`, which the inner endpoint's watcher waits on.
 struct Shared {
     state: Mutex<State>,
     ready: Arc<Notify>,
+    ended: Arc<Notify>,
     waker: Waker,
-    recv: AtomicWaker,
 }
 
 /// Dropping the tunnel aborts CONNECT-UDP before the outer connection is closed.
@@ -100,6 +101,9 @@ pub(super) async fn connect(
     request: ConnectRequest,
     proxy: Intercept,
 ) -> Result<Conn, BoxError> {
+    // A local configuration error must not cost, or be reported as, a proxy setup.
+    let tls = inner.tunnel_config(&request)?;
+
     // This scope classifies proxy setup failures separately from target TLS errors.
     let connect_proxy = async {
         // The configured quic:// URI becomes HTTPS on the CONNECT request.
@@ -144,7 +148,10 @@ pub(super) async fn connect(
     };
 
     let (socket, remote) = connect_proxy.await.map_err(ProxyConnect::Source)?;
-    inner.finish_tunnel(&request, socket, remote).await
+    let ended = socket.shared.ended.clone();
+    inner
+        .finish_tunnel(&request, &tls, socket, remote, ended)
+        .await
 }
 
 /// Names the UDP port a CONNECT-UDP target requires; an origin without one uses 443.
@@ -184,7 +191,7 @@ impl Socket {
                 }),
                 waker: Waker::from(Arc::new(SendWake(ready.clone()))),
                 ready,
-                recv: AtomicWaker::new(),
+                ended: Arc::new(Notify::new()),
             }),
             local,
             remote,
@@ -213,25 +220,24 @@ impl AsyncUdpSocket for Socket {
                 "MASQUE receive requires a buffer and metadata slot",
             )));
         };
-        self.shared.recv.register(cx.waker());
         // Invalid or oversized input must not monopolize the endpoint driver.
         for _ in 0..32 {
             let payload = {
                 let mut state = self.shared.state.lock();
+                // The watcher closes the endpoint once the tunnel ends.
                 let Some(tunnel) = state.tunnel.as_mut() else {
-                    return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+                    return Poll::Pending;
                 };
                 match ready!(tunnel.poll_recv(cx)) {
                     Ok(Some(payload)) => payload,
-                    result => {
-                        state.tunnel = None;
-                        drop(state);
-                        self.shared.ready.notify_waiters();
-                        return Poll::Ready(Err(match result {
-                            Err(error) => io::Error::other(error),
-                            // QUIC ignores ConnectionReset, so EOF must be terminal.
-                            _ => io::ErrorKind::BrokenPipe.into(),
-                        }));
+                    Ok(None) => {
+                        self.shared.close(state);
+                        return Poll::Pending;
+                    }
+                    Err(_error) => {
+                        debug!("MASQUE tunnel receive error: {_error}");
+                        self.shared.close(state);
+                        return Poll::Pending;
                     }
                 }
             };
@@ -246,7 +252,8 @@ impl AsyncUdpSocket for Socket {
             meta.len = payload.len();
             meta.stride = payload.len();
             meta.ecn = None;
-            meta.dst_ip = Some(self.local.ip());
+            // The tunnel does not report which outer address received the payload.
+            meta.dst_ip = None;
             return Poll::Ready(Ok(1));
         }
         cx.waker().wake_by_ref();
@@ -292,13 +299,18 @@ impl UdpSender for SocketSender {
             )));
         }
 
+        // Once the tunnel ends, packets are lost as on a dead UDP path; a send error would
+        // make the connection driver log it as an I/O error.
         let mut state = this.shared.state.lock();
         let Some(tunnel) = state.tunnel.as_mut() else {
             this.waiting = None;
-            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+            return Poll::Ready(Ok(()));
         };
         match tunnel.try_send(transmit.contents) {
-            Ok(()) => {
+            // An oversized packet is lost, as on UDP; a send error would close the inner
+            // connection instead. The outer path MTU never drops below a full tunnel packet.
+            // https://www.rfc-editor.org/rfc/rfc9298.html#section-6.1
+            Ok(()) | Err(SendError::TooLarge) => {
                 this.waiting = None;
                 Poll::Ready(Ok(()))
             }
@@ -310,16 +322,11 @@ impl UdpSender for SocketSender {
                     .get_or_insert_with(|| Box::pin(this.shared.ready.clone().notified_owned()));
                 if waiting.as_mut().poll(cx).is_pending() {
                     let mut cx = Context::from_waker(&this.shared.waker);
-                    match ready!(tunnel.poll_send_ready(&mut cx)) {
-                        Ok(()) => {}
-                        Err(error) => {
-                            state.tunnel = None;
-                            drop(state);
-                            this.waiting = None;
-                            this.shared.ready.notify_waiters();
-                            this.shared.recv.wake();
-                            return Poll::Ready(Err(io::Error::other(error)));
-                        }
+                    if let Err(_error) = ready!(tunnel.poll_send_ready(&mut cx)) {
+                        debug!("MASQUE tunnel send error: {_error}");
+                        this.waiting = None;
+                        this.shared.close(state);
+                        return Poll::Ready(Ok(()));
                     }
                 }
                 drop(state);
@@ -327,20 +334,11 @@ impl UdpSender for SocketSender {
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            Err(error) => {
+            Err(_error) => {
+                debug!("MASQUE tunnel send error: {_error}");
                 this.waiting = None;
-                let kind = if error == SendError::TooLarge {
-                    io::ErrorKind::InvalidInput
-                } else {
-                    state.tunnel = None;
-                    io::ErrorKind::BrokenPipe
-                };
-                drop(state);
-                if kind == io::ErrorKind::BrokenPipe {
-                    this.shared.ready.notify_waiters();
-                    this.shared.recv.wake();
-                }
-                Poll::Ready(Err(io::Error::new(kind, error)))
+                this.shared.close(state);
+                Poll::Ready(Ok(()))
             }
         }
     }
@@ -351,6 +349,18 @@ impl fmt::Debug for SocketSender {
         f.debug_struct("SocketSender")
             .field("remote", &self.remote)
             .finish_non_exhaustive()
+    }
+}
+
+// ===== impl Shared =====
+
+impl Shared {
+    /// Ends the tunnel: senders drop packets from now on and the watcher closes the endpoint.
+    fn close(&self, mut state: MutexGuard<'_, State>) {
+        state.tunnel = None;
+        drop(state);
+        self.ready.notify_waiters();
+        self.ended.notify_one();
     }
 }
 

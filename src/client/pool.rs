@@ -141,6 +141,11 @@ pub struct Config {
 
     /// Delay policy applied before starting a new connection.
     pub(super) strategy: PoolStrategy,
+
+    /// Deadline of the HTTP/3 connect and handshake, which the transport timeout alone does not
+    /// cover.
+    #[cfg(feature = "http3")]
+    pub(super) connect_timeout: Option<Duration>,
 }
 
 // ===== impl Config =====
@@ -159,6 +164,8 @@ impl Default for Config {
             max_idle_per_host: usize::MAX,
             max_pool_size: None,
             strategy: PoolStrategy::default(),
+            #[cfg(feature = "http3")]
+            connect_timeout: None,
         }
     }
 }
@@ -286,6 +293,10 @@ where
 
     /// Whether HTTP/1 should generate a missing `Host` field.
     set_host: bool,
+
+    /// Deadline of each HTTP/3 connect and handshake.
+    #[cfg(feature = "http3")]
+    connect_timeout: Option<Duration>,
 
     /// Carries the request-body type without owning a body.
     _body: PhantomData<fn(B)>,
@@ -653,6 +664,8 @@ where
                 pool: pool.clone(),
                 runtime: runtime.clone(),
                 set_host,
+                #[cfg(feature = "http3")]
+                connect_timeout: config.connect_timeout,
                 _body: PhantomData,
             };
 
@@ -934,6 +947,7 @@ where
                 service: Singleton::new(http3::Connect::new(
                     self.connector.clone(),
                     self.runtime.clone(),
+                    self.connect_timeout,
                 )),
                 state,
             }),
