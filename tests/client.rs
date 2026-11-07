@@ -986,67 +986,6 @@ async fn http1_connection_rejects_http3_wire_version() {
     );
 }
 
-#[cfg(feature = "http3")]
-#[test]
-fn http3_options_fail_when_set() {
-    use std::error::Error as _;
-
-    use wreq::{
-        Emulation,
-        http3::{Http3Options, SettingId, SettingsOrder},
-        quic::QuicOptions,
-    };
-
-    let source = |error: wreq::Error| {
-        assert!(error.is_builder() && !error.is_connect(), "{error:?}");
-        error.source().map(ToString::to_string).unwrap_or_default()
-    };
-    // Client options fail the build instead of every later handshake.
-    let error = Client::builder_tokio()
-        .http3_options(Http3Options::builder().max_concurrent_requests(0).build())
-        .build()
-        .err()
-        .unwrap();
-    assert!(source(error).contains("max_concurrent_requests"));
-
-    // A setting left out of SETTINGS is never sent, so its value is not limited.
-    let unsent = Http3Options::builder()
-        .max_field_section_size(u64::MAX)
-        .settings_order(
-            SettingsOrder::builder()
-                .push(SettingId::QPACK_MAX_TABLE_CAPACITY)
-                .build(),
-        )
-        .build();
-    let client = Client::builder_tokio()
-        .http3_options(unsent)
-        .build()
-        .unwrap();
-
-    // Request options fail when attached, before any connection exists.
-    for (emulation, field) in [
-        (
-            Emulation::from(QuicOptions::builder().initial_max_streams_uni(2).build()),
-            "initial_max_streams_uni",
-        ),
-        (
-            Emulation::from(
-                Http3Options::builder()
-                    .qpack_blocked_streams(Some(1 << 62))
-                    .build(),
-            ),
-            "qpack_blocked_streams",
-        ),
-    ] {
-        let error = client
-            .get("https://localhost/")
-            .emulation(emulation)
-            .build()
-            .unwrap_err();
-        assert!(source(error).contains(field));
-    }
-}
-
 #[cfg(feature = "http2")]
 #[tokio::test]
 async fn http2_only() {

@@ -475,10 +475,6 @@ impl ClientBuilder {
         if let Some(err) = self.config.error {
             return Err(err);
         }
-        #[cfg(feature = "http3")]
-        if let Some(options) = self.config.config_set.get::<netty::http3::Http3Options>() {
-            proto::http3::check_options(options)?;
-        }
 
         // Prepare proxies
         if self.config.auto_sys_proxy {

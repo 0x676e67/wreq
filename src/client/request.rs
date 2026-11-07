@@ -804,11 +804,6 @@ impl RequestBuilder {
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let Emulation(headers, orig_headers, config_set) = emulation.into_emulation();
-            #[cfg(feature = "http3")]
-            if let Err(error) = check_http3(&config_set) {
-                self.request = Err(error);
-                return self;
-            }
             req.config_set_mut().extend(config_set);
             let builder = self.headers(headers);
             return if orig_headers.is_empty() {
@@ -935,19 +930,6 @@ fn extract_authority(uri: &mut Uri) -> Option<(String, Option<String>)> {
     }
 
     None
-}
-
-/// Checks request QUIC and HTTP/3 options as the client builder does, so a bad value is a
-/// builder error rather than a connect error after the QUIC handshake.
-#[cfg(feature = "http3")]
-fn check_http3(config_set: &ConfigSet) -> crate::Result<()> {
-    if let Some(options) = config_set.get::<crate::quic::QuicOptions>() {
-        options.transport()?;
-    }
-    if let Some(options) = config_set.get::<crate::http3::Http3Options>() {
-        super::proto::http3::check_options(options)?;
-    }
-    Ok(())
 }
 
 impl<T: Into<Body>> From<http::Request<T>> for Request {

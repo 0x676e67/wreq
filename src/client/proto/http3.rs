@@ -14,7 +14,7 @@ use futures_util::{
 };
 use http::{Request, Response};
 use http_body::Body;
-use netty::{body::Incoming, conn, http3::Http3Options, rt::quic::Compat};
+use netty::{body::Incoming, conn, rt::quic::Compat};
 use tower::{BoxError, Service, ServiceExt};
 
 use super::{ConnectionState, SendError, is_expired};
@@ -40,59 +40,6 @@ pub struct Connect<C, B> {
     runtime: RuntimeHandle,
     timeout: Option<Duration>,
     _body: PhantomData<fn(B)>,
-}
-
-/// Rejects [`Http3Options`] that the HTTP/3 handshake refuses, before any connection exists.
-/// Only SETTINGS values that are sent must fit a QUIC varint
-/// ([RFC 9114 Section 7.2.4](https://www.rfc-editor.org/rfc/rfc9114.html#section-7.2.4)).
-pub(crate) fn check_options(options: &Http3Options) -> crate::Result<()> {
-    use netty::http3::SettingId;
-
-    if options.max_concurrent_requests == 0 {
-        return Err(crate::Error::builder(
-            "HTTP/3 option max_concurrent_requests must not be zero",
-        ));
-    }
-    let sent = |id: SettingId| {
-        options
-            .settings_order
-            .as_ref()
-            .is_none_or(|order| order.into_iter().any(|sent| *sent == id))
-    };
-    let varint = ::quic::VarInt::MAX.into_inner();
-    // The QPACK decoder also keeps its table capacity in a `usize`.
-    let capacity = u64::try_from(usize::MAX).map_or(varint, |max| max.min(varint));
-    let settings = [
-        (
-            "max_field_section_size",
-            SettingId::MAX_HEADER_LIST_SIZE,
-            Some(options.max_field_section_size),
-            varint,
-        ),
-        (
-            "qpack_max_table_capacity",
-            SettingId::QPACK_MAX_TABLE_CAPACITY,
-            options.qpack_max_table_capacity,
-            capacity,
-        ),
-        (
-            "qpack_blocked_streams",
-            SettingId::QPACK_MAX_BLOCKED_STREAMS,
-            options.qpack_blocked_streams,
-            varint,
-        ),
-    ];
-    for (name, id, value, max) in settings {
-        if let Some(value) = value
-            && value > max
-            && sent(id)
-        {
-            return Err(crate::Error::builder(format!(
-                "HTTP/3 option {name} out of range: {value}"
-            )));
-        }
-    }
-    Ok(())
 }
 
 // ===== impl Connect =====
