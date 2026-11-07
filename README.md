@@ -27,7 +27,6 @@ An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, f
 - WebSocket Upgrade
 - HTTPS via BoringSSL
 - Certificate Store (CAs & mTLS)
-- Explicit runtime selection (Tokio, Compio, or custom)
 
 ## Example
 
