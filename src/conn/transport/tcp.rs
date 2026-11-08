@@ -5,62 +5,69 @@ use std::{
     io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
-    task::{self, Poll},
     time::Duration,
 };
 
 use futures_util::{TryFutureExt, future::BoxFuture};
 use http::uri::{Scheme, Uri};
 use socket2::TcpKeepalive;
-use tower::Service;
 
 use super::{BindOptions, ConnectError, ConnectOptions, resolve};
 use crate::{
     conn::{Connected, Connection, HttpInfo, TlsInfoFactory},
-    dns::{self, DnsResolver},
+    dns::{self, DynResolver},
+    error::BoxError,
     rt::{BoxConnection, Connecting, DynRuntime, Timer as _},
 };
 
-static INVALID_NOT_HTTP: &str = "invalid URI, scheme is not http";
 static INVALID_MISSING_SCHEME: &str = "invalid URI, scheme is missing";
 static INVALID_MISSING_HOST: &str = "invalid URI, host is missing";
 
 /// Resolves URI targets and races configured TCP sockets using the selected runtime.
-/// Clones share socket settings until a caller changes them.
-/// Configure `TcpConnector<()>`, then attach a resolver with [`Self::build`].
-#[must_use]
+/// Clones share the socket settings, resolver and runtime; each dial takes its own
+/// `TCP_NODELAY` and bindings.
 #[derive(Clone)]
-pub(crate) struct TcpConnector<R> {
-    options: Arc<TcpOptions>,
-    resolver: R,
+pub(crate) struct TcpConnector {
+    inner: Arc<Inner>,
+}
+
+/// Client socket settings, the resolver and the runtime shared by every dial.
+struct Inner {
+    options: TcpOptions,
+    resolver: DynResolver,
     runtime: DynRuntime,
 }
 
-#[derive(Clone)]
-pub(crate) struct TcpOptions {
-    pub enforce_http: bool,
-    pub connect_options: ConnectOptions,
-    pub nodelay: bool,
-    pub reuse_address: bool,
-    pub linger: Option<Duration>,
-    pub send_buffer_size: Option<usize>,
-    pub recv_buffer_size: Option<usize>,
+/// Configures TCP sockets before attaching a resolver with [`Self::build`].
+#[must_use]
+pub(crate) struct TcpConnectorBuilder {
+    options: TcpOptions,
+    runtime: DynRuntime,
+}
+
+/// Socket settings the client applies to every TCP dial.
+struct TcpOptions {
+    connect_options: ConnectOptions,
+    nodelay: bool,
+    reuse_address: bool,
+    linger: Option<Duration>,
+    send_buffer_size: Option<usize>,
+    recv_buffer_size: Option<usize>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub tcp_user_timeout: Option<Duration>,
-    pub keepalive: Option<Duration>,
-    pub keepalive_interval: Option<Duration>,
-    pub keepalive_retries: Option<u32>,
-    pub bind_options: BindOptions,
+    tcp_user_timeout: Option<Duration>,
+    keepalive: Option<Duration>,
+    keepalive_interval: Option<Duration>,
+    keepalive_retries: Option<u32>,
+    bind_options: BindOptions,
 }
 
 // ===== impl TcpConnector =====
 
-impl TcpConnector<()> {
+impl TcpConnector {
     /// Starts configuring a TCP connector using the shared runtime.
-    pub(crate) fn new(runtime: DynRuntime) -> Self {
-        Self {
-            options: Arc::new(TcpOptions {
-                enforce_http: true,
+    pub(crate) fn builder(runtime: DynRuntime) -> TcpConnectorBuilder {
+        TcpConnectorBuilder {
+            options: TcpOptions {
                 connect_options: ConnectOptions::default(),
                 nodelay: false,
                 reuse_address: false,
@@ -73,79 +80,82 @@ impl TcpConnector<()> {
                 keepalive_interval: None,
                 keepalive_retries: None,
                 bind_options: BindOptions::default(),
-            }),
-            resolver: (),
+            },
             runtime,
         }
     }
 
-    /// Attaches a resolver without cloning the runtime or socket settings.
+    /// Returns whether the client disables Nagle.
     #[inline]
-    pub(crate) fn build<R>(self, resolver: R) -> TcpConnector<R> {
-        TcpConnector {
-            options: self.options,
-            resolver,
-            runtime: self.runtime,
-        }
-    }
-}
-
-impl<R> TcpConnector<R> {
-    fn options_mut(&mut self) -> &mut TcpOptions {
-        // Keep existing clones unchanged when updating socket settings.
-        Arc::make_mut(&mut self.options)
-    }
-
-    /// Returns whether this connector disables Nagle.
     pub(crate) fn nodelay(&self) -> bool {
-        self.options.nodelay
+        self.inner.options.nodelay
     }
 
     /// Returns the address-race policy that QUIC dials share.
     #[cfg(feature = "http3")]
-    pub(crate) fn connect_options(&self) -> ConnectOptions {
-        self.options.connect_options
-    }
-
-    /// Requires the `http` URI scheme when enabled, as it is by default.
     #[inline]
-    pub(crate) fn enforce_http(mut self, is_enforced: bool) -> Self {
-        self.options_mut().enforce_http = is_enforced;
-        self
+    pub(crate) fn connect_options(&self) -> ConnectOptions {
+        self.inner.options.connect_options
     }
 
+    /// Resolves `uri` and races its addresses with this dial's `TCP_NODELAY` and bindings.
+    /// Request bindings of `None` keep the client's.
+    pub(crate) fn dial(
+        &self,
+        uri: Uri,
+        nodelay: bool,
+        bind_options: Option<Arc<BindOptions>>,
+    ) -> BoxFuture<'static, Result<BoxConnection, BoxError>> {
+        let inner = self.inner.clone();
+        Box::pin(async move {
+            let (host, port) = get_host_port(&uri)?;
+            let addrs = resolve(host, port, uri.port().is_some(), |name| {
+                inner.resolver.resolve(name)
+            })
+            .await?;
+            let bind_options = bind_options
+                .as_deref()
+                .unwrap_or(&inner.options.bind_options);
+            Ok(connect(addrs, &inner.options, bind_options, nodelay, &inner.runtime).await?)
+        })
+    }
+}
+
+// ===== impl TcpConnectorBuilder =====
+
+impl TcpConnectorBuilder {
     /// Sets `TCP_NODELAY` on each socket. Defaults to `false`.
     #[inline]
     pub(crate) fn set_nodelay(mut self, nodelay: bool) -> Self {
-        self.options_mut().nodelay = nodelay;
+        self.options.nodelay = nodelay;
         self
     }
 
     /// Sets the socket send buffer size (`SO_SNDBUF`).
     #[inline]
     pub(crate) fn set_send_buffer_size(mut self, size: Option<usize>) -> Self {
-        self.options_mut().send_buffer_size = size;
+        self.options.send_buffer_size = size;
         self
     }
 
     /// Sets the socket receive buffer size (`SO_RCVBUF`).
     #[inline]
     pub(crate) fn set_recv_buffer_size(mut self, size: Option<usize>) -> Self {
-        self.options_mut().recv_buffer_size = size;
+        self.options.recv_buffer_size = size;
         self
     }
 
     /// Sets `SO_REUSEADDR` on each socket. Defaults to `false`.
     #[inline]
     pub(crate) fn set_reuse_address(mut self, reuse_address: bool) -> Self {
-        self.options_mut().reuse_address = reuse_address;
+        self.options.reuse_address = reuse_address;
         self
     }
 
     /// Sets `SO_LINGER`. The default, `None`, leaves the socket option unchanged.
     #[inline]
     pub(crate) fn set_linger(mut self, linger: Option<Duration>) -> Self {
-        self.options_mut().linger = linger;
+        self.options.linger = linger;
         self
     }
 
@@ -164,7 +174,7 @@ impl<R> TcpConnector<R> {
     ) -> Self {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         {
-            self.options_mut().tcp_user_timeout = time;
+            self.options.tcp_user_timeout = time;
         }
         self
     }
@@ -174,7 +184,7 @@ impl<R> TcpConnector<R> {
     /// See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305.html#section-5).
     #[inline]
     pub(crate) fn set_happy_eyeballs_timeout(mut self, dur: Option<Duration>) -> Self {
-        self.options_mut().connect_options.happy_eyeballs_timeout = dur;
+        self.options.connect_options.happy_eyeballs_timeout = dur;
         self
     }
 
@@ -182,61 +192,45 @@ impl<R> TcpConnector<R> {
     /// Defaults to `None`; any keepalive option supported by the platform enables `SO_KEEPALIVE`.
     #[inline]
     pub(crate) fn set_keepalive(mut self, time: Option<Duration>) -> Self {
-        self.options_mut().keepalive = time;
+        self.options.keepalive = time;
         self
     }
 
     /// Sets the interval between unanswered TCP keepalive probes.
     #[inline]
     pub(crate) fn set_keepalive_interval(mut self, interval: Option<Duration>) -> Self {
-        self.options_mut().keepalive_interval = interval;
+        self.options.keepalive_interval = interval;
         self
     }
 
     /// Sets how many unanswered TCP keepalive probes cause the connection to fail.
     #[inline]
     pub(crate) fn set_keepalive_retries(mut self, retries: Option<u32>) -> Self {
-        self.options_mut().keepalive_retries = retries;
+        self.options.keepalive_retries = retries;
         self
     }
 
-    /// Sets the local addresses and interface of each socket.
+    /// Sets the client's local addresses and interface for each socket.
     #[inline]
     pub(crate) fn set_bind_options(mut self, bind_options: &BindOptions) -> Self {
-        self.options_mut().bind_options = bind_options.clone();
+        self.options.bind_options = bind_options.clone();
         self
     }
-}
 
-impl<R> Service<Uri> for TcpConnector<R>
-where
-    R: DnsResolver + Clone + Send + Sync + 'static,
-    R::Future: Send,
-{
-    type Response = BoxConnection;
-    type Error = ConnectError;
-    type Future = BoxFuture<'static, Result<BoxConnection, ConnectError>>;
-
+    /// Attaches the resolver and freezes the socket settings.
     #[inline]
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.resolver.poll_ready(cx).map_err(ConnectError::dns)
-    }
-
-    fn call(&mut self, dst: Uri) -> Self::Future {
-        let mut this = self.clone();
-
-        Box::pin(async move {
-            let (host, port) = get_host_port(&this.options, &dst)?;
-            let addrs = resolve(host, port, dst.port().is_some(), |name| {
-                dns::resolve(&mut this.resolver, name)
-            })
-            .await?;
-            connect(addrs, &this.options, this.runtime).await
-        })
+    pub(crate) fn build(self, resolver: DynResolver) -> TcpConnector {
+        TcpConnector {
+            inner: Arc::new(Inner {
+                options: self.options,
+                resolver,
+                runtime: self.runtime,
+            }),
+        }
     }
 }
 
-fn get_host_port<'u>(options: &TcpOptions, dst: &'u Uri) -> Result<(&'u str, u16), ConnectError> {
+fn get_host_port(dst: &Uri) -> Result<(&str, u16), ConnectError> {
     trace!(
         "Http::connect; scheme={:?}, host={:?}, port={:?}",
         dst.scheme(),
@@ -244,15 +238,7 @@ fn get_host_port<'u>(options: &TcpOptions, dst: &'u Uri) -> Result<(&'u str, u16
         dst.port(),
     );
 
-    if options.enforce_http {
-        if dst.scheme() != Some(&Scheme::HTTP) {
-            return Err(ConnectError {
-                msg: INVALID_NOT_HTTP,
-                addr: None,
-                cause: None,
-            });
-        }
-    } else if dst.scheme().is_none() {
+    if dst.scheme().is_none() {
         return Err(ConnectError {
             msg: INVALID_MISSING_SCHEME,
             addr: None,
@@ -288,15 +274,17 @@ fn get_host_port<'u>(options: &TcpOptions, dst: &'u Uri) -> Result<(&'u str, u16
 async fn connect(
     addrs: dns::SocketAddrs,
     options: &TcpOptions,
-    runtime: DynRuntime,
+    bind_options: &BindOptions,
+    nodelay: bool,
+    runtime: &DynRuntime,
 ) -> Result<BoxConnection, ConnectError> {
     options
         .connect_options
         .connect(
             addrs,
-            &options.bind_options,
+            bind_options,
             |addr| {
-                connect_socket(&addr, options, &runtime)
+                connect_socket(&addr, options, bind_options, nodelay, runtime)
                     .map(|future| future.map_err(ConnectError::m("tcp connect error")))
             },
             |duration| runtime.sleep(duration),
@@ -335,6 +323,8 @@ fn bind_local_address(
 fn connect_socket(
     addr: &SocketAddr,
     options: &TcpOptions,
+    bind_options: &BindOptions,
+    nodelay: bool,
     runtime: &DynRuntime,
 ) -> Result<Connecting, ConnectError> {
     use socket2::{Domain, Protocol, Socket, Type};
@@ -366,7 +356,7 @@ fn connect_socket(
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    if let Some(interface) = &options.bind_options.interface {
+    if let Some(interface) = &bind_options.interface {
         super::bind_interface(&socket, *addr, interface)
             .map_err(ConnectError::m("tcp bind interface error"))?;
     }
@@ -381,8 +371,8 @@ fn connect_socket(
     bind_local_address(
         &socket,
         addr,
-        &options.bind_options.ipv4_address,
-        &options.bind_options.ipv6_address,
+        &bind_options.ipv4_address,
+        &bind_options.ipv6_address,
     )
     .map_err(ConnectError::m("tcp bind local error"))?;
 
@@ -410,7 +400,7 @@ fn connect_socket(
         warn!("tcp set_recv_buffer_size error: {_e}");
     }
 
-    if let Err(_e) = socket.set_tcp_nodelay(options.nodelay) {
+    if let Err(_e) = socket.set_tcp_nodelay(nodelay) {
         warn!("tcp set_tcp_nodelay error: {_e}");
     }
 

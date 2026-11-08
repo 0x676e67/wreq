@@ -1,6 +1,7 @@
 //! Connector composition, established connections and response metadata.
-//! [`layer`] handles proxy tunnels, stream TLS and the connection deadline;
-//! [`transport`] handles dialing and QUIC endpoints. Protocol pools live in the client.
+//! [`ConnectorBuilder`] stacks [`layer`] middleware (deadline, proxy routes, stream TLS) on the
+//! [`transport`] dialers with `ServiceBuilder`, as the client does. Protocol pools live in the
+//! client.
 
 pub(crate) mod config;
 pub(crate) mod request;
@@ -29,40 +30,33 @@ use ::http::{Extensions, HeaderMap, HeaderValue};
 use btls::x509::X509Ref;
 use bytes::Bytes;
 use config::ConfigSet;
-use futures_util::future::BoxFuture;
 use layer::{
     proxy::{ProxyConnector, ProxyLayer},
-    timeout::TimeoutFuture,
+    timeout::{Timeout, TimeoutLayer},
 };
 use pin_project_lite::pin_project;
 use request::ConnectRequest;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::{
-    BoxError, Layer, Service, ServiceBuilder, ServiceExt, service_fn,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
+    BoxError, Layer, ServiceBuilder, ServiceExt,
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either},
 };
-use transport::{BindOptions, SocketConnector};
+use transport::{BindOptions, SocketConnector, TcpConnectorBuilder};
 #[cfg(feature = "http3")]
 use {
-    crate::{
-        error::{ProxyConnect, ProxyMismatch},
-        protocol::TransportKind,
-        proxy::{Intercepted, quic_port},
-    },
+    crate::protocol::TransportKind,
     btls::x509::X509,
-    layer::proxy::{intercept, quic::masque},
+    layer::proxy::quic::{QuicProxyConnector, QuicProxyLayer},
     std::ops::Deref,
-    transport::QuicConnector,
+    transport::{QuicConnector, Transports},
 };
-#[cfg(all(feature = "http3", feature = "socks"))]
-use {layer::proxy::quic::socks, transport::TcpConnector};
 
 use crate::{
     dns::DynResolver,
     error::map_timeout_to_connector_error,
     proxy::{Matcher as ProxyMatcher, matcher::Intercept},
-    rt::{DynRuntime, Timer as _},
+    rt::DynRuntime,
     tls::{AlpnProtocol, TlsInfo, config::TlsBuilder, connector::MaybeHttpsStream},
 };
 
@@ -73,6 +67,24 @@ pub type BoxedTransportConnector = BoxCloneSyncService<Unnameable, Conn, BoxErro
 pub type BoxedConnectorLayer =
     BoxCloneSyncServiceLayer<BoxedTransportConnector, Unnameable, Conn, BoxError>;
 
+cfg_select! {
+    feature = "http3" => {
+        /// The built-in transports, selected by the transport the request's protocol runs over.
+        type Direct =
+            Transports<ProxyConnector<SocketConnector>, QuicProxyConnector<QuicConnector>>;
+    }
+    _ => {
+        /// The built-in stream transport.
+        type Direct = ProxyConnector<SocketConnector>;
+    }
+}
+
+/// Establishes stream and QUIC transports under one connection deadline.
+/// Without user layers the built-in transports are called directly; user layers see them
+/// behind [`Unnameable`]. Clones share the transports' state.
+pub(crate) type Connector =
+    Timeout<Either<Direct, BoxCloneSyncService<ConnectRequest, Conn, BoxError>>>;
+
 /// Client settings for proxy selection, tracing and post-handshake socket policy.
 /// Request-specific bindings and protocol configuration travel in [`ConnectRequest`].
 #[derive(Clone)]
@@ -81,35 +93,6 @@ pub(crate) struct Config {
     pub verbose: bool,
     pub nodelay: bool,
     pub tls_info: bool,
-}
-
-/// Establishes stream and QUIC transports under one connection deadline.
-/// The deadline starts when the connector is called, after readiness waits, and covers any
-/// user layers, proxy setup and the transport handshakes. Clones share the transports.
-#[derive(Clone)]
-pub(crate) struct Connector {
-    stack: Stack,
-    timeout: Option<Duration>,
-    runtime: DynRuntime,
-}
-
-/// The built-in transports, called directly or through user connector layers.
-#[derive(Clone)]
-enum Stack {
-    Direct(Arc<Direct>),
-    Layered(BoxedTransportConnector),
-}
-
-/// Built-in transports, selected by the transport the request's protocol runs over.
-struct Direct {
-    stream: ProxyConnector<SocketConnector>,
-    #[cfg(feature = "http3")]
-    quic: QuicConnector,
-    #[cfg(feature = "http3")]
-    proxies: Arc<Vec<ProxyMatcher>>,
-    /// Dials the TCP control connections of SOCKS5 UDP associations.
-    #[cfg(all(feature = "http3", feature = "socks"))]
-    tcp: TcpConnector<DynResolver>,
 }
 
 /// Builds the stream and QUIC paths from common client settings.
@@ -124,16 +107,12 @@ pub(crate) struct ConnectorBuilder {
     layers: Vec<BoxedConnectorLayer>,
 }
 
-// ===== impl Connector =====
+// ===== impl ConnectorBuilder =====
 
-impl Connector {
+impl ConnectorBuilder {
     /// Starts configuring both transports with common runtime, TLS and connection policy.
-    pub(crate) fn builder(
-        runtime: DynRuntime,
-        tls: TlsBuilder,
-        config: Config,
-    ) -> ConnectorBuilder {
-        ConnectorBuilder {
+    pub(crate) fn new(runtime: DynRuntime, tls: TlsBuilder, config: Config) -> Self {
+        Self {
             runtime,
             tls,
             config,
@@ -142,83 +121,7 @@ impl Connector {
             layers: Vec::new(),
         }
     }
-}
 
-impl Service<ConnectRequest> for Connector {
-    type Response = Conn;
-    type Error = BoxError;
-    type Future = TimeoutFuture<BoxFuture<'static, Result<Conn, BoxError>>>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match &mut self.stack {
-            Stack::Direct(_) => Poll::Ready(Ok(())),
-            Stack::Layered(service) => service.poll_ready(cx),
-        }
-    }
-
-    fn call(&mut self, request: ConnectRequest) -> Self::Future {
-        let future = match &mut self.stack {
-            Stack::Direct(direct) => direct.connect(request),
-            Stack::Layered(service) => service.call(Unnameable(request)),
-        };
-        let sleep = self.timeout.map(|timeout| self.runtime.sleep(timeout));
-        TimeoutFuture::new(future, sleep)
-    }
-}
-
-// ===== impl Direct =====
-
-impl Direct {
-    /// Starts one attempt over the request's transport; the future shares the transports.
-    fn connect(
-        self: &Arc<Self>,
-        request: ConnectRequest,
-    ) -> BoxFuture<'static, Result<Conn, BoxError>> {
-        #[cfg(feature = "http3")]
-        if request.resolved_protocol().transport() == TransportKind::Quic {
-            let direct = self.clone();
-            return Box::pin(async move { direct.connect_quic(request).await });
-        }
-        self.stream.connect(request)
-    }
-
-    /// Connects over QUIC directly, through a `quic://` MASQUE proxy, or through SOCKS5 UDP.
-    /// Other proxy routes fail before DNS.
-    #[cfg(feature = "http3")]
-    async fn connect_quic(&self, request: ConnectRequest) -> Result<Conn, BoxError> {
-        let proxy = match intercept(&request, &self.proxies) {
-            None => return self.quic.connect(&request).await,
-            #[cfg(feature = "socks")]
-            Some(Intercepted::Proxy(proxy))
-                if matches!(proxy.uri().scheme_str(), Some("socks5" | "socks5h")) =>
-            {
-                let mut tcp = self.tcp.clone();
-                if let Some(bind_options) = request.bind_options() {
-                    tcp = tcp.set_bind_options(bind_options);
-                }
-                return socks::connect(&self.quic, tcp, request, proxy).await;
-            }
-            Some(Intercepted::Proxy(proxy)) if proxy.uri().scheme_str() == Some("quic") => proxy,
-            Some(_) => {
-                return Err(ProxyMismatch(
-                    "HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature",
-                )
-                .into());
-            }
-        };
-
-        // Environment proxy entries reach this point without builder validation.
-        if let Err(message) = quic_port(proxy.uri()) {
-            return Err(ProxyConnect::Message(message).into());
-        }
-
-        masque::connect(&self.quic, request, proxy).await
-    }
-}
-
-// ===== impl ConnectorBuilder =====
-
-impl ConnectorBuilder {
     /// Sets the deadline of each connector call, covering user layers and both transports.
     #[inline]
     pub(crate) fn connect_timeout(mut self, timeout: Option<Duration>) -> Self {
@@ -244,12 +147,11 @@ impl ConnectorBuilder {
     /// QUIC endpoints remain lazy until a connection future is polled.
     pub(crate) fn build(
         self,
-        tcp: transport::TcpConnector<()>,
+        tcp: TcpConnectorBuilder,
         resolver: DynResolver,
         config_set: ConfigSet,
     ) -> Result<Connector, crate::Error> {
         let tcp = tcp
-            .enforce_http(false)
             .set_bind_options(&self.bind_options)
             .build(resolver.clone());
 
@@ -262,47 +164,53 @@ impl ConnectorBuilder {
                 .build(resolver.clone())?
         };
 
-        // The QUIC fields clone their state before the stream stack takes it.
-        let direct = Arc::new(Direct {
-            #[cfg(feature = "http3")]
-            quic,
-            #[cfg(feature = "http3")]
-            proxies: self.config.proxies.clone(),
-            #[cfg(all(feature = "http3", feature = "socks"))]
-            tcp: tcp.clone(),
-            stream: {
-                let tls = self.tls.build(config_set)?;
-                ServiceBuilder::new()
-                    .layer(ProxyLayer::new(self.config, tls, resolver))
-                    .service(SocketConnector::new(
-                        #[cfg(unix)]
-                        self.runtime.clone(),
-                        tcp,
-                    ))
-            },
-        });
+        let socket = SocketConnector::new(
+            #[cfg(unix)]
+            self.runtime.clone(),
+            tcp,
+        );
 
-        let stack = if self.layers.is_empty() {
-            Stack::Direct(direct)
+        #[cfg(feature = "http3")]
+        let quic = ServiceBuilder::new()
+            .layer(QuicProxyLayer::new(
+                self.config.proxies.clone(),
+                #[cfg(feature = "socks")]
+                socket.clone(),
+            ))
+            .service(quic);
+
+        let stream = ServiceBuilder::new()
+            .layer(ProxyLayer::new(
+                self.config,
+                self.tls.build(config_set)?,
+                resolver,
+            ))
+            .service(socket);
+
+        #[cfg(feature = "http3")]
+        let direct = Transports::new(stream, quic);
+        #[cfg(not(feature = "http3"))]
+        let direct = stream;
+
+        let service = if self.layers.is_empty() {
+            Either::Left(direct)
         } else {
             let service = self.layers.iter().fold(
-                BoxCloneSyncService::new(service_fn(move |Unnameable(request)| {
-                    direct.connect(request)
-                })),
+                BoxCloneSyncService::new(direct.map_request(|Unnameable(request)| request)),
                 |service, layer| layer.layer(service),
             );
             // The connector's deadline also covers user layers; this maps a tower timeout
             // supplied among them.
-            Stack::Layered(BoxCloneSyncService::new(
-                service.map_err(map_timeout_to_connector_error),
+            Either::Right(BoxCloneSyncService::new(
+                service
+                    .map_err(map_timeout_to_connector_error)
+                    .map_request(Unnameable),
             ))
         };
 
-        Ok(Connector {
-            stack,
-            timeout: self.connect_timeout,
-            runtime: self.runtime,
-        })
+        Ok(ServiceBuilder::new()
+            .layer(TimeoutLayer::new(self.connect_timeout, self.runtime))
+            .service(service))
     }
 }
 
@@ -899,17 +807,21 @@ mod tests {
                 nodelay: false,
                 tls_info: false,
             };
-            let connector = Connector::builder(runtime.clone(), TlsBuilder::new(), config)
+            let connector = ConnectorBuilder::new(runtime.clone(), TlsBuilder::new(), config)
                 .build(
-                    transport::TcpConnector::new(runtime.clone()).set_happy_eyeballs_timeout(delay),
+                    transport::TcpConnector::builder(runtime.clone())
+                        .set_happy_eyeballs_timeout(delay),
                     DynResolver::new(Arc::new(NoDns)),
                     ConfigSet::default(),
                 )
                 .unwrap();
-            let Stack::Direct(direct) = &connector.stack else {
+            let Either::Left(direct) = &connector.inner else {
                 panic!("a connector without layers dials directly");
             };
-            assert_eq!(direct.quic.connect_options().happy_eyeballs_timeout, delay);
+            assert_eq!(
+                direct.quic.inner.connect_options().happy_eyeballs_timeout,
+                delay
+            );
         }
     }
 
@@ -943,9 +855,9 @@ mod tests {
                 nodelay: false,
                 tls_info: false,
             };
-            let connector = Connector::builder(runtime.clone(), TlsBuilder::new(), config)
+            let connector = ConnectorBuilder::new(runtime.clone(), TlsBuilder::new(), config)
                 .build(
-                    transport::TcpConnector::new(runtime.clone()),
+                    transport::TcpConnector::builder(runtime.clone()),
                     DynResolver::new(Arc::new(NoDns)),
                     ConfigSet::default(),
                 )

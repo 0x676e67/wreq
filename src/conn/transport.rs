@@ -1,5 +1,6 @@
-//! Shared socket bindings, address resolution and connection scheduling for transports.
-//! TCP and Unix open byte streams; QUIC also manages TLS handshakes and endpoints.
+//! Leaf transports and their shared socket bindings, address resolution and scheduling.
+//! [`SocketConnector`] dials TCP and Unix streams; `QuicConnector` dials QUIC and manages TLS
+//! handshakes and endpoints. With `http3`, `Transports` routes each request to one of them.
 //! Proxy handshakes and tunnel sockets live in [`super::layer::proxy`].
 //!
 //! DNS completes before racing addresses. With Happy Eyeballs enabled, families
@@ -15,18 +16,6 @@ mod quic;
 mod socket;
 mod tcp;
 
-#[cfg(all(test, feature = "http3"))]
-pub(crate) use quic::test_server_config;
-#[cfg(feature = "http3")]
-pub(crate) use quic::{QuicConnector, TUNNEL_MTU};
-pub(crate) use socket::{SocketConnector, SocketRequest};
-pub(crate) use tcp::TcpConnector;
-#[cfg(unix)]
-pub use uds::UnixConnector;
-
-#[cfg(unix)]
-mod uds;
-
 use std::{
     collections::VecDeque,
     error::Error as StdError,
@@ -39,12 +28,32 @@ use std::{
     time::Duration,
 };
 
+#[cfg(all(test, feature = "http3"))]
+pub(crate) use quic::test_server_config;
+#[cfg(feature = "http3")]
+pub(crate) use quic::{QuicConnector, TUNNEL_MTU};
+pub(crate) use socket::{SocketConnector, SocketRequest};
+pub(crate) use tcp::{TcpConnector, TcpConnectorBuilder};
+#[cfg(feature = "http3")]
+use {
+    super::request::ConnectRequest, crate::protocol::TransportKind, futures_util::future::Either,
+    std::task::ready, tower::Service,
+};
+
 use crate::{
     dns::{self, SocketAddrs},
     error::BoxError,
 };
 
 const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
+
+/// Routes each request to the stream or QUIC transport its protocol runs over.
+#[cfg(feature = "http3")]
+#[derive(Clone)]
+pub(crate) struct Transports<S, Q> {
+    pub(in crate::conn) stream: S,
+    pub(in crate::conn) quic: Q,
+}
 
 /// Timing policy shared by TCP and QUIC address attempts.
 #[derive(Clone, Copy)]
@@ -134,6 +143,38 @@ where
             })
             .collect(),
     ))
+}
+
+// ===== impl Transports =====
+
+#[cfg(feature = "http3")]
+impl<S, Q> Transports<S, Q> {
+    pub(crate) fn new(stream: S, quic: Q) -> Self {
+        Self { stream, quic }
+    }
+}
+
+#[cfg(feature = "http3")]
+impl<S, Q> Service<ConnectRequest> for Transports<S, Q>
+where
+    S: Service<ConnectRequest>,
+    Q: Service<ConnectRequest, Response = S::Response, Error = S::Error>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = Either<S::Future, Q::Future>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        ready!(self.stream.poll_ready(cx))?;
+        self.quic.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: ConnectRequest) -> Self::Future {
+        match request.resolved_protocol().transport() {
+            TransportKind::Stream => Either::Left(self.stream.call(request)),
+            TransportKind::Quic => Either::Right(self.quic.call(request)),
+        }
+    }
 }
 
 // ===== impl ConnectOptions =====
@@ -561,7 +602,7 @@ mod tests {
     };
 
     use futures_util::{FutureExt, poll};
-    use tower::service_fn;
+    use tower::{Service, service_fn};
 
     use super::*;
 
@@ -603,7 +644,7 @@ mod tests {
             ))
         });
         for (host, expected) in [("127.0.0.1", V4), ("[::1]", V6)] {
-            let addrs = resolve(host, 443, false, |name| dns::resolve(&mut resolver, name))
+            let addrs = resolve(host, 443, false, |name| resolver.call(name))
                 .await
                 .unwrap()
                 .collect::<Vec<_>>();
@@ -611,13 +652,11 @@ mod tests {
         }
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         for (port, explicit, expected) in [(443, false, [8443, 443]), (444, true, [444, 444])] {
-            let ports = resolve("example.test", port, explicit, |name| {
-                dns::resolve(&mut resolver, name)
-            })
-            .await
-            .unwrap()
-            .map(|addr| addr.port())
-            .collect::<Vec<_>>();
+            let ports = resolve("example.test", port, explicit, |name| resolver.call(name))
+                .await
+                .unwrap()
+                .map(|addr| addr.port())
+                .collect::<Vec<_>>();
             assert_eq!(ports, expected);
         }
         assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -626,12 +665,10 @@ mod tests {
                 io::ErrorKind::NotFound,
             )))
         });
-        let error = resolve("example.test", 443, false, |name| {
-            dns::resolve(&mut failed, name)
-        })
-        .await
-        .err()
-        .unwrap();
+        let error = resolve("example.test", 443, false, |name| failed.call(name))
+            .await
+            .err()
+            .unwrap();
         assert_eq!(error.msg, "dns error");
         assert_eq!(
             error.cause.unwrap().downcast::<io::Error>().unwrap().kind(),

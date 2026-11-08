@@ -68,7 +68,8 @@ use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Protocol, Proxy,
     conn::{
-        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connector, Unnameable,
+        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connector, ConnectorBuilder,
+        Unnameable,
         config::ConfigSet,
         transport::{self, BindOptions},
     },
@@ -492,7 +493,7 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let tcp = transport::TcpConnector::new(self.runtime.clone())
+            let tcp = transport::TcpConnector::builder(self.runtime.clone())
                 .set_keepalive(self.config.tcp_keepalive)
                 .set_keepalive_interval(self.config.tcp_keepalive_interval)
                 .set_keepalive_retries(self.config.tcp_keepalive_retries)
@@ -524,7 +525,7 @@ impl ClientBuilder {
                     nodelay: self.config.tcp_nodelay,
                     tls_info: self.config.tls_info,
                 };
-                Connector::builder(self.runtime.clone(), tls, config)
+                ConnectorBuilder::new(self.runtime.clone(), tls, config)
                     .connect_timeout(self.config.connect_timeout)
                     .bind_options(self.config.bind_options.clone())
                     .layers(self.config.connector_layers)

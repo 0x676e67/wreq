@@ -15,10 +15,7 @@ mod resolve;
 pub(crate) mod hickory;
 
 pub use self::resolve::{Addrs, IntoResolve, Name, Resolve, Resolving};
-pub(crate) use self::{
-    resolve::{DynResolver, OverrideResolver},
-    sealed::{DnsResolver, resolve},
-};
+pub(crate) use self::resolve::{DynResolver, OverrideResolver};
 
 /// Address iterator with IP parsing and address-family selection for connection attempts.
 pub(crate) struct SocketAddrs {
@@ -94,57 +91,6 @@ impl Iterator for SocketAddrs {
     #[inline]
     fn next(&mut self) -> Option<SocketAddr> {
         self.iter.next()
-    }
-}
-
-mod sealed {
-    use std::{
-        future::Future,
-        net::SocketAddr,
-        task::{self, Poll},
-    };
-
-    use tower::{BoxError, Service};
-
-    use super::Name;
-
-    /// Connector DNS interface, implemented by Tower services.
-    /// Custom [`super::Resolve`] implementations use the [`super::DynResolver`] adapter.
-    pub trait DnsResolver {
-        type Addrs: Iterator<Item = SocketAddr>;
-        type Error: Into<BoxError>;
-        type Future: Future<Output = Result<Self::Addrs, Self::Error>>;
-
-        fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>>;
-        fn resolve(&mut self, name: Name) -> Self::Future;
-    }
-
-    /// Automatic implementation for any Tower [`Service`] that resolves names to socket addresses.
-    impl<S> DnsResolver for S
-    where
-        S: Service<Name>,
-        S::Response: Iterator<Item = SocketAddr>,
-        S::Error: Into<BoxError>,
-    {
-        type Addrs = S::Response;
-        type Error = S::Error;
-        type Future = S::Future;
-
-        fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-            Service::poll_ready(self, cx)
-        }
-
-        fn resolve(&mut self, name: Name) -> Self::Future {
-            Service::call(self, name)
-        }
-    }
-
-    pub async fn resolve<R>(resolver: &mut R, name: Name) -> Result<R::Addrs, R::Error>
-    where
-        R: DnsResolver,
-    {
-        std::future::poll_fn(|cx| resolver.poll_ready(cx)).await?;
-        resolver.resolve(name).await
     }
 }
 

@@ -1,11 +1,14 @@
 //! TCP and Unix proxy handshakes, shared proxy selection and target TLS.
 //! Every stream route ends in one place that finishes TLS and builds the [`Conn`].
-//! With `http3`, the `quic` submodule carries QUIC through MASQUE and SOCKS5 UDP tunnels.
+//! With `http3`, the `quic` submodule routes QUIC through MASQUE and SOCKS5 UDP tunnels.
 
 #[cfg(feature = "http3")]
 pub(crate) mod quic;
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use futures_util::future::BoxFuture;
 use http::Uri;
@@ -27,7 +30,7 @@ use crate::{
     tls::connector::{HttpsConnector, HttpsLayer, MaybeHttpsStream},
 };
 
-/// Adds proxy selection, proxy handshakes and target TLS around a socket service.
+/// Middleware layer to use [`ProxyConnector`].
 /// Clones share the client's proxy rules and connection policy.
 #[derive(Clone)]
 pub(crate) struct ProxyLayer {
@@ -38,7 +41,8 @@ pub(crate) struct ProxyLayer {
 
 /// Establishes a direct socket, a forward-proxy connection, or a proxy tunnel,
 /// then finishes target TLS and returns the stream for the HTTP/1 or HTTP/2 pool.
-/// Each attempt waits for readiness on the socket service instance it calls.
+/// Each call moves the readied socket service into its attempt.
+#[derive(Clone)]
 pub(crate) struct ProxyConnector<S> {
     inner: S,
     config: Arc<Config>,
@@ -133,6 +137,7 @@ impl ProxyLayer {
 impl<S> Layer<S> for ProxyLayer {
     type Service = ProxyConnector<S>;
 
+    #[inline(always)]
     fn layer(&self, inner: S) -> Self::Service {
         ProxyConnector {
             inner,
@@ -145,18 +150,24 @@ impl<S> Layer<S> for ProxyLayer {
 
 // ===== impl ProxyConnector =====
 
-impl<S> ProxyConnector<S>
+impl<S> Service<ConnectRequest> for ProxyConnector<S>
 where
     S: Service<SocketRequest, Response = BoxConnection> + Clone + Send + 'static,
     S::Error: Into<BoxError>,
     S::Future: Send + Unpin + 'static,
 {
-    /// Starts one attempt through a shared reference; the future owns what it needs.
-    pub(crate) fn connect(
-        &self,
-        req: ConnectRequest,
-    ) -> BoxFuture<'static, Result<Conn, BoxError>> {
+    type Response = Conn;
+    type Error = BoxError;
+    type Future = BoxFuture<'static, Result<Conn, BoxError>>;
+
+    #[inline(always)]
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, req: ConnectRequest) -> Self::Future {
         let inner = self.inner.clone();
+        let inner = std::mem::replace(&mut self.inner, inner);
         let config = self.config.clone();
         let tls = self.tls.clone();
         #[cfg(feature = "socks")]

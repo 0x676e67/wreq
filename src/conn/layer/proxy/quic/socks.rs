@@ -29,9 +29,11 @@ use crate::{
     conn::{
         Conn,
         request::ConnectRequest,
-        transport::{self, BindOptions, ConnectError, QuicConnector, TUNNEL_MTU, TcpConnector},
+        transport::{
+            self, BindOptions, ConnectError, QuicConnector, SocketConnector, SocketRequest,
+            TUNNEL_MTU,
+        },
     },
-    dns::DynResolver,
     error::ProxyConnect,
     proxy::matcher::Intercept,
     rt::{BoxConnection, Timer as _},
@@ -98,7 +100,7 @@ pin_project! {
 /// Resolves SOCKS5 targets locally or delegates SOCKS5h target names to the proxy.
 pub(crate) async fn connect(
     quic: &QuicConnector,
-    tcp: TcpConnector<DynResolver>,
+    socket: SocketConnector,
     request: ConnectRequest,
     proxy: Intercept,
 ) -> Result<Conn, BoxError> {
@@ -113,7 +115,7 @@ pub(crate) async fn connect(
             Ok(ip) => Address::Ip((ip, port).into()),
             Err(_) => Address::Domain(host.into(), port),
         };
-        return Ok(connect_target(quic, tcp, &request, &proxy, &config, target).await?);
+        return Ok(connect_target(quic, socket, &request, &proxy, &config, target).await?);
     }
 
     let addresses = transport::resolve(host, port, uri.port().is_some(), |name| {
@@ -131,7 +133,7 @@ pub(crate) async fn connect(
                 let target = Address::Ip(address);
                 let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
                     quic,
-                    tcp.clone(),
+                    socket.clone(),
                     &request,
                     &proxy,
                     &config,
@@ -148,14 +150,21 @@ pub(crate) async fn connect(
 /// Errors name the stage that failed; those of the proxy's stages are proxy connect errors.
 async fn connect_target(
     quic: &QuicConnector,
-    tcp: TcpConnector<DynResolver>,
+    socket: SocketConnector,
     request: &ConnectRequest,
     proxy: &Intercept,
     config: &QuicConfig,
     target: Address,
 ) -> Result<Conn, ConnectError> {
-    let io = tcp
-        .oneshot(proxy.uri().clone())
+    // The control connection takes the request's bindings, like the relay socket.
+    let io = socket
+        .oneshot(SocketRequest {
+            uri: proxy.uri().clone(),
+            #[cfg(unix)]
+            unix: None,
+            bind_options: request.bind_options().clone(),
+            secure: false,
+        })
         .await
         .map_err(proxy_error(PROXY_CONNECT_ERROR))?;
 
