@@ -102,7 +102,8 @@ async fn respond(connection: quic::Connection) -> h3::Connection {
 
 #[tokio::test]
 async fn http3_tickets_resume_across_contexts_and_preserve_client_scope() {
-    // Cover both the shared client context and request contexts rebuilt for each connection.
+    // Cover both the shared client context and a request context, which the second
+    // connection takes from the cache.
     for request_options in [false, true] {
         // After rotation, a full handshake fails trust validation; only resumption works.
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();

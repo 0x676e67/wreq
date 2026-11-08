@@ -16,7 +16,7 @@ use quic::{
 
 use super::{
     AlpnProtocol, AlpsProtocol, TlsVersion,
-    config::Config,
+    config::{Config, ContextCache},
     ext::{SslContextBuilderExt as _, set_ech_grease_host},
     session::{Key, SessionStore, SessionTarget},
 };
@@ -25,35 +25,33 @@ use crate::{
     conn::{
         config::{ConfigSet, Overrides},
         request::ConnectRequest,
-        transport::TUNNEL_MTU,
     },
     protocol::TransportKind,
     quic::QuicOptions,
     sync::Mutex,
 };
 
-/// Builds per-connection QUIC configurations from shared client TLS policy.
-/// Different request context options are compiled for each connection attempt.
+/// Builds per-connection QUIC TLS configurations from shared client TLS policy.
+/// Different request context options are compiled once and cached.
 #[derive(Clone)]
 pub(crate) struct TlsConfig(Arc<Inner>);
 
-/// Client policy, QUIC options, compiled TLS context and transport configuration.
+/// Client policy, QUIC options and compiled TLS contexts.
 struct Inner {
     config: Config,
     config_set: ConfigSet,
     options: Option<Arc<QuicOptions>>,
-    context: QuicClientConfig,
-    transport: Arc<TransportConfig>,
-    proxy_transport: Arc<TransportConfig>,
+    contexts: ContextCache<QuicClientConfig>,
 }
 
 /// The QUIC configuration of one connection, shared by its address race.
-/// Each handshake attempt starts from its own [`client`](Self::client) configuration.
+/// Each handshake attempt starts from its own [`client`](Self::client) configuration; the
+/// connector sets the transport and token store.
 pub(crate) struct QuicConfig {
     crypto: Arc<QuicClientConfig>,
     handshake: Arc<Handshake>,
     resumption: Option<Arc<Resumption>>,
-    transport: Arc<TransportConfig>,
+    transport: Option<Arc<TransportConfig>>,
     tokens: Option<Arc<dyn TokenStore>>,
 }
 
@@ -90,47 +88,27 @@ struct Attempt {
 impl TlsConfig {
     pub(super) fn new(config: Config, config_set: ConfigSet) -> Result<Self> {
         let options = config_set.get_arc::<QuicOptions>();
-        let context = compile(&config, options.as_deref())?;
-        let transport = match options.as_deref() {
-            Some(options) => Arc::new(options.transport()?),
-            None => Arc::new(TransportConfig::default()),
-        };
-        let proxy_transport = Arc::new(proxy_transport(options.as_deref())?);
+        let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self(Arc::new(Inner {
             config,
             config_set,
             options,
-            context,
-            transport,
-            proxy_transport,
+            contexts,
         })))
     }
 
-    /// Returns the MASQUE proxy transport for `request`, built from the same QUIC options as
-    /// its TLS; the client's is reused unless the request changes transport fields.
-    pub(crate) fn proxy_transport(&self, request: &ConnectRequest) -> Result<Arc<TransportConfig>> {
-        let inner = &*self.0;
-        match (
-            request.config_override::<QuicOptions>(),
-            inner.options.as_deref(),
-        ) {
-            (Some(requested), Some(client)) if requested.same_transport(client) => {
-                Ok(inner.proxy_transport.clone())
-            }
-            (Some(requested), _) => proxy_transport(Some(requested)).map(Arc::new),
-            (None, _) => Ok(inner.proxy_transport.clone()),
-        }
+    /// Returns the client's QUIC options.
+    #[inline]
+    pub(crate) fn options(&self) -> Option<&QuicOptions> {
+        self.0.options.as_deref()
     }
 
-    /// Returns the QUIC configuration of one connection for `request`.
+    /// Returns the QUIC TLS configuration of one connection for `request`.
     ///
     /// QUIC always negotiates TLS 1.3, so a client capped below it fails here rather than
-    /// when it is built. A tunnel fixes the inner MTU while its outer path discovers its own.
-    pub(crate) fn config(
-        &self,
-        request: &ConnectRequest,
-        tunnel_mtu: Option<u16>,
-    ) -> Result<QuicConfig> {
+    /// when it is built. Contexts are shared, so each connection installs its SSL callback on
+    /// its own copy.
+    pub(crate) fn config(&self, request: &ConnectRequest) -> Result<QuicConfig> {
         let inner = &*self.0;
         if inner
             .config
@@ -145,14 +123,13 @@ impl TlsConfig {
             &inner.config_set,
             TransportKind::Quic,
         );
-        let mut crypto = if overrides.is_empty() {
-            inner.context.clone()
-        } else {
-            compile(&inner.config, overrides.get::<QuicOptions>())?
-        };
+        let mut crypto = inner.contexts.get(overrides, |overrides| {
+            compile(&inner.config, overrides.get::<QuicOptions>())
+        })?;
 
-        let requested = request.config_override_arc::<QuicOptions>();
-        let options = requested.clone().or_else(|| inner.options.clone());
+        let options = request
+            .config_override_arc::<QuicOptions>()
+            .or_else(|| inner.options.clone());
         let resumption = options
             .as_ref()
             .is_some_and(|options| options.pre_shared_key);
@@ -183,31 +160,11 @@ impl TlsConfig {
             None
         };
 
-        let transport = if let Some(mtu) = tunnel_mtu {
-            let mut transport = requested
-                .as_deref()
-                .or(inner.options.as_deref())
-                .map_or_else(|| Ok(TransportConfig::default()), QuicOptions::transport)?;
-            // The tunnel's outer path owns MTU discovery; preserve other transport options.
-            transport
-                .initial_mtu(mtu)
-                .min_mtu(mtu)
-                .mtu_discovery_config(None);
-            Arc::new(transport)
-        } else {
-            match (requested.as_deref(), inner.options.as_deref()) {
-                (Some(requested), Some(client)) if requested.same_transport(client) => {
-                    inner.transport.clone()
-                }
-                (Some(requested), _) => Arc::new(requested.transport()?),
-                (None, _) => inner.transport.clone(),
-            }
-        };
         Ok(QuicConfig {
             crypto: Arc::new(crypto),
             handshake,
             resumption,
-            transport,
+            transport: None,
             tokens: None,
         })
     }
@@ -226,7 +183,9 @@ impl QuicConfig {
             None => self.crypto.clone(),
         };
         let mut client = quic::ClientConfig::new(crypto);
-        client.transport_config(self.transport.clone());
+        if let Some(transport) = &self.transport {
+            client.transport_config(transport.clone());
+        }
         if let Some(tokens) = &self.tokens {
             client.token_store(tokens.clone());
         }
@@ -236,7 +195,7 @@ impl QuicConfig {
     /// Sets the transport configuration of every attempt.
     #[inline]
     pub(crate) fn transport_config(&mut self, transport: Arc<TransportConfig>) {
-        self.transport = transport;
+        self.transport = Some(transport);
     }
 
     /// Sets the address validation token store of every attempt.
@@ -299,33 +258,6 @@ impl Handshake {
                 let _ = self.rejected.set(error.clone());
             })
     }
-}
-
-/// Outer MTU fitting a tunneled 1200-byte datagram: QUIC short header (1 + 20-byte CID + 4),
-/// AEAD tag (16), DATAGRAM frame (9), Quarter Stream ID (8) and Context ID (1), at most.
-const PROXY_MTU: u16 = TUNNEL_MTU + 59;
-
-/// Smallest frame limit a MASQUE proxy connection keeps. The QUIC stack also bounds buffered
-/// datagrams by this limit, so it must hold a burst of tunnel packets, not one or two.
-const PROXY_DATAGRAM_BUFFER: u64 = 16 * PROXY_MTU as u64;
-
-/// Builds a MASQUE proxy transport from client options. Its Datagrams carry the tunnel and
-/// cannot be fragmented, so the path MTU starts at and never drops below one that fits them,
-/// even after a black hole reset
-/// ([RFC 9298 Section 6.1](https://www.rfc-editor.org/rfc/rfc9298.html#section-6.1)); a frame
-/// limit too small for a burst of them falls back to the default.
-fn proxy_transport(options: Option<&QuicOptions>) -> Result<TransportConfig> {
-    let mut options = options.cloned().unwrap_or_default();
-    if options
-        .max_datagram_frame_size
-        .is_some_and(|size| size < PROXY_DATAGRAM_BUFFER)
-    {
-        options.max_datagram_frame_size = None;
-    }
-    let mut transport = options.transport()?;
-    // The initial MTU is raised to this floor as well.
-    transport.min_mtu(PROXY_MTU);
-    Ok(transport)
 }
 
 /// Compiles a QUIC context from the client policy and the context options of `options`.
@@ -444,23 +376,54 @@ impl SessionCache for Attempt {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn proxy_transport_keeps_room_for_tunnel_datagrams() {
-        use super::*;
+    #[tokio::test]
+    async fn cached_contexts_take_a_callback_per_connection() {
+        use std::net::Ipv4Addr;
 
-        // The frame limit is advertised as is; only one too small for a burst is replaced.
-        for (size, advertised) in [(1500, 1_250_000), (65_536, 65_536)] {
-            let options = QuicOptions::builder().max_datagram_frame_size(size).build();
-            let transport = format!("{:?}", proxy_transport(Some(&options)).unwrap());
+        use btls::ssl::SslContextRef;
+        use http::Uri;
+
+        use super::*;
+        use crate::{
+            Protocol,
+            tls::{KeyShare, config::TlsBuilder},
+        };
+
+        // The key share is not among the curves, so the SSL callback of each connection fails.
+        let request = |grease: Option<bool>| {
+            let mut config_set = ConfigSet::default();
+            if let Some(grease) = grease {
+                config_set.insert(
+                    QuicOptions::builder()
+                        .curves_list("X25519")
+                        .key_shares(vec![KeyShare::P256])
+                        .grease_enabled(grease)
+                        .build(),
+                );
+            }
+            let uri = Uri::from_static("https://localhost/");
+            ConnectRequest::test(uri, Some(Protocol::Http3), config_set)
+        };
+        let tls = TlsBuilder::new().build_quic(ConfigSet::default()).unwrap();
+        let [client, first, second, other] = [None, Some(false), Some(false), Some(true)]
+            .map(|grease| tls.config(&request(grease)).unwrap());
+        let context = |config: &QuicConfig| -> *const SslContextRef { &**config.crypto.ctx() };
+        // Equal context options hit the cache; others compile their own context.
+        assert_eq!(context(&first), context(&second));
+        assert_ne!(context(&first), context(&other));
+        assert_ne!(context(&first), context(&client));
+
+        // The cached context carries no callback, so each connection records its own rejection.
+        let endpoint = quic::Endpoint::client((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+        let address = endpoint.local_addr().unwrap();
+        for config in [&first, &second] {
+            assert!(config.rejected().is_none());
             assert!(
-                transport.contains(&format!("datagram_receive_buffer_size: Some({advertised})")),
-                "{transport}"
+                endpoint
+                    .connect_with(config.client(), address, "localhost")
+                    .is_err()
             );
-            // A black hole reset keeps the path MTU large enough for a tunnel packet.
-            assert!(
-                transport.contains(&format!("min_mtu: {PROXY_MTU},")),
-                "{transport}"
-            );
+            assert!(config.rejected().is_some());
         }
     }
 

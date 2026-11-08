@@ -10,7 +10,9 @@ use std::{
     sync::Arc,
 };
 
-use ::quic::{AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokenStore};
+use ::quic::{
+    AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokenStore, TransportConfig,
+};
 use bytes::Bytes;
 use futures_util::future::{self, BoxFuture, Either};
 use http::Uri;
@@ -26,6 +28,7 @@ use crate::{
         request::{ConnectRequest, ConnectionKey},
     },
     dns::{DynResolver, SocketAddrs},
+    quic::QuicOptions,
     rt::{DynRuntime, Timer as _},
     sync::Mutex,
     tls::quic::{QuicConfig, TlsConfig},
@@ -42,6 +45,8 @@ pub(crate) struct QuicConnector {
     tls_info: bool,
     connect_options: ConnectOptions,
     bind_options: BindOptions,
+    transport: Arc<TransportConfig>,
+    proxy_transport: Arc<TransportConfig>,
     endpoints: Arc<Endpoints>,
     tokens: Arc<Tokens>,
 }
@@ -55,6 +60,17 @@ pub(crate) struct QuicConnectorBuilder {
     tls_info: bool,
     bind_options: BindOptions,
     connect_options: ConnectOptions,
+}
+
+/// The route of one QUIC connection, which selects its transport.
+#[derive(Clone, Copy)]
+enum Path {
+    /// To the origin over UDP.
+    Direct,
+    /// To a MASQUE proxy, whose Datagrams carry a tunnel.
+    Proxy,
+    /// To the origin over a proxy tunnel.
+    Tunnel,
 }
 
 /// Lazily binds each address family independently, allowing fallback if one fails.
@@ -81,6 +97,14 @@ struct ScopedTokens {
 /// UDP payload a tunnel must carry for QUIC, which pads client Initial datagrams to 1200 bytes
 /// ([RFC 9000 Section 14.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-14.1)).
 pub(crate) const TUNNEL_MTU: u16 = 1200;
+
+/// Outer MTU fitting a tunneled 1200-byte datagram: QUIC short header (1 + 20-byte CID + 4),
+/// AEAD tag (16), DATAGRAM frame (9), Quarter Stream ID (8) and Context ID (1), at most.
+const PROXY_MTU: u16 = TUNNEL_MTU + 59;
+
+/// Smallest frame limit a MASQUE proxy connection keeps. The QUIC stack also bounds buffered
+/// datagrams by this limit, so it must hold a burst of tunnel packets, not one or two.
+const PROXY_DATAGRAM_BUFFER: u64 = 16 * PROXY_MTU as u64;
 
 const TOKEN_KEYS: NonZeroUsize =
     NonZeroUsize::new(256).expect("token key capacity must be non-zero");
@@ -301,7 +325,7 @@ impl QuicConnector {
 
     /// Connects to the request's route directly and retains the connection's endpoint.
     pub(crate) async fn connect(&self, request: &ConnectRequest) -> Result<Conn, BoxError> {
-        let config = self.config(request, None)?;
+        let config = self.config(request, Path::Direct)?;
         let bind_options = self.merged_bind_options(request);
         let (connection, endpoint) = self
             .dial(
@@ -323,8 +347,8 @@ impl QuicConnector {
     ) -> Result<(Connection, Endpoint), BoxError> {
         let mut config = self
             .tls
-            .config(&request.clone().with_route_uri(uri.clone()), None)?;
-        config.transport_config(self.tls.proxy_transport(request)?);
+            .config(&request.clone().with_route_uri(uri.clone()))?;
+        config.transport_config(self.transport(request, Path::Proxy)?);
         let bind_options = self.merged_bind_options(request);
         self.dial(uri, &bind_options, &config, false).await
     }
@@ -332,7 +356,7 @@ impl QuicConnector {
     /// Returns the target's configuration over a tunnel, built before the tunnel so a local
     /// configuration error costs no proxy setup.
     pub(crate) fn tunnel_config(&self, request: &ConnectRequest) -> Result<QuicConfig, BoxError> {
-        self.config(request, Some(TUNNEL_MTU))
+        self.config(request, Path::Tunnel)
     }
 
     /// Authenticates the target over an established UDP tunnel and retains its endpoint.
@@ -421,18 +445,34 @@ impl QuicConnector {
             .await?)
     }
 
-    /// Attaches single-use address tokens to the original target's TLS configuration.
-    fn config(
-        &self,
-        request: &ConnectRequest,
-        tunnel_mtu: Option<u16>,
-    ) -> Result<QuicConfig, BoxError> {
-        let mut config = self.tls.config(request, tunnel_mtu)?;
+    /// Attaches the transport of `path` and single-use address tokens to the original
+    /// target's TLS configuration.
+    fn config(&self, request: &ConnectRequest, path: Path) -> Result<QuicConfig, BoxError> {
+        let mut config = self.tls.config(request)?;
+        config.transport_config(self.transport(request, path)?);
         config.token_store(Arc::new(ScopedTokens {
             tokens: self.tokens.clone(),
             key: request.key(),
         }));
         Ok(config)
+    }
+
+    /// Returns the transport of `path` for `request`. The client's is reused unless the
+    /// request changes transport options; a tunnel's is built for each connection.
+    fn transport(
+        &self,
+        request: &ConnectRequest,
+        path: Path,
+    ) -> crate::Result<Arc<TransportConfig>> {
+        let client = self.tls.options();
+        let requested = request
+            .config_override::<QuicOptions>()
+            .filter(|requested| !client.is_some_and(|client| requested.same_transport(client)));
+        match (path, requested) {
+            (Path::Direct, None) => Ok(self.transport.clone()),
+            (Path::Proxy, None) => Ok(self.proxy_transport.clone()),
+            (path, requested) => path.transport(requested.or(client)).map(Arc::new),
+        }
     }
 
     fn connection(&self, connection: Connection, endpoint: Endpoint) -> Result<Conn, BoxError> {
@@ -502,20 +542,67 @@ impl QuicConnectorBuilder {
         self
     }
 
-    /// Attaches the resolver and creates the shared transport state.
-    #[inline]
-    pub(crate) fn build(self, resolver: DynResolver) -> QuicConnector {
-        QuicConnector {
+    /// Attaches the resolver, builds the client's transports from its QUIC options and
+    /// creates the shared transport state.
+    pub(crate) fn build(self, resolver: DynResolver) -> crate::Result<QuicConnector> {
+        let options = self.tls.options();
+        let transport = Arc::new(Path::Direct.transport(options)?);
+        let proxy_transport = Arc::new(Path::Proxy.transport(options)?);
+        Ok(QuicConnector {
             runtime: self.runtime,
             resolver,
             tls: self.tls,
             tls_info: self.tls_info,
             connect_options: self.connect_options,
             bind_options: self.bind_options,
+            transport,
+            proxy_transport,
             endpoints: Arc::default(),
             tokens: Arc::new(Tokens(Mutex::new(LruCache::sparse(TOKEN_KEYS)))),
+        })
+    }
+}
+
+// ===== impl Path =====
+
+impl Path {
+    /// Builds this path's transport from the QUIC options in effect.
+    fn transport(self, options: Option<&QuicOptions>) -> crate::Result<TransportConfig> {
+        match self {
+            Path::Direct => {
+                options.map_or_else(|| Ok(TransportConfig::default()), QuicOptions::transport)
+            }
+            Path::Proxy => proxy_transport(options),
+            Path::Tunnel => {
+                let mut transport = Path::Direct.transport(options)?;
+                // The tunnel's outer path owns MTU discovery; preserve other transport options.
+                transport
+                    .initial_mtu(TUNNEL_MTU)
+                    .min_mtu(TUNNEL_MTU)
+                    .mtu_discovery_config(None);
+                Ok(transport)
+            }
         }
     }
+}
+
+/// Builds a MASQUE proxy transport from client options. Its Datagrams carry the tunnel and
+/// cannot be fragmented, so the path MTU starts at and never drops below one that fits them,
+/// even after a black hole reset
+/// ([RFC 9298 Section 6.1](https://www.rfc-editor.org/rfc/rfc9298.html#section-6.1)); a frame
+/// limit too small for a burst of them falls back to the default.
+fn proxy_transport(options: Option<&QuicOptions>) -> crate::Result<TransportConfig> {
+    let mut options = options.cloned().unwrap_or_default();
+    if options
+        .max_datagram_frame_size
+        .is_some_and(|size| size < PROXY_DATAGRAM_BUFFER)
+    {
+        options.max_datagram_frame_size = None;
+    }
+    let mut transport = options.transport()?;
+    // The initial MTU is raised to this floor as well.
+    transport.min_mtu(PROXY_MTU);
+    Ok(transport)
 }
 
 // ===== impl ScopedTokens =====
@@ -643,6 +730,7 @@ mod tests {
             .unwrap();
         QuicConnector::builder(DynRuntime::new(TokioRuntime), tls, false)
             .build(DynResolver::new(resolver))
+            .unwrap()
     }
 
     fn current(slot: &Mutex<Option<Endpoint>>) -> Endpoint {
@@ -1005,5 +1093,31 @@ mod tests {
             matches!(error, ::quic::ConnectionError::TimedOut),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn path_transports_fit_tunnel_packets() {
+        let transport = |path: Path, options: &QuicOptions| {
+            format!("{:?}", path.transport(Some(options)).unwrap())
+        };
+        for (size, advertised) in [(1500, 1_250_000), (65_536, 65_536)] {
+            let options = QuicOptions::builder().max_datagram_frame_size(size).build();
+            // The proxy's frame limit is advertised as is; only one too small for a burst is
+            // replaced. A black hole reset keeps the path MTU large enough for a tunnel packet.
+            let proxy = transport(Path::Proxy, &options);
+            let datagrams = format!("datagram_receive_buffer_size: Some({advertised})");
+            assert!(proxy.contains(&datagrams), "{proxy}");
+            assert!(proxy.contains(&format!("min_mtu: {PROXY_MTU},")), "{proxy}");
+            // A tunnel fixes its MTU, leaving discovery to the outer path, and keeps the rest.
+            let tunnel = transport(Path::Tunnel, &options);
+            let datagrams = format!("datagram_receive_buffer_size: Some({size})");
+            let mtu = format!(
+                "initial_mtu: {TUNNEL_MTU}, min_mtu: {TUNNEL_MTU}, mtu_discovery_config: None,"
+            );
+            assert!(
+                tunnel.contains(&datagrams) && tunnel.contains(&mtu),
+                "{tunnel}"
+            );
+        }
     }
 }

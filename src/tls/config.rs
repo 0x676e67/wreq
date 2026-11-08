@@ -1,8 +1,9 @@
-//! Client TLS construction settings for TCP, Unix and QUIC.
+//! Client TLS construction settings and compiled contexts for TCP, Unix and QUIC.
 
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 
 use btls::ssl::{SslContextBuilder, SslVerifyMode};
+use lru::LruCache;
 
 use super::{
     TlsVersion, connector,
@@ -11,7 +12,11 @@ use super::{
     session::{SessionStore, TlsSessionStore},
     trust::{CertStore, Identity},
 };
-use crate::{Error, conn::config::ConfigSet};
+use crate::{
+    Error,
+    conn::config::{ConfigSet, Overrides},
+    sync::Mutex,
+};
 
 /// Client settings used to build TLS connection services and QUIC configurations.
 /// The minimum version applies to TCP/Unix. QUIC checks the maximum version against
@@ -35,6 +40,20 @@ pub(super) struct Config {
 pub(crate) struct TlsBuilder {
     config: Config,
 }
+
+/// The client's compiled TLS context and the most recently used request contexts, keyed by
+/// the request's context [`Overrides`].
+///
+/// Contexts are stored without per-connection callbacks or session caches; each connection
+/// sets its own on a copy.
+pub(super) struct ContextCache<T> {
+    client: T,
+    requests: Mutex<LruCache<Overrides, T>>,
+}
+
+/// Request contexts kept per client, least recently used evicted first.
+const REQUEST_CONTEXTS: NonZeroUsize =
+    NonZeroUsize::new(16).expect("request context capacity must be non-zero");
 
 // ===== impl Config =====
 
@@ -184,5 +203,37 @@ impl TlsBuilder {
     #[cfg(feature = "http3")]
     pub(crate) fn build_quic(self, config_set: ConfigSet) -> crate::Result<super::quic::TlsConfig> {
         super::quic::TlsConfig::new(self.config, config_set)
+    }
+}
+
+// ===== impl ContextCache =====
+
+impl<T: Clone> ContextCache<T> {
+    /// Starts with the client's context and no request contexts.
+    pub(super) fn new(client: T) -> Self {
+        Self {
+            client,
+            requests: Mutex::new(LruCache::sparse(REQUEST_CONTEXTS)),
+        }
+    }
+
+    /// Returns the client's context when `overrides` is empty, and otherwise the request's.
+    /// A missing request context is compiled outside the lock, so concurrent misses may
+    /// compile it more than once.
+    pub(super) fn get(
+        &self,
+        overrides: Overrides,
+        compile: impl FnOnce(&Overrides) -> crate::Result<T>,
+    ) -> crate::Result<T> {
+        if overrides.is_empty() {
+            return Ok(self.client.clone());
+        }
+        if let Some(context) = self.requests.lock().get(&overrides) {
+            return Ok(context.clone());
+        }
+        let context = compile(&overrides)?;
+        // An evicted context is freed after the lock is released.
+        let _evicted = self.requests.lock().push(overrides, context.clone());
+        Ok(context)
     }
 }

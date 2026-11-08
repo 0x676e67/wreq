@@ -20,7 +20,7 @@ use tokio_btls::SslStream;
 use tower::{BoxError, Service};
 
 use super::{
-    config::Config,
+    config::{Config, ContextCache},
     ext::{SslContextBuilderExt, set_ech_grease_host},
 };
 use crate::{
@@ -38,19 +38,19 @@ use crate::{
 const URI_MISSING_HOST: &str = "URI missing host";
 
 /// Provides shared TLS state for HTTPS connection services.
-/// Clones share the client policy and its compiled context.
-/// Different request context options are compiled for each connection attempt.
+/// Clones share the client policy and its compiled contexts.
+/// Different request context options are compiled once and cached.
 #[derive(Clone)]
 pub struct HttpsLayer {
     inner: Arc<Inner>,
 }
 
-/// Client TLS policy and its compiled context.
+/// Client TLS policy and its compiled contexts.
 struct Inner {
     config: Config,
     config_set: ConfigSet,
     options: Option<Arc<TlsOptions>>,
-    context: SslConnector,
+    contexts: ContextCache<SslConnector>,
 }
 
 /// Applies TLS to a route unless it is plain HTTP.
@@ -78,13 +78,13 @@ impl HttpsLayer {
     /// Compiles the client's TLS context while preserving the shared session scope.
     pub(super) fn new(config: Config, config_set: ConfigSet) -> crate::Result<Self> {
         let options = config_set.get_arc::<TlsOptions>();
-        let context = compile(&config, options.as_deref())?;
+        let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
                 config_set,
                 options,
-                context,
+                contexts,
             }),
         })
     }
@@ -98,11 +98,9 @@ impl HttpsLayer {
             &inner.config_set,
             TransportKind::Stream,
         );
-        let context = if overrides.is_empty() {
-            inner.context.clone()
-        } else {
-            compile(&inner.config, overrides.get::<TlsOptions>())?
-        };
+        let context = inner.contexts.get(overrides, |overrides| {
+            compile(&inner.config, overrides.get::<TlsOptions>())
+        })?;
         Ok(HttpsConnector {
             inner: (),
             tls: self,

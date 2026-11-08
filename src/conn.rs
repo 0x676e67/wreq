@@ -261,7 +261,7 @@ impl ConnectorBuilder {
             QuicConnector::builder(self.runtime.clone(), tls, self.config.tls_info)
                 .bind_options(self.bind_options)
                 .connect_options(tcp.connect_options())
-                .build(resolver.clone())
+                .build(resolver.clone())?
         };
 
         // The QUIC fields clone their state before the stream stack takes it.
