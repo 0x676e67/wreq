@@ -1454,7 +1454,7 @@ dependencies = [
 [[package]]
 name = "http3"
 version = "0.2.0"
-source = "git+https://github.com/0x676e67/http3?rev=41cee7a8166ba681847505f87ad61bfcab517473#41cee7a8166ba681847505f87ad61bfcab517473"
+source = "git+https://github.com/0x676e67/http3?rev=5bd394f3dfb8bc63591627a229c34c02caadc3af#5bd394f3dfb8bc63591627a229c34c02caadc3af"
 dependencies = [
  "bytes",
  "fastrand",
@@ -1469,7 +1469,7 @@ dependencies = [
 [[package]]
 name = "http3-datagram"
 version = "0.2.0"
-source = "git+https://github.com/0x676e67/http3?rev=41cee7a8166ba681847505f87ad61bfcab517473#41cee7a8166ba681847505f87ad61bfcab517473"
+source = "git+https://github.com/0x676e67/http3?rev=5bd394f3dfb8bc63591627a229c34c02caadc3af#5bd394f3dfb8bc63591627a229c34c02caadc3af"
 dependencies = [
  "bytes",
  "http3",
@@ -1478,7 +1478,7 @@ dependencies = [
 [[package]]
 name = "http3-quic"
 version = "0.2.0"
-source = "git+https://github.com/0x676e67/http3?rev=41cee7a8166ba681847505f87ad61bfcab517473#41cee7a8166ba681847505f87ad61bfcab517473"
+source = "git+https://github.com/0x676e67/http3?rev=5bd394f3dfb8bc63591627a229c34c02caadc3af#5bd394f3dfb8bc63591627a229c34c02caadc3af"
 dependencies = [
  "bytes",
  "futures-util",
@@ -2026,7 +2026,7 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 [[package]]
 name = "netty"
 version = "0.2.5"
-source = "git+https://github.com/0x676e67/netty?rev=4ed398237e7e329725c7da41b4c58e52b4956c21#4ed398237e7e329725c7da41b4c58e52b4956c21"
+source = "git+https://github.com/0x676e67/netty?rev=0e1e53c0d9e500b253361cf6997559c44d7717b5#0e1e53c0d9e500b253361cf6997559c44d7717b5"
 dependencies = [
  "bytes",
  "futures-channel",

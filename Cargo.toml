@@ -390,13 +390,14 @@ required-features = ["http2", "tokio-rt"]
 
 [patch.crates-io]
 # Remove once an http3 release includes the connection-wide pseudo-header order, the
-# SETTINGS order builders and the SETTINGS value checks. Its QUIC adapter and Datagram
-# crates must match its revision.
-http3 = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
-http3-datagram = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
-http3-quic = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
+# SETTINGS order builders, the SETTINGS value checks and the client's critical streams
+# opened by the connection driver. Its QUIC adapter and Datagram crates must match its
+# revision.
+http3 = { git = "https://github.com/0x676e67/http3", rev = "5bd394f3dfb8bc63591627a229c34c02caadc3af" }
+http3-datagram = { git = "https://github.com/0x676e67/http3", rev = "5bd394f3dfb8bc63591627a229c34c02caadc3af" }
+http3-quic = { git = "https://github.com/0x676e67/http3", rev = "5bd394f3dfb8bc63591627a229c34c02caadc3af" }
 quic = { git = "https://github.com/0x676e67/quic", rev = "b3d74044e874c5e785f462e3032faaf021cb6958" }
-netty = { git = "https://github.com/0x676e67/netty", rev = "4ed398237e7e329725c7da41b4c58e52b4956c21" }
+netty = { git = "https://github.com/0x676e67/netty", rev = "0e1e53c0d9e500b253361cf6997559c44d7717b5" }
 # Remove once an http2 release includes `Connection::extended_connect_protocol`, ignores
 # content-length on 1xx responses and on 2xx responses to CONNECT, adds the preface PING and
 # its timeout, custom PING payloads, read activity, client GOAWAY,

@@ -143,11 +143,6 @@ pub struct Config {
 
     /// Delay policy applied before starting a new connection.
     pub(super) strategy: PoolStrategy,
-
-    /// Deadline of the HTTP/3 connect and handshake, which the transport timeout alone does not
-    /// cover.
-    #[cfg(feature = "http3")]
-    pub(super) http3_connect_timeout: Option<Duration>,
 }
 
 // ===== impl Config =====
@@ -166,8 +161,6 @@ impl Default for Config {
             max_idle_per_host: usize::MAX,
             max_size: None,
             strategy: PoolStrategy::default(),
-            #[cfg(feature = "http3")]
-            http3_connect_timeout: None,
         }
     }
 }
@@ -278,10 +271,6 @@ struct PoolTargeter<C> {
     http2: Arc<conn::http2::Builder<DynRuntime>>,
     #[cfg(feature = "http3")]
     http3: Arc<conn::http3::Builder<DynRuntime>>,
-
-    /// Deadline of each HTTP/3 connect and handshake.
-    #[cfg(feature = "http3")]
-    http3_connect_timeout: Option<Duration>,
 }
 
 /// Applies the request's counted `O` override to a copy of the client's builder.
@@ -353,8 +342,6 @@ where
                 http2: Arc::new(http2),
                 #[cfg(feature = "http3")]
                 http3: Arc::new(http3),
-                #[cfg(feature = "http3")]
-                http3_connect_timeout: config.http3_connect_timeout,
             };
 
             PoolInner {
@@ -638,7 +625,6 @@ where
                     connect.connector,
                     configure(&self.http3, req, conn::http3::Builder::options),
                     connect.runtime,
-                    self.http3_connect_timeout,
                 )),
                 state,
                 #[cfg(test)]

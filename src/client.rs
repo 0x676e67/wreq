@@ -440,11 +440,8 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            // The request stack inherits the client's bindings and bounds HTTP/3 setup by the
-            // connect timeout as well.
+            // The request stack inherits the client's bindings.
             let bind_options = self.config.connect.bind_options.clone();
-            #[cfg(feature = "http3")]
-            let connect_timeout = self.config.connect.connect_timeout;
             let connector = Connector::new(
                 self.config.connect,
                 self.runtime.clone(),
@@ -464,10 +461,6 @@ impl ClientBuilder {
                 .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
                 .pool_max_size(self.config.pool_max_size)
                 .pool_strategy(self.config.pool_strategy)
-                .http3_connect_timeout(
-                    #[cfg(feature = "http3")]
-                    connect_timeout,
-                )
                 .build(connector)
         };
 
@@ -906,13 +899,11 @@ impl ClientBuilder {
 
     /// Set a timeout for only the connect phase of a `Client`.
     ///
-    /// The timeout covers DNS resolution, the complete TCP address race,
-    /// proxy tunneling, and the TLS handshake. For HTTP/3 it covers DNS
-    /// resolution, proxy setup, the QUIC handshake and opening the HTTP/3
-    /// control and QPACK streams.
+    /// The timeout covers connection establishment for every protocol: connector layers,
+    /// proxies, DNS resolution, the TCP address race and TLS handshake, or the QUIC handshake.
+    /// The HTTP/3 handshake itself does not wait for the server.
     ///
-    /// Default is `None`, which leaves these steps without a deadline: an HTTP/3 server that
-    /// withholds stream credit can then stall a new connection and the requests waiting for it.
+    /// Default is `None`.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.connect.connect_timeout = Some(timeout);
@@ -1718,25 +1709,6 @@ mod sealed {
         #[inline]
         pub fn pool_strategy(mut self, strategy: PoolStrategy) -> Self {
             self.pool_config.strategy = strategy;
-            self
-        }
-
-        /// Sets the deadline for a new HTTP/3 connection, starting once the connector is ready.
-        /// It covers the connector call and the HTTP/3 handshake that opens the control and
-        /// QPACK streams; the connector's own deadline covers only its call. Defaults to `None`.
-        #[inline]
-        pub fn http3_connect_timeout(
-            #[cfg_attr(
-                not(feature = "http3"),
-                expect(unused_mut, reason = "Only the http3 feature mutates this builder")
-            )]
-            mut self,
-            #[cfg(feature = "http3")] timeout: Option<Duration>,
-        ) -> Self {
-            #[cfg(feature = "http3")]
-            {
-                self.pool_config.http3_connect_timeout = timeout;
-            }
             self
         }
 

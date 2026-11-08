@@ -87,23 +87,27 @@ async fn connect_timeout() {
     assert!(err.is_timeout());
 }
 
-/// The connect timeout also covers opening the HTTP/3 control and QPACK streams, which needs
-/// the server's unidirectional stream credit
-/// ([RFC 9114 Section 6.2](https://www.rfc-editor.org/rfc/rfc9114.html#section-6.2)).
+/// A server that withholds unidirectional stream credit, which the client's HTTP/3 control and
+/// QPACK streams need
+/// ([RFC 9114 Section 6.2](https://www.rfc-editor.org/rfc/rfc9114.html#section-6.2)), does not
+/// stall connection setup: the request is sent, and its timeout bounds the missing response.
 #[cfg(feature = "http3")]
 #[tokio::test]
-async fn connect_timeout_covers_http3_setup() {
+async fn http3_setup_does_not_wait_for_stream_credit() {
     use support::h3;
 
     let mut transport = quic::TransportConfig::default();
     transport.max_concurrent_uni_streams(0u32.into());
     let endpoint = h3::endpoint(&h3::Certificate::new("127.0.0.1"), Some(transport));
     let addr = endpoint.local_addr().unwrap();
+    // Takes the request stream and never answers.
     let server = tokio::spawn(async move {
         let connection = endpoint.accept().await.unwrap().await.unwrap();
-        connection.closed().await
+        let request = connection.accept_bi().await.unwrap();
+        (connection, request)
     });
 
+    // A stalled setup would end with the shorter connect timeout instead.
     let client = Client::builder_tokio()
         .no_proxy()
         .http3_only()
@@ -113,13 +117,16 @@ async fn connect_timeout_covers_http3_setup() {
         .unwrap();
     let err = tokio::time::timeout(
         Duration::from_secs(10),
-        client.get(format!("https://{addr}/")).send(),
+        client
+            .get(format!("https://{addr}/"))
+            .timeout(Duration::from_secs(1))
+            .send(),
     )
     .await
-    .expect("the connect timeout must end HTTP/3 setup")
+    .expect("the request timeout must end the request")
     .unwrap_err();
-    assert!(err.is_connect() && err.is_timeout(), "{err:?}");
-    // The QUIC handshake completed; dropping the stalled setup closes the connection.
+    assert!(err.is_timeout() && !err.is_connect(), "{err:?}");
+    // The request reached the server.
     tokio::time::timeout(Duration::from_secs(5), server)
         .await
         .unwrap()
