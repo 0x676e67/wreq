@@ -151,8 +151,6 @@ impl Service<ConnectRequest> for Connector {
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match &mut self.stack {
-            // The built-in transports are always ready; user layers reserve capacity here,
-            // before the deadline starts.
             Stack::Direct(_) => Poll::Ready(Ok(())),
             Stack::Layered(service) => service.poll_ready(cx),
         }
