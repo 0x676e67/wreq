@@ -33,6 +33,11 @@ use pin_project_lite::pin_project;
 pub(crate) use self::handle::DynRuntime;
 use crate::dns::Resolve;
 
+#[cfg(unix)]
+const UNSUPPORTED_UNIX_SOCKETS: &str = "runtime does not support Unix domain sockets";
+#[cfg(feature = "http3")]
+const UNSUPPORTED_UDP_SOCKETS: &str = "runtime does not support UDP sockets";
+
 /// Longest delay [`deadline_after`] adds: about 30 years, Tokio's far-future deadline.
 const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
 
@@ -72,7 +77,7 @@ pub trait Runtime: Timer + Send + Sync + Debug + 'static {
     fn connect_unix(&self, _path: Arc<std::path::Path>) -> Connecting {
         Box::pin(std::future::ready(Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "runtime does not support Unix domain sockets",
+            UNSUPPORTED_UNIX_SOCKETS,
         ))))
     }
 
@@ -87,7 +92,7 @@ pub trait Runtime: Timer + Send + Sync + Debug + 'static {
     fn udp_socket(&self, _socket: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "runtime does not support UDP sockets",
+            UNSUPPORTED_UDP_SOCKETS,
         ))
     }
 }
