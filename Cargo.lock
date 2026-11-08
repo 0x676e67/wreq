@@ -1434,7 +1434,7 @@ dependencies = [
 [[package]]
 name = "http2"
 version = "0.5.20"
-source = "git+https://github.com/0x676e67/http2?rev=328f5c3245df5af3b0fbcd5ae4054ed77c55d8ef#328f5c3245df5af3b0fbcd5ae4054ed77c55d8ef"
+source = "git+https://github.com/0x676e67/http2?rev=ce505e52ce9c25fb055412cb39b1caaa7a1f70a8#ce505e52ce9c25fb055412cb39b1caaa7a1f70a8"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2026,7 +2026,7 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 [[package]]
 name = "netty"
 version = "0.2.5"
-source = "git+https://github.com/0x676e67/netty?rev=d2f797b7c244f792f549fc6f37071f642253b06f#d2f797b7c244f792f549fc6f37071f642253b06f"
+source = "git+https://github.com/0x676e67/netty?rev=4ed398237e7e329725c7da41b4c58e52b4956c21#4ed398237e7e329725c7da41b4c58e52b4956c21"
 dependencies = [
  "bytes",
  "futures-channel",

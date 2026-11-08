@@ -2,13 +2,16 @@
 
 mod support;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use futures_util::future::join_all;
 use http::{Response, StatusCode, Version};
 use support::h3;
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::{
+    sync::{Notify, mpsc},
+    task::JoinSet,
+};
 use wreq::{
     Client, ClientBuilder, Emulation,
     http3::{Http3Options, PseudoId, PseudoOrder, SettingId, SettingsOrder},
@@ -195,6 +198,45 @@ async fn http3_redials_after_the_idle_timeout() {
         assert_eq!(response.text().await.unwrap(), "ok");
         assert_eq!(server.connections(), expected);
     }
+}
+
+#[tokio::test]
+async fn http3_keeps_a_connection_with_a_live_body_past_the_idle_timeout() {
+    let certificate = h3::Certificate::new("localhost");
+    let release = Arc::new(Notify::new());
+    let server = h3::Server::serve(h3::endpoint(&certificate, None), false, {
+        let release = release.clone();
+        move |request, mut stream| {
+            let release = release.clone();
+            async move {
+                stream.send_response(Response::new(())).await.unwrap();
+                if request.uri().path() == "/slow" {
+                    release.notified().await;
+                }
+                stream.send_data(Bytes::from_static(b"ok")).await.unwrap();
+                stream.finish().await.unwrap();
+            }
+        }
+    });
+    let client = client(&server, &certificate)
+        .pool_idle_timeout(Duration::from_millis(100))
+        .build()
+        .unwrap();
+    let url = url(&server);
+    let get = async || client.get(&url).send().await.unwrap().text().await.unwrap();
+
+    // A body outliving the idle timeout and a sweep keeps its connection reusable.
+    let slow = client.get(format!("{url}slow")).send().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(get().await, "ok");
+    assert_eq!(server.connections(), 1);
+
+    // Once the body ends, the connection idles out again.
+    release.notify_one();
+    assert_eq!(slow.text().await.unwrap(), "ok");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(get().await, "ok");
+    assert_eq!(server.connections(), 2);
 }
 
 #[tokio::test]

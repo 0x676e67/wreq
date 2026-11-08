@@ -62,6 +62,13 @@ pub(super) trait Entry: Send {
     /// Returns whether this entry retains reusable connection state.
     fn is_retained(&self) -> bool;
 
+    /// Returns whether LRU eviction would remove only idle state.
+    ///
+    /// HTTP/1 drains only idle senders; a shared HTTP/2 or HTTP/3 sender in use is never evicted.
+    fn is_evictable(&self) -> bool {
+        self.is_retained()
+    }
+
     /// Removes reusable state selected by the global idle-group LRU.
     fn evict_retained(&mut self) -> Option<DeferredDrop>;
 
@@ -341,7 +348,7 @@ where
 
     /// Removes a completed sender when poisoned, closed, or expired idle.
     ///
-    /// Pending singleton creation is left untouched. Active sender checkouts are
+    /// Pending singleton creation is left untouched. Connections in use are
     /// kept by [`mux::Connection::is_reusable`].
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
         // Pending checkouts defer idle expiry, never poison or closure checks.
@@ -359,6 +366,11 @@ where
         self.service.has_service_and(|connection| {
             !connection.connected().poisoned() && !connection.is_closed()
         })
+    }
+
+    /// Keeps a sender in use out of eviction, which would split its origin's traffic.
+    fn is_evictable(&self) -> bool {
+        self.is_retained() && !self.service.has_service_and(mux::Connection::is_in_use)
     }
 
     /// Detaches the completed sender selected by the global retained-group LRU.
@@ -460,6 +472,15 @@ where
         !self.service.pending_is_empty()
             || self.service.fallback().has_idle()
             || self.service.upgrade().has_service_and(|_| true)
+    }
+
+    /// Keeps the group while its upgraded sender is in use.
+    fn is_evictable(&self) -> bool {
+        self.is_retained()
+            && !self
+                .service
+                .upgrade()
+                .has_service_and(mux::Connection::is_in_use)
     }
 
     /// Drains every reusable connection while preserving active HTTP/1 work.

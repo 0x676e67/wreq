@@ -396,14 +396,15 @@ http3 = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba6818475
 http3-datagram = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
 http3-quic = { git = "https://github.com/0x676e67/http3", rev = "41cee7a8166ba681847505f87ad61bfcab517473" }
 quic = { git = "https://github.com/0x676e67/quic", rev = "b3d74044e874c5e785f462e3032faaf021cb6958" }
-netty = { git = "https://github.com/0x676e67/netty", rev = "d2f797b7c244f792f549fc6f37071f642253b06f" }
+netty = { git = "https://github.com/0x676e67/netty", rev = "4ed398237e7e329725c7da41b4c58e52b4956c21" }
 # Remove once an http2 release includes `Connection::extended_connect_protocol`, ignores
 # content-length on 1xx responses and on 2xx responses to CONNECT, adds the preface PING and
 # its timeout, custom PING payloads, read activity, client GOAWAY,
 # `Builder::headers_priority`, the DATA and header frame caps and one frame per write, keeps
 # reading while control frames or a GOAWAY wait to be written, limits only consecutive empty
-# DATA frames, and keeps an error GOAWAY reason when closing on idle.
-http2 = { git = "https://github.com/0x676e67/http2", rev = "328f5c3245df5af3b0fbcd5ae4054ed77c55d8ef" }
+# DATA frames, keeps an error GOAWAY reason when closing on idle, and adds
+# `Connection::has_streams`.
+http2 = { git = "https://github.com/0x676e67/http2", rev = "ce505e52ce9c25fb055412cb39b1caaa7a1f70a8" }
 btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
 btls-sys = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
 tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }

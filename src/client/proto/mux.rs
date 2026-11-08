@@ -36,7 +36,7 @@ pub enum Sender {
 ///
 /// The pool singleton stores one instance and gives each checkout a sender
 /// clone. Protocol stream availability remains owned by netty; the local
-/// state records sender checkout only and is not an active-stream count.
+/// state counts sender checkouts, and netty reports which exchanges are live.
 #[derive(Clone)]
 pub struct Connection {
     tx: Sender,
@@ -46,8 +46,8 @@ pub struct Connection {
 }
 
 /// Checkout state shared by every clone of one [`Connection`].
-/// Accounting ends at response headers or checkout cancellation, not stream end.
-/// Bodies and extended `CONNECT` upgrades do not hold this checkout state.
+/// A checkout ends at response headers or cancellation; bodies and extended `CONNECT`
+/// tunnels are tracked by netty instead. `idle_at` is when the connection was last in use.
 struct ConnectionState {
     checkouts: AtomicUsize,
     idle_at: Mutex<Instant>,
@@ -111,6 +111,22 @@ impl Connection {
         }
     }
 
+    /// Returns whether netty reports no live exchange: no response awaited, body unread,
+    /// request body sending or `CONNECT` tunnel open.
+    pub fn is_idle(&self) -> bool {
+        match &self.tx {
+            #[cfg(feature = "http2")]
+            Sender::Http2(tx) => tx.is_idle(),
+            #[cfg(feature = "http3")]
+            Sender::Http3(tx) => tx.is_idle(),
+        }
+    }
+
+    /// Returns whether a checkout is active or netty reports a live exchange.
+    pub fn is_in_use(&self) -> bool {
+        self.state.has_checkouts() || !self.is_idle()
+    }
+
     /// Marks the shared sender checked out until response headers are returned.
     pub fn begin_checkout(&self) {
         self.state.acquire();
@@ -122,14 +138,18 @@ impl Connection {
     }
 
     /// Returns whether the shared sender is healthy and reusable.
+    ///
+    /// A connection in use never idle-expires. With no busy-to-idle signal, seeing it in use
+    /// moves `idle_at` to `now`, so idle time counts from when it was last seen in use.
     pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
-        // TODO(task 9): Replace checkout-only idleness with a full-stream lease
-        // after netty can observe both request and response endpoints,
-        // including HTTP/2 extended CONNECT. Peer max-stream counts alone do
-        // not expose local occupancy: https://github.com/hyperium/hyper/issues/3623
-        !self.connected.poisoned()
-            && !self.is_closed()
-            && (!self.state.is_idle() || !is_expired(self.state.idle_at(), now, timeout))
+        if self.connected.poisoned() || self.is_closed() {
+            return false;
+        }
+        if self.is_in_use() {
+            self.state.touch(now);
+            return true;
+        }
+        !is_expired(self.state.idle_at(), now, timeout)
     }
 }
 
@@ -220,12 +240,18 @@ impl ConnectionState {
         }
     }
 
-    /// Returns whether no sender checkout is active.
-    fn is_idle(&self) -> bool {
-        self.checkouts.load(Ordering::Acquire) == 0
+    /// Returns whether a sender checkout is active.
+    fn has_checkouts(&self) -> bool {
+        self.checkouts.load(Ordering::Acquire) != 0
     }
 
-    /// Returns the last time the final checkout was released.
+    /// Moves the idle start to `now` for a connection seen in use, never backwards.
+    fn touch(&self, now: Instant) {
+        let mut idle_at = self.idle_at.lock();
+        *idle_at = (*idle_at).max(now);
+    }
+
+    /// Returns when the connection was last released or seen in use.
     fn idle_at(&self) -> Instant {
         *self.idle_at.lock()
     }

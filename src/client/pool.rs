@@ -9,7 +9,8 @@
 //! between HTTP/1 and HTTP/2 through [`Negotiate`].
 //!
 //! HTTP/1 senders are exclusive and return only when ready. HTTP/2 and HTTP/3
-//! senders are shared; checkout accounting ends at response headers, not at stream completion.
+//! senders are shared; checkout accounting ends at response headers, while streams netty
+//! reports live keep the connection out of idle expiry and eviction.
 //!
 //! # Checkout flow
 //!
@@ -476,9 +477,11 @@ where
             Some((true, _)) => removed.extend(services.remove_if(key, |_| true)),
             Some((false, true)) => {
                 schedule_expiration = true;
-                let (pruned, evicted) = services.mark_retained(key, |entry| entry.is_retained());
-                // Pruned groups lost reusable state between sweeps, such as a closed
-                // QUIC connection. Idle sweeps may be disabled, so clean them up here.
+                let (pruned, evicted) = services.mark_retained(key, |entry| entry.is_evictable());
+                // Pruned groups lost reusable state between sweeps, such as a closed QUIC
+                // connection, or are in use and so not evicted, as HTTP/1 evicts only idle
+                // senders. Idle sweeps may be disabled, so clean them up here; groups in use
+                // are marked again on their next checkout.
                 if !pruned.is_empty() {
                     let now = self.now();
                     for key in &pruned {

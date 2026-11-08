@@ -1038,9 +1038,10 @@ impl ClientBuilder {
 
     /// Sets the maximum number of compatibility groups retaining reusable connections.
     ///
-    /// Idle HTTP/1 senders and shared HTTP/2 and HTTP/3 senders count toward this limit,
-    /// including shared senders with active requests. Eviction leaves existing
-    /// requests running. This does not limit physical connections; `0` means unlimited.
+    /// Idle HTTP/1 senders and shared HTTP/2 and HTTP/3 senders count toward this limit.
+    /// A full limit evicts the least recently used idle group; a shared sender with a live
+    /// request, body or tunnel is not evicted. This does not limit physical connections;
+    /// `0` means unlimited.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
         self.config.pool_max_size = NonZeroUsize::new(max);

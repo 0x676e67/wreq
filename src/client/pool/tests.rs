@@ -749,12 +749,12 @@ async fn pool_max_size_evicts_only_idle_groups() {
 
 #[tokio::test]
 #[cfg(any(feature = "http2", feature = "http3"))]
-async fn pool_max_size_skips_dead_mux_groups() {
+async fn pool_max_size_skips_dead_and_busy_mux_groups() {
     for (protocol, connector) in [
         #[cfg(feature = "http2")]
         (
             Protocol::Http2,
-            TestConnector::Http2(Arc::default(), Arc::new(tokio::sync::Semaphore::new(3))),
+            TestConnector::Http2(Arc::default(), Arc::new(tokio::sync::Semaphore::new(5))),
         ),
         #[cfg(feature = "http3")]
         (Protocol::Http3, http3_connector()),
@@ -770,8 +770,8 @@ async fn pool_max_size_skips_dead_mux_groups() {
             &ConfigSet::default(),
             true,
         );
-        let [live, dead, next] =
-            ["live", "dead", "next"].map(|name| grouped_request(Group::new(name), protocol));
+        let request = |name| grouped_request(Group::new(name), protocol);
+        let [live, dead, next] = ["live", "dead", "next"].map(request);
         let (live_key, dead_key, next_key) = (live.key(), dead.key(), next.key());
         let checkout = |req| pool.checkout(req, false);
         let retained = |key| {
@@ -797,9 +797,17 @@ async fn pool_max_size_skips_dead_mux_groups() {
         // even though idle sweeps are disabled.
         drop(checkout(next).await.expect("next checkout"));
         assert!(retained(&live_key) && retained(&next_key), "{protocol:?}");
-        let mut services = pool.inner.services.lock();
-        assert!(services.get_mut(&dead_key).is_none());
-        assert_eq!(services.iter_mut().count(), 2);
+        assert!(pool.inner.services.lock().get_mut(&dead_key).is_none());
+        assert_eq!(pool.inner.services.lock().iter_mut().count(), 2);
+
+        // A group in use is pruned, not evicted, even once it is the least recent group:
+        // the full LRU displaces the idle `next` instead.
+        let busy = checkout(request("live")).await.expect("busy checkout");
+        for name in ["first", "second"] {
+            drop(checkout(request(name)).await.expect("idle checkout"));
+        }
+        assert!(retained(&live_key) && !retained(&next_key), "{protocol:?}");
+        drop(busy);
     }
 }
 
