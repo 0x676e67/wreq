@@ -3,12 +3,11 @@
 //! [`transport`] dialers with `ServiceBuilder`, as the client does. Protocol pools live in the
 //! client.
 
-pub(crate) mod config;
-pub(crate) mod request;
-
 mod layer;
 mod verbose;
 
+pub(crate) mod config;
+pub(crate) mod request;
 pub(super) mod transport;
 
 use std::{
@@ -69,12 +68,10 @@ pub type BoxedConnectorLayer =
 
 cfg_select! {
     feature = "http3" => {
-        /// The built-in transports, selected by the transport the request's protocol runs over.
         type Direct =
             Transports<ProxyConnector<SocketConnector>, QuicProxyConnector<QuicConnector>>;
     }
     _ => {
-        /// The built-in stream transport.
         type Direct = ProxyConnector<SocketConnector>;
     }
 }
@@ -131,21 +128,20 @@ impl ConnectorBuilder {
         self
     }
 
-    /// Sets the local addresses and interface inherited by TCP and QUIC sockets.
-    #[inline]
-    pub(crate) fn bind_options(mut self, bind_options: BindOptions) -> Self {
-        self.bind_options = bind_options;
-        self
-    }
-
     /// Sets the Happy Eyeballs delay shared by TCP and QUIC address races.
-    /// `None` tries addresses in order.
     #[inline]
     pub(crate) fn happy_eyeballs_timeout(
         mut self,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         self.happy_eyeballs_timeout = happy_eyeballs_timeout;
+        self
+    }
+
+    /// Sets the local addresses and interface inherited by TCP and QUIC sockets.
+    #[inline]
+    pub(crate) fn bind_options(mut self, bind_options: BindOptions) -> Self {
+        self.bind_options = bind_options;
         self
     }
 
@@ -325,10 +321,7 @@ pub struct Connected {
 /// Shared response metadata, ordered by concrete type.
 /// Edits copy shared handles; values are cloned only when exported to a response.
 #[derive(Clone, Default)]
-#[expect(
-    clippy::type_complexity,
-    reason = "Keep the single-use metadata entry representation inline"
-)]
+#[expect(clippy::type_complexity)]
 struct Metadata(Option<Arc<[(TypeId, Arc<dyn MetadataValue>)]>>);
 
 trait MetadataValue: Send + Sync {
@@ -650,7 +643,6 @@ impl Connected {
     /// Poison this connection
     ///
     /// A poisoned connection will not be reused for subsequent requests by the pool
-    #[allow(unused)]
     #[inline]
     pub fn poison(&self) {
         self.poisoned.0.store(true, Ordering::Relaxed);
