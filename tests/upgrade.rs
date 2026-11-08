@@ -326,9 +326,11 @@ async fn websocket_reuses_established_http2_with_extended_connect() {
         assert_eq!(accepted(&mut server), before);
         drop(websocket);
 
-        // Explicit HTTP/2 uses its own group: a new connection waits for SETTINGS, and a
-        // known refusal fails before sending instead of retrying the same connection.
-        for _ in 0..2 {
+        // Explicit HTTP/2 shares this client's group, but has its own on an automatic client:
+        // a new connection waits for SETTINGS, and a known refusal fails before sending
+        // instead of retrying the same connection.
+        let auto = Client::builder_tokio().no_proxy().build().unwrap();
+        for client in [&client, &auto, &auto] {
             let result = client
                 .websocket(&ws_url)
                 .version(http::Version::HTTP_2)

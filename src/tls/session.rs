@@ -367,7 +367,7 @@ impl TlsSessionStore for LruTlsSessionStore {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     use super::*;
     use crate::{
@@ -466,10 +466,8 @@ mod tests {
             assert!(plain != other);
         }
 
-        let bind_options = BindOptions {
-            ipv4_address: Some(Ipv4Addr::LOCALHOST),
-            ..Default::default()
-        };
+        let mut bind_options = BindOptions::default();
+        bind_options.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
         let uri = Uri::from_static("https://example.com/");
         let frozen = |requested| {
             ConnectRequest::new(
@@ -485,6 +483,11 @@ mod tests {
         };
         let inherited = frozen(None);
         let equal = frozen(Some(Arc::new(bind_options.clone())));
+        // Merges to the client's bindings.
+        let partial = frozen(Some(Arc::new(BindOptions {
+            ipv4_address: Some(Ipv4Addr::LOCALHOST),
+            ..Default::default()
+        })));
         let changed = frozen(Some(Arc::new(BindOptions {
             ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
             ..Default::default()
@@ -492,6 +495,7 @@ mod tests {
         let assert_bindings = |transport: TransportKind| {
             let inherited_key = SessionKey::new(&inherited, &client_config_set, transport);
             assert!(inherited_key == SessionKey::new(&equal, &client_config_set, transport));
+            assert!(inherited_key == SessionKey::new(&partial, &client_config_set, transport));
             assert!(inherited_key != SessionKey::new(&changed, &client_config_set, transport));
 
             // Bindings separate tickets without compiling another TLS context.

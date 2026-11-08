@@ -222,7 +222,7 @@ impl QuicConnector {
         request: &ConnectRequest,
         remote: SocketAddr,
     ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-        let bind_options = self.merged_bind_options(request);
+        let bind_options = self.bind_options(request);
         if matches!(
             (bind_options.ipv4_address, bind_options.ipv6_address, remote),
             (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
@@ -231,16 +231,15 @@ impl QuicConnector {
         }
         Ok(self
             .runtime
-            .udp_socket(self.bind_socket(&bind_options, remote)?)?)
+            .udp_socket(self.bind_socket(bind_options, remote)?)?)
     }
 
-    /// Merges request bindings over the client's per field, as TCP connections do.
-    fn merged_bind_options(&self, request: &ConnectRequest) -> BindOptions {
-        let mut bind_options = self.bind_options.clone();
-        if let Some(overrides) = request.bind_options() {
-            bind_options.merge(overrides);
-        }
-        bind_options
+    /// Returns the request's bindings, or the client's when the request inherits them.
+    fn bind_options<'a>(&'a self, request: &'a ConnectRequest) -> &'a BindOptions {
+        request
+            .bind_options()
+            .as_deref()
+            .unwrap_or(&self.bind_options)
     }
 
     /// Opens one authenticated connection and retains its UDP endpoint.
@@ -326,13 +325,12 @@ impl QuicConnector {
     /// Connects to the request's route directly and retains the connection's endpoint.
     pub(crate) async fn connect(&self, request: &ConnectRequest) -> Result<Conn, BoxError> {
         let config = self.config(request, Path::Direct)?;
-        let bind_options = self.merged_bind_options(request);
         let (connection, endpoint) = self
             .dial(
                 request.route_uri(),
-                &bind_options,
+                self.bind_options(request),
                 &config,
-                bind_options == self.bind_options,
+                request.bind_options().is_none(),
             )
             .await?;
         self.connection(connection, endpoint)
@@ -349,8 +347,8 @@ impl QuicConnector {
             .tls
             .config(&request.clone().with_route_uri(uri.clone()))?;
         config.transport_config(self.transport(request, Path::Proxy)?);
-        let bind_options = self.merged_bind_options(request);
-        self.dial(uri, &bind_options, &config, false).await
+        self.dial(uri, self.bind_options(request), &config, false)
+            .await
     }
 
     /// Returns the target's configuration over a tunnel, built before the tunnel so a local
@@ -855,6 +853,44 @@ mod tests {
             for connection in [first, second, bound] {
                 connection.close(0u32.into(), b"done");
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn bindings_merged_to_the_client_share_its_endpoints() {
+        let (server_config, cert) = test_server_config();
+        let server = Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+        let mut client = BindOptions::default();
+        client.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
+        let connector = QuicConnector {
+            bind_options: client.clone(),
+            ..connector(resolving(vec![server.local_addr().unwrap()]), &cert)
+        };
+        let uri = Uri::from_static("https://localhost/");
+        let request = |bindings: Option<BindOptions>| {
+            ConnectRequest::new(
+                &uri,
+                None,
+                crate::Protocol::Auto,
+                ConfigSet::default(),
+                &ConfigSet::default(),
+                bindings.map(Arc::new),
+                &client,
+            )
+            .unwrap()
+        };
+        let (first, shared, _peer) = connect(&connector, request(None), &server).await;
+        assert_eq!(shared.local_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
+
+        let partial = request(Some(BindOptions {
+            ipv4_address: Some(Ipv4Addr::LOCALHOST),
+            ..Default::default()
+        }));
+        assert!(partial.bind_options().is_none());
+        let (second, reused, _peer) = connect(&connector, partial, &server).await;
+        assert!(same_socket(&reused, &shared));
+        for connection in [first, second] {
+            connection.close(0u32.into(), b"done");
         }
     }
 

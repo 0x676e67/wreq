@@ -1,7 +1,8 @@
 //! Frozen connection identity shared by pool lookup and transport setup.
 //!
 //! Request configuration is editable until a [`ConnectRequest`] is built. Its key then counts
-//! socket bindings and typed entries that differ from the client's configuration.
+//! the resolved protocol, and the socket bindings and typed entries that differ from the
+//! client's configuration.
 
 use std::{
     fmt,
@@ -23,7 +24,6 @@ use crate::{Protocol, error::BoxError};
 #[derive(Debug, Clone)]
 pub struct ConnectRequest {
     key: ConnectionKey,
-    resolved_protocol: Protocol,
     route_uri: Option<Uri>,
 }
 
@@ -32,8 +32,8 @@ pub struct ConnectRequest {
 #[derive(Clone)]
 pub(crate) struct ConnectionKey {
     origin: Uri,
-    /// Preference; `None` inherits the client.
-    protocol: Option<Protocol>,
+    /// Selection after inheriting the client's; configuration, not the negotiated version.
+    protocol: Protocol,
     bind_options: Option<Arc<BindOptions>>,
     overrides: Overrides,
     hash: u64,
@@ -46,6 +46,7 @@ impl ConnectRequest {
     ///
     /// The origin keeps scheme and authority with `/` as the path. The key counts the
     /// request entries the resolved protocol can use that differ from `client_config_set`.
+    /// Request bindings are merged over the client's and kept only if the result differs.
     ///
     /// Returns an error if the URI lacks a scheme or authority.
     pub(crate) fn new(
@@ -62,16 +63,19 @@ impl ConnectRequest {
             .authority(uri.authority().ok_or("URI missing authority")?.clone())
             .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
+        let bind_options = bind_options.and_then(|requested| {
+            let mut merged = client_bind_options.clone();
+            merged.merge(&requested);
+            (merged != *client_bind_options).then(|| Arc::new(merged))
+        });
         Ok(Self {
             key: ConnectionKey::new(
                 origin,
-                protocol,
-                client_protocol,
+                protocol.unwrap_or(client_protocol),
                 config_set,
                 client_config_set,
-                bind_options.filter(|options| options.as_ref() != client_bind_options),
+                bind_options,
             ),
-            resolved_protocol: protocol.unwrap_or(client_protocol),
             route_uri: None,
         })
     }
@@ -83,18 +87,10 @@ impl ConnectRequest {
         &self.key.origin
     }
 
-    /// Returns the request's connection protocol preference.
-    /// `None` inherits the client; `Some(Protocol::Auto)` allows protocol negotiation.
-    /// This is a selection policy, not the established connection's wire version.
-    #[cfg(test)]
-    pub(crate) fn protocol(&self) -> Option<Protocol> {
-        self.key.protocol
-    }
-
     /// Returns the protocol selection after inheriting the client's preference.
     /// Frozen before pool checkout; proxy routing does not change this selection.
     pub(crate) fn resolved_protocol(&self) -> Protocol {
-        self.resolved_protocol
+        self.key.protocol
     }
 
     /// All request connection options, including those this key does not count.
@@ -117,8 +113,8 @@ impl ConnectRequest {
         self.key.overrides.get_arc::<T>()
     }
 
-    /// Request socket bindings shared by transport setup, pool and session keys.
-    /// `None` inherits the client's bindings.
+    /// Request bindings merged over the client's, shared by transport setup, pool and
+    /// session keys. `None` when the result equals the client's bindings.
     pub(crate) fn bind_options(&self) -> &Option<Arc<BindOptions>> {
         &self.key.bind_options
     }
@@ -128,19 +124,17 @@ impl ConnectRequest {
         self.key.clone()
     }
 
-    /// Returns the identity of this origin and configuration under another preference.
+    /// Returns the identity of this origin and configuration under another resolved protocol.
     #[cfg(any(test, feature = "http2"))]
     pub(crate) fn key_with_protocol(
         &self,
-        protocol: Option<Protocol>,
-        client_protocol: Protocol,
+        protocol: Protocol,
         client_config_set: &ConfigSet,
     ) -> ConnectionKey {
         let config_set = self.key.overrides.config_set().clone();
         ConnectionKey::new(
             self.key.origin.clone(),
             protocol,
-            client_protocol,
             config_set,
             client_config_set,
             self.key.bind_options.clone(),
@@ -168,17 +162,12 @@ impl ConnectRequest {
 impl ConnectionKey {
     fn new(
         origin: Uri,
-        protocol: Option<Protocol>,
-        client_protocol: Protocol,
+        protocol: Protocol,
         config_set: ConfigSet,
         client_config_set: &ConfigSet,
         bind_options: Option<Arc<BindOptions>>,
     ) -> Self {
-        let overrides = Overrides::for_pool(
-            config_set,
-            client_config_set,
-            protocol.unwrap_or(client_protocol),
-        );
+        let overrides = Overrides::for_pool(config_set, client_config_set, protocol);
         let hash = HASHER.hash_one((&origin, protocol, &bind_options, overrides.hash()));
         Self {
             origin,
@@ -307,14 +296,6 @@ mod tests {
         );
         assert_ne!(plain, changed.key());
         assert!(changed.config_override::<TlsOptions>().is_some());
-        assert_ne!(
-            plain,
-            key(
-                Some(Protocol::Auto),
-                ConfigSet::default(),
-                &client_config_set
-            )
-        );
 
         let rerouted = changed
             .clone()
@@ -323,8 +304,31 @@ mod tests {
         assert_eq!(rerouted.route_uri(), "https://proxy:8443/");
         assert_eq!(rerouted.key(), changed.key());
 
-        // Inherited and explicit choices keep their meaning through proxy routing.
-        let assert_rerouted = |client: Protocol, protocol: Option<Protocol>, resolved: Protocol| {
+        // Preferences that resolve to one protocol share a key, which proxy routing keeps.
+        let keys = [
+            (Protocol::Auto, None, Protocol::Auto),
+            (Protocol::Auto, Some(Protocol::Auto), Protocol::Auto),
+            (Protocol::Auto, Some(Protocol::Http1), Protocol::Http1),
+            (Protocol::Http1, None, Protocol::Http1),
+            (Protocol::Http1, Some(Protocol::Http1), Protocol::Http1),
+            #[cfg(feature = "http2")]
+            (Protocol::Http2, None, Protocol::Http2),
+            #[cfg(feature = "http2")]
+            (Protocol::Http2, Some(Protocol::Http2), Protocol::Http2),
+            #[cfg(feature = "http2")]
+            (Protocol::Http2, Some(Protocol::Auto), Protocol::Auto),
+            #[cfg(feature = "http3")]
+            (Protocol::Http3, None, Protocol::Http3),
+            #[cfg(feature = "http3")]
+            (Protocol::Http3, Some(Protocol::Auto), Protocol::Auto),
+            #[cfg(feature = "http3")]
+            (Protocol::Http3, Some(Protocol::Http1), Protocol::Http1),
+            #[cfg(feature = "http3")]
+            (Protocol::Auto, Some(Protocol::Http3), Protocol::Http3),
+            #[cfg(all(feature = "http2", feature = "http3"))]
+            (Protocol::Http3, Some(Protocol::Http2), Protocol::Http2),
+        ]
+        .map(|(client, protocol, resolved)| {
             let request = ConnectRequest::new(
                 changed.uri(),
                 protocol,
@@ -337,25 +341,19 @@ mod tests {
             .unwrap();
             let key = request.key();
             let rerouted = request.with_route_uri(Uri::from_static("https://proxy:8443/"));
-            assert_eq!(rerouted.protocol(), protocol);
             assert_eq!(rerouted.resolved_protocol(), resolved);
             assert_eq!(rerouted.key(), key);
-        };
-        assert_rerouted(Protocol::Http1, None, Protocol::Http1);
-        #[cfg(feature = "http2")]
-        {
-            assert_rerouted(Protocol::Http2, None, Protocol::Http2);
-            assert_rerouted(Protocol::Http2, Some(Protocol::Auto), Protocol::Auto);
+            (resolved, key)
+        });
+        for (resolved, key) in &keys {
+            for (other, other_key) in &keys {
+                assert_eq!(
+                    key == other_key,
+                    resolved == other,
+                    "{resolved:?} vs {other:?}"
+                );
+            }
         }
-        #[cfg(feature = "http3")]
-        {
-            assert_rerouted(Protocol::Http3, None, Protocol::Http3);
-            assert_rerouted(Protocol::Http3, Some(Protocol::Auto), Protocol::Auto);
-            assert_rerouted(Protocol::Http3, Some(Protocol::Http1), Protocol::Http1);
-            assert_rerouted(Protocol::Auto, Some(Protocol::Http3), Protocol::Http3);
-        }
-        #[cfg(all(feature = "http2", feature = "http3"))]
-        assert_rerouted(Protocol::Http3, Some(Protocol::Http2), Protocol::Http2);
 
         // Equal hashes still compare the counted values.
         let mut collision = changed.key();
@@ -388,13 +386,12 @@ mod tests {
             ipv4_address: Some(Ipv4Addr::LOCALHOST),
             ..Default::default()
         };
-        let mut effective = bindings.clone();
-        effective.merge(&partial_bindings);
-        assert_eq!(effective, bindings);
         let other_bindings = BindOptions {
             ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
             ..Default::default()
         };
+        let mut merged = bindings.clone();
+        merged.merge(&other_bindings);
         for protocol in [
             None,
             Some(Protocol::Http1),
@@ -403,33 +400,35 @@ mod tests {
             #[cfg(feature = "http3")]
             Some(Protocol::Http3),
         ] {
-            let request = |bind_options, client_bind_options| {
+            let request = |bind_options: Option<&BindOptions>| {
                 ConnectRequest::new(
                     &uri,
                     protocol,
                     Protocol::Auto,
                     ConfigSet::default(),
                     &client_config_set,
-                    bind_options,
-                    client_bind_options,
+                    bind_options.cloned().map(Arc::new),
+                    &bindings,
                 )
                 .unwrap()
             };
-            let inherited = request(None, &bindings);
-            let same = request(Some(Arc::new(bindings.clone())), &bindings);
-            assert!(same.bind_options().is_none());
-            assert_eq!(same.key(), inherited.key());
-            assert_eq!(same.key().hash, inherited.key().hash);
+            let inherited = request(None);
 
-            let partial = request(Some(Arc::new(partial_bindings.clone())), &bindings);
-            assert_ne!(partial.key(), inherited.key());
-            assert_eq!(partial.bind_options().as_deref(), Some(&partial_bindings));
+            // Bindings that merge to the client's are the client's.
+            for same in [&bindings, &partial_bindings] {
+                let same = request(Some(same));
+                assert!(same.bind_options().is_none());
+                assert_eq!(same.key(), inherited.key());
+                assert_eq!(same.key().hash, inherited.key().hash);
+            }
 
-            let changed = request(Some(Arc::new(other_bindings.clone())), &bindings);
+            // Other bindings keep the merged value, so equal results share a key.
+            let changed = request(Some(&other_bindings));
             assert_ne!(changed.key(), inherited.key());
-            assert_eq!(changed.bind_options().as_deref(), Some(&other_bindings));
+            assert_eq!(changed.bind_options().as_deref(), Some(&merged));
+            assert_eq!(request(Some(&merged)).key(), changed.key());
             assert_eq!(
-                changed.key_with_protocol(protocol, Protocol::Auto, &client_config_set),
+                changed.key_with_protocol(changed.resolved_protocol(), &client_config_set),
                 changed.key()
             );
             assert_eq!(
@@ -479,12 +478,9 @@ mod tests {
                 key(None, ConfigSet::default(), &client_config_set)
             );
 
-            // Another preference selects again from the whole request storage.
-            let probe = request(h1, http2, &client_config_set).key_with_protocol(
-                None,
-                Protocol::Auto,
-                &client_config_set,
-            );
+            // Another protocol selects again from the whole request storage.
+            let probe = request(h1, http2, &client_config_set)
+                .key_with_protocol(Protocol::Auto, &client_config_set);
             assert_ne!(probe, key(None, ConfigSet::default(), &client_config_set));
         }
 

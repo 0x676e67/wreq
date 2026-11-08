@@ -283,7 +283,7 @@ impl<S, B> Stack<S, B> {
         #[cfg(feature = "http2")]
         let extended_connect_key = (dedicated.is_some_and(|d| d.extended_connect)
             && matches!(defaults.protocol, Protocol::Auto | Protocol::Http2))
-        .then(|| req.key_with_protocol(None, defaults.protocol, &defaults.config_set));
+        .then(|| req.key_with_protocol(defaults.protocol, &defaults.config_set));
 
         Ok(PoolRequest {
             request,
@@ -1248,7 +1248,11 @@ mod tests {
                 future::ready(Ok::<_, DispatchError<()>>(request))
             });
             let request = stack(service, client, true).oneshot(request).await.unwrap();
-            assert_eq!(request.config.req.protocol(), expected);
+            assert_eq!(
+                request.config.req.resolved_protocol(),
+                expected.unwrap_or(client)
+            );
+            assert_eq!(request.negotiable, expected == Some(Protocol::Auto));
             assert_eq!(
                 request.config.req.bind_options().as_deref(),
                 Some(bind_options.as_ref())
@@ -1277,9 +1281,9 @@ mod tests {
             keys[1], keys[2],
             "fixed H1 and negotiated requests remain isolated"
         );
-        assert_ne!(
+        assert_eq!(
             keys[2], keys[3],
-            "explicit negotiation differs from client inheritance"
+            "explicit negotiation shares the pool of an automatic client"
         );
         assert_ne!(
             keys[2], keys[4],
@@ -1288,7 +1292,10 @@ mod tests {
         assert_eq!(keys[2], keys[5], "Protocol does not override negotiation");
         assert_eq!(keys[2], keys[7], "request negotiation overrides fixed H1");
         #[cfg(feature = "http3")]
-        assert_eq!(keys[1], keys[10], "explicit H1 overrides fixed H3");
+        {
+            assert_eq!(keys[8], keys[9], "explicit and inherited H3 share a pool");
+            assert_eq!(keys[1], keys[10], "explicit H1 overrides fixed H3");
+        }
     }
 
     #[tokio::test]
@@ -1331,7 +1338,7 @@ mod tests {
                 .unwrap();
             let plain = stack.oneshot(request(None)).await.unwrap();
             assert!(websocket.config.dedicated);
-            assert_eq!(websocket.config.req.protocol(), Some(Protocol::Http1));
+            assert_eq!(websocket.config.req.resolved_protocol(), Protocol::Http1);
             // The probe targets the group ordinary requests use; those never probe.
             assert!(plain.extended_connect_key.is_none());
             assert_eq!(

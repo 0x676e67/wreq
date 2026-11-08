@@ -1100,8 +1100,8 @@ async fn connection_pool_respects_https_version_policy() {
         let url = format!("https://{}/upload?part=1", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
             let mut connections = tokio::task::JoinSet::new();
-            // One transport per request policy; extra dialing cannot pass as reuse.
-            for id in ["0", "1", "2"] {
+            // One transport per resolved protocol; extra dialing cannot pass as reuse.
+            for id in ["0", "1"] {
                 let (socket, _) = listener.accept().await.unwrap();
                 let stream = server::tls_accept(&acceptor, socket).await;
                 let version = match stream.ssl().selected_alpn_protocol() {
@@ -1173,18 +1173,18 @@ async fn connection_pool_respects_https_version_policy() {
         } else {
             configured_offer
         };
-        let client_offer = match client_version {
-            Some(Version::HTTP_11) => h1,
-            Some(Version::HTTP_2) => h2,
-            _ => configured_offer,
+        // A default request resolves to the client's protocol and reuses its connection.
+        let (client_id, client_offer) = match client_version {
+            Some(Version::HTTP_11) => ("1", h1),
+            _ => ("0", preference_offer),
         };
         for (version, id, offer) in [
             (Some(Version::HTTP_2), "0", preference_offer),
             (Some(Version::HTTP_11), "1", h1),
             (Some(Version::HTTP_2), "0", preference_offer),
             (Some(Version::HTTP_11), "1", h1),
-            (None, "2", client_offer),
-            (None, "2", client_offer),
+            (None, client_id, client_offer),
+            (None, client_id, client_offer),
         ] {
             let mut request = client.post(&url).body("payload");
             if let Some(version) = version {
@@ -1210,10 +1210,7 @@ async fn connection_pool_respects_https_version_policy() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(
-            *offers.lock().unwrap(),
-            [preference_offer, h1, client_offer]
-        );
+        assert_eq!(*offers.lock().unwrap(), [preference_offer, h1]);
     }
 }
 
@@ -1396,6 +1393,16 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
     for _ in 0..2 {
         http1.get(&url).send().await.unwrap().bytes().await.unwrap();
     }
+    // A version that resolves to the client's protocol shares the default requests' pool.
+    http1
+        .get(&url)
+        .version(Version::HTTP_11)
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
 
     #[cfg(feature = "http2")]
     let http2 = Client::builder_tokio().http2_only().build().unwrap();
@@ -1406,6 +1413,12 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
         for response in responses {
             response.unwrap();
         }
+        http2
+            .get(&url)
+            .version(Version::HTTP_2)
+            .send()
+            .await
+            .unwrap();
     }
 
     let accepted = server

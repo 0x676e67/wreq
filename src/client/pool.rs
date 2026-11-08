@@ -1827,7 +1827,7 @@ mod tests {
                 let target = PoolTarget {
                     config: connection_config(ConnectRequest::test(
                         req.uri().clone(),
-                        req.protocol(),
+                        Some(protocol),
                         config_set,
                     )),
                     wait_for_reuse: false,

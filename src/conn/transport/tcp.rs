@@ -200,10 +200,10 @@ impl<R> TcpConnector<R> {
         self
     }
 
-    /// Applies local addresses and interface, preserving unspecified bindings.
+    /// Sets the local addresses and interface of each socket.
     #[inline]
     pub(crate) fn set_bind_options(mut self, bind_options: &BindOptions) -> Self {
-        self.options_mut().bind_options.merge(bind_options);
+        self.options_mut().bind_options = bind_options.clone();
         self
     }
 }
