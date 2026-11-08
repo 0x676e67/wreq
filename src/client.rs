@@ -1097,7 +1097,8 @@ impl ClientBuilder {
     /// fails; use a `quic://` proxy, a SOCKS5 proxy with the `socks` feature, or
     /// [`no_proxy`](Self::no_proxy). An explicit HTTP/1 or HTTP/2 request
     /// [`version`](RequestBuilder::version) overrides this setting. A WebSocket handshake without
-    /// an explicit version may still use a dedicated HTTP/1.1 connection.
+    /// an explicit version uses an established HTTP/3 connection whose peer enabled extended
+    /// CONNECT, otherwise a dedicated HTTP/1.1 connection.
     #[cfg(feature = "http3")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
     pub fn http3_only(mut self) -> ClientBuilder {

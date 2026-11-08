@@ -58,7 +58,7 @@ pub struct Stack<S, B> {
 /// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
 ///
 /// With `extended_connect`, dispatch first tries an established connection of the
-/// default request group whose peer enabled RFC 8441 extended CONNECT.
+/// default request group whose peer enabled extended CONNECT (RFC 8441, RFC 9220).
 #[derive(Clone, Copy)]
 #[cfg_attr(
     not(feature = "ws"),
@@ -68,7 +68,7 @@ pub struct Stack<S, B> {
     )
 )]
 pub(super) struct DedicatedConnection {
-    #[cfg(feature = "http2")]
+    #[cfg(any(feature = "http2", feature = "http3"))]
     pub(super) extended_connect: bool,
 }
 
@@ -119,7 +119,7 @@ pub struct DispatchRequest<B> {
     /// Whether the wire version follows the connection, as an explicit `Protocol::Auto` asks.
     negotiable: bool,
     /// Default-group key whose established sender may carry this WebSocket.
-    #[cfg(feature = "http2")]
+    #[cfg(any(feature = "http2", feature = "http3"))]
     extended_connect_key: Option<crate::conn::request::ConnectionKey>,
 }
 
@@ -233,10 +233,17 @@ impl<S, B> Stack<S, B> {
                 .with_context("HTTP/3 requires an https URI"));
         }
 
-        // Only clients that may negotiate HTTP/2 have a default group to probe.
-        #[cfg(feature = "http2")]
+        // Probe the default group only where it may be HTTP/2, or HTTP/3 over https. Without
+        // Alt-Svc discovery, an automatic client's explicit HTTP/3 group is not probed.
+        #[cfg(any(feature = "http2", feature = "http3"))]
         let extended_connect_key = (dedicated.is_some_and(|d| d.extended_connect)
-            && matches!(self.protocol, Protocol::Auto | Protocol::Http2))
+            && match self.protocol {
+                #[cfg(feature = "http2")]
+                Protocol::Auto | Protocol::Http2 => true,
+                #[cfg(feature = "http3")]
+                Protocol::Http3 => uri.is_https(),
+                _ => false,
+            })
         .then(|| req.key_with_protocol(self.protocol, &self.config_set));
 
         Ok(DispatchRequest {
@@ -244,7 +251,7 @@ impl<S, B> Stack<S, B> {
             req,
             dedicated: dedicated.is_some(),
             negotiable: protocol == Some(Protocol::Auto),
-            #[cfg(feature = "http2")]
+            #[cfg(any(feature = "http2", feature = "http3"))]
             extended_connect_key,
         })
     }

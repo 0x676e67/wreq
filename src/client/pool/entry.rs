@@ -51,7 +51,7 @@ pub(super) trait Entry: Send {
 
     /// Clones an established shared sender without creating, joining, or draining
     /// work. HTTP/1 entries and generations still being made return `None`.
-    #[cfg(feature = "http2")]
+    #[cfg(any(feature = "http2", feature = "http3"))]
     fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)>;
 
     /// Removes expired or closed idle connections for unlocked destruction.
@@ -252,7 +252,7 @@ where
         (future, None)
     }
 
-    #[cfg(feature = "http2")]
+    #[cfg(any(feature = "http2", feature = "http3"))]
     fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)> {
         None
     }
@@ -331,7 +331,6 @@ where
         (future, None)
     }
 
-    #[cfg(feature = "http2")]
     fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)> {
         Some((self.service.checkout_made()?, self.state.clone()))
     }

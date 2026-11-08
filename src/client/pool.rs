@@ -57,15 +57,12 @@ use self::{
     maker::ConnectionMaker,
     map::{Map, Target},
 };
+#[cfg(feature = "http2")]
+use self::{entry::NegotiatedEntry, negotiate::Negotiate};
 #[cfg(any(feature = "http2", feature = "http3"))]
 use self::{
-    entry::MuxEntry,
+    entry::{EntryUse, MuxEntry},
     singleton::{Singleton, SingletonError},
-};
-#[cfg(feature = "http2")]
-use self::{
-    entry::{EntryUse, NegotiatedEntry},
-    negotiate::Negotiate,
 };
 #[cfg(feature = "http2")]
 use super::proto::http2;
@@ -418,11 +415,11 @@ where
         future.await
     }
 
-    /// Checks out an established HTTP/2 sender whose peer enabled extended CONNECT.
+    /// Checks out an established HTTP/2 or HTTP/3 sender whose peer enabled extended CONNECT.
     ///
     /// Never creates entries or connections, joins pending handshakes, or touches
     /// HTTP/1 state, so a miss costs one map lookup.
-    #[cfg(feature = "http2")]
+    #[cfg(any(feature = "http2", feature = "http3"))]
     pub(super) fn checkout_extended_connect(&self, key: &ConnectionKey) -> Option<Pooled> {
         if !self.inner.enabled {
             return None;

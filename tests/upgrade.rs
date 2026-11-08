@@ -354,3 +354,130 @@ async fn websocket_reuses_established_http2_with_extended_connect() {
         assert_eq!(accepted(&mut server), before + 1);
     }
 }
+
+#[cfg(all(feature = "ws", feature = "http3"))]
+#[tokio::test]
+async fn websocket_reuses_established_http3_with_extended_connect() {
+    use bytes::BytesMut;
+    use futures_util::{SinkExt, StreamExt};
+    use http::{
+        Method, Response, Version,
+        header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
+    };
+    use support::h3;
+    use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::Role};
+    use wreq::ws::{WebSocketResponse, message::Message};
+
+    /// Echoes text messages on the tunnel of an accepted extended CONNECT. Tungstenite runs on
+    /// one end of a pipe whose other end is pumped to and from the request stream.
+    async fn echo(stream: h3::RequestStream) {
+        let (mut send, mut recv) = stream.split();
+        let (io, tunnel) = tokio::io::duplex(4096);
+        let (mut reader, mut writer) = tokio::io::split(tunnel);
+        let inbound = async move {
+            while let Ok(Some(mut data)) = recv.recv_data().await {
+                if writer.write_all_buf(&mut data).await.is_err() {
+                    break;
+                }
+            }
+            let _ = writer.shutdown().await;
+        };
+        let outbound = async move {
+            let mut buf = BytesMut::with_capacity(4096);
+            while reader.read_buf(&mut buf).await.is_ok_and(|n| n > 0) {
+                if send.send_data(buf.split().freeze()).await.is_err() {
+                    break;
+                }
+            }
+            let _ = send.finish().await;
+        };
+        let websocket = async move {
+            let mut ws = WebSocketStream::from_raw_socket(io, Role::Server, None).await;
+            while let Some(Ok(message)) = ws.next().await {
+                if message.is_text() && ws.send(message).await.is_err() {
+                    break;
+                }
+            }
+        };
+        tokio::join!(inbound, outbound, websocket);
+    }
+
+    async fn ping(response: WebSocketResponse) {
+        assert_eq!(response.version(), Version::HTTP_3);
+        let mut websocket = response.into_websocket().await.unwrap();
+        websocket.send(Message::text("ping")).await.unwrap();
+        assert_eq!(
+            websocket.recv().await.unwrap().unwrap(),
+            Message::text("ping")
+        );
+    }
+
+    for enabled in [true, false] {
+        let certificate = h3::Certificate::new("localhost");
+        let endpoint = h3::endpoint(&certificate, None);
+        let server = h3::Server::serve(endpoint, enabled, |request, mut stream| async move {
+            stream.send_response(Response::new(())).await.unwrap();
+            if request.method() == Method::CONNECT {
+                // RFC 9220 §3 follows RFC 8441 §5: no RFC 6455 key or connection-specific fields.
+                assert_eq!(
+                    request.extensions().get::<http3::ext::Protocol>(),
+                    Some(&http3::ext::Protocol::WEBSOCKET)
+                );
+                for name in [SEC_WEBSOCKET_KEY, UPGRADE, CONNECTION] {
+                    assert!(!request.headers().contains_key(name));
+                }
+                echo(stream).await;
+            } else {
+                stream.finish().await.unwrap();
+            }
+        });
+        // Nothing listens on TCP, so a fallback to a dedicated HTTP/1.1 connection fails.
+        let client = Client::builder_tokio()
+            .no_proxy()
+            .http3_only()
+            .resolve("localhost", server.addr())
+            .tls_cert_store(certificate.cert_store())
+            .build()
+            .unwrap();
+        let port = server.addr().port();
+        let ws_url = format!("wss://localhost:{port}/chat");
+        let http_url = format!("https://localhost:{port}/");
+
+        // The default WebSocket route does not open an HTTP/3 connection.
+        let error = client.websocket(&ws_url).send().await.unwrap_err();
+        assert!(error.is_connect(), "{error:?}");
+        assert_eq!(server.connections(), 0);
+
+        let response = client.get(&http_url).send().await.unwrap();
+        assert_eq!(response.version(), Version::HTTP_3);
+        response.bytes().await.unwrap();
+        assert_eq!(server.connections(), 1);
+
+        // The default route reuses the connection only if its peer enabled extended CONNECT.
+        let result = client.websocket(&ws_url).send().await;
+        if enabled {
+            ping(result.unwrap()).await;
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.is_connect(), "{error:?}");
+        }
+        assert_eq!(server.connections(), 1);
+
+        // Explicit HTTP/3 shares the client's group; a known refusal fails before sending.
+        let result = client
+            .websocket(&ws_url)
+            .version(Version::HTTP_3)
+            .send()
+            .await;
+        if enabled {
+            ping(result.unwrap()).await;
+        } else {
+            let error = format!("{:?}", result.unwrap_err());
+            assert!(
+                error.contains("peer did not enable extended CONNECT"),
+                "{error}"
+            );
+        }
+        assert_eq!(server.connections(), 1);
+    }
+}

@@ -59,7 +59,7 @@ impl WebSocketRequestBuilder {
     }
 
     /// Sets the `Sec-WebSocket-Key` used for an HTTP/1.1 handshake.
-    /// HTTP/2 handshakes do not use this key.
+    /// HTTP/2 and HTTP/3 handshakes do not use this key.
     #[inline]
     pub fn accept_key<K>(mut self, key: K) -> Self
     where
@@ -73,14 +73,15 @@ impl WebSocketRequestBuilder {
     ///
     /// # Default
     ///
-    /// - Uses the Extended CONNECT Protocol ([RFC 8441]) on an established pooled HTTP/2 connection
-    ///   opened by requests to the same origin with the same options and no explicit version, if
-    ///   its server enabled it; the WebSocket then holds a stream on that shared connection
+    /// - Uses the Extended CONNECT Protocol ([RFC 8441], [RFC 9220]) on an established pooled
+    ///   HTTP/2 or HTTP/3 connection opened by requests to the same origin with the same options
+    ///   and no explicit version, if its server enabled it; the WebSocket then holds a stream on
+    ///   that shared connection
     /// - Otherwise sends the RFC 6455 upgrade on a new HTTP/1.1 connection that is never pooled; no
-    ///   HTTP/2 connection is opened for the handshake
+    ///   HTTP/2 or HTTP/3 connection is opened for the handshake
     ///
-    /// A WebSocket on a shared HTTP/2 connection counts toward the server's concurrent stream limit
-    /// and shares the connection flow-control window, so many open or unread WebSockets can delay
+    /// A WebSocket on a shared connection counts toward the server's concurrent stream limit and
+    /// shares the connection flow-control window, so many open or unread WebSockets can delay
     /// other requests on that connection. A non-200 response to the Extended CONNECT fails the
     /// handshake without retrying over HTTP/1.1. Use [`Version::HTTP_11`] to keep the WebSocket on
     /// its own connection.
@@ -90,18 +91,17 @@ impl WebSocketRequestBuilder {
     /// - Always uses the standard `Upgrade: websocket` mechanism (RFC 6455) on a new, never pooled
     ///   connection
     ///
-    /// # HTTP/2
+    /// # HTTP/2 and HTTP/3
     ///
     /// - Always sends a `CONNECT` request with the `:protocol: websocket` pseudo-header, which may
-    ///   open an HTTP/2 connection
+    ///   open an HTTP/2 or HTTP/3 connection; HTTP/3 needs a `wss` or `https` URI
     /// - Waits for the server's SETTINGS and fails if it did not enable the protocol
     ///
     /// # Other versions
     ///
     /// - [`Version::HTTP_10`] is sent as HTTP/1.1
-    /// - WebSocket over HTTP/3 ([RFC 9220]) is not supported; [`Version::HTTP_3`],
-    ///   [`Version::HTTP_09`], and [`Version::HTTP_2`] without the `http2` feature fail the
-    ///   handshake with an upgrade error
+    /// - [`Version::HTTP_09`], and [`Version::HTTP_2`] or [`Version::HTTP_3`] without its feature,
+    ///   fail the handshake with an upgrade error
     ///
     /// [RFC 8441]: https://www.rfc-editor.org/rfc/rfc8441
     /// [RFC 9220]: https://www.rfc-editor.org/rfc/rfc9220
@@ -465,7 +465,7 @@ impl WebSocketRequestBuilder {
             HeaderValue::from_static("13"),
         );
 
-        // Ensure the request is HTTP 1.1/HTTP 2
+        // Ensure the request is HTTP/1.1, HTTP/2 or HTTP/3
         let accept_key = match version {
             None | Some(Version::HTTP_10 | Version::HTTP_11) => {
                 // Generate a nonce if one wasn't provided
@@ -483,9 +483,9 @@ impl WebSocketRequestBuilder {
                 *request.method_mut() = Method::GET;
                 *request.version_mut() = Some(Version::HTTP_11);
                 // Never reuse an idle socket or return this one to the pool. The default
-                // route may still reuse an established HTTP/2 connection instead.
+                // route may still reuse an established HTTP/2 or HTTP/3 connection instead.
                 request.extensions_mut().insert(DedicatedConnection {
-                    #[cfg(feature = "http2")]
+                    #[cfg(any(feature = "http2", feature = "http3"))]
                     extended_connect: version.is_none(),
                 });
                 Some(nonce)
@@ -497,6 +497,15 @@ impl WebSocketRequestBuilder {
                 request
                     .extensions_mut()
                     .insert(Protocol::from_static("websocket"));
+                None
+            }
+            #[cfg(feature = "http3")]
+            Some(Version::HTTP_3) => {
+                *request.method_mut() = Method::CONNECT;
+                *request.version_mut() = Some(Version::HTTP_3);
+                request
+                    .extensions_mut()
+                    .insert(netty::http3::Protocol::WEBSOCKET);
                 None
             }
             unsupported => {
@@ -603,9 +612,10 @@ impl WebSocketResponse {
                         }
                     }
                 }
-                // HTTP/2 uses the Extended CONNECT Protocol (RFC 8441)
-                // See: https://datatracker.ietf.org/doc/html/rfc8441
-                Version::HTTP_2 => {
+                // HTTP/2 and HTTP/3 use the Extended CONNECT Protocol:
+                // https://www.rfc-editor.org/rfc/rfc8441
+                // https://www.rfc-editor.org/rfc/rfc9220
+                Version::HTTP_2 | Version::HTTP_3 => {
                     if status != StatusCode::OK {
                         return Err(Error::upgrade(format!("unexpected status code: {status}")));
                     }

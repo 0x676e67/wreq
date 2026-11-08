@@ -125,7 +125,7 @@ impl ConnectRequest {
     }
 
     /// Returns the identity of this origin and configuration under another resolved protocol.
-    #[cfg(any(test, feature = "http2"))]
+    #[cfg(any(test, feature = "http2", feature = "http3"))]
     pub(crate) fn key_with_protocol(
         &self,
         protocol: Protocol,
