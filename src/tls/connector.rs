@@ -2,7 +2,7 @@
 
 use std::{
     fmt, io,
-    net::SocketAddr,
+    net::IpAddr,
     pin::Pin,
     sync::{Arc, LazyLock},
     task::{Context, Poll},
@@ -26,12 +26,12 @@ use super::{
 use crate::{
     Error, Protocol,
     conn::{
-        Connected, Connection,
         config::{ConfigSet, Overrides},
         request::ConnectRequest,
     },
     ext::UriExt,
     protocol::TransportKind,
+    rt::BoxConnection,
     tls::{AlpnProtocol, TlsOptions, session::SessionTarget},
 };
 
@@ -111,10 +111,11 @@ impl StreamTls {
 
     /// Prepares a connection using its request-specific or shared TLS context.
     /// Unset or empty request ALPN inherits the client's list during handshake setup.
+    /// `remote_ip` is the dialed socket's peer, which keys session resumption.
     fn ssl_for_connection(
         &self,
         req: ConnectRequest,
-        conn: &dyn Connection,
+        remote_ip: Option<IpAddr>,
         context: &SslConnector,
         alpn_enabled: bool,
     ) -> Result<Ssl, BoxError> {
@@ -192,7 +193,7 @@ impl StreamTls {
                 &req,
                 &inner.config_set,
                 TransportKind::Stream,
-                conn.remote_addr().map(|addr| addr.ip()),
+                remote_ip,
                 tickets.session_id_context()?,
             );
 
@@ -266,14 +267,16 @@ impl<S> HttpsConnector<S> {
     }
 
     /// Runs the TLS handshake over an established transport, or returns it unchanged for
-    /// an `http` route. The transport may already carry a proxy's TLS.
+    /// an `http` route. The transport may already carry a proxy's TLS; `remote_ip` is the
+    /// peer of the socket beneath it.
     pub(crate) async fn handshake<IO>(
         &self,
         io: IO,
         req: ConnectRequest,
+        remote_ip: Option<IpAddr>,
     ) -> Result<MaybeHttpsStream<IO>, BoxError>
     where
-        IO: AsyncRead + AsyncWrite + Connection + Unpin,
+        IO: AsyncRead + AsyncWrite + Unpin,
     {
         if req.route_uri().is_http() {
             return Ok(MaybeHttpsStream::Http(io));
@@ -281,19 +284,18 @@ impl<S> HttpsConnector<S> {
 
         let ssl = self
             .tls
-            .ssl_for_connection(req, &io, &self.context, self.alpn_enabled)?;
+            .ssl_for_connection(req, remote_ip, &self.context, self.alpn_enabled)?;
         perform_handshake(ssl, io).await
     }
 }
 
-impl<T, S> Service<ConnectRequest> for HttpsConnector<S>
+impl<S> Service<ConnectRequest> for HttpsConnector<S>
 where
-    S: Service<Uri, Response = T> + Send,
+    S: Service<Uri, Response = BoxConnection> + Send,
     S::Error: Into<BoxError>,
     S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Connection + Unpin + fmt::Debug + Sync + Send + 'static,
 {
-    type Response = MaybeHttpsStream<T>;
+    type Response = MaybeHttpsStream<BoxConnection>;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -313,7 +315,8 @@ where
 
         Box::pin(async move {
             let conn = connect.await.map_err(Into::into)?;
-            tls.handshake(conn, req).await
+            let remote_ip = conn.peer_addr().map(|addr| addr.ip());
+            tls.handshake(conn, req, remote_ip).await
         })
     }
 }
@@ -327,24 +330,6 @@ impl<T> AsRef<T> for MaybeHttpsStream<T> {
             MaybeHttpsStream::Http(s) => s,
             MaybeHttpsStream::Https(s) => s.get_ref(),
         }
-    }
-}
-
-impl<T> Connection for MaybeHttpsStream<T>
-where
-    T: Connection,
-{
-    #[inline]
-    fn connected(&self) -> Connected {
-        match self {
-            MaybeHttpsStream::Http(s) => s.connected(),
-            MaybeHttpsStream::Https(s) => s.get_ref().connected(),
-        }
-    }
-
-    #[inline]
-    fn remote_addr(&self) -> Option<SocketAddr> {
-        self.as_ref().remote_addr()
     }
 }
 

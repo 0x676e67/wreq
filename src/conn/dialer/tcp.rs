@@ -11,9 +11,8 @@ use socket2::TcpKeepalive;
 
 use super::{BindOptions, ConnectError};
 use crate::{
-    conn::{Connected, Connection, HttpInfo, TlsInfoFactory},
     ext::UriExt,
-    rt::{BoxConnection, Connecting, DynRuntime},
+    rt::{Connecting, DynRuntime},
 };
 
 static INVALID_MISSING_SCHEME: &str = "invalid URI, scheme is missing";
@@ -246,24 +245,3 @@ impl Default for TcpConfig {
         }
     }
 }
-
-// ===== impl BoxConnection =====
-
-impl Connection for BoxConnection {
-    fn connected(&self) -> Connected {
-        let connected = Connected::new();
-        match (self.local_addr(), self.peer_addr()) {
-            (Some(local_addr), Some(remote_addr)) => connected.extra(HttpInfo {
-                local_addr,
-                remote_addr,
-            }),
-            _ => connected,
-        }
-    }
-    #[inline]
-    fn remote_addr(&self) -> Option<SocketAddr> {
-        self.peer_addr()
-    }
-}
-
-impl TlsInfoFactory for BoxConnection {}

@@ -2,12 +2,15 @@
 //! Proxy routes supply tunnel sockets; [`Endpoints`] authenticates the
 //! target over them using the original request's configuration and token scope.
 
-use std::{collections::VecDeque, net::SocketAddr, num::NonZeroUsize, pin::pin, sync::Arc};
+use std::{
+    collections::VecDeque, net::SocketAddr, num::NonZeroUsize, ops::Deref, pin::pin, sync::Arc,
+};
 
 use ::quic::{
     AsyncUdpSocket, Connecting, Connection, ConnectionError, Endpoint, EndpointConfig, TokenStore,
     TransportConfig, TransportErrorCode,
 };
+use btls::x509::X509;
 use bytes::Bytes;
 use futures_util::future::{self, BoxFuture, Either};
 use http::Uri;
@@ -17,7 +20,8 @@ use tower::BoxError;
 
 use crate::{
     conn::{
-        Conn, Connected, HttpInfo, TlsInfoFactory, Transport,
+        Conn, Connected, HttpInfo, Transport,
+        connected::tls_info,
         dialer::{BindOptions, ConnectError, Dialer, race, resolve},
         request::{ConnectRequest, ConnectionKey},
     },
@@ -363,9 +367,14 @@ impl Endpoints {
             local_addr: endpoint.local_addr()?,
         });
         if self.tls.tls_info()
-            && let Some(tls_info) = connection.tls_info()
+            && let Some(chain) = connection
+                .peer_identity()
+                .and_then(|identity| identity.downcast::<Vec<X509>>().ok())
         {
-            connected = connected.extra(tls_info);
+            connected = connected.extra(tls_info(
+                chain.first().map(Deref::deref),
+                Some(chain.iter().map(Deref::deref)),
+            ));
         }
         Ok(Conn {
             transport: Transport::Quic {

@@ -68,7 +68,8 @@ async fn https_proxy_keeps_transport_and_target_alpn_separate() {
             move |offer| offers.lock().unwrap().push(offer.to_vec())
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let proxy = format!("https://{}", listener.local_addr().unwrap());
+        let proxy_addr = listener.local_addr().unwrap();
+        let proxy = format!("https://{proxy_addr}");
         let url = if tunnel {
             "https://target.invalid/resource"
         } else {
@@ -176,6 +177,8 @@ async fn https_proxy_keeps_transport_and_target_alpn_separate() {
                 .await
                 .unwrap();
             assert_eq!(response.version(), Version::HTTP_11);
+            // Both routes report the socket to the proxy, beneath its TLS.
+            assert_eq!(response.remote_addr(), Some(proxy_addr));
             assert_eq!(response.bytes().await.unwrap(), "body");
         }
         tokio::time::timeout(Duration::from_secs(5), server)

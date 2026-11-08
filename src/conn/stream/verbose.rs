@@ -1,6 +1,6 @@
 //! Optional I/O tracing for established stream connections.
 
-use crate::conn::AsyncConnWithInfo;
+use crate::conn::AsyncConn;
 
 /// Controls whether to enable verbose tracing for connections.
 ///
@@ -20,9 +20,9 @@ pub struct Verbose(
 
 impl Verbose {
     #[cfg_attr(not(feature = "tracing"), inline(always))]
-    pub(super) fn wrap<T>(&self, conn: T) -> Box<dyn AsyncConnWithInfo>
+    pub(super) fn wrap<T>(&self, conn: T) -> Box<dyn AsyncConn>
     where
-        T: AsyncConnWithInfo,
+        T: AsyncConn,
     {
         #[cfg(feature = "tracing")]
         if self.0 {
@@ -47,27 +47,11 @@ mod sealed {
 
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-    use crate::{
-        conn::{Connected, Connection, TlsInfoFactory},
-        tls::TlsInfo,
-        util::Escape,
-    };
+    use crate::util::Escape;
 
     pub(super) struct Wrapper<T> {
         pub(super) id: u64,
         pub(super) inner: T,
-    }
-
-    impl<T: Connection + AsyncRead + AsyncWrite + Unpin> Connection for Wrapper<T> {
-        #[inline]
-        fn connected(&self) -> Connected {
-            self.inner.connected()
-        }
-
-        #[inline]
-        fn remote_addr(&self) -> Option<std::net::SocketAddr> {
-            self.inner.remote_addr()
-        }
     }
 
     impl<T: AsyncRead + AsyncWrite + Unpin> AsyncRead for Wrapper<T> {
@@ -135,12 +119,6 @@ mod sealed {
         #[inline]
         fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
             Pin::new(&mut self.inner).poll_shutdown(cx)
-        }
-    }
-
-    impl<T: TlsInfoFactory> TlsInfoFactory for Wrapper<T> {
-        fn tls_info(&self) -> Option<TlsInfo> {
-            self.inner.tls_info()
         }
     }
 

@@ -16,18 +16,21 @@ use netty::proxy::tunnel;
 use tower::{BoxError, Service, ServiceExt, util::MapRequest};
 use verbose::Verbose;
 
-use super::intercept;
+use super::{connected::tls_info, intercept};
 use crate::{
     conn::{
-        AsyncConnWithInfo, Conn, TlsConn, Transport,
+        AsyncConn, Conn, Connected, HttpInfo, Transport,
         dialer::{Dialer, SocketRequest},
         request::ConnectRequest,
     },
     error::{ProxyConnect, ProxyMismatch},
     ext::UriExt,
-    proxy::{Intercepted, Matcher},
+    proxy::{Intercepted, Matcher, matcher::Intercept},
     rt::{self, BoxConnection},
-    tls::connector::{HttpsConnector, MaybeHttpsStream, StreamTls},
+    tls::{
+        AlpnProtocol,
+        connector::{HttpsConnector, MaybeHttpsStream, StreamTls},
+    },
 };
 
 /// Establishes a direct socket, a forward-proxy connection, or a proxy tunnel,
@@ -60,33 +63,58 @@ fn proxy_hop<S>(
     MapRequest::new(connector, move |uri| route.clone().with_route_uri(uri))
 }
 
-/// Finishes TLS over an established route, restores Nagle once when `restore_nagle` is set,
-/// and attaches connection metadata. An `http` route skips TLS.
+/// Finishes TLS over an established route and restores Nagle once when `restore_nagle` is set.
+/// Builds the metadata from the dialed socket's addresses, the target TLS session and the
+/// identity of `proxy`, the forward proxy `io` reaches. An `http` route skips TLS.
 async fn finish<IO>(
     verbose: Verbose,
     io: IO,
     req: ConnectRequest,
     tls: HttpsConnector<()>,
     restore_nagle: bool,
+    proxy: Option<Intercept>,
 ) -> Result<Conn, BoxError>
 where
-    IO: AsyncConnWithInfo + Dialed,
+    IO: AsyncConn + Dialed,
 {
-    let stream = match tls.handshake(io, req).await? {
+    let socket = io.socket();
+    let (local_addr, remote_addr) = (socket.local_addr(), socket.peer_addr());
+    let stream = tls
+        .handshake(io, req, remote_addr.map(|addr| addr.ip()))
+        .await?;
+
+    let mut connected = Connected::new();
+    if let (Some(local_addr), Some(remote_addr)) = (local_addr, remote_addr) {
+        connected = connected.extra(HttpInfo {
+            remote_addr,
+            local_addr,
+        });
+    }
+    if let Some(proxy) = proxy {
+        connected = connected.proxy(proxy);
+    }
+    let stream = match stream {
         MaybeHttpsStream::Http(stream) => verbose.wrap(stream),
         MaybeHttpsStream::Https(stream) => {
             if restore_nagle {
                 stream.get_ref().socket().set_nodelay(false)?;
             }
-            verbose.wrap(TlsConn { stream })
+            let ssl = stream.ssl();
+            if ssl
+                .selected_alpn_protocol()
+                .is_some_and(|alpn| AlpnProtocol::HTTP2.eq(alpn))
+            {
+                connected = connected.negotiated_h2();
+            }
+            if tls.tls_info() {
+                connected = connected.extra(tls_info(
+                    ssl.peer_certificate().as_deref(),
+                    ssl.peer_cert_chain(),
+                ));
+            }
+            verbose.wrap(stream)
         }
     };
-    let mut connected = stream.connected();
-    if tls.tls_info()
-        && let Some(tls_info) = stream.tls_info()
-    {
-        connected = connected.extra(tls_info);
-    }
     Ok(Conn {
         transport: Transport::Stream(stream),
         connected,
@@ -158,7 +186,7 @@ impl Service<ConnectRequest> for StreamConnector {
                 None => {
                     let tls = tls.for_request(&req)?;
                     let io = dialer.oneshot(req.route_uri().clone()).await?;
-                    finish(verbose, io, req, tls, restore_nagle).await
+                    finish(verbose, io, req, tls, restore_nagle, None).await
                 }
                 Some(Intercepted::Proxy(proxy)) => {
                     let proxy_uri = proxy.uri().clone();
@@ -184,7 +212,7 @@ impl Service<ConnectRequest> for StreamConnector {
 
                         let io = connector.oneshot(uri).await?;
                         let tls = tls.for_request(&req)?;
-                        return finish(verbose, io, req, tls, restore_nagle).await;
+                        return finish(verbose, io, req, tls, restore_nagle, None).await;
                     }
 
                     if secure {
@@ -201,7 +229,7 @@ impl Service<ConnectRequest> for StreamConnector {
                         }
 
                         let io = tunnel.oneshot(uri).await?;
-                        finish(verbose, io, req, tls, restore_nagle).await
+                        finish(verbose, io, req, tls, restore_nagle, None).await
                     } else {
                         // HTTP/1 forwarding to an HTTPS proxy must not negotiate target ALPN.
                         let mut tls = tls
@@ -213,11 +241,9 @@ impl Service<ConnectRequest> for StreamConnector {
                             .oneshot(req.route_uri().clone())
                             .await
                             .map_err(ProxyConnect::Source)?;
-                        let mut conn = finish(verbose, io, req, tls, restore_nagle)
+                        finish(verbose, io, req, tls, restore_nagle, Some(proxy))
                             .await
-                            .map_err(ProxyConnect::Source)?;
-                        conn.connected = conn.connected.proxy(proxy);
-                        Ok(conn)
+                            .map_err(|err| ProxyConnect::Source(err).into())
                     }
                 }
                 #[cfg(unix)]
@@ -229,10 +255,10 @@ impl Service<ConnectRequest> for StreamConnector {
                             proxy_hop(&tls, dialer, &req),
                         );
                         let io = tunnel.oneshot(uri).await?;
-                        finish(verbose, io, req, tls, false).await
+                        finish(verbose, io, req, tls, false, None).await
                     } else {
                         let io = dialer.oneshot(req.route_uri().clone()).await?;
-                        finish(verbose, io, req, tls, false).await
+                        finish(verbose, io, req, tls, false, None).await
                     }
                 }
             }
