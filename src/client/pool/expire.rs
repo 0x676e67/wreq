@@ -25,11 +25,11 @@ use tokio::sync::watch;
 
 use crate::rt::{BoxSleep, DynRuntime, Timer as _};
 
-/// Inspects retained state owned by an expiration target.
+/// Retains reusable state owned by an expiration target.
 ///
 /// Implementations move rejected services out of their locks before dropping
 /// them. The returned interval determines when the watcher next inspects the pool.
-pub(super) trait Inspect: Send + Sync + 'static {
+pub(super) trait Retain: Send + Sync + 'static {
     /// Removes expired state and returns the next required inspection interval.
     fn retain(&self, now: Instant) -> Option<Duration>;
 
@@ -41,7 +41,7 @@ pub(super) trait Inspect: Send + Sync + 'static {
 ///
 /// `Expire` remains dormant until its owner observes retained state and calls
 /// [`Expire::schedule`]. At most one watcher runs at a time. It repeatedly asks
-/// [`Inspect`] to filter the wrapped pool, then stops once no reusable state
+/// [`Retain`] to filter the wrapped pool, then stops once no reusable state
 /// remains.
 pub(super) struct Expire<T> {
     /// Pool inspected on each expiration tick.
@@ -84,7 +84,7 @@ impl<T> Expire<T> {
 
 impl<T> Expire<T>
 where
-    T: Inspect,
+    T: Retain,
 {
     /// Starts the watcher when proactive expiration is configured.
     ///
@@ -223,7 +223,7 @@ mod tests {
         checks: AtomicUsize,
     }
 
-    impl Inspect for TestTarget {
+    impl Retain for TestTarget {
         fn retain(&self, _now: Instant) -> Option<Duration> {
             self.checks.fetch_add(1, Ordering::SeqCst);
             self.next()
