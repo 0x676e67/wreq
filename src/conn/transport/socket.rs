@@ -1,21 +1,17 @@
 //! Request-aware TCP and Unix socket dialing.
 
-#[cfg(unix)]
-use std::path::Path;
 use std::{
     sync::Arc,
     task::{Context, Poll},
 };
 
-#[cfg(unix)]
-use futures_util::TryFutureExt;
 use futures_util::future::{BoxFuture, Either, ErrInto};
 use http::Uri;
 use tower::Service;
+#[cfg(unix)]
+use {crate::rt::DynRuntime, futures_util::TryFutureExt, std::path::Path};
 
 use super::{BindOptions, TcpConnector};
-#[cfg(unix)]
-use crate::rt::DynRuntime;
 use crate::{
     error::BoxError,
     rt::{BoxConnection, Connecting},

@@ -10,8 +10,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-#[cfg(feature = "http3")]
-use btls::ssl::SslSession;
 use btls::{
     error::ErrorStack,
     rand::rand_bytes,
@@ -19,7 +17,7 @@ use btls::{
 };
 use lru::LruCache;
 #[cfg(feature = "http3")]
-use quic::crypto::btls::Zeroizing;
+use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 
 use super::{
     Key, SESSION_ENTRY_CAPACITY, SESSION_ID_CONTEXT_LENGTH, SessionTarget, Ticket, TlsSession,

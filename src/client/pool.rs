@@ -42,12 +42,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "http2")]
-use netty::http2::Http2Options;
-#[cfg(feature = "http3")]
-use netty::http3::Http3Options;
 use netty::{conn, http1::Http1Options};
 use tower::{BoxError, Layer, Service, ServiceBuilder};
+#[cfg(feature = "http2")]
+use {
+    self::{entry::NegotiatedEntry, negotiate::Negotiate},
+    super::proto::http2,
+    netty::http2::Http2Options,
+};
+#[cfg(feature = "http3")]
+use {super::proto::http3, netty::http3::Http3Options};
 
 pub(super) use self::pooled::Pooled;
 use self::{
@@ -57,17 +61,11 @@ use self::{
     maker::ConnectionMaker,
     map::{Map, Target},
 };
-#[cfg(feature = "http2")]
-use self::{entry::NegotiatedEntry, negotiate::Negotiate};
 #[cfg(any(feature = "http2", feature = "http3"))]
 use self::{
     entry::{EntryUse, MuxEntry},
     singleton::{Singleton, SingletonError},
 };
-#[cfg(feature = "http2")]
-use super::proto::http2;
-#[cfg(feature = "http3")]
-use super::proto::http3;
 use super::proto::{Established, http1};
 use crate::{
     Protocol,

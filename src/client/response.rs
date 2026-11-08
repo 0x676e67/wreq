@@ -5,18 +5,19 @@ use std::{
 };
 
 use bytes::Bytes;
-#[cfg(feature = "charset")]
-use encoding_rs::{Encoding, UTF_8};
 #[cfg(feature = "stream")]
 use futures_util::Stream;
 use http::{HeaderMap, StatusCode, Uri, Version};
 use http_body::{Body as HttpBody, Frame};
 use http_body_util::{BodyExt, Collected};
-#[cfg(feature = "charset")]
-use mime::Mime;
 use netty::ext::ReasonPhrase;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
+#[cfg(feature = "charset")]
+use {
+    encoding_rs::{Encoding, UTF_8},
+    mime::Mime,
+};
 
 #[cfg(feature = "cookies")]
 use crate::cookie;

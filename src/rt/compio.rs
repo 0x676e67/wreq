@@ -4,8 +4,6 @@ mod future;
 mod gai;
 mod io;
 
-#[cfg(unix)]
-use std::path::Path;
 use std::{
     fmt::{self, Debug, Formatter},
     future::Future,
@@ -16,11 +14,11 @@ use std::{
     time::Instant,
 };
 
-#[cfg(unix)]
-use ::compio::net::UnixStream;
 use ::compio::{net::TcpSocket, runtime, time};
 use futures_util::future::{BoxFuture, LocalBoxFuture};
 use send_wrapper::SendWrapper;
+#[cfg(unix)]
+use {::compio::net::UnixStream, std::path::Path};
 
 use self::{future::SendFuture, gai::GaiResolver, io::Compat};
 use crate::{

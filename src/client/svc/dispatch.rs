@@ -123,13 +123,14 @@ where
     ) -> Result<(DispatchRequest<Body>, CheckedOut), DispatchError<Body>> {
         // RFC 8441 §3 and RFC 9220 §3: extended CONNECT only after the peer enabled it. A
         // miss keeps the dedicated HTTP/1.1 upgrade, so no HTTP/2 or HTTP/3 connection opens.
-        let reused: Option<pool::Pooled> = cfg_select! {
-            any(feature = "http2", feature = "http3") => request
-                .extended_connect_key
-                .as_ref()
-                .and_then(|key| self.pool.checkout_extended_connect(key)),
-            _ => None,
-        };
+        let reused: Option<pool::Pooled> =
+            cfg_select! {
+                any(feature = "http2", feature = "http3") => request
+                    .extended_connect_key
+                    .as_ref()
+                    .and_then(|key| self.pool.checkout_extended_connect(key)),
+                _ => None,
+            };
         #[cfg(any(feature = "http2", feature = "http3"))]
         let mut request = request;
         #[cfg(any(feature = "http2", feature = "http3"))]
@@ -547,14 +548,15 @@ mod tests {
     };
 
     use futures_util::future;
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    use {
+        super::super::{DedicatedConnection, RequestVersion},
+        crate::config::RequestConfig,
+    };
 
     #[cfg(feature = "cookies")]
     use super::super::tests::http1_dispatch;
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    use super::super::{DedicatedConnection, RequestVersion};
     use super::{super::tests::stack, *};
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    use crate::config::RequestConfig;
     use crate::{
         Protocol,
         conn::{Conn, request::ConnectRequest},

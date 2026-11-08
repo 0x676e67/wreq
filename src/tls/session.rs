@@ -14,17 +14,15 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(feature = "http3")]
-use btls::ssl::SslSession;
 use btls::{
     nid::Nid,
     ssl::{ClientSession, SslSessionRef},
 };
 use http::Uri;
 use lru::LruCache;
-#[cfg(feature = "http3")]
-use quic::crypto::btls::Zeroizing;
 pub(crate) use store::Tickets;
+#[cfg(feature = "http3")]
+use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 
 use crate::{
     conn::{

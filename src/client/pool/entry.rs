@@ -17,11 +17,17 @@ use std::{
 
 use futures_util::future::BoxFuture;
 use tower::{BoxError, Service, util::Oneshot};
-
 #[cfg(feature = "http2")]
-use super::negotiate::{Negotiate, Negotiated};
+use {
+    super::negotiate::{Negotiate, Negotiated},
+    crate::client::proto::{Established, is_expired},
+};
 #[cfg(any(feature = "http2", feature = "http3"))]
-use super::singleton::{Singled, Singleton, SingletonFuture};
+use {
+    super::singleton::{Singled, Singleton, SingletonFuture},
+    crate::client::proto::mux,
+};
+
 use super::{
     PoolTarget,
     cache::{self, BackgroundConnect, Cache, Cached},
@@ -29,10 +35,6 @@ use super::{
 };
 #[cfg(test)]
 use crate::Protocol;
-#[cfg(any(feature = "http2", feature = "http3"))]
-use crate::client::proto::mux;
-#[cfg(feature = "http2")]
-use crate::client::proto::{Established, is_expired};
 use crate::{client::proto::http1, conn::request::ConnectRequest};
 
 /// Type-erased operations required from one mapped pool entry.
@@ -131,9 +133,11 @@ trait Http1Cache:
 /// Handshake future of one HTTP/2 or HTTP/3 connection.
 #[cfg(any(feature = "http2", feature = "http3"))]
 type MuxMake = BoxFuture<'static, Result<mux::Connection, BoxError>>;
+
 /// Shared sender clone checked out from a singleton.
 #[cfg(any(feature = "http2", feature = "http3"))]
 pub(super) type MuxPooled = Singled<MuxMake, mux::Connection>;
+
 /// Future joining an existing singleton generation.
 #[cfg(any(feature = "http2", feature = "http3"))]
 type MuxCheckout = SingletonFuture<MuxMake, mux::Connection>;

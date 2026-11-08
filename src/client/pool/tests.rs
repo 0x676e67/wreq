@@ -1,37 +1,33 @@
-#[cfg(feature = "http3")]
-use std::net::{Ipv4Addr, SocketAddr};
-#[cfg(feature = "http2")]
-use std::{
-    hash::{Hash, Hasher},
-    sync::atomic::AtomicBool,
-};
 use std::{
     io,
     sync::atomic::Ordering,
     task::{self, Poll},
 };
 
-#[cfg(feature = "http3")]
-use ::quic::crypto::rustls::QuicClientConfig;
-#[cfg(feature = "http2")]
-use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use http::Request;
-#[cfg(feature = "http2")]
-use http::Response;
-#[cfg(feature = "http2")]
-use http_body_util::Empty;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(feature = "http2")]
-use tower::util::Oneshot;
-
-#[cfg(feature = "http2")]
-use super::entry::Checkout;
-use super::*;
-#[cfg(feature = "http2")]
-use crate::conn::config::ConfigScope;
+use {
+    super::entry::Checkout,
+    crate::conn::config::ConfigScope,
+    bytes::Bytes,
+    http::Response,
+    http_body_util::Empty,
+    std::{
+        hash::{Hash, Hasher},
+        sync::atomic::AtomicBool,
+    },
+    tower::util::Oneshot,
+};
 #[cfg(feature = "http3")]
-use crate::conn::{Connected, Transport, TransportMismatch, transport::test_server_config};
+use {
+    crate::conn::{Connected, Transport, TransportMismatch, transport::test_server_config},
+    ::quic::crypto::rustls::QuicClientConfig,
+    std::net::{Ipv4Addr, SocketAddr},
+};
+
+use super::*;
 use crate::{conn::Conn, group::Group};
 
 /// Connector behavior used to exercise unsuccessful checkout cleanup.
