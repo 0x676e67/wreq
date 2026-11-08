@@ -5,7 +5,8 @@
 //!
 //! DNS completes before racing addresses. With Happy Eyeballs enabled, families
 //! alternate and attempts are staggered, with at most six active attempts.
-//! If every active attempt fails, the next starts immediately; success drops pending attempts.
+//! If every active attempt fails, the next starts immediately; success drops pending attempts,
+//! and so does a failure that every address would repeat, such as a refused QUIC handshake.
 //! The connector's deadline covers DNS and the whole race. Disabling racing preserves resolver
 //! order.
 //!
@@ -29,6 +30,8 @@ use std::{
     time::Duration,
 };
 
+#[cfg(all(feature = "http3", feature = "socks"))]
+pub(crate) use quic::handshake_error;
 #[cfg(all(test, feature = "http3"))]
 pub(crate) use quic::test_server_config;
 #[cfg(feature = "http3")]
@@ -91,10 +94,13 @@ pub struct ConnectError {
     pub(crate) msg: &'static str,
     pub(crate) addr: Option<SocketAddr>,
     pub(crate) cause: Option<BoxError>,
+    /// Every other address of the host would fail the same way, so the race ends here.
+    terminal: bool,
 }
 
 enum Event<C> {
     Connected(C),
+    Terminal(ConnectError),
     AllAttemptsFailed,
     DelayElapsed,
 }
@@ -134,7 +140,8 @@ where
 
 /// Tries candidates using transport-specific setup and the selected clock, staggered by
 /// `happy_eyeballs_timeout` or one at a time without it. Bindings of one family drop the
-/// other family's candidates. Setup errors and failed futures advance through addresses.
+/// other family's candidates. Setup errors and failed futures advance through addresses; a
+/// terminal error ends the race at once and cancels the other attempts.
 pub(super) async fn race<C, F, S>(
     addrs: SocketAddrs,
     bind_options: &BindOptions,
@@ -164,6 +171,9 @@ where
                 Err(error) => {
                     let error = error.with_addr(addr);
                     trace!("connect error for {}: {:?}", addr, error);
+                    if error.terminal {
+                        return Err(error);
+                    }
                     first_error.get_or_insert(error);
                 }
             }
@@ -394,6 +404,9 @@ where
                         Err(error) => {
                             let error = error.with_addr(addr);
                             trace!("connect error for {}: {:?}", addr, error);
+                            if error.terminal {
+                                return Poll::Ready(Event::Terminal(error));
+                            }
                             self.record_error(order, error);
                             failed = true;
                         }
@@ -435,6 +448,7 @@ where
             };
             match event {
                 Event::Connected(connection) => return Ok(connection),
+                Event::Terminal(error) => return Err(error),
                 Event::AllAttemptsFailed => {}
                 Event::DelayElapsed => {
                     if self.attempts.len() >= MAX_PARALLEL_CONNECT_ATTEMPTS {
@@ -456,6 +470,7 @@ impl ConnectError {
             msg,
             addr: None,
             cause: Some(cause.into()),
+            terminal: false,
         }
     }
 

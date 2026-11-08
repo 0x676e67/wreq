@@ -268,7 +268,7 @@ async fn connect_target(
 
     quic.finish_tunnel(request, config, socket, relay, ended)
         .await
-        .map_err(ConnectError::m(TARGET_HANDSHAKE_ERROR))
+        .map_err(transport::handshake_error(TARGET_HANDSHAKE_ERROR))
 }
 
 /// Labels a failed proxy stage, keeping it a proxy connect error.

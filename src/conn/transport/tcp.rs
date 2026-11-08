@@ -237,6 +237,7 @@ fn get_host_port(dst: &Uri) -> Result<(&str, u16), ConnectError> {
             msg: INVALID_MISSING_SCHEME,
             addr: None,
             cause: None,
+            terminal: false,
         });
     }
 
@@ -247,6 +248,7 @@ fn get_host_port(dst: &Uri) -> Result<(&str, u16), ConnectError> {
                 msg: INVALID_MISSING_HOST,
                 addr: None,
                 cause: None,
+                terminal: false,
             });
         }
     };

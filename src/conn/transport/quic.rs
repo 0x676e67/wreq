@@ -13,7 +13,8 @@ use std::{
 };
 
 use ::quic::{
-    AsyncUdpSocket, Connecting, Connection, Endpoint, EndpointConfig, TokenStore, TransportConfig,
+    AsyncUdpSocket, Connecting, Connection, ConnectionError, Endpoint, EndpointConfig, TokenStore,
+    TransportConfig, TransportErrorCode,
 };
 use bytes::Bytes;
 use futures_util::future::{self, BoxFuture, Either};
@@ -267,7 +268,7 @@ impl QuicConnector {
         let connection = connecting
             .map_err(|error| ConnectError::new("quic connect error", session_error(error, config)))?
             .await
-            .map_err(ConnectError::m("quic handshake error"))?;
+            .map_err(handshake_error("quic handshake error"))?;
         Ok((connection, endpoint))
     }
 
@@ -532,6 +533,36 @@ fn session_error(error: ::quic::ConnectError, config: &QuicConfig) -> BoxError {
             Box::new(rejected.clone())
         }
         _ => Box::new(error),
+    }
+}
+
+/// Labels a failed handshake; one the peer answered and refused ends the address race.
+///
+/// Another address of the host would refuse it too, so QUIC reports it once, as TLS over TCP
+/// does after the TCP race. A refusal is a TLS alert from either side, carried as a
+/// CRYPTO_ERROR code ([RFC 9000 Section 20.1], [RFC 9001 Section 4.8]), or a Version
+/// Negotiation packet without a supported version ([RFC 9000 Section 6.2]). Timeouts, resets
+/// and other closes, such as a busy or draining server's, advance the race.
+///
+/// [RFC 9000 Section 20.1]: https://www.rfc-editor.org/rfc/rfc9000#section-20.1
+/// [RFC 9001 Section 4.8]: https://www.rfc-editor.org/rfc/rfc9001#section-4.8
+/// [RFC 9000 Section 6.2]: https://www.rfc-editor.org/rfc/rfc9000#section-6.2
+pub(crate) fn handshake_error<E: Into<BoxError>>(
+    msg: &'static str,
+) -> impl FnOnce(E) -> ConnectError {
+    move |cause| {
+        let cause = cause.into();
+        let crypto = |code: TransportErrorCode| (0x100..0x200).contains(&u64::from(code));
+        let terminal = match cause.downcast_ref() {
+            Some(ConnectionError::VersionMismatch) => true,
+            Some(ConnectionError::TransportError(error)) => crypto(error.code),
+            Some(ConnectionError::ConnectionClosed(close)) => crypto(close.error_code),
+            _ => false,
+        };
+        ConnectError {
+            terminal,
+            ..ConnectError::new(msg, cause)
+        }
     }
 }
 
@@ -820,6 +851,54 @@ mod tests {
         .expect("losing handshake must be canceled without closing its endpoint");
         assert!(same_socket(&current(slot), &pending_endpoint));
         connection.close(0u32.into(), b"done");
+    }
+
+    #[tokio::test]
+    async fn a_refused_handshake_ends_the_race() {
+        let (server_config, _) = test_server_config();
+        // The client trusts another certificate, so it rejects each server's.
+        let (_, cert) = test_server_config();
+        let handshakes = Arc::new(AtomicUsize::new(0));
+        let mut addresses = Vec::new();
+        for _ in 0..2 {
+            let server =
+                Endpoint::server(server_config.clone(), (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+            addresses.push(server.local_addr().unwrap());
+            let handshakes = handshakes.clone();
+            tokio::spawn(async move {
+                while let Some(incoming) = server.accept().await {
+                    handshakes.fetch_add(1, Ordering::SeqCst);
+                    let _ = incoming.await;
+                }
+            });
+        }
+        // Sequential and staggered attempts both stop at the first refusal.
+        for happy_eyeballs_timeout in [None, Some(Duration::from_secs(5))] {
+            handshakes.store(0, Ordering::SeqCst);
+            let connector = builder(&cert)
+                .happy_eyeballs_timeout(happy_eyeballs_timeout)
+                .build(DynResolver::new(resolving(addresses.clone())))
+                .unwrap();
+            let localhost = request(Uri::from_static("https://localhost/"), None);
+            let error = tokio::time::timeout(Duration::from_secs(5), connector.connect(&localhost))
+                .await
+                .unwrap()
+                .err()
+                .unwrap()
+                .downcast::<ConnectError>()
+                .unwrap();
+            assert_eq!(error.addr, Some(addresses[0]));
+            assert_eq!(handshakes.load(Ordering::SeqCst), 1, "{error:?}");
+            // unknown_ca (https://www.rfc-editor.org/rfc/rfc8446#section-6.2)
+            assert!(
+                matches!(
+                    error.cause.as_deref().and_then(|cause| cause.downcast_ref()),
+                    Some(ConnectionError::TransportError(alert))
+                        if alert.code == TransportErrorCode::crypto(48)
+                ),
+                "{error:?}"
+            );
+        }
     }
 
     #[tokio::test]
