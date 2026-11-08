@@ -24,7 +24,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::Notify;
 use tower::{BoxError, Service};
 
-use super::{BindOptions, ConnectError, HAPPY_EYEBALLS_TIMEOUT, race, resolve};
+use super::{BindOptions, ConnectError, race, resolve};
 use crate::{
     conn::{
         Conn, Connected, HttpInfo, TlsInfoFactory, Transport,
@@ -51,24 +51,12 @@ struct Inner {
     runtime: DynRuntime,
     resolver: DynResolver,
     tls: TlsConfig,
-    tls_info: bool,
     happy_eyeballs_timeout: Option<Duration>,
     bind_options: BindOptions,
     transport: Arc<TransportConfig>,
     proxy_transport: Arc<TransportConfig>,
     endpoints: Endpoints,
     tokens: Arc<Tokens>,
-}
-
-/// Configures QUIC transport before attaching a resolver.
-/// Building creates shared endpoint and token stores without opening sockets.
-#[must_use]
-pub(crate) struct QuicConnectorBuilder {
-    runtime: DynRuntime,
-    tls: TlsConfig,
-    tls_info: bool,
-    bind_options: BindOptions,
-    happy_eyeballs_timeout: Option<Duration>,
 }
 
 /// The route of one QUIC connection, which selects its transport.
@@ -122,19 +110,32 @@ const TOKENS_PER_KEY: usize = 2;
 // ===== impl QuicConnector =====
 
 impl QuicConnector {
-    /// Starts configuring a transport with its runtime, TLS and connection policy.
-    pub(crate) fn builder(
+    /// Creates a transport dialing with the client's TLS and bindings, racing addresses
+    /// `happy_eyeballs_timeout` apart. Builds the client's transports from its QUIC options and
+    /// creates the shared endpoint and token stores without opening sockets.
+    pub(crate) fn new(
         runtime: DynRuntime,
+        resolver: DynResolver,
         tls: TlsConfig,
-        tls_info: bool,
-    ) -> QuicConnectorBuilder {
-        QuicConnectorBuilder {
-            runtime,
-            tls,
-            tls_info,
-            bind_options: BindOptions::default(),
-            happy_eyeballs_timeout: Some(HAPPY_EYEBALLS_TIMEOUT),
-        }
+        bind_options: BindOptions,
+        happy_eyeballs_timeout: Option<Duration>,
+    ) -> crate::Result<Self> {
+        let options = tls.options();
+        let transport = Arc::new(Path::Direct.transport(options)?);
+        let proxy_transport = Arc::new(Path::Proxy.transport(options)?);
+        Ok(Self {
+            inner: Arc::new(Inner {
+                runtime,
+                resolver,
+                tls,
+                happy_eyeballs_timeout,
+                bind_options,
+                transport,
+                proxy_transport,
+                endpoints: Endpoints::default(),
+                tokens: Arc::new(Tokens(Mutex::new(LruCache::sparse(TOKEN_KEYS)))),
+            }),
+        })
     }
 
     /// Returns the runtime that drives endpoints, tunnels and timers.
@@ -475,7 +476,7 @@ impl QuicConnector {
             remote_addr: connection.remote_address(),
             local_addr: endpoint.local_addr()?,
         });
-        if self.inner.tls_info
+        if self.inner.tls.tls_info()
             && let Some(tls_info) = connection.tls_info()
         {
             connected = connected.extra(tls_info);
@@ -563,49 +564,6 @@ pub(crate) fn handshake_error<E: Into<BoxError>>(
             terminal,
             ..ConnectError::new(msg, cause)
         }
-    }
-}
-
-// ===== impl QuicConnectorBuilder =====
-
-impl QuicConnectorBuilder {
-    /// Sets the client's local addresses and interface for outbound UDP sockets.
-    #[inline]
-    pub(crate) fn bind_options(mut self, bind_options: BindOptions) -> Self {
-        self.bind_options = bind_options;
-        self
-    }
-
-    /// Sets the delay between overlapping address attempts; `None` tries them in order.
-    #[inline]
-    pub(crate) fn happy_eyeballs_timeout(
-        mut self,
-        happy_eyeballs_timeout: Option<Duration>,
-    ) -> Self {
-        self.happy_eyeballs_timeout = happy_eyeballs_timeout;
-        self
-    }
-
-    /// Attaches the resolver, builds the client's transports from its QUIC options and
-    /// creates the shared transport state.
-    pub(crate) fn build(self, resolver: DynResolver) -> crate::Result<QuicConnector> {
-        let options = self.tls.options();
-        let transport = Arc::new(Path::Direct.transport(options)?);
-        let proxy_transport = Arc::new(Path::Proxy.transport(options)?);
-        Ok(QuicConnector {
-            inner: Arc::new(Inner {
-                runtime: self.runtime,
-                resolver,
-                tls: self.tls,
-                tls_info: self.tls_info,
-                happy_eyeballs_timeout: self.happy_eyeballs_timeout,
-                bind_options: self.bind_options,
-                transport,
-                proxy_transport,
-                endpoints: Endpoints::default(),
-                tokens: Arc::new(Tokens(Mutex::new(LruCache::sparse(TOKEN_KEYS)))),
-            }),
-        })
     }
 }
 
@@ -719,7 +677,7 @@ mod tests {
         conn::{config::ConfigSet, layer::timeout::TimeoutLayer},
         dns::{Addrs, Name, Resolve, Resolving},
         rt::tokio::TokioRuntime,
-        tls::{config::TlsBuilder, trust::CertStore},
+        tls::trust::CertStore,
     };
 
     struct Resolver {
@@ -767,18 +725,32 @@ mod tests {
         (connection, endpoint, peer)
     }
 
-    /// Returns a connector builder trusting `cert`.
-    fn builder(cert: &[u8]) -> QuicConnectorBuilder {
-        let tls = TlsBuilder::new()
-            .cert_store(CertStore::from_der_certs([cert]).unwrap())
-            .build_quic(ConfigSet::default())
-            .unwrap();
-        QuicConnector::builder(DynRuntime::new(TokioRuntime), tls, false)
+    /// Returns a connector trusting `cert` that resolves names through `resolver`, with the
+    /// client's bindings and Happy Eyeballs delay.
+    fn connector_with(
+        resolver: Arc<dyn Resolve>,
+        cert: &[u8],
+        bind_options: BindOptions,
+        happy_eyeballs_timeout: Option<Duration>,
+    ) -> QuicConnector {
+        let tls = crate::tls::config::TlsConfig {
+            cert_store: Some(CertStore::from_der_certs([cert]).unwrap()),
+            ..Default::default()
+        };
+        QuicConnector::new(
+            DynRuntime::new(TokioRuntime),
+            DynResolver::new(resolver),
+            tls.build_quic(&ConfigSet::default()).unwrap(),
+            bind_options,
+            happy_eyeballs_timeout,
+        )
+        .unwrap()
     }
 
-    /// Returns a connector trusting `cert` that resolves names through `resolver`.
+    /// Returns a connector trusting `cert` that resolves names through `resolver`. Its tests
+    /// resolve one address, so no delay applies.
     fn connector(resolver: Arc<dyn Resolve>, cert: &[u8]) -> QuicConnector {
-        builder(cert).build(DynResolver::new(resolver)).unwrap()
+        connector_with(resolver, cert, BindOptions::default(), None)
     }
 
     fn current(slot: &Mutex<Option<Endpoint>>) -> Endpoint {
@@ -826,10 +798,12 @@ mod tests {
             .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
             .unwrap();
         let resolver = resolving(vec![blackhole.local_addr().unwrap(), addr4]);
-        let connector = builder(&cert)
-            .happy_eyeballs_timeout(Some(Duration::from_millis(20)))
-            .build(DynResolver::new(resolver.clone()))
-            .unwrap();
+        let connector = connector_with(
+            resolver.clone(),
+            &cert,
+            BindOptions::default(),
+            Some(Duration::from_millis(20)),
+        );
         let localhost = request(Uri::from_static("https://localhost/"), None);
         let (connection, _, _peer) = connect(&connector, localhost, &server4).await;
         assert_eq!(connection.remote_address(), addr4);
@@ -875,10 +849,12 @@ mod tests {
         // Sequential and staggered attempts both stop at the first refusal.
         for happy_eyeballs_timeout in [None, Some(Duration::from_secs(5))] {
             handshakes.store(0, Ordering::SeqCst);
-            let connector = builder(&cert)
-                .happy_eyeballs_timeout(happy_eyeballs_timeout)
-                .build(DynResolver::new(resolving(addresses.clone())))
-                .unwrap();
+            let connector = connector_with(
+                resolving(addresses.clone()),
+                &cert,
+                BindOptions::default(),
+                happy_eyeballs_timeout,
+            );
             let localhost = request(Uri::from_static("https://localhost/"), None);
             let error = tokio::time::timeout(Duration::from_secs(5), connector.connect(&localhost))
                 .await
@@ -962,12 +938,12 @@ mod tests {
         let server = Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         let mut client = BindOptions::default();
         client.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
-        let connector = builder(&cert)
-            .bind_options(client.clone())
-            .build(DynResolver::new(resolving(vec![
-                server.local_addr().unwrap(),
-            ])))
-            .unwrap();
+        let connector = connector_with(
+            resolving(vec![server.local_addr().unwrap()]),
+            &cert,
+            client.clone(),
+            None,
+        );
         let uri = Uri::from_static("https://localhost/");
         let request = |bindings: Option<BindOptions>| {
             ConnectRequest::new(

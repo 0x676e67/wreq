@@ -9,7 +9,7 @@ use super::{
     TlsVersion, connector,
     ext::SslContextBuilderExt,
     keylog::KeyLog,
-    session::{Tickets, TlsSessionStore},
+    session::Tickets,
     trust::{CertStore, Identity},
 };
 use crate::{
@@ -18,27 +18,21 @@ use crate::{
     sync::Mutex,
 };
 
-/// Client settings used to build TLS connection services and QUIC configurations.
-/// The minimum version applies to TCP/Unix. QUIC checks the maximum version against
-/// TLS 1.3 and uses its own ALPN.
+/// Client-wide TLS policy, fixed at build and compiled into TCP/Unix and QUIC contexts.
+/// The minimum version applies to TCP/Unix. QUIC checks the maximum version against TLS 1.3
+/// and uses its own ALPN. Clones share one session store across both transports.
 #[derive(Clone)]
-pub(super) struct Config {
-    pub(super) max_version: Option<TlsVersion>,
-    pub(super) min_version: Option<TlsVersion>,
-    pub(super) sni: bool,
-    pub(super) verify_hostname: bool,
-    pub(super) cert_verification: bool,
-    pub(super) tickets: Arc<Tickets>,
-    keylog: Option<KeyLog>,
-    identity: Option<Identity>,
-    cert_store: Option<CertStore>,
-}
-
-/// Configures client TLS settings before compiling TCP/Unix or QUIC contexts.
-/// Clones retain one client session scope across both transports.
-#[derive(Clone)]
-pub(crate) struct TlsBuilder {
-    config: Config,
+pub(crate) struct TlsConfig {
+    pub(crate) min_version: Option<TlsVersion>,
+    pub(crate) max_version: Option<TlsVersion>,
+    pub(crate) sni: bool,
+    pub(crate) verify_hostname: bool,
+    pub(crate) cert_verification: bool,
+    pub(crate) keylog: Option<KeyLog>,
+    pub(crate) identity: Option<Identity>,
+    pub(crate) cert_store: Option<CertStore>,
+    pub(crate) tickets: Arc<Tickets>,
+    pub(crate) tls_info: bool,
 }
 
 /// The client's compiled TLS context and the most recently used request contexts, keyed by
@@ -55,9 +49,9 @@ pub(super) struct ContextCache<T> {
 const REQUEST_CONTEXTS: NonZeroUsize =
     NonZeroUsize::new(16).expect("request context capacity must be non-zero");
 
-// ===== impl Config =====
+// ===== impl TlsConfig =====
 
-impl Config {
+impl TlsConfig {
     /// Applies the client's identity, trust roots, verification and key log to a context.
     pub(super) fn configure(&self, builder: &mut SslContextBuilder) -> crate::Result<()> {
         builder.set_identity(self.identity.as_ref())?;
@@ -93,113 +87,38 @@ impl Config {
         builder.set_session_timeout(60 * 60);
         Ok(())
     }
-}
 
-// ===== impl TlsBuilder =====
-
-impl TlsBuilder {
-    /// Starts configuring the client-wide TLS policy.
-    pub(crate) fn new() -> Self {
-        Self {
-            config: Config {
-                min_version: None,
-                max_version: None,
-                identity: None,
-                sni: true,
-                verify_hostname: true,
-                cert_store: None,
-                cert_verification: true,
-                keylog: None,
-                tickets: Arc::new(Tickets::new(None)),
-            },
-        }
-    }
-
-    /// Sets the TLS keylog policy.
-    #[inline]
-    pub fn keylog(mut self, keylog: Option<KeyLog>) -> Self {
-        self.config.keylog = keylog;
-        self
-    }
-
-    /// Sets the identity to be used for client certificate authentication.
-    #[inline]
-    pub fn identity(mut self, identity: Option<Identity>) -> Self {
-        self.config.identity = identity;
-        self
-    }
-
-    /// Sets the certificate store used for TLS verification.
-    #[inline]
-    pub fn cert_store<T>(mut self, cert_store: T) -> Self
-    where
-        T: Into<Option<CertStore>>,
-    {
-        self.config.cert_store = cert_store.into();
-        self
-    }
-
-    /// Sets the certificate verification flag.
-    #[inline]
-    pub fn cert_verification(mut self, enabled: bool) -> Self {
-        self.config.cert_verification = enabled;
-        self
-    }
-
-    /// Sets the minimum TLS version to use.
-    #[inline]
-    pub fn min_version<T>(mut self, version: T) -> Self
-    where
-        T: Into<Option<TlsVersion>>,
-    {
-        self.config.min_version = version.into();
-        self
-    }
-
-    /// Sets the maximum TLS version to use.
-    #[inline]
-    pub fn max_version<T>(mut self, version: T) -> Self
-    where
-        T: Into<Option<TlsVersion>>,
-    {
-        self.config.max_version = version.into();
-        self
-    }
-
-    /// Sets the Server Name Indication (SNI) flag.
-    #[inline]
-    pub fn sni(mut self, enabled: bool) -> Self {
-        self.config.sni = enabled;
-        self
-    }
-
-    /// Sets the hostname verification flag.
-    #[inline]
-    pub fn verify_hostname(mut self, enabled: bool) -> Self {
-        self.config.verify_hostname = enabled;
-        self
-    }
-
-    /// Sets the shared TLS session store.
-    #[inline]
-    pub fn session_store(mut self, tls_session_store: Option<Arc<dyn TlsSessionStore>>) -> Self {
-        if let Some(tls_session_store) = tls_session_store {
-            self.config.tickets = Arc::new(Tickets::new(Some(tls_session_store)));
-        }
-        self
-    }
-
-    /// Compiles the client's context from its TLS options and consumes this builder.
+    /// Compiles the client's TCP/Unix context from its TLS options.
     /// Missing options leave TLS customization to the backend's defaults; the client-wide
     /// trust, version, and ALPN policy still applies.
-    pub fn build(self, config_set: ConfigSet) -> crate::Result<connector::HttpsLayer> {
-        connector::HttpsLayer::new(self.config, config_set)
+    pub(crate) fn build(self, config_set: &ConfigSet) -> crate::Result<connector::HttpsLayer> {
+        connector::HttpsLayer::new(self, config_set.clone())
     }
 
-    /// Compiles the client's QUIC context from its QUIC options and consumes this builder.
+    /// Compiles the client's QUIC context from its QUIC options.
     #[cfg(feature = "http3")]
-    pub(crate) fn build_quic(self, config_set: ConfigSet) -> crate::Result<super::quic::TlsConfig> {
-        super::quic::TlsConfig::new(self.config, config_set)
+    pub(crate) fn build_quic(
+        self,
+        config_set: &ConfigSet,
+    ) -> crate::Result<super::quic::TlsConfig> {
+        super::quic::TlsConfig::new(self, config_set.clone())
+    }
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            min_version: None,
+            max_version: None,
+            sni: true,
+            verify_hostname: true,
+            cert_verification: true,
+            keylog: None,
+            identity: None,
+            cert_store: None,
+            tickets: Arc::new(Tickets::new(None)),
+            tls_info: false,
+        }
     }
 }
 

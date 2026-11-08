@@ -16,7 +16,7 @@ use quic::{
 
 use super::{
     AlpnProtocol, AlpsProtocol, TlsVersion,
-    config::{Config, ContextCache},
+    config::{self, ContextCache},
     ext::{SslContextBuilderExt as _, set_ech_grease_host},
     session::{Key, SessionTarget, Tickets},
 };
@@ -38,7 +38,7 @@ pub(crate) struct TlsConfig(Arc<Inner>);
 
 /// Client policy, QUIC options and compiled TLS contexts.
 struct Inner {
-    config: Config,
+    config: config::TlsConfig,
     config_set: ConfigSet,
     options: Option<Arc<QuicOptions>>,
     contexts: ContextCache<QuicClientConfig>,
@@ -86,7 +86,7 @@ struct Attempt {
 // ===== impl TlsConfig =====
 
 impl TlsConfig {
-    pub(super) fn new(config: Config, config_set: ConfigSet) -> Result<Self> {
+    pub(super) fn new(config: config::TlsConfig, config_set: ConfigSet) -> Result<Self> {
         let options = config_set.get_arc::<QuicOptions>();
         let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self(Arc::new(Inner {
@@ -101,6 +101,12 @@ impl TlsConfig {
     #[inline]
     pub(crate) fn options(&self) -> Option<&QuicOptions> {
         self.0.options.as_deref()
+    }
+
+    /// Returns whether responses carry the peer's [`TlsInfo`](crate::tls::TlsInfo).
+    #[inline]
+    pub(crate) fn tls_info(&self) -> bool {
+        self.0.config.tls_info
     }
 
     /// Returns the QUIC TLS configuration of one connection for `request`.
@@ -258,7 +264,7 @@ impl Handshake {
 
 /// Compiles a QUIC context from the client policy and the context options of `options`.
 /// Callbacks and the session cache are configured for each connection attempt.
-fn compile(config: &Config, options: Option<&QuicOptions>) -> Result<QuicClientConfig> {
+fn compile(config: &config::TlsConfig, options: Option<&QuicOptions>) -> Result<QuicClientConfig> {
     let mut builder = SslContextBuilder::new(SslMethod::tls()).map_err(Error::tls)?;
     config.configure(&mut builder)?;
     if let Some(options) = options {
@@ -380,10 +386,7 @@ mod tests {
         use http::Uri;
 
         use super::*;
-        use crate::{
-            Protocol,
-            tls::{KeyShare, config::TlsBuilder},
-        };
+        use crate::{Protocol, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
         let request = |grease: Option<bool>| {
@@ -400,7 +403,9 @@ mod tests {
             let uri = Uri::from_static("https://localhost/");
             ConnectRequest::test(uri, Some(Protocol::Http3), config_set)
         };
-        let tls = TlsBuilder::new().build_quic(ConfigSet::default()).unwrap();
+        let tls = config::TlsConfig::default()
+            .build_quic(&ConfigSet::default())
+            .unwrap();
         let [client, first, second, other] = [None, Some(false), Some(false), Some(true)]
             .map(|grease| tls.config(&request(grease)).unwrap());
         let context = |config: &QuicConfig| -> *const SslContextRef { &**config.crypto.ctx() };

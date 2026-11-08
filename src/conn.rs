@@ -1,5 +1,5 @@
 //! Connector composition, established connections and response metadata.
-//! [`ConnectorBuilder`] stacks [`layer`] middleware (deadline, proxy routes, stream TLS) on the
+//! [`Connector::new`] stacks [`layer`] middleware (deadline, proxy routes, stream TLS) on the
 //! [`transport`] dialers with `ServiceBuilder`, as the client does. Protocol pools live in the
 //! client.
 
@@ -41,7 +41,7 @@ use tower::{
     BoxError, Layer, ServiceBuilder, ServiceExt,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either},
 };
-use transport::{BindOptions, SocketConnector, TcpConnectorBuilder};
+use transport::{BindOptions, SocketConnector, TcpConfig, TcpConnector};
 #[cfg(feature = "http3")]
 use {
     crate::protocol::TransportKind,
@@ -56,7 +56,7 @@ use crate::{
     error::map_timeout_to_connector_error,
     proxy::{Matcher as ProxyMatcher, matcher::Intercept},
     rt::DynRuntime,
-    tls::{AlpnProtocol, TlsInfo, config::TlsBuilder, connector::MaybeHttpsStream},
+    tls::{AlpnProtocol, TlsInfo, config::TlsConfig, connector::MaybeHttpsStream},
 };
 
 /// Type-erased transport service retained after custom connector layers are composed.
@@ -82,108 +82,75 @@ cfg_select! {
 pub(crate) type Connector =
     Timeout<Either<Direct, BoxCloneSyncService<ConnectRequest, Conn, BoxError>>>;
 
-/// Client settings for proxy selection, tracing and post-handshake socket policy.
-/// Request-specific bindings and protocol configuration travel in [`ConnectRequest`].
-#[derive(Clone)]
-pub(crate) struct Config {
-    pub proxies: Arc<Vec<ProxyMatcher>>,
-    pub verbose: bool,
-    pub nodelay: bool,
-    pub tls_info: bool,
+/// Client-wide connector settings, fixed at build.
+pub(crate) struct ConnectorConfig {
+    pub(crate) tcp: TcpConfig,
+    pub(crate) tls: TlsConfig,
+    pub(crate) proxies: Vec<ProxyMatcher>,
+    pub(crate) bind_options: BindOptions,
+    pub(crate) happy_eyeballs_timeout: Option<Duration>,
+    pub(crate) connect_timeout: Option<Duration>,
+    pub(crate) verbose: bool,
+    pub(crate) layers: Vec<BoxedConnectorLayer>,
 }
 
-/// Builds the stream and QUIC paths from common client settings.
-/// Client TLS contexts are compiled before connection middleware is initialized.
-#[must_use]
-pub(crate) struct ConnectorBuilder {
-    config: Config,
-    runtime: DynRuntime,
-    tls: TlsBuilder,
-    connect_timeout: Option<Duration>,
-    bind_options: BindOptions,
-    happy_eyeballs_timeout: Option<Duration>,
-    layers: Vec<BoxedConnectorLayer>,
-}
+// ===== impl ConnectorConfig =====
 
-// ===== impl ConnectorBuilder =====
-
-impl ConnectorBuilder {
-    /// Starts configuring both transports with common runtime, TLS and connection policy.
-    pub(crate) fn new(runtime: DynRuntime, tls: TlsBuilder, config: Config) -> Self {
+impl Default for ConnectorConfig {
+    fn default() -> Self {
         Self {
-            runtime,
-            tls,
-            config,
-            connect_timeout: None,
+            tcp: TcpConfig::default(),
+            tls: TlsConfig::default(),
+            proxies: Vec::new(),
             bind_options: BindOptions::default(),
-            happy_eyeballs_timeout: Some(transport::HAPPY_EYEBALLS_TIMEOUT),
+            happy_eyeballs_timeout: Some(Duration::from_millis(300)),
+            connect_timeout: None,
+            verbose: false,
             layers: Vec::new(),
         }
     }
+}
 
-    /// Sets the deadline of each connector call, covering user layers and both transports.
-    #[inline]
-    pub(crate) fn connect_timeout(mut self, timeout: Option<Duration>) -> Self {
-        self.connect_timeout = timeout;
-        self
-    }
+// ===== impl Connector =====
 
-    /// Sets the Happy Eyeballs delay shared by TCP and QUIC address races.
-    #[inline]
-    pub(crate) fn happy_eyeballs_timeout(
-        mut self,
-        happy_eyeballs_timeout: Option<Duration>,
-    ) -> Self {
-        self.happy_eyeballs_timeout = happy_eyeballs_timeout;
-        self
-    }
-
-    /// Sets the local addresses and interface inherited by TCP and QUIC sockets.
-    #[inline]
-    pub(crate) fn bind_options(mut self, bind_options: BindOptions) -> Self {
-        self.bind_options = bind_options;
-        self
-    }
-
-    /// Adds middleware shared by stream and QUIC connection attempts.
-    #[inline]
-    pub(crate) fn layers(mut self, layers: Vec<BoxedConnectorLayer>) -> Self {
-        self.layers = layers;
-        self
-    }
-
-    /// Attaches DNS and compiles client TLS contexts, then assembles both transport paths.
+impl Connector {
+    /// Compiles client TLS, attaches DNS and assembles both transport paths under one deadline.
     /// QUIC endpoints remain lazy until a connection future is polled.
-    pub(crate) fn build(
-        self,
-        tcp: TcpConnectorBuilder,
+    pub(crate) fn new(
+        config: ConnectorConfig,
+        runtime: DynRuntime,
         resolver: DynResolver,
-        config_set: ConfigSet,
-    ) -> Result<Connector, crate::Error> {
-        let tcp = tcp
-            .set_bind_options(&self.bind_options)
-            .set_happy_eyeballs_timeout(self.happy_eyeballs_timeout)
-            .build(resolver.clone());
+        config_set: &ConfigSet,
+    ) -> Result<Self, crate::Error> {
+        let proxies = Arc::new(config.proxies);
 
         #[cfg(feature = "http3")]
-        let quic = {
-            let tls = self.tls.clone().build_quic(config_set.clone())?;
-            QuicConnector::builder(self.runtime.clone(), tls, self.config.tls_info)
-                .bind_options(self.bind_options)
-                .happy_eyeballs_timeout(self.happy_eyeballs_timeout)
-                .build(resolver.clone())?
-        };
+        let quic = QuicConnector::new(
+            runtime.clone(),
+            resolver.clone(),
+            config.tls.clone().build_quic(config_set)?,
+            config.bind_options.clone(),
+            config.happy_eyeballs_timeout,
+        )?;
 
+        let tcp = TcpConnector::new(
+            runtime.clone(),
+            resolver.clone(),
+            config.tcp,
+            config.bind_options,
+            config.happy_eyeballs_timeout,
+        );
+        let nodelay = tcp.nodelay();
         let socket = SocketConnector::new(
             #[cfg(unix)]
-            self.runtime.clone(),
+            runtime.clone(),
             tcp,
         );
 
         #[cfg(feature = "http3")]
         let quic = ServiceBuilder::new()
             .layer(QuicProxyLayer::new(
-                self.config.proxies.clone(),
+                proxies.clone(),
                 #[cfg(feature = "socks")]
                 socket.clone(),
             ))
@@ -191,8 +158,10 @@ impl ConnectorBuilder {
 
         let stream = ServiceBuilder::new()
             .layer(ProxyLayer::new(
-                self.config,
-                self.tls.build(config_set)?,
+                proxies,
+                config.verbose,
+                nodelay,
+                config.tls.build(config_set)?,
                 resolver,
             ))
             .service(socket);
@@ -202,10 +171,10 @@ impl ConnectorBuilder {
         #[cfg(not(feature = "http3"))]
         let direct = stream;
 
-        let service = if self.layers.is_empty() {
+        let service = if config.layers.is_empty() {
             Either::Left(direct)
         } else {
-            let service = self.layers.iter().fold(
+            let service = config.layers.iter().fold(
                 BoxCloneSyncService::new(direct.map_request(|Unnameable(request)| request)),
                 |service, layer| layer.layer(service),
             );
@@ -217,7 +186,7 @@ impl ConnectorBuilder {
         };
 
         Ok(ServiceBuilder::new()
-            .layer(TimeoutLayer::new(self.connect_timeout, self.runtime))
+            .layer(TimeoutLayer::new(config.connect_timeout, runtime))
             .service(service))
     }
 }
@@ -818,23 +787,24 @@ mod tests {
         ])));
         let runtime = DynRuntime::new(crate::rt::tokio::TokioRuntime);
         for delay in [Some(Duration::from_millis(10)), None] {
-            let tls = TlsBuilder::new()
-                .cert_store(crate::tls::trust::CertStore::from_der_certs([&cert]).unwrap());
-            let config = Config {
-                proxies: Arc::new(Vec::new()),
-                verbose: false,
-                nodelay: false,
-                tls_info: false,
+            let config = ConnectorConfig {
+                tls: TlsConfig {
+                    cert_store: Some(
+                        crate::tls::trust::CertStore::from_der_certs([&cert]).unwrap(),
+                    ),
+                    ..Default::default()
+                },
+                happy_eyeballs_timeout: delay,
+                connect_timeout: Some(Duration::from_millis(500)),
+                ..Default::default()
             };
-            let connector = ConnectorBuilder::new(runtime.clone(), tls, config)
-                .connect_timeout(Some(Duration::from_millis(500)))
-                .happy_eyeballs_timeout(delay)
-                .build(
-                    transport::TcpConnector::builder(runtime.clone()),
-                    resolver.clone(),
-                    ConfigSet::default(),
-                )
-                .unwrap();
+            let connector = Connector::new(
+                config,
+                runtime.clone(),
+                resolver.clone(),
+                &ConfigSet::default(),
+            )
+            .unwrap();
             let request = ConnectRequest::test(
                 ::http::Uri::from_static("https://localhost/"),
                 Some(crate::Protocol::Http3),
@@ -882,19 +852,17 @@ mod tests {
             (vec![proxy()], ConfigSet::default()),
             (Vec::new(), overridden),
         ] {
-            let config = Config {
-                proxies: Arc::new(proxies),
-                verbose: false,
-                nodelay: false,
-                tls_info: false,
+            let config = ConnectorConfig {
+                proxies,
+                ..Default::default()
             };
-            let connector = ConnectorBuilder::new(runtime.clone(), TlsBuilder::new(), config)
-                .build(
-                    transport::TcpConnector::builder(runtime.clone()),
-                    DynResolver::new(Arc::new(NoDns)),
-                    ConfigSet::default(),
-                )
-                .unwrap();
+            let connector = Connector::new(
+                config,
+                runtime.clone(),
+                DynResolver::new(Arc::new(NoDns)),
+                &ConfigSet::default(),
+            )
+            .unwrap();
             let request = ConnectRequest::test(
                 ::http::Uri::from_static("https://localhost/"),
                 Some(crate::Protocol::Http3),

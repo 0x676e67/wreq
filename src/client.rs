@@ -68,10 +68,8 @@ use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Protocol, Proxy,
     conn::{
-        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connector, ConnectorBuilder,
-        Unnameable,
-        config::ConfigSet,
-        transport::{self, BindOptions},
+        BoxedTransportConnector, Conn, Connector, ConnectorConfig, Unnameable, config::ConfigSet,
+        transport::BindOptions,
     },
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
@@ -83,9 +81,8 @@ use crate::{
     rt::{DynRuntime, IntoRuntime},
     tls::{
         TlsOptions, TlsVersion,
-        config::TlsBuilder,
         keylog::KeyLog,
-        session::{IntoTlsSessionStore, TlsSessionStore},
+        session::{IntoTlsSessionStore, Tickets},
         trust::{CertStore, Identity},
     },
 };
@@ -166,25 +163,11 @@ struct Config {
         feature = "deflate",
     ))]
     accept_encoding: AcceptEncoding,
-    connect_timeout: Option<Duration>,
-    connection_verbose: bool,
+    connect: ConnectorConfig,
     pool_idle_timeout: Option<Duration>,
     pool_max_idle_per_host: usize,
     pool_max_size: Option<NonZeroUsize>,
     pool_strategy: PoolStrategy,
-    tcp_nodelay: bool,
-    tcp_reuse_address: bool,
-    tcp_linger: Option<Duration>,
-    tcp_keepalive: Option<Duration>,
-    tcp_keepalive_interval: Option<Duration>,
-    tcp_keepalive_retries: Option<u32>,
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    tcp_user_timeout: Option<Duration>,
-    tcp_send_buffer_size: Option<usize>,
-    tcp_recv_buffer_size: Option<usize>,
-    tcp_happy_eyeballs_timeout: Option<Duration>,
-    bind_options: BindOptions,
-    proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     retry_policy: retry::Policy,
     redirect_policy: redirect::Policy,
@@ -197,17 +180,6 @@ struct Config {
     protocol: Protocol,
     https_only: bool,
     layers: Vec<BoxedClientServiceLayer>,
-    connector_layers: Vec<BoxedConnectorLayer>,
-    tls_sni: bool,
-    tls_info: bool,
-    tls_keylog: Option<KeyLog>,
-    tls_identity: Option<Identity>,
-    tls_cert_store: Option<CertStore>,
-    tls_cert_verification: bool,
-    tls_verify_hostname: bool,
-    tls_min_version: Option<TlsVersion>,
-    tls_max_version: Option<TlsVersion>,
-    tls_session_store: Option<Arc<dyn TlsSessionStore>>,
     config_set: ConfigSet,
 }
 
@@ -249,25 +221,11 @@ impl Client {
                     feature = "deflate",
                 ))]
                 accept_encoding: AcceptEncoding::default(),
-                connect_timeout: None,
-                connection_verbose: false,
+                connect: ConnectorConfig::default(),
                 pool_idle_timeout: Some(Duration::from_secs(90)),
                 pool_max_idle_per_host: usize::MAX,
                 pool_max_size: None,
                 pool_strategy: PoolStrategy::default(),
-                tcp_keepalive: Some(Duration::from_secs(15)),
-                tcp_keepalive_interval: Some(Duration::from_secs(15)),
-                tcp_keepalive_retries: Some(3),
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                tcp_user_timeout: Some(Duration::from_secs(30)),
-                tcp_nodelay: true,
-                tcp_reuse_address: false,
-                tcp_linger: None,
-                tcp_send_buffer_size: None,
-                tcp_recv_buffer_size: None,
-                tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
-                bind_options: BindOptions::default(),
-                proxies: Vec::new(),
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
                 redirect_policy: redirect::Policy::none(),
@@ -280,17 +238,6 @@ impl Client {
                 protocol: Protocol::Auto,
                 https_only: false,
                 layers: Vec::new(),
-                connector_layers: Vec::new(),
-                tls_sni: true,
-                tls_info: false,
-                tls_keylog: None,
-                tls_identity: None,
-                tls_cert_store: None,
-                tls_cert_verification: true,
-                tls_verify_hostname: true,
-                tls_min_version: None,
-                tls_max_version: None,
-                tls_session_store: None,
                 config_set: ConfigSet::default(),
             },
             runtime: DynRuntime::new(runtime),
@@ -476,7 +423,7 @@ impl ClientBuilder {
 
         // Prepare proxies
         if self.config.auto_sys_proxy {
-            self.config.proxies.push(ProxyMatcher::system());
+            self.config.connect.proxies.push(ProxyMatcher::system());
         }
 
         // Create base client service
@@ -493,44 +440,17 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let tcp = transport::TcpConnector::builder(self.runtime.clone())
-                .set_keepalive(self.config.tcp_keepalive)
-                .set_keepalive_interval(self.config.tcp_keepalive_interval)
-                .set_keepalive_retries(self.config.tcp_keepalive_retries)
-                .set_reuse_address(self.config.tcp_reuse_address)
-                .set_linger(self.config.tcp_linger)
-                .set_nodelay(self.config.tcp_nodelay)
-                .set_send_buffer_size(self.config.tcp_send_buffer_size)
-                .set_recv_buffer_size(self.config.tcp_recv_buffer_size)
-                .set_tcp_user_timeout(
-                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    self.config.tcp_user_timeout,
-                );
-
-            let connector = {
-                let tls = TlsBuilder::new()
-                    .keylog(self.config.tls_keylog)
-                    .cert_store(self.config.tls_cert_store)
-                    .identity(self.config.tls_identity)
-                    .max_version(self.config.tls_max_version)
-                    .min_version(self.config.tls_min_version)
-                    .session_store(self.config.tls_session_store)
-                    .sni(self.config.tls_sni)
-                    .verify_hostname(self.config.tls_verify_hostname)
-                    .cert_verification(self.config.tls_cert_verification);
-                let config = crate::conn::Config {
-                    proxies: Arc::new(self.config.proxies),
-                    verbose: self.config.connection_verbose,
-                    nodelay: self.config.tcp_nodelay,
-                    tls_info: self.config.tls_info,
-                };
-                ConnectorBuilder::new(self.runtime.clone(), tls, config)
-                    .connect_timeout(self.config.connect_timeout)
-                    .bind_options(self.config.bind_options.clone())
-                    .happy_eyeballs_timeout(self.config.tcp_happy_eyeballs_timeout)
-                    .layers(self.config.connector_layers)
-                    .build(tcp, resolver, self.config.config_set.clone())?
-            };
+            // The request stack inherits the client's bindings and bounds HTTP/3 setup by the
+            // connect timeout as well.
+            let bind_options = self.config.connect.bind_options.clone();
+            #[cfg(feature = "http3")]
+            let connect_timeout = self.config.connect.connect_timeout;
+            let connector = Connector::new(
+                self.config.connect,
+                self.runtime.clone(),
+                resolver,
+                &self.config.config_set,
+            )?;
 
             sealed::Builder::new(self.runtime.clone())
                 .cookie_store(
@@ -539,14 +459,14 @@ impl ClientBuilder {
                 )
                 .config_set(self.config.config_set)
                 .protocol(self.config.protocol)
-                .bind_options(self.config.bind_options)
+                .bind_options(bind_options)
                 .pool_idle_timeout(self.config.pool_idle_timeout)
                 .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
                 .pool_max_size(self.config.pool_max_size)
                 .pool_strategy(self.config.pool_strategy)
                 .http3_connect_timeout(
                     #[cfg(feature = "http3")]
-                    self.config.connect_timeout,
+                    connect_timeout,
                 )
                 .build(connector)
         };
@@ -940,7 +860,7 @@ impl ClientBuilder {
     /// ```
     #[inline]
     pub fn proxy(mut self, proxy: Proxy) -> ClientBuilder {
-        self.config.proxies.push(proxy.into_matcher());
+        self.config.connect.proxies.push(proxy.into_matcher());
         self.config.auto_sys_proxy = false;
         self
     }
@@ -954,7 +874,7 @@ impl ClientBuilder {
     /// This also disables the automatic usage of the "system" proxy.
     #[inline]
     pub fn no_proxy(mut self) -> ClientBuilder {
-        self.config.proxies.clear();
+        self.config.connect.proxies.clear();
         self.config.auto_sys_proxy = false;
         self
     }
@@ -995,7 +915,7 @@ impl ClientBuilder {
     /// withholds stream credit can then stall a new connection and the requests waiting for it.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.connect_timeout = Some(timeout);
+        self.config.connect.connect_timeout = Some(timeout);
         self
     }
 
@@ -1008,7 +928,7 @@ impl ClientBuilder {
     /// [log]: https://crates.io/crates/log
     #[inline]
     pub fn connection_verbose(mut self, verbose: bool) -> ClientBuilder {
-        self.config.connection_verbose = verbose;
+        self.config.connect.verbose = verbose;
         self
     }
 
@@ -1159,7 +1079,7 @@ impl ClientBuilder {
     /// Default is `true`.
     #[inline]
     pub fn tcp_nodelay(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tcp_nodelay = enabled;
+        self.config.connect.tcp.nodelay = enabled;
         self
     }
 
@@ -1173,7 +1093,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.tcp_keepalive = val.into();
+        self.config.connect.tcp.keepalive = val.into();
         self
     }
 
@@ -1187,7 +1107,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.tcp_keepalive_interval = val.into();
+        self.config.connect.tcp.keepalive_interval = val.into();
         self
     }
 
@@ -1201,7 +1121,7 @@ impl ClientBuilder {
     where
         C: Into<Option<u32>>,
     {
-        self.config.tcp_keepalive_retries = retries.into();
+        self.config.connect.tcp.keepalive_retries = retries.into();
         self
     }
 
@@ -1223,14 +1143,14 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.tcp_user_timeout = val.into();
+        self.config.connect.tcp.tcp_user_timeout = val.into();
         self
     }
 
     /// Set whether sockets have `SO_REUSEADDR` enabled.
     #[inline]
     pub fn tcp_reuse_address(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tcp_reuse_address = enabled;
+        self.config.connect.tcp.reuse_address = enabled;
         self
     }
 
@@ -1251,7 +1171,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.tcp_linger = val.into();
+        self.config.connect.tcp.linger = val.into();
         self
     }
 
@@ -1263,7 +1183,7 @@ impl ClientBuilder {
     where
         S: Into<Option<usize>>,
     {
-        self.config.tcp_send_buffer_size = size.into();
+        self.config.connect.tcp.send_buffer_size = size.into();
         self
     }
 
@@ -1275,7 +1195,7 @@ impl ClientBuilder {
     where
         S: Into<Option<usize>>,
     {
-        self.config.tcp_recv_buffer_size = size.into();
+        self.config.connect.tcp.recv_buffer_size = size.into();
         self
     }
 
@@ -1297,7 +1217,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.tcp_happy_eyeballs_timeout = val.into();
+        self.config.connect.happy_eyeballs_timeout = val.into();
         self
     }
 
@@ -1322,7 +1242,7 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.config.bind_options.set_local_address(addr);
+        self.config.connect.bind_options.set_local_address(addr);
         self
     }
 
@@ -1350,7 +1270,10 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.config.bind_options.set_local_addresses(ipv4, ipv6);
+        self.config
+            .connect
+            .bind_options
+            .set_local_addresses(ipv4, ipv6);
         self
     }
 
@@ -1426,7 +1349,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.bind_options.set_interface(interface);
+        self.config.connect.bind_options.set_interface(interface);
         self
     }
 
@@ -1437,7 +1360,7 @@ impl ClientBuilder {
     /// The identity is also offered to `https://` and `quic://` proxies that request one.
     #[inline]
     pub fn tls_identity(mut self, identity: Identity) -> ClientBuilder {
-        self.config.tls_identity = Some(identity);
+        self.config.connect.tls.identity = Some(identity);
         self
     }
 
@@ -1447,7 +1370,7 @@ impl ClientBuilder {
     /// `https://` and `quic://` proxies.
     #[inline]
     pub fn tls_cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.tls_cert_store = Some(store);
+        self.config.connect.tls.cert_store = Some(store);
         self
     }
 
@@ -1464,7 +1387,7 @@ impl ClientBuilder {
     /// as a last resort.
     #[inline]
     pub fn tls_cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
-        self.config.tls_cert_verification = cert_verification;
+        self.config.connect.tls.cert_verification = cert_verification;
         self
     }
 
@@ -1480,7 +1403,7 @@ impl ClientBuilder {
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     #[inline]
     pub fn tls_verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.tls_verify_hostname = verify_hostname;
+        self.config.connect.tls.verify_hostname = verify_hostname;
         self
     }
 
@@ -1490,14 +1413,14 @@ impl ClientBuilder {
     /// are never sent. Defaults to `true`.
     #[inline]
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.tls_sni = tls_sni;
+        self.config.connect.tls.sni = tls_sni;
         self
     }
 
     /// Configures TLS key logging for the client.
     #[inline]
     pub fn tls_keylog(mut self, keylog: KeyLog) -> ClientBuilder {
-        self.config.tls_keylog = Some(keylog);
+        self.config.connect.tls.keylog = Some(keylog);
         self
     }
 
@@ -1507,7 +1430,7 @@ impl ClientBuilder {
     /// TLS 1.3 and ignores this setting.
     #[inline]
     pub fn tls_min_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.tls_min_version = Some(version);
+        self.config.connect.tls.min_version = Some(version);
         self
     }
 
@@ -1517,7 +1440,7 @@ impl ClientBuilder {
     /// maximum makes every HTTP/3 connection fail.
     #[inline]
     pub fn tls_max_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.tls_max_version = Some(version);
+        self.config.connect.tls.max_version = Some(version);
         self
     }
 
@@ -1528,7 +1451,7 @@ impl ClientBuilder {
     /// feature to be enabled.
     #[inline]
     pub fn tls_info(mut self, tls_info: bool) -> ClientBuilder {
-        self.config.tls_info = tls_info;
+        self.config.connect.tls.tls_info = tls_info;
         self
     }
 
@@ -1537,7 +1460,7 @@ impl ClientBuilder {
     /// Session keys remain scoped to this client and its request configuration.
     #[inline]
     pub fn tls_session_store<S: IntoTlsSessionStore>(mut self, store: S) -> ClientBuilder {
-        self.config.tls_session_store = Some(store.into_shared());
+        self.config.connect.tls.tickets = Arc::new(Tickets::new(Some(store.into_shared())));
         self
     }
 
@@ -1689,7 +1612,7 @@ impl ClientBuilder {
         <L::Service as Service<Unnameable>>::Future: Send + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
-        self.config.connector_layers.push(layer);
+        self.config.connect.layers.push(layer);
         self
     }
 

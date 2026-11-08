@@ -20,7 +20,7 @@ use tokio_btls::SslStream;
 use tower::{BoxError, Service};
 
 use super::{
-    config::{Config, ContextCache},
+    config::{ContextCache, TlsConfig},
     ext::{SslContextBuilderExt, set_ech_grease_host},
 };
 use crate::{
@@ -47,7 +47,7 @@ pub struct HttpsLayer {
 
 /// Client TLS policy and its compiled contexts.
 struct Inner {
-    config: Config,
+    config: TlsConfig,
     config_set: ConfigSet,
     options: Option<Arc<TlsOptions>>,
     contexts: ContextCache<SslConnector>,
@@ -76,7 +76,7 @@ pub enum MaybeHttpsStream<T> {
 
 impl HttpsLayer {
     /// Compiles the client's TLS context while preserving the shared session scope.
-    pub(super) fn new(config: Config, config_set: ConfigSet) -> crate::Result<Self> {
+    pub(super) fn new(config: TlsConfig, config_set: ConfigSet) -> crate::Result<Self> {
         let options = config_set.get_arc::<TlsOptions>();
         let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self {
@@ -259,6 +259,12 @@ impl<S> HttpsConnector<S> {
         self
     }
 
+    /// Returns whether responses carry the peer's [`TlsInfo`](crate::tls::TlsInfo).
+    #[inline]
+    pub(crate) fn tls_info(&self) -> bool {
+        self.tls.inner.config.tls_info
+    }
+
     /// Runs the TLS handshake over an established transport, or returns it unchanged for
     /// an `http` route. The transport may already carry a proxy's TLS.
     pub(crate) async fn handshake<IO>(
@@ -423,7 +429,7 @@ where
 
 /// Builds a TCP/Unix context from client policy and optional TLS options.
 /// ALPN selection remains deferred until an individual connection is prepared.
-fn compile(config: &Config, opts: Option<&TlsOptions>) -> crate::Result<SslConnector> {
+fn compile(config: &TlsConfig, opts: Option<&TlsOptions>) -> crate::Result<SslConnector> {
     let max_tls_version = opts
         .and_then(|opts| opts.max_tls_version)
         .or(config.max_version);

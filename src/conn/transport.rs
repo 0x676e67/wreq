@@ -37,7 +37,7 @@ pub(crate) use quic::test_server_config;
 #[cfg(feature = "http3")]
 pub(crate) use quic::{QuicConnector, TUNNEL_MTU};
 pub(crate) use socket::{SocketConnector, SocketRequest};
-pub(crate) use tcp::{TcpConnector, TcpConnectorBuilder};
+pub(crate) use tcp::{TcpConfig, TcpConnector};
 #[cfg(feature = "http3")]
 use {
     super::request::ConnectRequest, crate::protocol::TransportKind, futures_util::future::Either,
@@ -50,9 +50,6 @@ use crate::{
 };
 
 const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
-
-/// Delay between overlapping TCP and QUIC address attempts unless the client sets another.
-pub(super) const HAPPY_EYEBALLS_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// Routes each request to the stream or QUIC transport its protocol runs over.
 #[cfg(feature = "http3")]

@@ -12,7 +12,7 @@ use futures_util::{TryFutureExt, future::BoxFuture};
 use http::uri::Uri;
 use socket2::TcpKeepalive;
 
-use super::{BindOptions, ConnectError, HAPPY_EYEBALLS_TIMEOUT, race, resolve};
+use super::{BindOptions, ConnectError, race, resolve};
 use crate::{
     conn::{Connected, Connection, HttpInfo, TlsInfoFactory},
     dns::{self, DynResolver},
@@ -32,64 +32,56 @@ pub(crate) struct TcpConnector {
     inner: Arc<Inner>,
 }
 
-/// Client socket settings, the resolver and the runtime shared by every dial.
+/// Client socket options, bindings, the resolver and the runtime shared by every dial.
 struct Inner {
-    options: TcpOptions,
+    config: TcpConfig,
+    bind_options: BindOptions,
+    happy_eyeballs_timeout: Option<Duration>,
     resolver: DynResolver,
     runtime: DynRuntime,
 }
 
-/// Configures TCP sockets before attaching a resolver with [`Self::build`].
-#[must_use]
-pub(crate) struct TcpConnectorBuilder {
-    options: TcpOptions,
-    runtime: DynRuntime,
-}
-
-/// Socket settings the client applies to every TCP dial.
-struct TcpOptions {
-    happy_eyeballs_timeout: Option<Duration>,
-    nodelay: bool,
-    reuse_address: bool,
-    linger: Option<Duration>,
-    send_buffer_size: Option<usize>,
-    recv_buffer_size: Option<usize>,
+/// Socket options the client applies to every TCP dial.
+pub(crate) struct TcpConfig {
+    pub(crate) nodelay: bool,
+    pub(crate) reuse_address: bool,
+    pub(crate) linger: Option<Duration>,
+    pub(crate) send_buffer_size: Option<usize>,
+    pub(crate) recv_buffer_size: Option<usize>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    tcp_user_timeout: Option<Duration>,
-    keepalive: Option<Duration>,
-    keepalive_interval: Option<Duration>,
-    keepalive_retries: Option<u32>,
-    bind_options: BindOptions,
+    pub(crate) tcp_user_timeout: Option<Duration>,
+    pub(crate) keepalive: Option<Duration>,
+    pub(crate) keepalive_interval: Option<Duration>,
+    pub(crate) keepalive_retries: Option<u32>,
 }
 
 // ===== impl TcpConnector =====
 
 impl TcpConnector {
-    /// Starts configuring a TCP connector using the shared runtime.
-    pub(crate) fn builder(runtime: DynRuntime) -> TcpConnectorBuilder {
-        TcpConnectorBuilder {
-            options: TcpOptions {
-                happy_eyeballs_timeout: Some(HAPPY_EYEBALLS_TIMEOUT),
-                nodelay: false,
-                reuse_address: false,
-                linger: None,
-                send_buffer_size: None,
-                recv_buffer_size: None,
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                tcp_user_timeout: None,
-                keepalive: None,
-                keepalive_interval: None,
-                keepalive_retries: None,
-                bind_options: BindOptions::default(),
-            },
-            runtime,
+    /// Creates a connector dialing with the client's socket options and bindings, racing
+    /// addresses `happy_eyeballs_timeout` apart.
+    pub(crate) fn new(
+        runtime: DynRuntime,
+        resolver: DynResolver,
+        config: TcpConfig,
+        bind_options: BindOptions,
+        happy_eyeballs_timeout: Option<Duration>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                config,
+                bind_options,
+                happy_eyeballs_timeout,
+                resolver,
+                runtime,
+            }),
         }
     }
 
     /// Returns whether the client disables Nagle.
     #[inline]
     pub(crate) fn nodelay(&self) -> bool {
-        self.inner.options.nodelay
+        self.inner.config.nodelay
     }
 
     /// Resolves `uri` and races its addresses with this dial's `TCP_NODELAY` and bindings.
@@ -107,120 +99,9 @@ impl TcpConnector {
                 inner.resolver.resolve(name)
             })
             .await?;
-            let bind_options = bind_options
-                .as_deref()
-                .unwrap_or(&inner.options.bind_options);
-            Ok(connect(addrs, &inner.options, bind_options, nodelay, &inner.runtime).await?)
+            let bind_options = bind_options.as_deref().unwrap_or(&inner.bind_options);
+            Ok(connect(addrs, &inner, bind_options, nodelay).await?)
         })
-    }
-}
-
-// ===== impl TcpConnectorBuilder =====
-
-impl TcpConnectorBuilder {
-    /// Sets `TCP_NODELAY` on each socket. Defaults to `false`.
-    #[inline]
-    pub(crate) fn set_nodelay(mut self, nodelay: bool) -> Self {
-        self.options.nodelay = nodelay;
-        self
-    }
-
-    /// Sets the socket send buffer size (`SO_SNDBUF`).
-    #[inline]
-    pub(crate) fn set_send_buffer_size(mut self, size: Option<usize>) -> Self {
-        self.options.send_buffer_size = size;
-        self
-    }
-
-    /// Sets the socket receive buffer size (`SO_RCVBUF`).
-    #[inline]
-    pub(crate) fn set_recv_buffer_size(mut self, size: Option<usize>) -> Self {
-        self.options.recv_buffer_size = size;
-        self
-    }
-
-    /// Sets `SO_REUSEADDR` on each socket. Defaults to `false`.
-    #[inline]
-    pub(crate) fn set_reuse_address(mut self, reuse_address: bool) -> Self {
-        self.options.reuse_address = reuse_address;
-        self
-    }
-
-    /// Sets `SO_LINGER`. The default, `None`, leaves the socket option unchanged.
-    #[inline]
-    pub(crate) fn set_linger(mut self, linger: Option<Duration>) -> Self {
-        self.options.linger = linger;
-        self
-    }
-
-    /// Sets `TCP_USER_TIMEOUT` on each socket.
-    /// Takes no argument on platforms without this option.
-    #[inline]
-    pub(crate) fn set_tcp_user_timeout(
-        #[cfg_attr(
-            not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")),
-            expect(unused_mut, reason = "Only supported platforms update this option")
-        )]
-        mut self,
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))] time: Option<
-            Duration,
-        >,
-    ) -> Self {
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        {
-            self.options.tcp_user_timeout = time;
-        }
-        self
-    }
-
-    /// Sets the delay between overlapping attempts; defaults to 300 milliseconds.
-    /// The first starts immediately. `None` tries addresses sequentially.
-    /// See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305.html#section-5).
-    #[inline]
-    pub(crate) fn set_happy_eyeballs_timeout(mut self, dur: Option<Duration>) -> Self {
-        self.options.happy_eyeballs_timeout = dur;
-        self
-    }
-
-    /// Sets the idle time before sending TCP keepalive probes.
-    /// Defaults to `None`; any keepalive option supported by the platform enables `SO_KEEPALIVE`.
-    #[inline]
-    pub(crate) fn set_keepalive(mut self, time: Option<Duration>) -> Self {
-        self.options.keepalive = time;
-        self
-    }
-
-    /// Sets the interval between unanswered TCP keepalive probes.
-    #[inline]
-    pub(crate) fn set_keepalive_interval(mut self, interval: Option<Duration>) -> Self {
-        self.options.keepalive_interval = interval;
-        self
-    }
-
-    /// Sets how many unanswered TCP keepalive probes cause the connection to fail.
-    #[inline]
-    pub(crate) fn set_keepalive_retries(mut self, retries: Option<u32>) -> Self {
-        self.options.keepalive_retries = retries;
-        self
-    }
-
-    /// Sets the client's local addresses and interface for each socket.
-    #[inline]
-    pub(crate) fn set_bind_options(mut self, bind_options: &BindOptions) -> Self {
-        self.options.bind_options = bind_options.clone();
-        self
-    }
-
-    /// Attaches the resolver and freezes the socket settings.
-    #[inline]
-    pub(crate) fn build(self, resolver: DynResolver) -> TcpConnector {
-        TcpConnector {
-            inner: Arc::new(Inner {
-                options: self.options,
-                resolver,
-                runtime: self.runtime,
-            }),
-        }
     }
 }
 
@@ -258,20 +139,19 @@ fn get_host_port(dst: &Uri) -> Result<(&str, u16), ConnectError> {
 /// Connects resolved candidates using the shared network policy.
 async fn connect(
     addrs: dns::SocketAddrs,
-    options: &TcpOptions,
+    inner: &Inner,
     bind_options: &BindOptions,
     nodelay: bool,
-    runtime: &DynRuntime,
 ) -> Result<BoxConnection, ConnectError> {
     race(
         addrs,
         bind_options,
-        options.happy_eyeballs_timeout,
+        inner.happy_eyeballs_timeout,
         |addr| {
-            connect_socket(&addr, options, bind_options, nodelay, runtime)
+            connect_socket(&addr, &inner.config, bind_options, nodelay, &inner.runtime)
                 .map(|future| future.map_err(ConnectError::m("tcp connect error")))
         },
-        |duration| runtime.sleep(duration),
+        |duration| inner.runtime.sleep(duration),
     )
     .await
 }
@@ -306,7 +186,7 @@ fn bind_local_address(
 
 fn connect_socket(
     addr: &SocketAddr,
-    options: &TcpOptions,
+    config: &TcpConfig,
     bind_options: &BindOptions,
     nodelay: bool,
     runtime: &DynRuntime,
@@ -322,7 +202,7 @@ fn connect_socket(
         .set_nonblocking(true)
         .map_err(ConnectError::m("tcp set_nonblocking error"))?;
 
-    if let Some(tcp_keepalive) = &options.tcp_keepalive()
+    if let Some(tcp_keepalive) = &config.tcp_keepalive()
         && let Err(_e) = socket.set_tcp_keepalive(tcp_keepalive)
     {
         warn!("tcp set_keepalive error: {_e}");
@@ -333,7 +213,7 @@ fn connect_socket(
         .map_err(ConnectError::m("tcp bind interface error"))?;
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    if let Some(tcp_user_timeout) = &options.tcp_user_timeout
+    if let Some(tcp_user_timeout) = &config.tcp_user_timeout
         && let Err(_e) = socket.set_tcp_user_timeout(Some(*tcp_user_timeout))
     {
         warn!("tcp set_tcp_user_timeout error: {_e}");
@@ -347,25 +227,25 @@ fn connect_socket(
     )
     .map_err(ConnectError::m("tcp bind local error"))?;
 
-    if options.reuse_address
+    if config.reuse_address
         && let Err(_e) = socket.set_reuse_address(true)
     {
         warn!("tcp set_reuse_address error: {_e}");
     }
 
-    if let Some(linger) = options.linger
+    if let Some(linger) = config.linger
         && let Err(_e) = socket.set_linger(Some(linger))
     {
         warn!("tcp set_linger error: {_e}");
     }
 
-    if let Some(size) = options.send_buffer_size
+    if let Some(size) = config.send_buffer_size
         && let Err(_e) = socket.set_send_buffer_size(size)
     {
         warn!("tcp set_buffer_size error: {_e}");
     }
 
-    if let Some(size) = options.recv_buffer_size
+    if let Some(size) = config.recv_buffer_size
         && let Err(_e) = socket.set_recv_buffer_size(size)
     {
         warn!("tcp set_recv_buffer_size error: {_e}");
@@ -378,9 +258,9 @@ fn connect_socket(
     Ok(runtime.connect_tcp(socket.into(), *addr))
 }
 
-// ===== impl TcpOptions =====
+// ===== impl TcpConfig =====
 
-impl TcpOptions {
+impl TcpConfig {
     /// Returns socket keepalive settings when at least one option is configured.
     fn tcp_keepalive(&self) -> Option<TcpKeepalive> {
         let mut dirty = false;
@@ -437,6 +317,23 @@ impl TcpOptions {
         };
 
         if dirty { Some(ka) } else { None }
+    }
+}
+
+impl Default for TcpConfig {
+    fn default() -> Self {
+        Self {
+            nodelay: true,
+            reuse_address: false,
+            linger: None,
+            send_buffer_size: None,
+            recv_buffer_size: None,
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            tcp_user_timeout: Some(Duration::from_secs(30)),
+            keepalive: Some(Duration::from_secs(15)),
+            keepalive_interval: Some(Duration::from_secs(15)),
+            keepalive_retries: Some(3),
+        }
     }
 }
 

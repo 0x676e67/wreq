@@ -19,7 +19,7 @@ use tower::{BoxError, Layer, Service, ServiceExt, util::MapRequest};
 
 use crate::{
     conn::{
-        AsyncConnWithInfo, Config, Conn, TlsConn, Transport, request::ConnectRequest,
+        AsyncConnWithInfo, Conn, TlsConn, Transport, request::ConnectRequest,
         transport::SocketRequest, verbose::Verbose,
     },
     dns::DynResolver,
@@ -34,7 +34,9 @@ use crate::{
 /// Clones share the client's proxy rules and connection policy.
 #[derive(Clone)]
 pub(crate) struct ProxyLayer {
-    config: Arc<Config>,
+    proxies: Arc<Vec<Matcher>>,
+    verbose: Verbose,
+    nodelay: bool,
     tls: HttpsLayer,
     resolver: DynResolver,
 }
@@ -45,7 +47,9 @@ pub(crate) struct ProxyLayer {
 #[derive(Clone)]
 pub(crate) struct ProxyConnector<S> {
     inner: S,
-    config: Arc<Config>,
+    proxies: Arc<Vec<Matcher>>,
+    verbose: Verbose,
+    nodelay: bool,
     tls: HttpsLayer,
     #[cfg_attr(
         not(feature = "socks"),
@@ -88,30 +92,29 @@ fn proxy_hop<S>(
     MapRequest::new(connector, move |uri| route.clone().with_route_uri(uri))
 }
 
-/// Finishes TLS over an established route, restores Nagle once for TCP routes,
+/// Finishes TLS over an established route, restores Nagle once when `restore_nagle` is set,
 /// and attaches connection metadata. An `http` route skips TLS.
 async fn finish<IO>(
-    config: &Config,
+    verbose: Verbose,
     io: IO,
     req: ConnectRequest,
     tls: HttpsConnector<()>,
-    restore_nodelay: bool,
+    restore_nagle: bool,
 ) -> Result<Conn, BoxError>
 where
     IO: AsyncConnWithInfo + Dialed,
 {
-    let verbose = Verbose(config.verbose);
     let stream = match tls.handshake(io, req).await? {
         MaybeHttpsStream::Http(stream) => verbose.wrap(stream),
         MaybeHttpsStream::Https(stream) => {
-            if restore_nodelay && !config.nodelay {
+            if restore_nagle {
                 stream.get_ref().socket().set_nodelay(false)?;
             }
             verbose.wrap(TlsConn { stream })
         }
     };
     let mut connected = stream.connected();
-    if config.tls_info
+    if tls.tls_info()
         && let Some(tls_info) = stream.tls_info()
     {
         connected = connected.extra(tls_info);
@@ -125,9 +128,17 @@ where
 // ===== impl ProxyLayer =====
 
 impl ProxyLayer {
-    pub(crate) fn new(config: Config, tls: HttpsLayer, resolver: DynResolver) -> Self {
+    pub(crate) fn new(
+        proxies: Arc<Vec<Matcher>>,
+        verbose: bool,
+        nodelay: bool,
+        tls: HttpsLayer,
+        resolver: DynResolver,
+    ) -> Self {
         Self {
-            config: Arc::new(config),
+            proxies,
+            verbose: Verbose(verbose),
+            nodelay,
             tls,
             resolver,
         }
@@ -141,7 +152,9 @@ impl<S> Layer<S> for ProxyLayer {
     fn layer(&self, inner: S) -> Self::Service {
         ProxyConnector {
             inner,
-            config: self.config.clone(),
+            proxies: self.proxies.clone(),
+            verbose: self.verbose,
+            nodelay: self.nodelay,
             tls: self.tls.clone(),
             resolver: self.resolver.clone(),
         }
@@ -168,14 +181,17 @@ where
     fn call(&mut self, req: ConnectRequest) -> Self::Future {
         let inner = self.inner.clone();
         let inner = std::mem::replace(&mut self.inner, inner);
-        let config = self.config.clone();
+        let proxies = self.proxies.clone();
+        let verbose = self.verbose;
+        // TCP routes turn Nagle back on after TLS unless the client disables it.
+        let restore_nagle = !self.nodelay;
         let tls = self.tls.clone();
         #[cfg(feature = "socks")]
         let resolver = self.resolver.clone();
 
         Box::pin(async move {
             debug!("starting new connection: {:?}", req.uri());
-            let intercepted = intercept(&req, &config.proxies);
+            let intercepted = intercept(&req, &proxies);
             let uri = req.uri().clone();
             let secure = uri.is_https();
             let bind_options = req.bind_options().clone();
@@ -201,7 +217,7 @@ where
                         .oneshot(req.route_uri().clone())
                         .await
                         .map_err(Into::into)?;
-                    finish(&config, io, req, tls, true).await
+                    finish(verbose, io, req, tls, restore_nagle).await
                 }
                 Some(Intercepted::Proxy(proxy)) => {
                     let proxy_uri = proxy.uri().clone();
@@ -227,7 +243,7 @@ where
 
                         let io = connector.oneshot(uri).await?;
                         let tls = tls.for_request(&req)?;
-                        return finish(&config, io, req, tls, true).await;
+                        return finish(verbose, io, req, tls, restore_nagle).await;
                     }
 
                     if secure {
@@ -244,7 +260,7 @@ where
                         }
 
                         let io = tunnel.oneshot(uri).await?;
-                        finish(&config, io, req, tls, true).await
+                        finish(verbose, io, req, tls, restore_nagle).await
                     } else {
                         // HTTP/1 forwarding to an HTTPS proxy must not negotiate target ALPN.
                         let mut tls = tls
@@ -256,7 +272,7 @@ where
                             .oneshot(req.route_uri().clone())
                             .await
                             .map_err(|err| ProxyConnect::Source(err.into()))?;
-                        let mut conn = finish(&config, io, req, tls, true)
+                        let mut conn = finish(verbose, io, req, tls, restore_nagle)
                             .await
                             .map_err(ProxyConnect::Source)?;
                         conn.connected = conn.connected.proxy(proxy);
@@ -272,13 +288,13 @@ where
                             proxy_hop(&tls, inner, &req),
                         );
                         let io = tunnel.oneshot(uri).await?;
-                        finish(&config, io, req, tls, false).await
+                        finish(verbose, io, req, tls, false).await
                     } else {
                         let io = inner
                             .oneshot(req.route_uri().clone())
                             .await
                             .map_err(Into::into)?;
-                        finish(&config, io, req, tls, false).await
+                        finish(verbose, io, req, tls, false).await
                     }
                 }
             }
