@@ -209,8 +209,6 @@ impl ConnectorBuilder {
                 BoxCloneSyncService::new(direct.map_request(|Unnameable(request)| request)),
                 |service, layer| layer.layer(service),
             );
-            // The connector's deadline also covers user layers; this maps a tower timeout
-            // supplied among them.
             Either::Right(BoxCloneSyncService::new(
                 service
                     .map_err(map_timeout_to_connector_error)
