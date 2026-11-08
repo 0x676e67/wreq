@@ -69,7 +69,7 @@ use crate::{
     IntoUri, Method, Protocol, Proxy,
     conn::{
         BoxedTransportConnector, Conn, Connector, ConnectorConfig, Unnameable, config::ConfigSet,
-        transport::BindOptions,
+        dialer::BindOptions,
     },
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,

@@ -37,11 +37,11 @@ use crate::{
 
 const URI_MISSING_HOST: &str = "URI missing host";
 
-/// Provides shared TLS state for HTTPS connection services.
+/// Compiled TLS for TCP and Unix streams, including proxy hops.
 /// Clones share the client policy and its compiled contexts.
 /// Different request context options are compiled once and cached.
 #[derive(Clone)]
-pub struct HttpsLayer {
+pub struct StreamTls {
     inner: Arc<Inner>,
 }
 
@@ -59,7 +59,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct HttpsConnector<T> {
     inner: T,
-    tls: HttpsLayer,
+    tls: StreamTls,
     context: SslConnector,
     alpn_enabled: bool,
 }
@@ -72,9 +72,9 @@ pub enum MaybeHttpsStream<T> {
     Https(SslStream<T>),
 }
 
-// ===== impl HttpsLayer =====
+// ===== impl StreamTls =====
 
-impl HttpsLayer {
+impl StreamTls {
     /// Compiles the client's TLS context while preserving the shared session scope.
     pub(super) fn new(config: TlsConfig, config_set: ConfigSet) -> crate::Result<Self> {
         let options = config_set.get_arc::<TlsOptions>();

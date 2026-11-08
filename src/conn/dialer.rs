@@ -1,7 +1,6 @@
-//! Leaf transports and their shared socket bindings, address resolution and scheduling.
-//! [`SocketConnector`] dials TCP and Unix streams; `QuicConnector` dials QUIC and manages TLS
-//! handshakes and endpoints. With `http3`, `Transports` routes each request to one of them.
-//! Proxy handshakes and tunnel sockets live in [`super::layer::proxy`].
+//! The leaf beneath both transport paths: [`Dialer`] resolves names, races addresses and applies
+//! local bindings and TCP socket options; it opens TCP and Unix streams and binds the UDP sockets
+//! QUIC uses.
 //!
 //! DNS completes before racing addresses. With Happy Eyeballs enabled, families
 //! alternate and attempts are staggered, with at most six active attempts.
@@ -12,11 +11,10 @@
 //!
 //! See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305#section-5).
 
-#[cfg(feature = "http3")]
-mod quic;
-mod socket;
 mod tcp;
 
+#[cfg(unix)]
+use std::path::Path;
 use std::{
     borrow::Cow,
     collections::VecDeque,
@@ -26,37 +24,59 @@ use std::{
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::{Pin, pin},
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
-#[cfg(all(feature = "http3", feature = "socks"))]
-pub(crate) use quic::handshake_error;
-#[cfg(all(test, feature = "http3"))]
-pub(crate) use quic::test_server_config;
-#[cfg(feature = "http3")]
-pub(crate) use quic::{QuicConnector, TUNNEL_MTU};
-pub(crate) use socket::{SocketConnector, SocketRequest};
-pub(crate) use tcp::{TcpConfig, TcpConnector};
+use futures_util::{
+    TryFutureExt,
+    future::{BoxFuture, Either, ErrInto},
+};
+use http::Uri;
+pub(crate) use tcp::TcpConfig;
+use tower::Service;
 #[cfg(feature = "http3")]
 use {
-    super::request::ConnectRequest, crate::protocol::TransportKind, futures_util::future::Either,
-    std::task::ready, tower::Service,
+    super::request::ConnectRequest,
+    socket2::{Domain, Protocol, Socket, Type},
+    std::net::UdpSocket,
 };
 
 use crate::{
-    dns::{self, SocketAddrs},
+    dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
+    rt::{BoxConnection, Connecting, DynRuntime, Timer as _},
 };
 
 const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
 
-/// Routes each request to the stream or QUIC transport its protocol runs over.
-#[cfg(feature = "http3")]
+/// Reaches addresses from this host: resolves names, races addresses and applies local
+/// bindings and TCP socket options. As a service it opens the TCP or Unix stream of a
+/// [`SocketRequest`]; it also binds the UDP sockets QUIC uses. Clones share one state.
 #[derive(Clone)]
-pub(crate) struct Transports<S, Q> {
-    stream: S,
-    quic: Q,
+pub(crate) struct Dialer {
+    inner: Arc<Inner>,
+}
+
+/// The runtime, resolver and client socket settings every dial shares.
+struct Inner {
+    runtime: DynRuntime,
+    resolver: DynResolver,
+    tcp: TcpConfig,
+    bind_options: BindOptions,
+    happy_eyeballs_timeout: Option<Duration>,
+}
+
+/// A physical socket target and the request's binding policy.
+/// Secure connections temporarily disable Nagle during the handshake.
+#[derive(Clone)]
+pub struct SocketRequest {
+    pub(crate) uri: Uri,
+    #[cfg(unix)]
+    pub(crate) unix: Option<Arc<Path>>,
+    pub(crate) bind_options: Option<Arc<BindOptions>>,
+    pub(crate) secure: bool,
 }
 
 /// Local addresses and interface selected for an outbound socket.
@@ -92,7 +112,7 @@ pub struct ConnectError {
     pub(crate) addr: Option<SocketAddr>,
     pub(crate) cause: Option<BoxError>,
     /// Every other address of the host would fail the same way, so the race ends here.
-    terminal: bool,
+    pub(super) terminal: bool,
 }
 
 enum Event<C> {
@@ -189,35 +209,148 @@ where
         .await
 }
 
-// ===== impl Transports =====
+// ===== impl Dialer =====
 
-#[cfg(feature = "http3")]
-impl<S, Q> Transports<S, Q> {
-    pub(crate) fn new(stream: S, quic: Q) -> Self {
-        Self { stream, quic }
+impl Dialer {
+    /// Creates a dialer with the client's socket options and bindings, racing addresses
+    /// `happy_eyeballs_timeout` apart.
+    pub(crate) fn new(
+        runtime: DynRuntime,
+        resolver: DynResolver,
+        tcp: TcpConfig,
+        bind_options: BindOptions,
+        happy_eyeballs_timeout: Option<Duration>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                runtime,
+                resolver,
+                tcp,
+                bind_options,
+                happy_eyeballs_timeout,
+            }),
+        }
+    }
+
+    /// Returns whether the client disables Nagle.
+    #[inline]
+    pub(crate) fn nodelay(&self) -> bool {
+        self.inner.tcp.nodelay
+    }
+
+    /// Returns the resolver for names that SOCKS routes and QUIC dials resolve locally.
+    #[cfg(any(feature = "socks", feature = "http3"))]
+    #[inline]
+    pub(crate) fn resolver(&self) -> &DynResolver {
+        &self.inner.resolver
     }
 }
 
 #[cfg(feature = "http3")]
-impl<S, Q> Service<ConnectRequest> for Transports<S, Q>
-where
-    S: Service<ConnectRequest>,
-    Q: Service<ConnectRequest, Response = S::Response, Error = S::Error>,
-{
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = Either<S::Future, Q::Future>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        ready!(self.stream.poll_ready(cx))?;
-        self.quic.poll_ready(cx)
+impl Dialer {
+    /// Returns the runtime that drives QUIC endpoints, tunnels and timers.
+    #[inline]
+    pub(crate) fn runtime(&self) -> &DynRuntime {
+        &self.inner.runtime
     }
 
-    fn call(&mut self, request: ConnectRequest) -> Self::Future {
-        match request.resolved_protocol().transport() {
-            TransportKind::Stream => Either::Left(self.stream.call(request)),
-            TransportKind::Quic => Either::Right(self.quic.call(request)),
+    /// Returns the Happy Eyeballs delay for QUIC and SOCKS5 target races.
+    #[inline]
+    pub(crate) fn happy_eyeballs_timeout(&self) -> Option<Duration> {
+        self.inner.happy_eyeballs_timeout
+    }
+
+    /// Returns the request's bindings, or the client's when the request inherits them.
+    pub(crate) fn bind_options<'a>(&'a self, request: &'a ConnectRequest) -> &'a BindOptions {
+        request
+            .bind_options()
+            .as_deref()
+            .unwrap_or(&self.inner.bind_options)
+    }
+
+    /// Binds a UDP socket for the address family of `remote` before the runtime registers it.
+    pub(crate) fn bind_udp(
+        &self,
+        bind_options: &BindOptions,
+        remote: SocketAddr,
+    ) -> Result<UdpSocket, ConnectError> {
+        let address = match remote {
+            SocketAddr::V4(_) => SocketAddr::from((
+                bind_options.ipv4_address.unwrap_or(Ipv4Addr::UNSPECIFIED),
+                0,
+            )),
+            SocketAddr::V6(_) => SocketAddr::from((
+                bind_options.ipv6_address.unwrap_or(Ipv6Addr::UNSPECIFIED),
+                0,
+            )),
+        };
+        let socket = Socket::new(
+            Domain::for_address(address),
+            Type::DGRAM,
+            Some(Protocol::UDP),
+        )
+        .map_err(ConnectError::m("quic open error"))?;
+        socket
+            .set_nonblocking(true)
+            .map_err(ConnectError::m("quic set_nonblocking error"))?;
+        if address.is_ipv6() {
+            socket
+                .set_only_v6(true)
+                .map_err(ConnectError::m("quic set_only_v6 error"))?;
         }
+        bind_options
+            .bind_interface(&socket, address)
+            .map_err(ConnectError::m("quic bind interface error"))?;
+        socket
+            .bind(&address.into())
+            .map_err(ConnectError::m("quic bind local error"))?;
+        Ok(socket.into())
+    }
+}
+
+impl Service<SocketRequest> for Dialer {
+    type Response = BoxConnection;
+    type Error = BoxError;
+    // A Unix socket keeps the runtime's own boxed future.
+    type Future =
+        Either<BoxFuture<'static, Result<BoxConnection, BoxError>>, ErrInto<Connecting, BoxError>>;
+
+    #[inline]
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: SocketRequest) -> Self::Future {
+        #[cfg(unix)]
+        if let Some(path) = req.unix {
+            return Either::Right(self.inner.runtime.connect_unix(path).err_into());
+        }
+
+        // Disable Nagle during TLS handshakes.
+        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
+        let nodelay = req.secure || self.nodelay();
+        let inner = self.inner.clone();
+        Either::Left(Box::pin(async move {
+            let (host, port) = tcp::get_host_port(&req.uri)?;
+            let addrs = resolve(host, port, req.uri.port().is_some(), |name| {
+                inner.resolver.resolve(name)
+            })
+            .await?;
+            // Request bindings of `None` keep the client's.
+            let bind_options = req.bind_options.as_deref().unwrap_or(&inner.bind_options);
+            let stream = race(
+                addrs,
+                bind_options,
+                inner.happy_eyeballs_timeout,
+                |addr| {
+                    tcp::connect_socket(&addr, &inner.tcp, bind_options, nodelay, &inner.runtime)
+                        .map(|future| future.map_err(ConnectError::m("tcp connect error")))
+                },
+                |duration| inner.runtime.sleep(duration),
+            )
+            .await?;
+            Ok(stream)
+        }))
     }
 }
 
@@ -282,7 +415,7 @@ cfg_select! {
             }
 
             /// Binds a TCP or UDP socket for a peer at `address` to the selected interface, if any.
-            pub(super) fn bind_interface(
+            fn bind_interface(
                 &self,
                 socket: &socket2::Socket,
                 address: SocketAddr,
@@ -316,7 +449,7 @@ cfg_select! {
         impl BindOptions {
             /// This platform cannot bind an interface, so none is ever selected.
             #[inline]
-            pub(super) fn bind_interface(
+            fn bind_interface(
                 &self,
                 _socket: &socket2::Socket,
                 _address: SocketAddr,

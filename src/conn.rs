@@ -1,14 +1,15 @@
 //! Connector composition, established connections and response metadata.
-//! [`Connector::new`] stacks [`layer`] middleware (deadline, proxy routes, stream TLS) on the
-//! [`transport`] dialers with `ServiceBuilder`, as the client does. Protocol pools live in the
-//! client.
+//! [`Connector::new`] puts [`Builtin`] under one [`deadline`]; it routes each request to the
+//! [`stream`] or QUIC path, both reaching hosts through the shared [`dialer`].
 
-mod layer;
-mod verbose;
+mod deadline;
+#[cfg(feature = "http3")]
+mod quic;
+mod stream;
 
 pub(crate) mod config;
+pub(super) mod dialer;
 pub(crate) mod request;
-pub(super) mod transport;
 
 use std::{
     any::{TypeId, type_name},
@@ -21,7 +22,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
     time::Duration,
 };
 
@@ -29,34 +30,31 @@ use ::http::{Extensions, HeaderMap, HeaderValue};
 use btls::x509::X509Ref;
 use bytes::Bytes;
 use config::ConfigSet;
-use layer::{
-    proxy::{ProxyConnector, ProxyLayer},
-    timeout::{Timeout, TimeoutLayer},
-};
+use deadline::{Deadline, DeadlineLayer};
+use dialer::{BindOptions, Dialer, TcpConfig};
 use pin_project_lite::pin_project;
+#[cfg(all(test, feature = "http3"))]
+pub(crate) use quic::test_server_config;
 use request::ConnectRequest;
+use stream::StreamConnector;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::{
-    BoxError, Layer, ServiceBuilder, ServiceExt,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either},
+    BoxError, Layer, Service, ServiceBuilder, ServiceExt,
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either as ServiceEither},
 };
-use transport::{BindOptions, SocketConnector, TcpConfig, TcpConnector};
 #[cfg(feature = "http3")]
 use {
-    crate::protocol::TransportKind,
-    btls::x509::X509,
-    layer::proxy::quic::{QuicProxyConnector, QuicProxyLayer},
-    std::ops::Deref,
-    transport::{QuicConnector, Transports},
+    crate::protocol::TransportKind, btls::x509::X509, futures_util::future::Either,
+    quic::QuicConnector, std::ops::Deref,
 };
 
 use crate::{
     dns::DynResolver,
     error::map_timeout_to_connector_error,
-    proxy::{Matcher as ProxyMatcher, matcher::Intercept},
+    proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
     rt::DynRuntime,
-    tls::{AlpnProtocol, TlsInfo, config::TlsConfig, connector::MaybeHttpsStream},
+    tls::{AlpnProtocol, TlsConfig, TlsInfo, connector::MaybeHttpsStream},
 };
 
 /// Type-erased transport service retained after custom connector layers are composed.
@@ -66,21 +64,20 @@ pub type BoxedTransportConnector = BoxCloneSyncService<Unnameable, Conn, BoxErro
 pub type BoxedConnectorLayer =
     BoxCloneSyncServiceLayer<BoxedTransportConnector, Unnameable, Conn, BoxError>;
 
-cfg_select! {
-    feature = "http3" => {
-        type Direct =
-            Transports<ProxyConnector<SocketConnector>, QuicProxyConnector<QuicConnector>>;
-    }
-    _ => {
-        type Direct = ProxyConnector<SocketConnector>;
-    }
-}
-
 /// Establishes stream and QUIC transports under one connection deadline.
 /// Without user layers the built-in transports are called directly; user layers see them
 /// behind [`Unnameable`]. Clones share the transports' state.
 pub(crate) type Connector =
-    Timeout<Either<Direct, BoxCloneSyncService<ConnectRequest, Conn, BoxError>>>;
+    Deadline<ServiceEither<Builtin, BoxCloneSyncService<ConnectRequest, Conn, BoxError>>>;
+
+/// The built-in transports: routes each request to the stream or QUIC path its protocol
+/// runs over. Clones share each path's state.
+#[derive(Clone)]
+pub(crate) struct Builtin {
+    stream: StreamConnector,
+    #[cfg(feature = "http3")]
+    quic: QuicConnector,
+}
 
 /// Client-wide connector settings, fixed at build.
 pub(crate) struct ConnectorConfig {
@@ -123,62 +120,40 @@ impl Connector {
         config_set: &ConfigSet,
     ) -> Result<Self, crate::Error> {
         let proxies = Arc::new(config.proxies);
-
-        #[cfg(feature = "http3")]
-        let quic = QuicConnector::new(
+        let dialer = Dialer::new(
             runtime.clone(),
-            resolver.clone(),
-            config.tls.clone().build_quic(config_set)?,
-            config.bind_options.clone(),
-            config.happy_eyeballs_timeout,
-        )?;
-
-        let tcp = TcpConnector::new(
-            runtime.clone(),
-            resolver.clone(),
+            resolver,
             config.tcp,
             config.bind_options,
             config.happy_eyeballs_timeout,
         );
-        let nodelay = tcp.nodelay();
-        let socket = SocketConnector::new(
-            #[cfg(unix)]
-            runtime.clone(),
-            tcp,
+
+        #[cfg(feature = "http3")]
+        let quic = QuicConnector::new(
+            dialer.clone(),
+            config.tls.clone().quic(config_set)?,
+            proxies.clone(),
+        )?;
+        let stream = StreamConnector::new(
+            dialer,
+            config.tls.stream(config_set)?,
+            proxies,
+            config.verbose,
         );
-
-        #[cfg(feature = "http3")]
-        let quic = ServiceBuilder::new()
-            .layer(QuicProxyLayer::new(
-                proxies.clone(),
-                #[cfg(feature = "socks")]
-                socket.clone(),
-            ))
-            .service(quic);
-
-        let stream = ServiceBuilder::new()
-            .layer(ProxyLayer::new(
-                proxies,
-                config.verbose,
-                nodelay,
-                config.tls.build(config_set)?,
-                resolver,
-            ))
-            .service(socket);
-
-        #[cfg(feature = "http3")]
-        let direct = Transports::new(stream, quic);
-        #[cfg(not(feature = "http3"))]
-        let direct = stream;
+        let builtin = Builtin {
+            stream,
+            #[cfg(feature = "http3")]
+            quic,
+        };
 
         let service = if config.layers.is_empty() {
-            Either::Left(direct)
+            ServiceEither::Left(builtin)
         } else {
             let service = config.layers.iter().fold(
-                BoxCloneSyncService::new(direct.map_request(|Unnameable(request)| request)),
+                BoxCloneSyncService::new(builtin.map_request(|Unnameable(request)| request)),
                 |service, layer| layer.layer(service),
             );
-            Either::Right(BoxCloneSyncService::new(
+            ServiceEither::Right(BoxCloneSyncService::new(
                 service
                     .map_err(map_timeout_to_connector_error)
                     .map_request(Unnameable),
@@ -186,8 +161,52 @@ impl Connector {
         };
 
         Ok(ServiceBuilder::new()
-            .layer(TimeoutLayer::new(config.connect_timeout, runtime))
+            .layer(DeadlineLayer::new(config.connect_timeout, runtime))
             .service(service))
+    }
+}
+
+/// Tries the request's proxy rule, then the client's rules in order.
+fn intercept(request: &ConnectRequest, proxies: &[ProxyMatcher]) -> Option<Intercepted> {
+    request
+        .config_override::<ProxyMatcher>()
+        .and_then(|proxy| proxy.intercept(request.uri()))
+        .or_else(|| {
+            proxies
+                .iter()
+                .find_map(|proxy| proxy.intercept(request.uri()))
+        })
+}
+
+// ===== impl Builtin =====
+
+impl Service<ConnectRequest> for Builtin {
+    type Response = Conn;
+    type Error = BoxError;
+    #[cfg(feature = "http3")]
+    type Future = Either<
+        <StreamConnector as Service<ConnectRequest>>::Future,
+        <QuicConnector as Service<ConnectRequest>>::Future,
+    >;
+    #[cfg(not(feature = "http3"))]
+    type Future = <StreamConnector as Service<ConnectRequest>>::Future;
+
+    #[inline]
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        ready!(self.stream.poll_ready(cx))?;
+        #[cfg(feature = "http3")]
+        ready!(self.quic.poll_ready(cx))?;
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: ConnectRequest) -> Self::Future {
+        cfg_select! {
+            feature = "http3" => match request.resolved_protocol().transport() {
+                TransportKind::Stream => Either::Left(self.stream.call(request)),
+                TransportKind::Quic => Either::Right(self.quic.call(request)),
+            },
+            _ => self.stream.call(request),
+        }
     }
 }
 
@@ -422,7 +441,7 @@ impl<T: TlsInfoFactory> TlsInfoFactory for MaybeHttpsStream<T> {
 // ===== impl quic::Connection =====
 
 #[cfg(feature = "http3")]
-impl TlsInfoFactory for quic::Connection {
+impl TlsInfoFactory for ::quic::Connection {
     fn tls_info(&self) -> Option<TlsInfo> {
         let chain = self.peer_identity()?.downcast::<Vec<X509>>().ok()?;
         Some(tls_info(
@@ -776,7 +795,7 @@ mod tests {
             }
         }
 
-        let (server_config, cert) = transport::test_server_config();
+        let (server_config, cert) = test_server_config();
         let server =
             ::quic::Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         // Bound without replying, so a dial to it stays pending until the deadline.

@@ -15,8 +15,8 @@ use quic::{
 };
 
 use super::{
-    AlpnProtocol, AlpsProtocol, TlsVersion,
-    config::{self, ContextCache},
+    AlpnProtocol, AlpsProtocol, TlsConfig, TlsVersion,
+    config::ContextCache,
     ext::{SslContextBuilderExt as _, set_ech_grease_host},
     session::{Key, SessionTarget, Tickets},
 };
@@ -34,11 +34,11 @@ use crate::{
 /// Builds per-connection QUIC TLS configurations from shared client TLS policy.
 /// Different request context options are compiled once and cached.
 #[derive(Clone)]
-pub(crate) struct TlsConfig(Arc<Inner>);
+pub(crate) struct QuicTls(Arc<Inner>);
 
 /// Client policy, QUIC options and compiled TLS contexts.
 struct Inner {
-    config: config::TlsConfig,
+    config: TlsConfig,
     config_set: ConfigSet,
     options: Option<Arc<QuicOptions>>,
     contexts: ContextCache<QuicClientConfig>,
@@ -83,10 +83,10 @@ struct Attempt {
     not_after: OnceLock<i64>,
 }
 
-// ===== impl TlsConfig =====
+// ===== impl QuicTls =====
 
-impl TlsConfig {
-    pub(super) fn new(config: config::TlsConfig, config_set: ConfigSet) -> Result<Self> {
+impl QuicTls {
+    pub(super) fn new(config: TlsConfig, config_set: ConfigSet) -> Result<Self> {
         let options = config_set.get_arc::<QuicOptions>();
         let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self(Arc::new(Inner {
@@ -264,7 +264,7 @@ impl Handshake {
 
 /// Compiles a QUIC context from the client policy and the context options of `options`.
 /// Callbacks and the session cache are configured for each connection attempt.
-fn compile(config: &config::TlsConfig, options: Option<&QuicOptions>) -> Result<QuicClientConfig> {
+fn compile(config: &TlsConfig, options: Option<&QuicOptions>) -> Result<QuicClientConfig> {
     let mut builder = SslContextBuilder::new(SslMethod::tls()).map_err(Error::tls)?;
     config.configure(&mut builder)?;
     if let Some(options) = options {
@@ -403,9 +403,7 @@ mod tests {
             let uri = Uri::from_static("https://localhost/");
             ConnectRequest::test(uri, Some(Protocol::Http3), config_set)
         };
-        let tls = config::TlsConfig::default()
-            .build_quic(&ConfigSet::default())
-            .unwrap();
+        let tls = TlsConfig::default().quic(&ConfigSet::default()).unwrap();
         let [client, first, second, other] = [None, Some(false), Some(false), Some(true)]
             .map(|grease| tls.config(&request(grease)).unwrap());
         let context = |config: &QuicConfig| -> *const SslContextRef { &**config.crypto.ctx() };

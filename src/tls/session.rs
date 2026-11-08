@@ -27,8 +27,8 @@ use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 use crate::{
     conn::{
         config::{ConfigSet, HASHER, Overrides},
+        dialer::BindOptions,
         request::ConnectRequest,
-        transport::BindOptions,
     },
     protocol::TransportKind,
     sync::Mutex,

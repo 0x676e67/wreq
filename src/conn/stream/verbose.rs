@@ -1,4 +1,6 @@
-use super::AsyncConnWithInfo;
+//! Optional I/O tracing for established stream connections.
+
+use crate::conn::AsyncConnWithInfo;
 
 /// Controls whether to enable verbose tracing for connections.
 ///
@@ -45,8 +47,11 @@ mod sealed {
 
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-    use super::super::{Connected, Connection, TlsInfoFactory};
-    use crate::{tls::TlsInfo, util::Escape};
+    use crate::{
+        conn::{Connected, Connection, TlsInfoFactory},
+        tls::TlsInfo,
+        util::Escape,
+    };
 
     pub(super) struct Wrapper<T> {
         pub(super) id: u64,

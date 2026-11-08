@@ -22,7 +22,7 @@ use {
 };
 #[cfg(feature = "http3")]
 use {
-    crate::conn::{Connected, Transport, TransportMismatch, transport::test_server_config},
+    crate::conn::{Connected, Transport, TransportMismatch, test_server_config},
     ::quic::crypto::rustls::QuicClientConfig,
     std::net::{Ipv4Addr, SocketAddr},
 };

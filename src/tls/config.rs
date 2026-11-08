@@ -5,8 +5,11 @@ use std::{num::NonZeroUsize, sync::Arc};
 use btls::ssl::{SslContextBuilder, SslVerifyMode};
 use lru::LruCache;
 
+#[cfg(feature = "http3")]
+use super::quic::QuicTls;
 use super::{
-    TlsVersion, connector,
+    TlsVersion,
+    connector::StreamTls,
     ext::SslContextBuilderExt,
     keylog::KeyLog,
     session::Tickets,
@@ -91,17 +94,14 @@ impl TlsConfig {
     /// Compiles the client's TCP/Unix context from its TLS options.
     /// Missing options leave TLS customization to the backend's defaults; the client-wide
     /// trust, version, and ALPN policy still applies.
-    pub(crate) fn build(self, config_set: &ConfigSet) -> crate::Result<connector::HttpsLayer> {
-        connector::HttpsLayer::new(self, config_set.clone())
+    pub(crate) fn stream(self, config_set: &ConfigSet) -> crate::Result<StreamTls> {
+        StreamTls::new(self, config_set.clone())
     }
 
     /// Compiles the client's QUIC context from its QUIC options.
     #[cfg(feature = "http3")]
-    pub(crate) fn build_quic(
-        self,
-        config_set: &ConfigSet,
-    ) -> crate::Result<super::quic::TlsConfig> {
-        super::quic::TlsConfig::new(self, config_set.clone())
+    pub(crate) fn quic(self, config_set: &ConfigSet) -> crate::Result<QuicTls> {
+        QuicTls::new(self, config_set.clone())
     }
 }
 

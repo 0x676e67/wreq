@@ -14,7 +14,7 @@ use http::{Uri, uri::PathAndQuery};
 
 use super::{
     config::{ConfigSet, ConnectConfig, HASHER, Overrides},
-    transport::BindOptions,
+    dialer::BindOptions,
 };
 use crate::{Protocol, error::BoxError};
 

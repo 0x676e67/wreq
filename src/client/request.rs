@@ -33,7 +33,7 @@ use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue},
-    conn::{config::ConfigSet, transport::BindOptions},
+    conn::{config::ConfigSet, dialer::BindOptions},
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},

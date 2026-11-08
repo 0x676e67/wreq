@@ -1,45 +1,23 @@
-//! URI resolution, TCP socket configuration and runtime connection setup.
-//! Address ordering and racing use the shared transport policy; the connector sets the deadline.
+//! TCP socket options and the socket setup for each address the dialer races.
 
 use std::{
     io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
     time::Duration,
 };
 
-use futures_util::{TryFutureExt, future::BoxFuture};
 use http::uri::Uri;
 use socket2::TcpKeepalive;
 
-use super::{BindOptions, ConnectError, race, resolve};
+use super::{BindOptions, ConnectError};
 use crate::{
     conn::{Connected, Connection, HttpInfo, TlsInfoFactory},
-    dns::{self, DynResolver},
-    error::BoxError,
     ext::UriExt,
-    rt::{BoxConnection, Connecting, DynRuntime, Timer as _},
+    rt::{BoxConnection, Connecting, DynRuntime},
 };
 
 static INVALID_MISSING_SCHEME: &str = "invalid URI, scheme is missing";
 static INVALID_MISSING_HOST: &str = "invalid URI, host is missing";
-
-/// Resolves URI targets and races configured TCP sockets using the selected runtime.
-/// Clones share the socket settings, resolver and runtime; each dial takes its own
-/// `TCP_NODELAY` and bindings.
-#[derive(Clone)]
-pub(crate) struct TcpConnector {
-    inner: Arc<Inner>,
-}
-
-/// Client socket options, bindings, the resolver and the runtime shared by every dial.
-struct Inner {
-    config: TcpConfig,
-    bind_options: BindOptions,
-    happy_eyeballs_timeout: Option<Duration>,
-    resolver: DynResolver,
-    runtime: DynRuntime,
-}
 
 /// Socket options the client applies to every TCP dial.
 pub(crate) struct TcpConfig {
@@ -55,57 +33,7 @@ pub(crate) struct TcpConfig {
     pub(crate) keepalive_retries: Option<u32>,
 }
 
-// ===== impl TcpConnector =====
-
-impl TcpConnector {
-    /// Creates a connector dialing with the client's socket options and bindings, racing
-    /// addresses `happy_eyeballs_timeout` apart.
-    pub(crate) fn new(
-        runtime: DynRuntime,
-        resolver: DynResolver,
-        config: TcpConfig,
-        bind_options: BindOptions,
-        happy_eyeballs_timeout: Option<Duration>,
-    ) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                config,
-                bind_options,
-                happy_eyeballs_timeout,
-                resolver,
-                runtime,
-            }),
-        }
-    }
-
-    /// Returns whether the client disables Nagle.
-    #[inline]
-    pub(crate) fn nodelay(&self) -> bool {
-        self.inner.config.nodelay
-    }
-
-    /// Resolves `uri` and races its addresses with this dial's `TCP_NODELAY` and bindings.
-    /// Request bindings of `None` keep the client's.
-    pub(crate) fn dial(
-        &self,
-        uri: Uri,
-        nodelay: bool,
-        bind_options: Option<Arc<BindOptions>>,
-    ) -> BoxFuture<'static, Result<BoxConnection, BoxError>> {
-        let inner = self.inner.clone();
-        Box::pin(async move {
-            let (host, port) = get_host_port(&uri)?;
-            let addrs = resolve(host, port, uri.port().is_some(), |name| {
-                inner.resolver.resolve(name)
-            })
-            .await?;
-            let bind_options = bind_options.as_deref().unwrap_or(&inner.bind_options);
-            Ok(connect(addrs, &inner, bind_options, nodelay).await?)
-        })
-    }
-}
-
-fn get_host_port(dst: &Uri) -> Result<(&str, u16), ConnectError> {
+pub(super) fn get_host_port(dst: &Uri) -> Result<(&str, u16), ConnectError> {
     trace!(
         "Http::connect; scheme={:?}, host={:?}, port={:?}",
         dst.scheme(),
@@ -136,26 +64,6 @@ fn get_host_port(dst: &Uri) -> Result<(&str, u16), ConnectError> {
     Ok((host, dst.port_or_default()))
 }
 
-/// Connects resolved candidates using the shared network policy.
-async fn connect(
-    addrs: dns::SocketAddrs,
-    inner: &Inner,
-    bind_options: &BindOptions,
-    nodelay: bool,
-) -> Result<BoxConnection, ConnectError> {
-    race(
-        addrs,
-        bind_options,
-        inner.happy_eyeballs_timeout,
-        |addr| {
-            connect_socket(&addr, &inner.config, bind_options, nodelay, &inner.runtime)
-                .map(|future| future.map_err(ConnectError::m("tcp connect error")))
-        },
-        |duration| inner.runtime.sleep(duration),
-    )
-    .await
-}
-
 fn bind_local_address(
     socket: &socket2::Socket,
     dst_addr: &SocketAddr,
@@ -184,7 +92,9 @@ fn bind_local_address(
     Ok(())
 }
 
-fn connect_socket(
+/// Opens a nonblocking TCP socket with the client's options and the dial's bindings, and
+/// starts connecting it on the runtime.
+pub(super) fn connect_socket(
     addr: &SocketAddr,
     config: &TcpConfig,
     bind_options: &BindOptions,

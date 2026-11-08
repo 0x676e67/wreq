@@ -35,13 +35,10 @@ use netty::{
 use tokio::sync::{Notify, futures::OwnedNotified};
 use tower::{BoxError, ServiceExt, service_fn};
 
+use super::endpoint::{Endpoints, TUNNEL_MTU};
 use crate::{
     Body,
-    conn::{
-        Conn,
-        request::ConnectRequest,
-        transport::{QuicConnector, TUNNEL_MTU},
-    },
+    conn::{Conn, request::ConnectRequest},
     error::ProxyConnect,
     ext::UriExt,
     proxy::matcher::Intercept,
@@ -101,13 +98,13 @@ struct Sender(::quic::Connection);
 struct Receiver(BoxStream<'static, Result<Bytes, ::quic::ConnectionError>>);
 
 /// Opens CONNECT-UDP and authenticates the target; its endpoint retains the outer connection.
-pub(crate) async fn connect(
-    quic: &QuicConnector,
+pub(super) async fn connect(
+    endpoints: &Endpoints,
     request: ConnectRequest,
     proxy: Intercept,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
-    let config = quic.tunnel_config(&request)?;
+    let config = endpoints.tunnel_config(&request)?;
 
     // This scope classifies proxy setup failures separately from target TLS errors.
     let connect_proxy = async {
@@ -115,9 +112,9 @@ pub(crate) async fn connect(
         let template =
             Template::well_known(proxy.uri().authority().ok_or(PROXY_MISSING_AUTHORITY)?)?;
 
-        let (connection, endpoint) = quic.connect_proxy(&request, template.proxy()).await?;
+        let (connection, endpoint) = endpoints.connect_proxy(&request, template.proxy()).await?;
         let remote = connection.remote_address();
-        let (sender, driver) = http3::Builder::new(quic.runtime().clone())
+        let (sender, driver) = http3::Builder::new(endpoints.dialer().runtime().clone())
             .handshake_with_datagrams::<_, Body>(OuterConnection::new(connection))
             .await?;
 
@@ -149,7 +146,8 @@ pub(crate) async fn connect(
 
     let (socket, remote) = connect_proxy.await.map_err(ProxyConnect::Source)?;
     let ended = socket.shared.ended.clone();
-    quic.finish_tunnel(&request, &config, socket, remote, ended)
+    endpoints
+        .finish_tunnel(&request, &config, socket, remote, ended)
         .await
 }
 

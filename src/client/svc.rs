@@ -36,7 +36,7 @@ use crate::protocol::TransportKind;
 use crate::{
     Protocol,
     config::RequestConfig,
-    conn::{config::ConfigSet, request::ConnectRequest, transport::BindOptions},
+    conn::{config::ConfigSet, dialer::BindOptions, request::ConnectRequest},
     ext::UriExt,
 };
 

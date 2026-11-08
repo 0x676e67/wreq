@@ -16,9 +16,9 @@ use crate::{
     rt::{BoxSleep, DynRuntime, Timer as _},
 };
 
-/// Middleware layer to use [`Timeout`].
+/// Middleware layer to use [`Deadline`].
 #[derive(Clone)]
-pub(crate) struct TimeoutLayer {
+pub(crate) struct DeadlineLayer {
     timeout: Option<Duration>,
     runtime: DynRuntime,
 }
@@ -26,7 +26,7 @@ pub(crate) struct TimeoutLayer {
 /// Bounds each connector call by one deadline, started in `call` after readiness waits.
 /// It covers everything beneath: user layers, proxy setup and the transport handshakes.
 #[derive(Clone)]
-pub(crate) struct Timeout<S> {
+pub(crate) struct Deadline<S> {
     inner: S,
     timeout: Option<Duration>,
     runtime: DynRuntime,
@@ -44,20 +44,20 @@ pin_project! {
     }
 }
 
-// ===== impl TimeoutLayer =====
+// ===== impl DeadlineLayer =====
 
-impl TimeoutLayer {
+impl DeadlineLayer {
     pub(crate) fn new(timeout: Option<Duration>, runtime: DynRuntime) -> Self {
         Self { timeout, runtime }
     }
 }
 
-impl<S> Layer<S> for TimeoutLayer {
-    type Service = Timeout<S>;
+impl<S> Layer<S> for DeadlineLayer {
+    type Service = Deadline<S>;
 
     #[inline(always)]
     fn layer(&self, inner: S) -> Self::Service {
-        Timeout {
+        Deadline {
             inner,
             timeout: self.timeout,
             runtime: self.runtime.clone(),
@@ -65,9 +65,9 @@ impl<S> Layer<S> for TimeoutLayer {
     }
 }
 
-// ===== impl Timeout =====
+// ===== impl Deadline =====
 
-impl<S> Service<ConnectRequest> for Timeout<S>
+impl<S> Service<ConnectRequest> for Deadline<S>
 where
     S: Service<ConnectRequest>,
     S::Error: Into<BoxError>,

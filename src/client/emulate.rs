@@ -123,7 +123,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        Client, Group, Proxy, config::RequestConfig, conn::transport::BindOptions, proxy::Matcher,
+        Client, Group, Proxy, config::RequestConfig, conn::dialer::BindOptions, proxy::Matcher,
         rt::tokio::TokioRuntime, tls::TlsVersion,
     };
 
