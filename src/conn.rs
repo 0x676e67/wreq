@@ -40,11 +40,8 @@ use {
 };
 
 use crate::{
-    dns::DynResolver,
-    error::map_timeout_to_connector_error,
-    proxy::{Intercepted, Matcher as ProxyMatcher},
-    rt::DynRuntime,
-    tls::TlsConfig,
+    dns::DynResolver, error::map_timeout_to_connector_error, proxy::Matcher as ProxyMatcher,
+    rt::DynRuntime, tls::TlsConfig,
 };
 
 /// Type-erased transport service retained after custom connector layers are composed.
@@ -154,18 +151,6 @@ impl Connector {
             .layer(DeadlineLayer::new(config.connect_timeout, runtime))
             .service(service))
     }
-}
-
-/// Tries the request's proxy rule, then the client's rules in order.
-fn intercept(request: &ConnectRequest, proxies: &[ProxyMatcher]) -> Option<Intercepted> {
-    request
-        .config_override::<ProxyMatcher>()
-        .and_then(|proxy| proxy.intercept(request.uri()))
-        .or_else(|| {
-            proxies
-                .iter()
-                .find_map(|proxy| proxy.intercept(request.uri()))
-        })
 }
 
 // ===== impl Builtin =====

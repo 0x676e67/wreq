@@ -16,7 +16,7 @@ use netty::proxy::tunnel;
 use tower::{BoxError, Service, ServiceExt, util::MapRequest};
 use verbose::Verbose;
 
-use super::{connected::tls_info, intercept};
+use super::connected::tls_info;
 use crate::{
     conn::{
         AsyncConn, Conn, Connected, HttpInfo, Transport,
@@ -163,7 +163,10 @@ impl Service<ConnectRequest> for StreamConnector {
 
         Box::pin(async move {
             debug!("starting new connection: {:?}", req.uri());
-            let intercepted = intercept(&req, &proxies);
+            let intercepted = req
+                .config_override::<Matcher>()
+                .and_then(|proxy| proxy.intercept(req.uri()))
+                .or_else(|| proxies.iter().find_map(|proxy| proxy.intercept(req.uri())));
             let uri = req.uri().clone();
             let secure = uri.is_https();
             let bind_options = req.bind_options().clone();

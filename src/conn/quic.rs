@@ -17,7 +17,6 @@ pub(crate) use endpoint::test_server_config;
 use futures_util::future::{self, BoxFuture, Either, Ready};
 use tower::{BoxError, Service};
 
-use super::intercept;
 use crate::{
     conn::{Conn, dialer::Dialer, request::ConnectRequest},
     error::{ProxyConnect, ProxyMismatch},
@@ -68,7 +67,15 @@ impl Service<ConnectRequest> for QuicConnector {
     }
 
     fn call(&mut self, request: ConnectRequest) -> Self::Future {
-        let proxy = match intercept(&request, &self.inner.proxies) {
+        let proxy = match request
+            .config_override::<Matcher>()
+            .and_then(|proxy| proxy.intercept(request.uri()))
+            .or_else(|| {
+                self.inner
+                    .proxies
+                    .iter()
+                    .find_map(|proxy| proxy.intercept(request.uri()))
+            }) {
             None => {
                 let inner = self.inner.clone();
                 return Either::Left(Box::pin(
