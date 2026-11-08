@@ -16,7 +16,7 @@ pub(crate) mod hickory;
 
 pub use self::resolve::{Addrs, IntoResolve, Name, Resolve, Resolving};
 pub(crate) use self::{
-    resolve::{DnsResolverWithOverrides, DynResolver},
+    resolve::{DynResolver, OverrideResolver},
     sealed::{DnsResolver, resolve},
 };
 

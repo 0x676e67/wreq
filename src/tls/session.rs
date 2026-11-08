@@ -24,7 +24,7 @@ use http::Uri;
 use lru::LruCache;
 #[cfg(feature = "http3")]
 use quic::crypto::btls::Zeroizing;
-pub(crate) use store::SessionStore;
+pub(crate) use store::Tickets;
 
 use crate::{
     conn::{

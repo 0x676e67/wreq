@@ -19,41 +19,24 @@ pub(super) mod mux;
 use std::time::{Duration, Instant};
 
 use http::Request;
-use netty::conn::{self, TrySendError};
+use netty::conn::TrySendError;
 
-use super::{
-    error::{Error, ErrorKind},
-    pool::ConnectionConfig,
-};
-#[cfg(any(feature = "http2", feature = "http3"))]
-use crate::rt::DynRuntime;
+use super::error::{Error, ErrorKind};
 use crate::{
     Body,
-    conn::{AsyncConn, Connected, request::ConnectRequest},
+    conn::{AsyncConn, Connected},
 };
 
-/// Physical byte stream and request-specific protocol configuration.
+/// Physical byte stream and its transport metadata.
 ///
 /// Connection making creates this value before protocol negotiation. The
 /// selected handshake consumes it exactly once and transfers the stream to
-/// the resulting protocol driver. Configuration stays shared until that
-/// handshake applies the selected protocol's overrides.
+/// the resulting protocol driver.
 pub(super) struct Established {
     io: Box<dyn AsyncConn>,
     connected: Connected,
-    config: ConnectionConfig,
     #[cfg(feature = "http2")]
     idle_at: Instant,
-}
-
-/// Handshake builders shared by all requests from one client.
-/// Each handshake applies its request's protocol options to a copy.
-pub(super) struct ProtocolBuilders {
-    pub(super) http1: conn::http1::Builder,
-    #[cfg(feature = "http2")]
-    pub(super) http2: conn::http2::Builder<DynRuntime>,
-    #[cfg(feature = "http3")]
-    pub(super) http3: conn::http3::Builder<DynRuntime>,
 }
 
 /// Error returned while preparing or dispatching a protocol request.
@@ -75,13 +58,11 @@ impl Established {
     pub(super) fn new(
         io: Box<dyn AsyncConn>,
         connected: Connected,
-        config: ConnectionConfig,
         #[cfg(feature = "http2")] idle_at: Instant,
     ) -> Self {
         Self {
             io,
             connected,
-            config,
             #[cfg(feature = "http2")]
             idle_at,
         }
@@ -97,39 +78,6 @@ impl Established {
     #[cfg(feature = "http2")]
     pub(super) fn idle_at(&self) -> Instant {
         self.idle_at
-    }
-}
-
-// ===== impl ProtocolBuilders =====
-
-impl ProtocolBuilders {
-    /// Returns the HTTP/1 builder with the request's HTTP/1 options applied.
-    fn http1_for(&self, req: &ConnectRequest) -> conn::http1::Builder {
-        req.config_override::<netty::http1::Http1Options>()
-            .map_or_else(
-                || self.http1.clone(),
-                |options| self.http1.clone().options(options.clone()),
-            )
-    }
-
-    /// Returns the HTTP/2 builder with the request's HTTP/2 options applied.
-    #[cfg(feature = "http2")]
-    fn http2_for(&self, req: &ConnectRequest) -> conn::http2::Builder<DynRuntime> {
-        req.config_override::<netty::http2::Http2Options>()
-            .map_or_else(
-                || self.http2.clone(),
-                |options| self.http2.clone().options(options.clone()),
-            )
-    }
-
-    /// Returns the HTTP/3 builder with the request's HTTP/3 options applied.
-    #[cfg(feature = "http3")]
-    fn http3_for(&self, req: &ConnectRequest) -> conn::http3::Builder<DynRuntime> {
-        req.config_override::<netty::http3::Http3Options>()
-            .map_or_else(
-                || self.http3.clone(),
-                |options| self.http3.clone().options(options.clone()),
-            )
     }
 }
 

@@ -8,6 +8,7 @@
 use std::{
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{self, Poll, ready},
     time::{Duration, Instant},
 };
@@ -50,9 +51,10 @@ pub struct Connection {
 /// Layers HTTP/1 handshaking over a transport-producing service.
 ///
 /// The resulting service waits for the physical connector, performs the
-/// handshake, and returns a cacheable [`Connection`].
+/// handshake with its entry's builder, and returns a cacheable [`Connection`].
 #[derive(Clone)]
 pub struct ConnectLayer {
+    builder: Arc<conn::http1::Builder>,
     set_host: bool,
     runtime: DynRuntime,
 }
@@ -65,6 +67,7 @@ pub struct ConnectLayer {
 #[derive(Clone)]
 pub struct Connect<S> {
     service: S,
+    builder: Arc<conn::http1::Builder>,
     set_host: bool,
     runtime: DynRuntime,
 }
@@ -76,6 +79,7 @@ pub struct Connect<S> {
 /// protocol handshake future.
 pub struct ConnectFuture<F> {
     state: ConnectState<F>,
+    builder: Arc<conn::http1::Builder>,
     set_host: bool,
     runtime: DynRuntime,
 }
@@ -94,8 +98,12 @@ enum ConnectState<F> {
 
 impl ConnectLayer {
     /// Creates an HTTP/1 handshake layer for pooled connections.
-    pub fn new(runtime: DynRuntime, set_host: bool) -> Self {
-        Self { runtime, set_host }
+    pub fn new(builder: Arc<conn::http1::Builder>, runtime: DynRuntime, set_host: bool) -> Self {
+        Self {
+            builder,
+            set_host,
+            runtime,
+        }
     }
 }
 
@@ -105,6 +113,7 @@ impl<S> Layer<S> for ConnectLayer {
     fn layer(&self, service: S) -> Self::Service {
         Connect {
             service,
+            builder: self.builder.clone(),
             runtime: self.runtime.clone(),
             set_host: self.set_host,
         }
@@ -129,6 +138,7 @@ where
     fn call(&mut self, target: Dst) -> Self::Future {
         ConnectFuture {
             state: ConnectState::Connecting(self.service.call(target)),
+            builder: self.builder.clone(),
             runtime: self.runtime.clone(),
             set_host: self.set_host,
         }
@@ -156,6 +166,7 @@ where
                     };
                     self.state = ConnectState::Handshaking(Box::pin(Connection::handshake(
                         established,
+                        self.builder.clone(),
                         self.runtime.clone(),
                         self.set_host,
                     )));
@@ -191,20 +202,12 @@ impl Connection {
     /// the sender closes during setup.
     async fn handshake(
         established: Established,
+        builder: Arc<conn::http1::Builder>,
         runtime: DynRuntime,
         set_host: bool,
     ) -> Result<Self, BoxError> {
-        let Established {
-            io,
-            connected,
-            config,
-            ..
-        } = established;
-
-        let builder = config.proto.http1_for(&config.req);
-        drop(config);
-
-        let (mut tx, connection) = builder.handshake(io).await?;
+        let Established { io, connected, .. } = established;
+        let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
         let (error_tx, error_rx) = oneshot::channel();
         runtime.execute(Box::pin(async move {
             if let Err(error) = connection.with_upgrades().await {

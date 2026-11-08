@@ -7,7 +7,7 @@ cfg_select! {
         feature = "tokio-rt",
         not(feature = "compio-rt")
     ) => {
-        use crate::dns::hickory::HickoryDnsResolver as Resolver;
+        use crate::dns::hickory::HickoryResolver as Resolver;
     }
     _ => {
         mod gai;

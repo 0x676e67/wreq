@@ -18,7 +18,7 @@ use super::{
     AlpnProtocol, AlpsProtocol, TlsVersion,
     config::{Config, ContextCache},
     ext::{SslContextBuilderExt as _, set_ech_grease_host},
-    session::{Key, SessionStore, SessionTarget},
+    session::{Key, SessionTarget, Tickets},
 };
 use crate::{
     Error, Result,
@@ -65,9 +65,9 @@ struct Handshake {
     rejected: OnceLock<ErrorStack>,
 }
 
-/// The client's session store and the session key of one connection.
+/// The client's tickets and the session key of one connection.
 struct Resumption {
-    session_store: Arc<SessionStore>,
+    tickets: Arc<Tickets>,
     key: Key,
 }
 
@@ -144,16 +144,16 @@ impl TlsConfig {
         });
 
         let resumption = if resumption {
-            let session_store = inner.config.session_store.clone();
+            let tickets = inner.config.tickets.clone();
             let target = SessionTarget::new(
                 request,
                 &inner.config_set,
                 TransportKind::Quic,
                 None,
-                session_store.session_id_context().map_err(Error::tls)?,
+                tickets.session_id_context().map_err(Error::tls)?,
             );
             Some(Arc::new(Resumption {
-                session_store,
+                tickets,
                 key: target.into_key(),
             }))
         } else {
@@ -216,11 +216,7 @@ impl QuicConfig {
         let verify_peer = self.handshake.verify_peer;
         let attempt = Arc::new(Attempt {
             resumption: resumption.clone(),
-            ticket: Mutex::new(
-                resumption
-                    .session_store
-                    .pop_quic(&resumption.key, verify_peer),
-            ),
+            ticket: Mutex::new(resumption.tickets.pop_quic(&resumption.key, verify_peer)),
             not_after: OnceLock::new(),
         });
         let mut crypto = (*self.crypto).clone();
@@ -355,8 +351,8 @@ impl SessionCache for Attempt {
             .get()
             .copied()
             .or_else(|| session.peer_chain_not_after());
-        let Resumption { session_store, key } = &*self.resumption;
-        session_store.insert_quic(key.clone(), session, value, not_after);
+        let Resumption { tickets, key } = &*self.resumption;
+        tickets.insert_quic(key.clone(), session, value, not_after);
     }
 
     fn take(&self, _key: &[u8]) -> Option<Zeroizing<Vec<u8>>> {

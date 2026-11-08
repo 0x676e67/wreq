@@ -130,32 +130,32 @@ impl Service<Name> for DynResolver {
 /// This resolver first checks for manual hostname-to-IP mappings before
 /// falling back to the underlying DNS resolver. Useful for testing or
 /// bypassing DNS for specific domains.
-pub(crate) struct DnsResolverWithOverrides {
-    dns_resolver: Arc<dyn Resolve>,
+pub(crate) struct OverrideResolver {
+    resolver: Arc<dyn Resolve>,
     overrides: Arc<HashMap<Cow<'static, str>, Vec<SocketAddr>>>,
 }
 
-impl DnsResolverWithOverrides {
-    /// Creates a new [`DnsResolverWithOverrides`] with the provided DNS resolver and overrides.
+impl OverrideResolver {
+    /// Creates a new [`OverrideResolver`] with the provided DNS resolver and overrides.
     pub(crate) fn new(
-        dns_resolver: Arc<dyn Resolve>,
+        resolver: Arc<dyn Resolve>,
         overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     ) -> Self {
-        DnsResolverWithOverrides {
-            dns_resolver,
+        OverrideResolver {
+            resolver,
             overrides: Arc::new(overrides),
         }
     }
 }
 
-impl Resolve for DnsResolverWithOverrides {
+impl Resolve for OverrideResolver {
     fn resolve(&self, name: Name) -> Resolving {
         match self.overrides.get(name.as_str()) {
             Some(dest) => {
                 let addrs: Addrs = Box::new(dest.clone().into_iter());
                 Box::pin(std::future::ready(Ok(addrs)))
             }
-            None => self.dns_resolver.resolve(name),
+            None => self.resolver.resolve(name),
         }
     }
 }

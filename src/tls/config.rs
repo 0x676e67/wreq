@@ -9,7 +9,7 @@ use super::{
     TlsVersion, connector,
     ext::SslContextBuilderExt,
     keylog::KeyLog,
-    session::{SessionStore, TlsSessionStore},
+    session::{Tickets, TlsSessionStore},
     trust::{CertStore, Identity},
 };
 use crate::{
@@ -28,7 +28,7 @@ pub(super) struct Config {
     pub(super) sni: bool,
     pub(super) verify_hostname: bool,
     pub(super) cert_verification: bool,
-    pub(super) session_store: Arc<SessionStore>,
+    pub(super) tickets: Arc<Tickets>,
     keylog: Option<KeyLog>,
     identity: Option<Identity>,
     cert_store: Option<CertStore>,
@@ -87,10 +87,7 @@ impl Config {
             });
             builder.set_reverify_on_resume(true);
         }
-        let scope = self
-            .session_store
-            .session_id_context()
-            .map_err(Error::tls)?;
+        let scope = self.tickets.session_id_context().map_err(Error::tls)?;
         builder.set_session_id_context(&scope).map_err(Error::tls)?;
         // This limits TLS 1.2 sessions; TLS 1.3 also obeys the server's ticket lifetime.
         builder.set_session_timeout(60 * 60);
@@ -113,7 +110,7 @@ impl TlsBuilder {
                 cert_store: None,
                 cert_verification: true,
                 keylog: None,
-                session_store: Arc::new(SessionStore::new(None)),
+                tickets: Arc::new(Tickets::new(None)),
             },
         }
     }
@@ -187,7 +184,7 @@ impl TlsBuilder {
     #[inline]
     pub fn session_store(mut self, tls_session_store: Option<Arc<dyn TlsSessionStore>>) -> Self {
         if let Some(tls_session_store) = tls_session_store {
-            self.config.session_store = Arc::new(SessionStore::new(Some(tls_session_store)));
+            self.config.tickets = Arc::new(Tickets::new(Some(tls_session_store)));
         }
         self
     }

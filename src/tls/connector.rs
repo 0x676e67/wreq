@@ -187,16 +187,16 @@ impl HttpsLayer {
         }
 
         if options.is_some_and(|options| options.pre_shared_key) {
-            let session_store = &inner.config.session_store;
+            let tickets = &inner.config.tickets;
             let target = SessionTarget::new(
                 &req,
                 &inner.config_set,
                 TransportKind::Stream,
                 conn.remote_addr().map(|addr| addr.ip()),
-                session_store.session_id_context()?,
+                tickets.session_id_context()?,
             );
 
-            if let Some(session) = session_store.pop_stream(&target) {
+            if let Some(session) = tickets.pop_stream(&target) {
                 // The key covers the TLS peer, request TLS options, proxy, and socket bindings;
                 // btls checks the domain and client scope. HTTP-only options and ALPN do not
                 // affect resumption without early data, which is never enabled.
@@ -450,12 +450,12 @@ fn compile(config: &Config, opts: Option<&TlsOptions>) -> crate::Result<SslConne
         config.enable_resumption(&mut builder)?;
         builder
             .set_session_cache_mode(SslSessionCacheMode::CLIENT | SslSessionCacheMode::NO_INTERNAL);
-        let session_store = Arc::downgrade(&config.session_store);
+        let tickets = Arc::downgrade(&config.tickets);
         builder.set_client_session_callback(move |ssl, session| {
-            if let Some(session_store) = session_store.upgrade()
+            if let Some(tickets) = tickets.upgrade()
                 && let Ok(Some(target)) = target_index().map(|idx| ssl.ex_data(idx))
             {
-                session_store.insert_stream(target, session);
+                tickets.insert_stream(target, session);
             }
         });
     }

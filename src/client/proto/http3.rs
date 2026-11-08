@@ -2,12 +2,13 @@
 
 use std::{
     pin::pin,
+    sync::Arc,
     task::{self, Poll},
     time::Duration,
 };
 
 use futures_util::future::{self, BoxFuture, Either};
-use netty::rt::quic::Compat;
+use netty::{conn, rt::quic::Compat};
 use tower::{BoxError, Service, ServiceExt};
 
 use super::mux::{Connection, Sender};
@@ -20,10 +21,12 @@ use crate::{
 };
 
 /// Establishes HTTP/3 connections for the pool's shared singleton.
-/// One connect timeout covers the QUIC connection and the HTTP/3 handshake.
+/// Handshakes use the entry's builder; one connect timeout covers the QUIC connection
+/// and the HTTP/3 handshake.
 #[derive(Clone)]
 pub struct Connect<C> {
     connector: C,
+    builder: Arc<conn::http3::Builder<DynRuntime>>,
     runtime: DynRuntime,
     timeout: Option<Duration>,
 }
@@ -32,9 +35,15 @@ pub struct Connect<C> {
 
 impl<C> Connect<C> {
     /// Creates the HTTP/3 connection service; `timeout` bounds the QUIC connection and handshake.
-    pub fn new(connector: C, runtime: DynRuntime, timeout: Option<Duration>) -> Self {
+    pub fn new(
+        connector: C,
+        builder: Arc<conn::http3::Builder<DynRuntime>>,
+        runtime: DynRuntime,
+        timeout: Option<Duration>,
+    ) -> Self {
         Self {
             connector,
+            builder,
             runtime,
             timeout,
         }
@@ -55,9 +64,9 @@ where
 
     fn call(&mut self, target: PoolTarget) -> Self::Future {
         let mut connector = self.connector.clone();
+        let builder = self.builder.clone();
         let runtime = self.runtime.clone();
         let timeout = self.timeout;
-        let builder = target.config.proto.http3_for(&target.config.req);
 
         Box::pin(async move {
             // As for the connector's own timeout, readiness waits such as concurrency admission
@@ -70,10 +79,12 @@ where
                 let Conn {
                     transport,
                     connected,
-                } = connector.call(target.config.req).await?;
+                } = connector.call(target.req).await?;
                 let (quic, endpoint) = transport.into_quic()?;
                 let quic = Compat::new(http3_quic::Connection::new(quic));
-                let (tx, connection) = builder.handshake::<_, Body>(quic).await?;
+                let (tx, connection) = Arc::unwrap_or_clone(builder)
+                    .handshake::<_, Body>(quic)
+                    .await?;
                 Ok::<_, BoxError>((tx, connection, endpoint, connected))
             };
 

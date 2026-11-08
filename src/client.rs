@@ -31,7 +31,7 @@ use http::{
     Request as HttpRequest,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
-use netty::{body::Incoming, conn};
+use netty::body::Incoming;
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
@@ -72,7 +72,7 @@ use crate::{
         config::ConfigSet,
         transport::{self, BindOptions},
     },
-    dns::{DnsResolverWithOverrides, DynResolver, IntoResolve, Resolve},
+    dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
     header::OrigHeaderMap,
     http1::Http1Options,
@@ -487,10 +487,7 @@ impl ClientBuilder {
                 };
 
                 if !self.config.dns_overrides.is_empty() {
-                    resolver = Arc::new(DnsResolverWithOverrides::new(
-                        resolver,
-                        self.config.dns_overrides,
-                    ));
+                    resolver = Arc::new(OverrideResolver::new(resolver, self.config.dns_overrides));
                 }
                 DynResolver::new(resolver)
             };
@@ -1717,18 +1714,17 @@ mod sealed {
 
     /// Assembles the protocol, runtime, and pool services used by [`Client`].
     ///
-    /// The builder owns client handshake configuration until [`Builder::build`]
+    /// The builder owns client connection configuration until [`Builder::build`]
     /// consumes it. The resulting client clones share the pool created around
     /// the supplied connector.
     pub struct Builder {
         /// Runtime used by protocol drivers and pool maintenance.
         runtime: DynRuntime,
 
-        /// Client handshake configuration for each HTTP version.
-        proto: proto::ProtocolBuilders,
-
         /// Protocol, options and socket bindings that requests inherit.
-        defaults: svc::ClientDefaults,
+        protocol: Protocol,
+        config_set: ConfigSet,
+        bind_options: BindOptions,
 
         /// Connection-pool reuse and retention policy.
         pool_config: pool::Config,
@@ -1744,18 +1740,9 @@ mod sealed {
         /// Creates a builder using `runtime` for protocol drivers and pool tasks.
         pub fn new(runtime: DynRuntime) -> Self {
             Self {
-                proto: proto::ProtocolBuilders {
-                    http1: conn::http1::Builder::default(),
-                    #[cfg(feature = "http2")]
-                    http2: conn::http2::Builder::new(runtime.clone()).timer(runtime.clone()),
-                    #[cfg(feature = "http3")]
-                    http3: conn::http3::Builder::new(runtime.clone()),
-                },
-                defaults: svc::ClientDefaults {
-                    protocol: Protocol::Auto,
-                    config_set: ConfigSet::default(),
-                    bind_options: BindOptions::default(),
-                },
+                protocol: Protocol::Auto,
+                config_set: ConfigSet::default(),
+                bind_options: BindOptions::default(),
                 pool_config: pool::Config {
                     idle_timeout: Some(Duration::from_secs(90)),
                     max_idle_per_host: usize::MAX,
@@ -1830,7 +1817,7 @@ mod sealed {
         /// Shares the client's protocol selection with the request stack and pool.
         #[inline]
         pub fn protocol(mut self, protocol: Protocol) -> Self {
-            self.defaults.protocol = protocol;
+            self.protocol = protocol;
             self
         }
 
@@ -1840,18 +1827,7 @@ mod sealed {
         /// options that differ from them, both for pool reuse and for handshakes.
         #[inline]
         pub fn config_set(mut self, config_set: ConfigSet) -> Self {
-            if let Some(opts) = config_set.get::<Http1Options>() {
-                self.proto.http1 = self.proto.http1.options(opts.clone());
-            }
-            #[cfg(feature = "http2")]
-            if let Some(opts) = config_set.get::<Http2Options>() {
-                self.proto.http2 = self.proto.http2.options(opts.clone());
-            }
-            #[cfg(feature = "http3")]
-            if let Some(opts) = config_set.get::<crate::http3::Http3Options>() {
-                self.proto.http3 = self.proto.http3.options(opts.clone());
-            }
-            self.defaults.config_set = config_set;
+            self.config_set = config_set;
             self
         }
 
@@ -1860,7 +1836,7 @@ mod sealed {
         /// Pool keys count only request bindings that differ from these.
         #[inline]
         pub fn bind_options(mut self, bind_options: BindOptions) -> Self {
-            self.defaults.bind_options = bind_options;
+            self.bind_options = bind_options;
             self
         }
 
@@ -1888,20 +1864,23 @@ mod sealed {
         where
             C: TransportConnector,
         {
+            let dispatch = svc::Dispatch::new(
+                self.pool_config,
+                connector,
+                &self.config_set,
+                true,
+                #[cfg(feature = "cookies")]
+                self.cookie_store,
+                self.runtime,
+            );
             ServiceBuilder::new()
                 .layer(svc::layer(
-                    Arc::new(self.proto),
-                    Arc::new(self.defaults),
+                    self.protocol,
+                    self.config_set,
+                    self.bind_options,
                     true,
                 ))
-                .service(svc::Dispatch::new(
-                    self.pool_config,
-                    connector,
-                    true,
-                    #[cfg(feature = "cookies")]
-                    self.cookie_store,
-                    self.runtime,
-                ))
+                .service(dispatch)
         }
     }
 }

@@ -34,7 +34,7 @@ const EXPIRATION_CHECK_INTERVAL: usize = 256;
 ///
 /// Contexts with resumption enabled share this client's session ID context. Compatible tickets
 /// remain usable when a request context is rebuilt; tickets from other clients are rejected.
-pub(crate) struct SessionStore {
+pub(crate) struct Tickets {
     state: Mutex<State>,
     tls_session_store: Option<Arc<dyn TlsSessionStore>>,
     session_id_context: OnceLock<[u8; SESSION_ID_CONTEXT_LENGTH]>,
@@ -49,9 +49,9 @@ struct State {
     lookups_since_sweep: usize,
 }
 
-// ===== impl SessionStore =====
+// ===== impl Tickets =====
 
-impl SessionStore {
+impl Tickets {
     /// Creates an empty store with an optional caller-provided store.
     /// The built-in LRU is allocated on first insertion.
     pub(crate) fn new(tls_session_store: Option<Arc<dyn TlsSessionStore>>) -> Self {
@@ -273,9 +273,9 @@ mod tests {
 
     #[test]
     fn store_is_lazy_bounded_and_sweeps_periodically() {
-        let store = SessionStore::new(None);
-        assert!(store.state.lock().sessions.is_none());
-        assert!(store.session_id_context.get().is_none());
+        let tickets = Tickets::new(None);
+        assert!(tickets.state.lock().sessions.is_none());
+        assert!(tickets.session_id_context.get().is_none());
 
         let sessions = entries();
         assert_eq!(sessions.cap().get(), SESSION_ENTRY_CAPACITY);
