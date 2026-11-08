@@ -27,7 +27,7 @@ pub(crate) struct TimeoutLayer {
 /// It covers everything beneath: user layers, proxy setup and the transport handshakes.
 #[derive(Clone)]
 pub(crate) struct Timeout<S> {
-    pub(in crate::conn) inner: S,
+    inner: S,
     timeout: Option<Duration>,
     runtime: DynRuntime,
 }

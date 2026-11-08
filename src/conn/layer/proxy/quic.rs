@@ -36,7 +36,7 @@ pub(crate) struct QuicProxyLayer {
 /// need its endpoints and TLS.
 #[derive(Clone)]
 pub(crate) struct QuicProxyConnector<S> {
-    pub(in crate::conn) inner: S,
+    inner: S,
     proxies: Arc<Vec<Matcher>>,
     /// Dials the TCP control connections of SOCKS5 UDP associations.
     #[cfg(feature = "socks")]

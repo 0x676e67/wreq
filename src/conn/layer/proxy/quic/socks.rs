@@ -124,26 +124,25 @@ pub(crate) async fn connect(
     .await?;
 
     // Target families are independent of the physical proxy's bindings.
-    Ok(quic
-        .connect_options()
-        .connect(
-            addresses,
-            &BindOptions::default(),
-            |address| {
-                let target = Address::Ip(address);
-                let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
-                    quic,
-                    socket.clone(),
-                    &request,
-                    &proxy,
-                    &config,
-                    target,
-                ));
-                Ok(attempt)
-            },
-            |duration| quic.runtime().sleep(duration),
-        )
-        .await?)
+    Ok(transport::race(
+        addresses,
+        &BindOptions::default(),
+        quic.happy_eyeballs_timeout(),
+        |address| {
+            let target = Address::Ip(address);
+            let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
+                quic,
+                socket.clone(),
+                &request,
+                &proxy,
+                &config,
+                target,
+            ));
+            Ok(attempt)
+        },
+        |duration| quic.runtime().sleep(duration),
+    )
+    .await?)
 }
 
 /// Each candidate owns its association; cancellation closes the control stream and UDP socket.

@@ -104,6 +104,7 @@ pub(crate) struct ConnectorBuilder {
     tls: TlsBuilder,
     connect_timeout: Option<Duration>,
     bind_options: BindOptions,
+    happy_eyeballs_timeout: Option<Duration>,
     layers: Vec<BoxedConnectorLayer>,
 }
 
@@ -118,6 +119,7 @@ impl ConnectorBuilder {
             config,
             connect_timeout: None,
             bind_options: BindOptions::default(),
+            happy_eyeballs_timeout: Some(transport::HAPPY_EYEBALLS_TIMEOUT),
             layers: Vec::new(),
         }
     }
@@ -133,6 +135,17 @@ impl ConnectorBuilder {
     #[inline]
     pub(crate) fn bind_options(mut self, bind_options: BindOptions) -> Self {
         self.bind_options = bind_options;
+        self
+    }
+
+    /// Sets the Happy Eyeballs delay shared by TCP and QUIC address races.
+    /// `None` tries addresses in order.
+    #[inline]
+    pub(crate) fn happy_eyeballs_timeout(
+        mut self,
+        happy_eyeballs_timeout: Option<Duration>,
+    ) -> Self {
+        self.happy_eyeballs_timeout = happy_eyeballs_timeout;
         self
     }
 
@@ -153,6 +166,7 @@ impl ConnectorBuilder {
     ) -> Result<Connector, crate::Error> {
         let tcp = tcp
             .set_bind_options(&self.bind_options)
+            .set_happy_eyeballs_timeout(self.happy_eyeballs_timeout)
             .build(resolver.clone());
 
         #[cfg(feature = "http3")]
@@ -160,7 +174,7 @@ impl ConnectorBuilder {
             let tls = self.tls.clone().build_quic(config_set.clone())?;
             QuicConnector::builder(self.runtime.clone(), tls, self.config.tls_info)
                 .bind_options(self.bind_options)
-                .connect_options(tcp.connect_options())
+                .happy_eyeballs_timeout(self.happy_eyeballs_timeout)
                 .build(resolver.clone())?
         };
 
@@ -787,41 +801,70 @@ mod tests {
         assert!(original.poisoned());
     }
 
-    /// The client's Happy Eyeballs delay also paces QUIC address races.
+    /// QUIC dials race addresses with the connector's Happy Eyeballs delay, and try them in order
+    /// without one.
     #[cfg(feature = "http3")]
     #[tokio::test]
     async fn quic_dials_follow_the_happy_eyeballs_delay() {
-        struct NoDns;
+        use std::net::{Ipv4Addr, UdpSocket};
 
-        impl crate::dns::Resolve for NoDns {
-            fn resolve(&self, name: crate::dns::Name) -> crate::dns::Resolving {
-                panic!("building a connector resolved {name}")
+        struct Fixed(Vec<SocketAddr>);
+
+        impl crate::dns::Resolve for Fixed {
+            fn resolve(&self, _: crate::dns::Name) -> crate::dns::Resolving {
+                let addrs: crate::dns::Addrs = Box::new(self.0.clone().into_iter());
+                Box::pin(std::future::ready(Ok(addrs)))
             }
         }
 
+        let (server_config, cert) = transport::test_server_config();
+        let server =
+            ::quic::Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+        // Bound without replying, so a dial to it stays pending until the deadline.
+        let blackhole = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let resolver = DynResolver::new(Arc::new(Fixed(vec![
+            blackhole.local_addr().unwrap(),
+            server.local_addr().unwrap(),
+        ])));
         let runtime = DynRuntime::new(crate::rt::tokio::TokioRuntime);
-        for delay in [None, Some(std::time::Duration::from_millis(20))] {
+        for delay in [Some(Duration::from_millis(10)), None] {
+            let tls = TlsBuilder::new()
+                .cert_store(crate::tls::trust::CertStore::from_der_certs([&cert]).unwrap());
             let config = Config {
                 proxies: Arc::new(Vec::new()),
                 verbose: false,
                 nodelay: false,
                 tls_info: false,
             };
-            let connector = ConnectorBuilder::new(runtime.clone(), TlsBuilder::new(), config)
+            let connector = ConnectorBuilder::new(runtime.clone(), tls, config)
+                .connect_timeout(Some(Duration::from_millis(500)))
+                .happy_eyeballs_timeout(delay)
                 .build(
-                    transport::TcpConnector::builder(runtime.clone())
-                        .set_happy_eyeballs_timeout(delay),
-                    DynResolver::new(Arc::new(NoDns)),
+                    transport::TcpConnector::builder(runtime.clone()),
+                    resolver.clone(),
                     ConfigSet::default(),
                 )
                 .unwrap();
-            let Either::Left(direct) = &connector.inner else {
-                panic!("a connector without layers dials directly");
-            };
-            assert_eq!(
-                direct.quic.inner.connect_options().happy_eyeballs_timeout,
-                delay
+            let request = ConnectRequest::test(
+                ::http::Uri::from_static("https://localhost/"),
+                Some(crate::Protocol::Http3),
+                ConfigSet::default(),
             );
+            let serve = async {
+                let _accepted = server.accept().await.unwrap().await;
+                std::future::pending::<()>().await
+            };
+            let result = tokio::select! {
+                result = connector.oneshot(request) => result,
+                () = serve => unreachable!(),
+            };
+            match delay {
+                Some(_) => {
+                    let (connection, _) = result.unwrap().transport.into_quic().unwrap();
+                    assert_eq!(connection.remote_address(), server.local_addr().unwrap());
+                }
+                None => assert!(result.err().unwrap().is::<crate::error::TimedOut>()),
+            }
         }
     }
 

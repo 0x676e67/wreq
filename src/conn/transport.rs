@@ -17,6 +17,7 @@ mod socket;
 mod tcp;
 
 use std::{
+    borrow::Cow,
     collections::VecDeque,
     error::Error as StdError,
     fmt,
@@ -47,37 +48,23 @@ use crate::{
 
 const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
 
+/// Delay between overlapping TCP and QUIC address attempts unless the client sets another.
+pub(super) const HAPPY_EYEBALLS_TIMEOUT: Duration = Duration::from_millis(300);
+
 /// Routes each request to the stream or QUIC transport its protocol runs over.
 #[cfg(feature = "http3")]
 #[derive(Clone)]
 pub(crate) struct Transports<S, Q> {
-    pub(in crate::conn) stream: S,
-    pub(in crate::conn) quic: Q,
-}
-
-/// Timing policy shared by TCP and QUIC address attempts.
-#[derive(Clone, Copy)]
-pub(crate) struct ConnectOptions {
-    pub(crate) happy_eyeballs_timeout: Option<Duration>,
+    stream: S,
+    quic: Q,
 }
 
 /// Local addresses and interface selected for an outbound socket.
 /// Missing request fields inherit the client's bindings before connection setup.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BindOptions {
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    pub(crate) interface: Option<std::borrow::Cow<'static, str>>,
+    /// Set only where interface binding is supported; see [`BindOptions::bind_interface`].
+    pub(crate) interface: Option<Cow<'static, str>>,
     pub(crate) ipv4_address: Option<Ipv4Addr>,
     pub(crate) ipv6_address: Option<Ipv6Addr>,
 }
@@ -145,6 +132,56 @@ where
     ))
 }
 
+/// Tries candidates using transport-specific setup and the selected clock, staggered by
+/// `happy_eyeballs_timeout` or one at a time without it. Bindings of one family drop the
+/// other family's candidates. Setup errors and failed futures advance through addresses.
+pub(super) async fn race<C, F, S>(
+    addrs: SocketAddrs,
+    bind_options: &BindOptions,
+    happy_eyeballs_timeout: Option<Duration>,
+    mut start: impl FnMut(SocketAddr) -> Result<F, ConnectError>,
+    sleep: impl Fn(Duration) -> S,
+) -> Result<C, ConnectError>
+where
+    F: Future<Output = Result<C, ConnectError>> + Unpin,
+    S: Future<Output = ()>,
+{
+    let addrs = match (bind_options.ipv4_address, bind_options.ipv6_address) {
+        (Some(_), None) => addrs.filter(SocketAddr::is_ipv4),
+        (None, Some(_)) => addrs.filter(SocketAddr::is_ipv6),
+        _ => addrs,
+    };
+    // Avoid allocating an active set when no overlapping attempts are needed.
+    if happy_eyeballs_timeout.is_none() || addrs.len() <= 1 {
+        let mut first_error = None;
+        for addr in addrs {
+            let result = match start(addr) {
+                Ok(future) => future.await,
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(connection) => return Ok(connection),
+                Err(error) => {
+                    let error = error.with_addr(addr);
+                    trace!("connect error for {}: {:?}", addr, error);
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        return Err(first_error.unwrap_or_else(ConnectError::network_unreachable));
+    }
+
+    let mut race = Race {
+        addr_families: addrs.split_by_preference(None, None),
+        next_fallback: false,
+        attempts: VecDeque::with_capacity(MAX_PARALLEL_CONNECT_ATTEMPTS),
+        next_order: 0,
+        first_error: None,
+    };
+    race.connect(happy_eyeballs_timeout, &mut start, sleep)
+        .await
+}
+
 // ===== impl Transports =====
 
 #[cfg(feature = "http3")]
@@ -177,91 +214,9 @@ where
     }
 }
 
-// ===== impl ConnectOptions =====
-
-impl Default for ConnectOptions {
-    fn default() -> Self {
-        Self {
-            happy_eyeballs_timeout: Some(Duration::from_millis(300)),
-        }
-    }
-}
-
-impl ConnectOptions {
-    /// Tries candidates using transport-specific setup and the selected clock.
-    /// Setup errors and failed futures advance through addresses.
-    pub(super) async fn connect<C, F, S>(
-        self,
-        addrs: SocketAddrs,
-        bind_options: &BindOptions,
-        mut start: impl FnMut(SocketAddr) -> Result<F, ConnectError>,
-        sleep: impl Fn(Duration) -> S,
-    ) -> Result<C, ConnectError>
-    where
-        F: Future<Output = Result<C, ConnectError>> + Unpin,
-        S: Future<Output = ()>,
-    {
-        let addrs = match (bind_options.ipv4_address, bind_options.ipv6_address) {
-            (Some(_), None) => addrs.filter(SocketAddr::is_ipv4),
-            (None, Some(_)) => addrs.filter(SocketAddr::is_ipv6),
-            _ => addrs,
-        };
-        // Avoid allocating an active set when no overlapping attempts are needed.
-        if self.happy_eyeballs_timeout.is_none() || addrs.len() <= 1 {
-            let mut first_error = None;
-            for addr in addrs {
-                let result = match start(addr) {
-                    Ok(future) => future.await,
-                    Err(error) => Err(error),
-                };
-                match result {
-                    Ok(connection) => return Ok(connection),
-                    Err(error) => {
-                        let error = error.with_addr(addr);
-                        trace!("connect error for {}: {:?}", addr, error);
-                        first_error.get_or_insert(error);
-                    }
-                }
-            }
-            return Err(first_error.unwrap_or_else(ConnectError::network_unreachable));
-        }
-
-        let mut race = Race {
-            addr_families: addrs.split_by_preference(None, None),
-            next_fallback: false,
-            attempts: VecDeque::with_capacity(MAX_PARALLEL_CONNECT_ATTEMPTS),
-            next_order: 0,
-            first_error: None,
-        };
-        race.connect(self.happy_eyeballs_timeout, &mut start, sleep)
-            .await
-    }
-}
-
 // ===== impl BindOptions =====
 
 impl BindOptions {
-    /// Selects the interface used when opening the outbound socket.
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    pub(crate) fn set_interface<I>(&mut self, interface: I) -> &mut Self
-    where
-        I: Into<std::borrow::Cow<'static, str>>,
-    {
-        self.interface = Some(interface.into());
-        self
-    }
-
     pub(crate) fn set_local_address<V>(&mut self, address: V)
     where
         V: Into<Option<IpAddr>>,
@@ -289,20 +244,78 @@ impl BindOptions {
     /// Applies specified request fields, preserving inherited values for `None`.
     pub(crate) fn merge(&mut self, overrides: &Self) {
         self.set_local_addresses(overrides.ipv4_address, overrides.ipv6_address);
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "solaris",
-            target_os = "tvos",
-            target_os = "visionos",
-            target_os = "watchos",
-        ))]
         if let Some(interface) = &overrides.interface {
             self.interface = Some(interface.clone());
+        }
+    }
+}
+
+// Platforms where socket2 binds a socket to an interface by name or index.
+cfg_select! {
+    any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
+    ) => {
+        impl BindOptions {
+            /// Selects the interface used when opening the outbound socket.
+            pub(crate) fn set_interface<I>(&mut self, interface: I) -> &mut Self
+            where
+                I: Into<Cow<'static, str>>,
+            {
+                self.interface = Some(interface.into());
+                self
+            }
+
+            /// Binds a TCP or UDP socket for a peer at `address` to the selected interface, if any.
+            pub(super) fn bind_interface(
+                &self,
+                socket: &socket2::Socket,
+                address: SocketAddr,
+            ) -> io::Result<()> {
+                let Some(interface) = self.interface.as_deref() else {
+                    return Ok(());
+                };
+                cfg_select! {
+                    any(target_os = "android", target_os = "fuchsia", target_os = "linux") => {
+                        let _ = address;
+                        socket.bind_device(Some(interface.as_bytes()))
+                    }
+                    _ => {
+                        let interface = std::ffi::CString::new(interface)
+                            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+                        // SAFETY: the owned CString is NUL-terminated and outlives the call.
+                        #[allow(unsafe_code)]
+                        let index = unsafe { libc::if_nametoindex(interface.as_ptr()) };
+                        let index = std::num::NonZeroU32::new(index)
+                            .ok_or_else(io::Error::last_os_error)?;
+                        match address {
+                            SocketAddr::V4(_) => socket.bind_device_by_index_v4(Some(index)),
+                            SocketAddr::V6(_) => socket.bind_device_by_index_v6(Some(index)),
+                        }
+                    }
+                }
+            }
+        }
+    }
+    _ => {
+        impl BindOptions {
+            /// This platform cannot bind an interface, so none is ever selected.
+            #[inline]
+            pub(super) fn bind_interface(
+                &self,
+                _socket: &socket2::Socket,
+                _address: SocketAddr,
+            ) -> io::Result<()> {
+                Ok(())
+            }
         }
     }
 }
@@ -435,45 +448,6 @@ where
     }
 }
 
-/// Binds TCP or UDP sockets to the selected network interface.
-#[cfg(any(
-    target_os = "android",
-    target_os = "fuchsia",
-    target_os = "illumos",
-    target_os = "ios",
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "solaris",
-    target_os = "tvos",
-    target_os = "visionos",
-    target_os = "watchos",
-))]
-pub(super) fn bind_interface(
-    socket: &socket2::Socket,
-    address: std::net::SocketAddr,
-    interface: &str,
-) -> std::io::Result<()> {
-    cfg_select! {
-        any(target_os = "android", target_os = "fuchsia", target_os = "linux") => {
-            let _ = address;
-            socket.bind_device(Some(interface.as_bytes()))
-        }
-        _ => {
-            let interface = std::ffi::CString::new(interface)
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-            // SAFETY: the owned CString remains a valid NUL-terminated name for the call.
-            #[allow(unsafe_code)]
-            let index = unsafe { libc::if_nametoindex(interface.as_ptr()) };
-            let index =
-                std::num::NonZeroU32::new(index).ok_or_else(std::io::Error::last_os_error)?;
-            match address {
-                std::net::SocketAddr::V4(_) => socket.bind_device_by_index_v4(Some(index)),
-                std::net::SocketAddr::V6(_) => socket.bind_device_by_index_v6(Some(index)),
-            }
-        }
-    }
-}
-
 // ===== impl ConnectError =====
 
 impl ConnectError {
@@ -540,19 +514,7 @@ mod bind_tests {
     fn bindings_merge_only_specified_fields() {
         let mut bindings = BindOptions::default();
         bindings.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "solaris",
-            target_os = "tvos",
-            target_os = "visionos",
-            target_os = "watchos",
-        ))]
-        bindings.set_interface("eth0");
+        bindings.interface = Some("eth0".into());
         let inherited = bindings.clone();
 
         bindings.merge(&BindOptions::default());
@@ -564,29 +526,15 @@ mod bind_tests {
         });
         assert_eq!(bindings.ipv4_address, Some(Ipv4Addr::UNSPECIFIED));
         assert_eq!(bindings.ipv6_address, Some(Ipv6Addr::LOCALHOST));
+        assert_eq!(bindings.interface, inherited.interface);
 
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "solaris",
-            target_os = "tvos",
-            target_os = "visionos",
-            target_os = "watchos",
-        ))]
-        {
-            assert_eq!(bindings.interface, inherited.interface);
-            bindings.merge(&BindOptions {
-                interface: Some("eth1".into()),
-                ..Default::default()
-            });
-            assert_eq!(bindings.interface.as_deref(), Some("eth1"));
-            assert_eq!(bindings.ipv4_address, Some(Ipv4Addr::UNSPECIFIED));
-            assert_eq!(bindings.ipv6_address, Some(Ipv6Addr::LOCALHOST));
-        }
+        bindings.merge(&BindOptions {
+            interface: Some("eth1".into()),
+            ..Default::default()
+        });
+        assert_eq!(bindings.interface.as_deref(), Some("eth1"));
+        assert_eq!(bindings.ipv4_address, Some(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(bindings.ipv6_address, Some(Ipv6Addr::LOCALHOST));
     }
 }
 
@@ -609,9 +557,6 @@ mod tests {
     const V4: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 443);
     const V6: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 443);
     const DELAY: Duration = Duration::from_millis(10);
-    const OPTIONS: ConnectOptions = ConnectOptions {
-        happy_eyeballs_timeout: Some(DELAY),
-    };
 
     struct Active(Arc<AtomicUsize>);
 
@@ -689,12 +634,10 @@ mod tests {
             let mut launched = Vec::new();
             let mut max_active = 0;
             let started = tokio::time::Instant::now();
-            let result = ConnectOptions {
-                happy_eyeballs_timeout,
-            }
-            .connect(
+            let result = race(
                 SocketAddrs::new([v4.as_slice(), v6.as_slice()].concat()),
                 &BindOptions::default(),
+                happy_eyeballs_timeout,
                 |addr| {
                     launched.push(addr);
                     let attempt = Active::new(&active);
@@ -733,26 +676,26 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn reports_the_error_of_the_first_launched_attempt() {
         let started = tokio::time::Instant::now();
-        let error = OPTIONS
-            .connect(
-                SocketAddrs::new(vec![V4, V6]),
-                &BindOptions::default(),
-                |addr| {
-                    Ok(async move {
-                        if addr == V4 {
-                            tokio::time::sleep(DELAY * 3).await;
-                        }
-                        Err::<(), _>(ConnectError::new(
-                            "attempt failed",
-                            io::Error::from(io::ErrorKind::ConnectionRefused),
-                        ))
+        let error = race(
+            SocketAddrs::new(vec![V4, V6]),
+            &BindOptions::default(),
+            Some(DELAY),
+            |addr| {
+                Ok(async move {
+                    if addr == V4 {
+                        tokio::time::sleep(DELAY * 3).await;
                     }
-                    .boxed())
-                },
-                tokio::time::sleep,
-            )
-            .await
-            .unwrap_err();
+                    Err::<(), _>(ConnectError::new(
+                        "attempt failed",
+                        io::Error::from(io::ErrorKind::ConnectionRefused),
+                    ))
+                }
+                .boxed())
+            },
+            tokio::time::sleep,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(
             error.addr,
             Some(V4),
@@ -773,12 +716,10 @@ mod tests {
                 bindings.set_local_addresses(ipv4, ipv6);
                 let mut launched = Vec::new();
                 let started = tokio::time::Instant::now();
-                let result = ConnectOptions {
-                    happy_eyeballs_timeout,
-                }
-                .connect(
+                let result = race(
                     SocketAddrs::new(vec![V4, V6]),
                     &bindings,
+                    happy_eyeballs_timeout,
                     |addr| {
                         launched.push(addr);
                         if addr == expected {
@@ -807,15 +748,15 @@ mod tests {
             }
         }
 
-        let error = OPTIONS
-            .connect(
-                SocketAddrs::new(Vec::new()),
-                &BindOptions::default(),
-                |addr| Ok(ready(Ok(addr))),
-                tokio::time::sleep,
-            )
-            .await
-            .unwrap_err();
+        let error = race(
+            SocketAddrs::new(Vec::new()),
+            &BindOptions::default(),
+            Some(DELAY),
+            |addr| Ok(ready(Ok(addr))),
+            tokio::time::sleep,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.addr, None);
         assert_eq!(
             error.cause.unwrap().downcast::<io::Error>().unwrap().kind(),
@@ -828,9 +769,10 @@ mod tests {
         let active = Arc::new(AtomicUsize::new(0));
         let mut launched = 0;
         let bindings = BindOptions::default();
-        let mut race = Box::pin(OPTIONS.connect(
+        let mut race = Box::pin(race(
             SocketAddrs::new((1..=4).map(|port| SocketAddr::new(V4.ip(), port)).collect()),
             &bindings,
+            Some(DELAY),
             |_| {
                 launched += 1;
                 let guard = Active::new(&active);

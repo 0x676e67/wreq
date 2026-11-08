@@ -502,7 +502,6 @@ impl ClientBuilder {
                 .set_nodelay(self.config.tcp_nodelay)
                 .set_send_buffer_size(self.config.tcp_send_buffer_size)
                 .set_recv_buffer_size(self.config.tcp_recv_buffer_size)
-                .set_happy_eyeballs_timeout(self.config.tcp_happy_eyeballs_timeout)
                 .set_tcp_user_timeout(
                     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                     self.config.tcp_user_timeout,
@@ -528,6 +527,7 @@ impl ClientBuilder {
                 ConnectorBuilder::new(self.runtime.clone(), tls, config)
                     .connect_timeout(self.config.connect_timeout)
                     .bind_options(self.config.bind_options.clone())
+                    .happy_eyeballs_timeout(self.config.tcp_happy_eyeballs_timeout)
                     .layers(self.config.connector_layers)
                     .build(tcp, resolver, self.config.config_set.clone())?
             };

@@ -9,6 +9,7 @@ use std::{
     pin::pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use ::quic::{
@@ -22,7 +23,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::Notify;
 use tower::{BoxError, Service};
 
-use super::{BindOptions, ConnectError, ConnectOptions, resolve};
+use super::{BindOptions, ConnectError, HAPPY_EYEBALLS_TIMEOUT, race, resolve};
 use crate::{
     conn::{
         Conn, Connected, HttpInfo, TlsInfoFactory, Transport,
@@ -50,7 +51,7 @@ struct Inner {
     resolver: DynResolver,
     tls: TlsConfig,
     tls_info: bool,
-    connect_options: ConnectOptions,
+    happy_eyeballs_timeout: Option<Duration>,
     bind_options: BindOptions,
     transport: Arc<TransportConfig>,
     proxy_transport: Arc<TransportConfig>,
@@ -66,7 +67,7 @@ pub(crate) struct QuicConnectorBuilder {
     tls: TlsConfig,
     tls_info: bool,
     bind_options: BindOptions,
-    connect_options: ConnectOptions,
+    happy_eyeballs_timeout: Option<Duration>,
 }
 
 /// The route of one QUIC connection, which selects its transport.
@@ -131,7 +132,7 @@ impl QuicConnector {
             tls,
             tls_info,
             bind_options: BindOptions::default(),
-            connect_options: ConnectOptions::default(),
+            happy_eyeballs_timeout: Some(HAPPY_EYEBALLS_TIMEOUT),
         }
     }
 
@@ -148,11 +149,11 @@ impl QuicConnector {
         &self.inner.resolver
     }
 
-    /// Returns the address-race policy, shared with SOCKS5 target races.
-    #[cfg(any(test, feature = "socks"))]
+    /// Returns the Happy Eyeballs delay, shared with SOCKS5 target races.
+    #[cfg(feature = "socks")]
     #[inline]
-    pub(crate) fn connect_options(&self) -> ConnectOptions {
-        self.inner.connect_options
+    pub(crate) fn happy_eyeballs_timeout(&self) -> Option<Duration> {
+        self.inner.happy_eyeballs_timeout
     }
 
     /// Opens a UDP endpoint for the address family of `remote`.
@@ -200,22 +201,9 @@ impl QuicConnector {
                 .set_only_v6(true)
                 .map_err(ConnectError::m("quic set_only_v6 error"))?;
         }
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "solaris",
-            target_os = "tvos",
-            target_os = "visionos",
-            target_os = "watchos",
-        ))]
-        if let Some(interface) = &bind_options.interface {
-            super::bind_interface(&socket, address, interface)
-                .map_err(ConnectError::m("quic bind interface error"))?;
-        }
+        bind_options
+            .bind_interface(&socket, address)
+            .map_err(ConnectError::m("quic bind interface error"))?;
         socket
             .bind(&address.into())
             .map_err(ConnectError::m("quic bind local error"))?;
@@ -437,20 +425,18 @@ impl QuicConnector {
         } else {
             &local_endpoints
         };
-        Ok(self
-            .inner
-            .connect_options
-            .connect(
-                addresses,
-                bind_options,
-                |address| {
-                    let attempt: BoxFuture<'_, _> =
-                        Box::pin(self.connect_addr(endpoints, bind_options, config, address, host));
-                    Ok(attempt)
-                },
-                |duration| self.inner.runtime.sleep(duration),
-            )
-            .await?)
+        Ok(race(
+            addresses,
+            bind_options,
+            self.inner.happy_eyeballs_timeout,
+            |address| {
+                let attempt: BoxFuture<'_, _> =
+                    Box::pin(self.connect_addr(endpoints, bind_options, config, address, host));
+                Ok(attempt)
+            },
+            |duration| self.inner.runtime.sleep(duration),
+        )
+        .await?)
     }
 
     /// Attaches the transport of `path` and single-use address tokens to the original
@@ -559,10 +545,13 @@ impl QuicConnectorBuilder {
         self
     }
 
-    /// Uses the client's address-race policy instead of the default.
+    /// Sets the delay between overlapping address attempts; `None` tries them in order.
     #[inline]
-    pub(crate) fn connect_options(mut self, connect_options: ConnectOptions) -> Self {
-        self.connect_options = connect_options;
+    pub(crate) fn happy_eyeballs_timeout(
+        mut self,
+        happy_eyeballs_timeout: Option<Duration>,
+    ) -> Self {
+        self.happy_eyeballs_timeout = happy_eyeballs_timeout;
         self
     }
 
@@ -578,7 +567,7 @@ impl QuicConnectorBuilder {
                 resolver,
                 tls: self.tls,
                 tls_info: self.tls_info,
-                connect_options: self.connect_options,
+                happy_eyeballs_timeout: self.happy_eyeballs_timeout,
                 bind_options: self.bind_options,
                 transport,
                 proxy_transport,
@@ -689,7 +678,6 @@ mod tests {
     use std::{
         net::{IpAddr, UdpSocket},
         sync::atomic::{AtomicUsize, Ordering},
-        time::Duration,
     };
 
     use http::Uri;
@@ -808,9 +796,7 @@ mod tests {
             .unwrap();
         let resolver = resolving(vec![blackhole.local_addr().unwrap(), addr4]);
         let connector = builder(&cert)
-            .connect_options(ConnectOptions {
-                happy_eyeballs_timeout: Some(Duration::from_millis(20)),
-            })
+            .happy_eyeballs_timeout(Some(Duration::from_millis(20)))
             .build(DynResolver::new(resolver.clone()))
             .unwrap();
         let localhost = request(Uri::from_static("https://localhost/"), None);

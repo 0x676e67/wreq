@@ -10,7 +10,6 @@ use std::{
 };
 
 use tokio::task::{JoinHandle, spawn_blocking};
-use tower::Service;
 
 use crate::dns::{Addrs, Name, Resolve, Resolving};
 
@@ -23,32 +22,15 @@ pub(super) struct GaiFuture(JoinHandle<io::Result<IntoIter<SocketAddr>>>);
 
 // ===== impl GaiResolver =====
 
-impl Service<Name> for GaiResolver {
-    type Response = IntoIter<SocketAddr>;
-    type Error = io::Error;
-    type Future = GaiFuture;
-
-    #[inline]
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, name: Name) -> Self::Future {
-        GaiFuture(spawn_blocking(move || {
-            debug!("resolving {}", name);
-            (name.as_str(), 0).to_socket_addrs()
-        }))
-    }
-}
-
 impl Resolve for GaiResolver {
     fn resolve(&self, name: Name) -> Resolving {
-        let mut this = self.clone();
         Box::pin(async move {
-            this.call(name)
-                .await
-                .map(|addrs| Box::new(addrs) as Addrs)
-                .map_err(Into::into)
+            let addrs = GaiFuture(spawn_blocking(move || {
+                debug!("resolving {}", name);
+                (name.as_str(), 0).to_socket_addrs()
+            }))
+            .await?;
+            Ok(Box::new(addrs) as Addrs)
         })
     }
 }

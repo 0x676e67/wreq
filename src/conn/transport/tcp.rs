@@ -9,14 +9,15 @@ use std::{
 };
 
 use futures_util::{TryFutureExt, future::BoxFuture};
-use http::uri::{Scheme, Uri};
+use http::uri::Uri;
 use socket2::TcpKeepalive;
 
-use super::{BindOptions, ConnectError, ConnectOptions, resolve};
+use super::{BindOptions, ConnectError, HAPPY_EYEBALLS_TIMEOUT, race, resolve};
 use crate::{
     conn::{Connected, Connection, HttpInfo, TlsInfoFactory},
     dns::{self, DynResolver},
     error::BoxError,
+    ext::UriExt,
     rt::{BoxConnection, Connecting, DynRuntime, Timer as _},
 };
 
@@ -47,7 +48,7 @@ pub(crate) struct TcpConnectorBuilder {
 
 /// Socket settings the client applies to every TCP dial.
 struct TcpOptions {
-    connect_options: ConnectOptions,
+    happy_eyeballs_timeout: Option<Duration>,
     nodelay: bool,
     reuse_address: bool,
     linger: Option<Duration>,
@@ -68,7 +69,7 @@ impl TcpConnector {
     pub(crate) fn builder(runtime: DynRuntime) -> TcpConnectorBuilder {
         TcpConnectorBuilder {
             options: TcpOptions {
-                connect_options: ConnectOptions::default(),
+                happy_eyeballs_timeout: Some(HAPPY_EYEBALLS_TIMEOUT),
                 nodelay: false,
                 reuse_address: false,
                 linger: None,
@@ -89,13 +90,6 @@ impl TcpConnector {
     #[inline]
     pub(crate) fn nodelay(&self) -> bool {
         self.inner.options.nodelay
-    }
-
-    /// Returns the address-race policy that QUIC dials share.
-    #[cfg(feature = "http3")]
-    #[inline]
-    pub(crate) fn connect_options(&self) -> ConnectOptions {
-        self.inner.options.connect_options
     }
 
     /// Resolves `uri` and races its addresses with this dial's `TCP_NODELAY` and bindings.
@@ -184,7 +178,7 @@ impl TcpConnectorBuilder {
     /// See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305.html#section-5).
     #[inline]
     pub(crate) fn set_happy_eyeballs_timeout(mut self, dur: Option<Duration>) -> Self {
-        self.options.connect_options.happy_eyeballs_timeout = dur;
+        self.options.happy_eyeballs_timeout = dur;
         self
     }
 
@@ -256,18 +250,7 @@ fn get_host_port(dst: &Uri) -> Result<(&str, u16), ConnectError> {
             });
         }
     };
-    let port = match dst.port() {
-        Some(port) => port.as_u16(),
-        None => {
-            if dst.scheme() == Some(&Scheme::HTTPS) {
-                443
-            } else {
-                80
-            }
-        }
-    };
-
-    Ok((host, port))
+    Ok((host, dst.port_or_default()))
 }
 
 /// Connects resolved candidates using the shared network policy.
@@ -278,18 +261,17 @@ async fn connect(
     nodelay: bool,
     runtime: &DynRuntime,
 ) -> Result<BoxConnection, ConnectError> {
-    options
-        .connect_options
-        .connect(
-            addrs,
-            bind_options,
-            |addr| {
-                connect_socket(&addr, options, bind_options, nodelay, runtime)
-                    .map(|future| future.map_err(ConnectError::m("tcp connect error")))
-            },
-            |duration| runtime.sleep(duration),
-        )
-        .await
+    race(
+        addrs,
+        bind_options,
+        options.happy_eyeballs_timeout,
+        |addr| {
+            connect_socket(&addr, options, bind_options, nodelay, runtime)
+                .map(|future| future.map_err(ConnectError::m("tcp connect error")))
+        },
+        |duration| runtime.sleep(duration),
+    )
+    .await
 }
 
 fn bind_local_address(
@@ -344,22 +326,9 @@ fn connect_socket(
         warn!("tcp set_keepalive error: {_e}");
     }
 
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    if let Some(interface) = &bind_options.interface {
-        super::bind_interface(&socket, *addr, interface)
-            .map_err(ConnectError::m("tcp bind interface error"))?;
-    }
+    bind_options
+        .bind_interface(&socket, *addr)
+        .map_err(ConnectError::m("tcp bind interface error"))?;
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     if let Some(tcp_user_timeout) = &options.tcp_user_timeout
