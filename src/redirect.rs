@@ -377,14 +377,9 @@ impl FollowRedirectPolicy {
 }
 
 impl FollowRedirectPolicy {
-    pub(crate) fn redirect(
-        &mut self,
-        attempt: redirect::Attempt<'_>,
-    ) -> Result<redirect::Action, BoxError> {
-        // Parse the next URI from the attempt.
-        let previous_uri = attempt.previous;
-        let next_uri = attempt.location;
-        self.uris.push(previous_uri.clone());
+    /// Asks the [`Policy`] what to do with a redirect; the answer may be pending.
+    pub(crate) fn redirect(&mut self, attempt: redirect::Attempt<'_>) -> redirect::Action {
+        self.uris.push(attempt.previous.clone());
         if let Some(referrer) = &mut self.referrer {
             referrer.on_redirect(attempt.headers);
         }
@@ -394,9 +389,24 @@ impl FollowRedirectPolicy {
             .policy
             .as_ref()
             .expect("[BUG] FollowRedirectPolicy should always have a policy set");
-        let action = policy.check(attempt.status, attempt.headers, next_uri, &self.uris);
+        policy.check(
+            attempt.status,
+            attempt.headers,
+            attempt.location,
+            &self.uris,
+        )
+    }
 
-        // Handle errors from the policy immediately
+    /// Checks a final action, immediate or resolved from pending, before it is applied.
+    pub(crate) fn resolve(
+        &mut self,
+        attempt: redirect::Attempt<'_>,
+        action: redirect::Action,
+    ) -> Result<redirect::Action, BoxError> {
+        let previous_uri = attempt.previous;
+        let next_uri = attempt.location;
+
+        // Handle errors from the policy
         if let redirect::Action::Error(err) = action {
             return Err(Error::redirect(err, previous_uri.clone()).into());
         }
@@ -418,14 +428,12 @@ impl FollowRedirectPolicy {
             }
 
             // Record redirect history
-            if !matches!(policy.inner, PolicyKind::None) {
-                self.history.get_or_insert_default().push(HistoryEntry {
-                    status: attempt.status,
-                    uri: attempt.location.clone(),
-                    previous: attempt.previous.clone(),
-                    headers: attempt.headers.clone(),
-                });
-            }
+            self.history.get_or_insert_default().push(HistoryEntry {
+                status: attempt.status,
+                uri: next_uri.clone(),
+                previous: previous_uri.clone(),
+                headers: attempt.headers.clone(),
+            });
         }
 
         Ok(action)

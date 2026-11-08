@@ -155,7 +155,7 @@ where
                 };
 
                 // Resolve the action, awaiting if it's pending
-                let action = match policy.redirect(attempt)? {
+                let action = match policy.redirect(attempt) {
                     Action::Pending(future) => {
                         // Save the task and necessary state for next poll
                         *pending_future = Some(Pending {
@@ -238,7 +238,14 @@ where
     S: Service<Request<Body>, Response = Response<B>> + Clone,
     S::Error: From<BoxError>,
 {
-    match redirect.action {
+    let attempt = Attempt {
+        status: redirect.res.status(),
+        headers: redirect.res.headers(),
+        location: &redirect.location,
+        previous: redirect.request.uri(),
+    };
+
+    match redirect.policy.resolve(attempt, redirect.action)? {
         Action::Follow => {
             *redirect.request.uri_mut() = redirect.location;
             redirect.body_repr.try_clone_from(&redirect.body);

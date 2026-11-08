@@ -693,6 +693,59 @@ async fn test_redirect_async_pending_follow() {
 }
 
 #[tokio::test]
+async fn test_redirect_async_pending_is_checked_like_direct() {
+    let server = server::http(move |req| async move {
+        let location = match req.uri().path() {
+            "/start" => "/dst",
+            "/bad-scheme" => "htt://127.0.0.1:1/",
+            "/deny" => "/denied",
+            _ => return http::Response::new(Body::default()),
+        };
+        http::Response::builder()
+            .status(302)
+            .header(header::LOCATION, location)
+            .body(Body::default())
+            .unwrap()
+    });
+
+    let client = Client::builder_tokio()
+        .redirect(Policy::custom(|attempt| {
+            attempt.pending(|attempt| async move {
+                if attempt.uri.path() == "/denied" {
+                    attempt.error("denied")
+                } else {
+                    attempt.follow()
+                }
+            })
+        }))
+        .build()
+        .unwrap();
+
+    let res = client
+        .get(format!("http://{}/start", server.addr()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+    let history = res.extensions().get::<History>().unwrap();
+    assert_eq!(history.into_iter().count(), 1);
+
+    let err = client
+        .get(format!("http://{}/bad-scheme", server.addr()))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(err.is_builder(), "{err:?}");
+
+    let err = client
+        .get(format!("http://{}/deny", server.addr()))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(err.is_redirect(), "{err:?}");
+}
+
+#[tokio::test]
 async fn test_redirect_utf8_location_is_encoded() {
     let server = server::http(move |req| async move {
         if req.uri() == "/start" {
