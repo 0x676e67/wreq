@@ -1,7 +1,6 @@
 //! HTTP/2 handshake layer for pooled connections.
 
 use std::{
-    future::Future,
     sync::Arc,
     task::{self, Poll},
 };
@@ -79,28 +78,17 @@ where
         let future = self.service.call(target);
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
-        Box::pin(handshake(future, builder, runtime))
+        Box::pin(async move {
+            let Established { io, connected, .. } = future.await?;
+            let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
+            runtime.execute(Box::pin(async move {
+                if let Err(_error) = connection.await {
+                    debug!("client connection error: {_error}");
+                }
+            }));
+            tx.ready().await?;
+
+            Ok(Connection::new(Sender::Http2(tx), connected, runtime))
+        })
     }
-}
-
-/// Awaits a transport and returns a handshaken HTTP/2 sender.
-/// Starts the connection driver before waiting for sender readiness.
-async fn handshake<F>(
-    established: F,
-    builder: Arc<conn::http2::Builder<DynRuntime>>,
-    runtime: DynRuntime,
-) -> Result<Connection, BoxError>
-where
-    F: Future<Output = Result<Established, BoxError>>,
-{
-    let Established { io, connected, .. } = established.await?;
-    let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
-    runtime.execute(Box::pin(async move {
-        if let Err(_error) = connection.await {
-            debug!("client connection error: {_error}");
-        }
-    }));
-    tx.ready().await?;
-
-    Ok(Connection::new(Sender::Http2(tx), connected, runtime))
 }
