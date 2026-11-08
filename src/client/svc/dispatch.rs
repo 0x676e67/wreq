@@ -123,14 +123,13 @@ where
     ) -> Result<(DispatchRequest<Body>, CheckedOut), DispatchError<Body>> {
         // RFC 8441 §3 and RFC 9220 §3: extended CONNECT only after the peer enabled it. A
         // miss keeps the dedicated HTTP/1.1 upgrade, so no HTTP/2 or HTTP/3 connection opens.
-        let reused: Option<pool::Pooled> =
-            cfg_select! {
-                any(feature = "http2", feature = "http3") => request
-                    .extended_connect_key
-                    .as_ref()
-                    .and_then(|key| self.pool.checkout_extended_connect(key)),
-                _ => None,
-            };
+        let reused: Option<pool::Pooled> = cfg_select! {
+            any(feature = "http2", feature = "http3") => request
+                .extended_connect_key
+                .as_ref()
+                .and_then(|key| self.pool.checkout_extended_connect(key)),
+            _ => None,
+        };
         #[cfg(any(feature = "http2", feature = "http3"))]
         let mut request = request;
         #[cfg(any(feature = "http2", feature = "http3"))]
