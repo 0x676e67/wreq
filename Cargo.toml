@@ -393,8 +393,8 @@ name = "unix_socket"
 path = "examples/unix_socket.rs"
 
 [patch.crates-io]
-btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
-btls-sys = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
-tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
-http2 = { git = "https://github.com/0x676e67/http2", rev = "fb5bf8bdbf3e9d9aad7073759a6f06f47373342e" }
-netty = { git = "https://github.com/0x676e67/netty", rev = "6e53746abc632056e3a8e518e10e26f6b86a21e6" }
+btls = { git = "https://github.com/0x676e67/btls", rev = "8879c026b548c25441f83ff58b39d7e22ba1b5b1" }
+btls-sys = { git = "https://github.com/0x676e67/btls", rev = "8879c026b548c25441f83ff58b39d7e22ba1b5b1" }
+tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "8879c026b548c25441f83ff58b39d7e22ba1b5b1" }
+http2 = { git = "https://github.com/0x676e67/http2", rev = "3219d38910c22105ea7fc5464696f26589432e9c" }
+netty = { git = "https://github.com/0x676e67/netty", rev = "314db585d85e7ea9c15535f458e7324b800fc702" }
