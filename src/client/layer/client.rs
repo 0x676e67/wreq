@@ -219,7 +219,7 @@ where
         let uri = req.uri().clone();
 
         loop {
-            req = match self.try_send_request(req, descriptor.clone()).await {
+            req = match self.try_send_request(req, &descriptor).await {
                 Ok(resp) => return Ok(resp),
                 Err(TrySendError::Nope(err)) => return Err(err),
                 Err(TrySendError::Retryable {
@@ -248,14 +248,19 @@ where
     async fn try_send_request(
         &self,
         mut req: Request<B>,
-        descriptor: ConnectionDescriptor,
+        descriptor: &ConnectionDescriptor,
     ) -> Result<Response<Incoming>, TrySendError<B>> {
-        let mut pooled = self
-            .connection_for(descriptor)
-            .await
-            // `connection_for` already retries checkout errors, so if
-            // it returns an error, there's not much else to retry
-            .map_err(TrySendError::Nope)?;
+        let mut pooled = match self.pool.try_checkout(&descriptor.id()) {
+            // An idle connection is used as it is.
+            Some(pooled) => pooled,
+            // A miss races a checkout against a new connection. That state is boxed, as it
+            // would otherwise sit in the future of every request.
+            None => Box::pin(self.connection_for(descriptor.clone()))
+                .await
+                // `connection_for` already retries checkout errors, so if
+                // it returns an error, there's not much else to retry
+                .map_err(TrySendError::Nope)?,
+        };
 
         let uri = req.uri().clone();
 
