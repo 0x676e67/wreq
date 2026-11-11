@@ -7,14 +7,13 @@
 use std::{
     fmt,
     hash::{BuildHasher, Hash, Hasher},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 use http::{Uri, uri::PathAndQuery};
 
 use super::{
     config::{ConfigSet, ConnectConfig, HASHER, Overrides},
-    deadline::{ProxyStage, ProxyStageGuard},
     dialer::BindOptions,
 };
 use crate::{Protocol, error::BoxError};
@@ -26,8 +25,8 @@ use crate::{Protocol, error::BoxError};
 pub struct ConnectRequest {
     key: ConnectionKey,
     route_uri: Option<Uri>,
-    /// Lets the connect deadline blame the proxy; not part of the identity.
-    proxy_stage: ProxyStage,
+    /// Upgraded while a proxy stage runs; dangling unless a connect deadline tracks it.
+    proxy_stage: Weak<()>,
 }
 
 /// Reuse identity for pool entries, extended CONNECT probes and QUIC address tokens.
@@ -80,7 +79,7 @@ impl ConnectRequest {
                 bind_options,
             ),
             route_uri: None,
-            proxy_stage: ProxyStage::default(),
+            proxy_stage: Weak::new(),
         })
     }
 
@@ -160,17 +159,19 @@ impl ConnectRequest {
         self
     }
 
-    /// Marks reaching or negotiating a proxy until the guard drops. A connect deadline that
-    /// expires meanwhile is a proxy connect error; the target handshake stays outside.
-    pub(crate) fn enter_proxy_stage(&self) -> ProxyStageGuard {
-        self.proxy_stage.enter()
+    /// Marks reaching or negotiating a proxy until the returned value drops, including on
+    /// errors and cancellation. A connect deadline that expires meanwhile is a proxy connect
+    /// error; the target handshake through the proxy stays outside.
+    #[must_use = "the proxy stage ends when the returned value drops"]
+    pub(crate) fn enter_proxy_stage(&self) -> Option<Arc<()>> {
+        self.proxy_stage.upgrade()
     }
 
-    /// Replaces the proxy stage with one the connect deadline reads; clones made afterwards
-    /// share it.
-    pub(super) fn track_proxy_stage(&mut self) -> ProxyStage {
-        self.proxy_stage = ProxyStage::tracked();
-        self.proxy_stage.clone()
+    /// Lets the returned handle count the proxy stages this request and its later clones enter.
+    pub(super) fn track_proxy_stage(&mut self) -> Arc<()> {
+        let stage = Arc::new(());
+        self.proxy_stage = Arc::downgrade(&stage);
+        stage
     }
 }
 
