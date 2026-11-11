@@ -3,7 +3,6 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -13,8 +12,8 @@ use tower::{BoxError, Layer, Service};
 
 use crate::{
     conn::request::ConnectRequest,
-    error::{ProxyConnect, TimedOut},
-    rt::{BoxSleep, DynRuntime, Timer as _},
+    error::TimedOut,
+    rt::{BoxSleep, DynRuntime, Timer as _, deadline_after},
 };
 
 /// Middleware layer to use [`Deadline`].
@@ -26,7 +25,7 @@ pub(crate) struct DeadlineLayer {
 
 /// Bounds each connector call by one deadline, started in `call` after readiness waits.
 /// It covers everything beneath: user layers, proxy setup and the transport handshakes.
-/// Expiry in a proxy stage is a proxy connect error; see [`ConnectRequest::enter_proxy_stage`].
+/// Dials share its instant through [`ConnectRequest::deadline`] and fail there themselves.
 #[derive(Clone)]
 pub(crate) struct Deadline<S> {
     inner: S,
@@ -35,14 +34,14 @@ pub(crate) struct Deadline<S> {
 }
 
 pin_project! {
-    /// Owns one in-flight connection and, under a timeout, its sleep and proxy stage handle.
+    /// Owns one in-flight connection and its optional timeout sleep.
     ///
     /// The connection is polled first; while it remains pending, the sleep can end the attempt.
     /// Dropping this future drops both operations.
     pub struct ResponseFuture<F> {
         #[pin]
         future: F,
-        deadline: Option<(BoxSleep, Arc<()>)>,
+        sleep: Option<BoxSleep>,
     }
 }
 
@@ -86,10 +85,11 @@ where
     fn call(&mut self, mut request: ConnectRequest) -> Self::Future {
         let deadline = self
             .timeout
-            .map(|timeout| (self.runtime.sleep(timeout), request.track_proxy_stage()));
+            .map(|timeout| deadline_after(self.runtime.now(), timeout));
+        request.set_deadline(deadline);
         ResponseFuture {
             future: self.inner.call(request),
-            deadline,
+            sleep: deadline.map(|deadline| self.runtime.sleep_until(deadline)),
         }
     }
 }
@@ -111,16 +111,10 @@ where
             Poll::Pending => {}
         }
 
-        if let Some((sleep, stage)) = this.deadline.as_mut()
+        if let Some(sleep) = this.sleep.as_mut()
             && Pin::new(&mut *sleep).poll(cx).is_ready()
         {
-            // Entered proxy stages hold the other strong references.
-            let error: BoxError = if Arc::strong_count(stage) > 1 {
-                Box::new(ProxyConnect::Source(Box::new(TimedOut)))
-            } else {
-                Box::new(TimedOut)
-            };
-            return Poll::Ready(Err(error));
+            return Poll::Ready(Err(Box::new(TimedOut)));
         }
 
         Poll::Pending

@@ -378,9 +378,9 @@ async fn masque_rejects_authentication_and_missing_extended_connect() {
     }
 }
 
-/// A connect deadline that expires while CONNECT-UDP is unanswered is a proxy failure; one that
-/// expires in the target handshake through an open tunnel is not. Both close the proxy
-/// connection, as cancellation does.
+/// A connect deadline that expires once the proxy connection is up, while CONNECT-UDP or the
+/// target handshake is unanswered, is not a failed proxy dial. Both close the proxy connection,
+/// as cancellation does.
 #[tokio::test]
 async fn masque_connect_timeout_and_cancellation_close_the_proxy_connection() {
     let origin = Server::origin();
@@ -395,7 +395,7 @@ async fn masque_connect_timeout_and_cancellation_close_the_proxy_connection() {
         next(&mut proxy.requests).await;
         if timeout {
             let error = request.await.unwrap().unwrap_err();
-            assert!(error.is_proxy_connect() && error.is_timeout(), "{error:?}");
+            assert!(error.is_connect() && error.is_timeout(), "{error:?}");
         } else {
             request.abort();
             assert!(request.await.unwrap_err().is_cancelled());

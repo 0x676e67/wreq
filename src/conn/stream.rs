@@ -170,6 +170,7 @@ impl Service<ConnectRequest> for StreamConnector {
             let uri = req.uri().clone();
             let secure = uri.is_https();
             let bind_options = req.bind_options().clone();
+            let deadline = req.deadline();
 
             #[cfg(unix)]
             let unix = match &intercepted {
@@ -183,6 +184,7 @@ impl Service<ConnectRequest> for StreamConnector {
                 bind_options: bind_options.clone(),
                 #[cfg(unix)]
                 unix: unix.clone(),
+                deadline,
             });
 
             match intercepted {
@@ -213,10 +215,7 @@ impl Service<ConnectRequest> for StreamConnector {
                         connector.set_version(version);
                         connector.set_dns_mode(dns);
 
-                        let io = {
-                            let _stage = req.enter_proxy_stage();
-                            connector.oneshot(uri).await?
-                        };
+                        let io = connector.oneshot(uri).await?;
                         let tls = tls.for_request(&req)?;
                         return finish(verbose, io, req, tls, restore_nagle, None).await;
                     }
@@ -234,14 +233,9 @@ impl Service<ConnectRequest> for StreamConnector {
                             tunnel = tunnel.with_headers(headers.clone());
                         }
 
-                        let io = {
-                            let _stage = req.enter_proxy_stage();
-                            tunnel.oneshot(uri).await?
-                        };
+                        let io = tunnel.oneshot(uri).await?;
                         finish(verbose, io, req, tls, restore_nagle, None).await
                     } else {
-                        // The proxy is the peer, so its TLS handshake is part of the proxy stage.
-                        let _stage = req.enter_proxy_stage();
                         // HTTP/1 forwarding to an HTTPS proxy must not negotiate target ALPN.
                         let mut tls = tls
                             .for_request(&req)

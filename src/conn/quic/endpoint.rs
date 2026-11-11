@@ -22,7 +22,7 @@ use crate::{
     conn::{
         Conn, Connected, HttpInfo, Transport,
         connected::tls_info,
-        dialer::{BindOptions, ConnectError, Dialer, race, resolve},
+        dialer::{BindOptions, ConnectError, Dialer, race, resolve, within_deadline},
         request::{ConnectRequest, ConnectionKey},
     },
     dns::SocketAddrs,
@@ -239,8 +239,8 @@ impl Endpoints {
             .tls
             .config(&request.clone().with_route_uri(uri.clone()))?;
         config.transport_config(self.transport(request, Path::Proxy)?);
-        self.dial(uri, self.dialer.bind_options(request), &config, false)
-            .await
+        let dial = self.dial(uri, self.dialer.bind_options(request), &config, false);
+        within_deadline(request.deadline(), self.dialer.runtime(), dial).await
     }
 
     /// Returns the target's configuration over a tunnel, built before the tunnel so a local

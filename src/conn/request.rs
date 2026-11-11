@@ -7,7 +7,8 @@
 use std::{
     fmt,
     hash::{BuildHasher, Hash, Hasher},
-    sync::{Arc, Weak},
+    sync::Arc,
+    time::Instant,
 };
 
 use http::{Uri, uri::PathAndQuery};
@@ -25,8 +26,7 @@ use crate::{Protocol, error::BoxError};
 pub struct ConnectRequest {
     key: ConnectionKey,
     route_uri: Option<Uri>,
-    /// Upgraded while a proxy stage runs; dangling unless a connect deadline tracks it.
-    proxy_stage: Weak<()>,
+    deadline: Option<Instant>,
 }
 
 /// Reuse identity for pool entries, extended CONNECT probes and QUIC address tokens.
@@ -79,7 +79,7 @@ impl ConnectRequest {
                 bind_options,
             ),
             route_uri: None,
-            proxy_stage: Weak::new(),
+            deadline: None,
         })
     }
 
@@ -159,19 +159,15 @@ impl ConnectRequest {
         self
     }
 
-    /// Marks reaching or negotiating a proxy until the returned value drops, including on
-    /// errors and cancellation. A connect deadline that expires meanwhile is a proxy connect
-    /// error; the target handshake through the proxy stays outside.
-    #[must_use = "the proxy stage ends when the returned value drops"]
-    pub(crate) fn enter_proxy_stage(&self) -> Option<Arc<()>> {
-        self.proxy_stage.upgrade()
+    /// Returns when the connect timeout expires, if one bounds this attempt.
+    /// Dials stop there themselves, so a proxy connector classifies their timeout.
+    pub(crate) fn deadline(&self) -> Option<Instant> {
+        self.deadline
     }
 
-    /// Lets the returned handle count the proxy stages this request and its later clones enter.
-    pub(super) fn track_proxy_stage(&mut self) -> Arc<()> {
-        let stage = Arc::new(());
-        self.proxy_stage = Arc::downgrade(&stage);
-        stage
+    /// Sets the instant [`Self::deadline`] returns; not part of the reuse identity.
+    pub(super) fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.deadline = deadline;
     }
 }
 

@@ -144,10 +144,7 @@ pub(super) async fn connect(
         Ok::<_, BoxError>((socket, remote))
     };
 
-    let (socket, remote) = {
-        let _stage = request.enter_proxy_stage();
-        connect_proxy.await.map_err(ProxyConnect::Source)?
-    };
+    let (socket, remote) = connect_proxy.await.map_err(ProxyConnect::Source)?;
     let ended = socket.shared.ended.clone();
     endpoints
         .finish_tunnel(&request, &config, socket, remote, ended)

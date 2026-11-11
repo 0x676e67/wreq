@@ -598,11 +598,11 @@ async fn tunnel_includes_user_agent() {
     );
 }
 
-/// A connect deadline that expires while a proxy is reached or negotiated is a proxy failure,
-/// like a failure of that stage; one that expires in the target's TLS handshake through an open
-/// tunnel is a plain connect failure.
+/// A connect deadline that expires while a proxy is resolved or dialed is a proxy failure, like
+/// any failure of that dial. Once the proxy accepts the connection, an expiry in its handshake or
+/// in the target's TLS handshake is a plain connect failure.
 #[tokio::test]
-async fn connect_timeout_is_classified_by_the_stage_it_interrupts() {
+async fn connect_timeout_while_dialing_a_proxy_is_a_proxy_failure() {
     use std::{net::SocketAddr, time::Duration};
 
     use tokio::{
@@ -610,9 +610,22 @@ async fn connect_timeout_is_classified_by_the_stage_it_interrupts() {
         net::TcpListener,
     };
 
-    // The kernel completes the TCP handshake, but nothing answers.
-    let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let silent = silent.local_addr().map(|addr| (silent, addr)).unwrap();
+    /// Never resolves `proxy.test`; resolves the target at once for SOCKS routes that look it up.
+    struct Resolver;
+
+    impl wreq::dns::Resolve for Resolver {
+        fn resolve(&self, name: wreq::dns::Name) -> wreq::dns::Resolving {
+            Box::pin(async move {
+                if name.as_str() == "proxy.test" {
+                    std::future::pending::<()>().await;
+                }
+                Ok(
+                    Box::new(std::iter::once(SocketAddr::from(([127, 0, 0, 1], 443))))
+                        as wreq::dns::Addrs,
+                )
+            })
+        }
+    }
 
     // A full accept queue makes the kernel drop SYNs, so the TCP handshake never completes.
     #[cfg(target_os = "linux")]
@@ -627,6 +640,10 @@ async fn connect_timeout_is_classified_by_the_stage_it_interrupts() {
         let queued = std::net::TcpStream::connect(addr).unwrap();
         (socket, queued, addr)
     };
+
+    // The kernel completes the TCP handshake, but nothing answers.
+    let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let silent_addr = silent.local_addr().unwrap();
 
     // Opens a CONNECT or SOCKS5 tunnel, then never answers the target's TLS handshake.
     let tunnel = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -669,7 +686,7 @@ async fn connect_timeout_is_classified_by_the_stage_it_interrupts() {
 
     let client = Client::builder_tokio()
         .no_proxy()
-        .resolve("target.test", SocketAddr::from(([127, 0, 0, 1], 443)))
+        .dns_resolver(Resolver)
         .connect_timeout(Duration::from_millis(200))
         .timeout(Duration::from_secs(5))
         .build()
@@ -681,15 +698,17 @@ async fn connect_timeout_is_classified_by_the_stage_it_interrupts() {
             .send()
     };
 
-    // CONNECT, the TLS handshake with an HTTPS proxy, and the SOCKS handshake stall.
-    let mut stalled = vec![
-        (format!("http://{}", silent.1), "https://target.test/"),
-        (format!("https://{}", silent.1), "https://target.test/"),
-        (format!("https://{}", silent.1), "http://target.test/"),
+    // CONNECT, forwarding and SOCKS routes all dial the proxy first.
+    let mut dialing = vec![
+        ("http://proxy.test:8080".to_owned(), "https://target.test/"),
+        ("https://proxy.test:8443".to_owned(), "http://target.test/"),
     ];
     #[cfg(feature = "socks")]
     for scheme in ["socks4", "socks4a", "socks5", "socks5h"] {
-        stalled.push((format!("{scheme}://{}", silent.1), "https://target.test/"));
+        dialing.push((
+            format!("{scheme}://proxy.test:1080"),
+            "https://target.test/",
+        ));
     }
     #[cfg(target_os = "linux")]
     for (scheme, target) in [
@@ -698,9 +717,9 @@ async fn connect_timeout_is_classified_by_the_stage_it_interrupts() {
         #[cfg(feature = "socks")]
         ("socks5h", "https://target.test/"),
     ] {
-        stalled.push((format!("{scheme}://{}", pending.2), target));
+        dialing.push((format!("{scheme}://{}", pending.2), target));
     }
-    for (proxy, target) in stalled {
+    for (proxy, target) in dialing {
         let error = send(proxy.clone(), target).await.unwrap_err();
         assert!(
             error.is_proxy_connect() && error.is_timeout(),
@@ -708,17 +727,19 @@ async fn connect_timeout_is_classified_by_the_stage_it_interrupts() {
         );
     }
 
-    for scheme in [
-        "http",
+    // The proxy accepted the connection: a silent handshake or target is not a failed dial.
+    let connected = [
+        format!("http://{silent_addr}"),
+        format!("http://{tunnel_addr}"),
         #[cfg(feature = "socks")]
-        "socks5h",
-    ] {
-        let error = send(format!("{scheme}://{tunnel_addr}"), "https://target.test/")
-            .await
-            .unwrap_err();
+        format!("socks5h://{tunnel_addr}"),
+    ];
+    for proxy in connected {
+        let target = "https://target.test/";
+        let error = send(proxy.clone(), target).await.unwrap_err();
         assert!(
             error.is_connect() && error.is_timeout() && !error.is_proxy_connect(),
-            "{scheme}: {error:?}"
+            "{proxy} -> {target}: {error:?}"
         );
     }
 }
