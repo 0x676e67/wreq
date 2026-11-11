@@ -558,7 +558,7 @@ mod tests {
         conn::{config::ConfigSet, deadline::DeadlineLayer, dialer::tcp},
         dns::{Addrs, DynResolver, Name, Resolve, Resolving},
         rt::{DynRuntime, tokio::TokioRuntime},
-        tls::trust::CertStore,
+        tls::{self, trust::CertStore},
     };
 
     struct Resolver {
@@ -614,7 +614,7 @@ mod tests {
         bind_options: BindOptions,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Endpoints {
-        let tls = crate::tls::Config {
+        let tls = tls::Config {
             cert_store: Some(CertStore::from_der_certs([cert]).unwrap()),
             ..Default::default()
         };
