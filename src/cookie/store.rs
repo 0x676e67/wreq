@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cookie::{
     Cookie as RawCookie,
@@ -120,6 +120,7 @@ pub struct Store {
     pub cookies: DomainMap,
     next_creation_index: u64,
     next_expiration: Option<OffsetDateTime>,
+    secure_domains_by_name: HashMap<Box<str>, HashSet<CanonicalHost>>,
 }
 
 impl Store {
@@ -148,13 +149,37 @@ impl Store {
             self.cookies.shrink_to_fit();
         }
 
+        // Rebuild or prune the secure cookie name index to keep it compact.
+        self.secure_domains_by_name.clear();
+        for (domain, path_map) in &self.cookies {
+            for cookie_map in path_map.values() {
+                for entry in cookie_map.values() {
+                    if entry.cookie.secure() == Some(true) {
+                        self.secure_domains_by_name
+                            .entry(Box::from(entry.cookie.name()))
+                            .or_default()
+                            .insert(domain.clone());
+                    }
+                }
+            }
+        }
+        if self.secure_domains_by_name.is_empty() {
+            self.secure_domains_by_name.shrink_to_fit();
+        }
+
         self.next_expiration = next_exp;
     }
 
     #[inline]
-    fn track_cookie_metadata(&mut self, cookie: &RawCookie<'static>) {
+    fn track_cookie_metadata(&mut self, domain: &CanonicalHost, cookie: &RawCookie<'static>) {
         if let Some(exp) = cookie.expires_datetime() {
             self.next_expiration = Some(self.next_expiration.map_or(exp, |cur| cur.min(exp)));
+        }
+        if cookie.secure() == Some(true) {
+            self.secure_domains_by_name
+                .entry(Box::from(cookie.name()))
+                .or_default()
+                .insert(domain.clone());
         }
     }
 
@@ -166,7 +191,7 @@ impl Store {
         cookie: RawCookie<'static>,
     ) {
         let host_only = cookie.domain().is_none();
-        self.track_cookie_metadata(&cookie);
+        self.track_cookie_metadata(&domain, &cookie);
 
         // Chromium inherits the creation time only when the replacement keeps the same value. A
         // value change receives a new creation time and therefore moves later among equal-length
@@ -255,20 +280,27 @@ impl Store {
     }
 
     /// Returns the unexpired cookies that apply to a request URI.
+    ///
+    /// Performs `O(L)` hash lookups across the parent domain labels of `request_host` instead of
+    /// scanning unrelated domains in the store.
     pub fn matching_cookies<'a>(
         &'a self,
         uri: &'a Uri,
         request_host: &'a CanonicalHost,
         now: OffsetDateTime,
     ) -> impl Iterator<Item = (&'a CanonicalHost, &'a str, &'a CookieEntry)> + 'a {
-        self.cookies.iter().flat_map(move |(domain, path_map)| {
-            path_map.iter().flat_map(move |(path, cookie_map)| {
-                cookie_map.values().filter_map(move |entry| {
-                    request_matches_cookie(uri, request_host, domain, path, &entry.cookie, now)
-                        .then_some((domain, path.as_ref(), entry))
+        let candidates = candidate_domains(request_host);
+        candidates
+            .into_iter()
+            .filter_map(move |candidate| self.cookies.get_key_value(&candidate))
+            .flat_map(move |(domain, path_map)| {
+                path_map.iter().flat_map(move |(path, cookie_map)| {
+                    cookie_map.values().filter_map(move |entry| {
+                        request_matches_cookie(uri, request_host, domain, path, &entry.cookie, now)
+                            .then_some((domain, path.as_ref(), entry))
+                    })
                 })
             })
-        })
     }
 
     /// Returns whether an insecure cookie would overlay an unexpired `Secure` cookie.
@@ -282,17 +314,41 @@ impl Store {
         path: &str,
         now: OffsetDateTime,
     ) -> bool {
-        self.cookies.iter().any(|(stored_domain, path_map)| {
+        let Some(secure_domains) = self.secure_domains_by_name.get(name) else {
+            return false;
+        };
+
+        secure_domains.iter().any(|stored_domain| {
             (domain_match(stored_domain, domain) || domain_match(domain, stored_domain))
-                && path_map.iter().any(|(stored_path, cookie_map)| {
-                    path_match(path, stored_path)
-                        && cookie_map.entries(name).any(|entry| {
-                            entry.cookie.secure() == Some(true)
-                                && !cookie_is_expired(&entry.cookie, now)
-                        })
+                && self.cookies.get(stored_domain).is_some_and(|path_map| {
+                    path_map.iter().any(|(stored_path, cookie_map)| {
+                        path_match(path, stored_path)
+                            && cookie_map.entries(name).any(|entry| {
+                                entry.cookie.secure() == Some(true)
+                                    && !cookie_is_expired(&entry.cookie, now)
+                            })
+                    })
                 })
         })
     }
+}
+
+/// Generates the candidate domain keys in `Store::cookies` that can domain-match `request_host`.
+fn candidate_domains(request_host: &CanonicalHost) -> Vec<CanonicalHost> {
+    let mut candidates = Vec::with_capacity(4);
+    candidates.push(request_host.clone());
+
+    if let Host::Domain(host_str) = request_host {
+        let mut rest = host_str.as_ref();
+        while let Some(dot) = rest.find('.') {
+            rest = &rest[dot + 1..];
+            if !rest.is_empty() {
+                candidates.push(Host::Domain(Box::from(rest)));
+            }
+        }
+    }
+
+    candidates
 }
 
 /// Applies the RFC 6265 request selection rules supported by this HTTP client.
