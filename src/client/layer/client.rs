@@ -8,6 +8,7 @@ use std::{
     fmt,
     future::Future,
     num::NonZeroUsize,
+    sync::Arc,
     task::{self, Poll},
     time::Duration,
 };
@@ -35,7 +36,6 @@ use tower::{BoxError, util::Oneshot};
 use {
     crate::cookie::{CookieStore, Cookies},
     http::header::COOKIE,
-    std::sync::Arc,
 };
 
 use self::lazy::{Started as Lazy, lazy};
@@ -57,15 +57,26 @@ use crate::{
 /// underlying connection pool will be reused.
 #[must_use]
 pub(crate) struct HttpClient<C, B> {
+    inner: Arc<ClientRef<C, B>>,
+}
+
+/// The state every clone of an [`HttpClient`] shares.
+struct ClientRef<C, B> {
     config: Config,
     connector: C,
     exec: Executor,
-    h1_builder: conn::http1::Builder,
-    #[cfg(feature = "http2")]
-    h2_builder: conn::http2::Builder<Executor>,
+    builders: Builders,
     pool: pool::Pool<PoolClient<B>, ConnectionId>,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
+}
+
+/// The builders of new connections, one per protocol.
+#[derive(Clone)]
+struct Builders {
+    h1: conn::http1::Builder,
+    #[cfg(feature = "http2")]
+    h2: conn::http2::Builder<Executor>,
 }
 
 #[derive(Clone, Copy)]
@@ -176,9 +187,9 @@ where
             }
         };
 
-        let mut this = self.clone();
-
-        // Extract per-request options from the request extensions and apply them to the client.
+        // Extract per-request options from the request extensions. Its own protocol options
+        // apply to a connection opened for it.
+        let mut builders = None;
         let descriptor = {
             let RequestOptions {
                 group,
@@ -198,28 +209,54 @@ where
             }
 
             if let Some(opts) = http1_options {
-                this.h1_builder = this.h1_builder.options(opts);
+                let mut own = builders.unwrap_or_else(|| self.inner.builders.clone());
+                own.h1 = own.h1.options(opts);
+                builders = Some(own);
             }
             #[cfg(feature = "http2")]
             if let Some(opts) = http2_options {
-                this.h2_builder = this.h2_builder.options(opts);
+                let mut own = builders.unwrap_or_else(|| self.inner.builders.clone());
+                own.h2 = own.h2.options(opts);
+                builders = Some(own);
             }
 
             ConnectionDescriptor::new(uri, group, proxy, version, tls_options, socket_bind_options)
         };
 
-        Box::pin(this.send_request(req, descriptor).map_err(Into::into))
+        let this = self.inner.clone();
+        let builders = builders.map(Box::new);
+        Box::pin(
+            this.send_request(req, descriptor, builders)
+                .map_err(Into::into),
+        )
     }
+}
 
+// ===== impl ClientRef =====
+
+impl<C, B> ClientRef<C, B>
+where
+    C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+    C::Error: Into<BoxError>,
+    C::Future: Unpin + Send + 'static,
+    B: Body + Send + 'static + Unpin,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+{
     async fn send_request(
-        self,
+        self: Arc<Self>,
         mut req: Request<B>,
         descriptor: ConnectionDescriptor,
+        builders: Option<Box<Builders>>,
     ) -> Result<Response<Incoming>, Error> {
         let uri = req.uri().clone();
 
         loop {
-            req = match self.try_send_request(req, descriptor.clone()).await {
+            req = match self
+                .try_send_request(req, &descriptor, builders.as_deref())
+                .await
+            {
                 Ok(resp) => return Ok(resp),
                 Err(TrySendError::Nope(err)) => return Err(err),
                 Err(TrySendError::Retryable {
@@ -248,14 +285,20 @@ where
     async fn try_send_request(
         &self,
         mut req: Request<B>,
-        descriptor: ConnectionDescriptor,
+        descriptor: &ConnectionDescriptor,
+        builders: Option<&Builders>,
     ) -> Result<Response<Incoming>, TrySendError<B>> {
-        let mut pooled = self
-            .connection_for(descriptor)
-            .await
-            // `connection_for` already retries checkout errors, so if
-            // it returns an error, there's not much else to retry
-            .map_err(TrySendError::Nope)?;
+        let mut pooled = match self.pool.try_checkout(&descriptor.id()) {
+            // An idle connection is used as it is.
+            Some(pooled) => pooled,
+            // A miss races a checkout against a new connection. That state is boxed, as it
+            // would otherwise sit in the future of every request.
+            None => Box::pin(self.connection_for(descriptor.clone(), builders))
+                .await
+                // `connection_for` already retries checkout errors, so if
+                // it returns an error, there's not much else to retry
+                .map_err(TrySendError::Nope)?,
+        };
 
         let uri = req.uri().clone();
 
@@ -383,9 +426,10 @@ where
     async fn connection_for(
         &self,
         descriptor: ConnectionDescriptor,
+        builders: Option<&Builders>,
     ) -> Result<pool::Pooled<PoolClient<B>, ConnectionId>, Error> {
         loop {
-            match self.one_connection_for(descriptor.clone()).await {
+            match self.one_connection_for(descriptor.clone(), builders).await {
                 Ok(pooled) => return Ok(pooled),
                 Err(ClientConnectError::Normal(err)) => return Err(err),
                 Err(ClientConnectError::CheckoutIsClosed(reason)) => {
@@ -406,11 +450,12 @@ where
     async fn one_connection_for(
         &self,
         descriptor: ConnectionDescriptor,
+        builders: Option<&Builders>,
     ) -> Result<pool::Pooled<PoolClient<B>, ConnectionId>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
-                .connect_to(descriptor)
+                .connect_to(descriptor, builders)
                 .await
                 .map_err(ClientConnectError::Normal);
         }
@@ -426,7 +471,7 @@ where
         //   available first), the started connection future is spawned into the runtime to
         //   complete, and then be inserted into the pool as an idle connection.
         let checkout = self.pool.checkout(descriptor.id());
-        let connect = self.connect_to(descriptor);
+        let connect = self.connect_to(descriptor, builders);
         let is_ver_h2 = self.config.ver == Ver::Http2;
 
         // The order of the `select` is depended on below...
@@ -497,6 +542,7 @@ where
     fn connect_to(
         &self,
         descriptor: ConnectionDescriptor,
+        builders: Option<&Builders>,
     ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnectionId>, Error>>
     + Send
     + Unpin
@@ -504,9 +550,11 @@ where
         let executor = self.exec.clone();
         let pool = self.pool.clone();
 
-        let h1_builder = self.h1_builder.clone();
-        #[cfg(feature = "http2")]
-        let h2_builder = self.h2_builder.clone();
+        let Builders {
+            h1: h1_builder,
+            #[cfg(feature = "http2")]
+                h2: h2_builder,
+        } = builders.unwrap_or(&self.builders).clone();
         let ver = match descriptor.version() {
             Some(Version::HTTP_2) => Ver::Http2,
             _ => self.config.ver,
@@ -613,18 +661,10 @@ where
     }
 }
 
-impl<C: Clone, B> Clone for HttpClient<C, B> {
+impl<C, B> Clone for HttpClient<C, B> {
     fn clone(&self) -> HttpClient<C, B> {
         HttpClient {
-            config: self.config,
-            exec: self.exec.clone(),
-            h1_builder: self.h1_builder.clone(),
-            #[cfg(feature = "http2")]
-            h2_builder: self.h2_builder.clone(),
-            connector: self.connector.clone(),
-            pool: self.pool.clone(),
-            #[cfg(feature = "cookies")]
-            cookie_store: self.cookie_store.clone(),
+            inner: self.inner.clone(),
         }
     }
 }
@@ -969,15 +1009,19 @@ impl Builder {
         let exec = self.exec.clone();
         let timer = self.pool_timer.clone();
         HttpClient {
-            config: self.config,
-            exec: exec.clone(),
-            connector,
-            h1_builder: self.h1_builder,
-            #[cfg(feature = "http2")]
-            h2_builder: self.h2_builder,
-            pool: pool::Pool::new(self.pool_config, exec, timer),
-            #[cfg(feature = "cookies")]
-            cookie_store: RequestConfig::new(self.cookie_store),
+            inner: Arc::new(ClientRef {
+                config: self.config,
+                exec: exec.clone(),
+                connector,
+                builders: Builders {
+                    h1: self.h1_builder,
+                    #[cfg(feature = "http2")]
+                    h2: self.h2_builder,
+                },
+                pool: pool::Pool::new(self.pool_config, exec, timer),
+                #[cfg(feature = "cookies")]
+                cookie_store: RequestConfig::new(self.cookie_store),
+            }),
         }
     }
 }

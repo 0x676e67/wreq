@@ -9,7 +9,8 @@ use wreq::{
     Client, Emulation,
     http1::Http1Options,
     http2::{
-        Http2Options, PseudoId, PseudoOrder, SettingId, SettingsOrder, StreamDependency, StreamId,
+        HeadersDependency, HeadersPriority, Http2Options, PseudoId, PseudoOrder, SettingId,
+        SettingsOrder,
     },
     tls::{
         AlpnProtocol, EchGrease, ExtensionType, KeyShare, Tls13Cipher, TlsOptions, TlsVersion,
@@ -243,7 +244,7 @@ fn http2_options_template() -> Http2Options {
         .initial_window_size(131072)
         .max_frame_size(16384)
         .initial_connection_window_size(12517377 + 65535)
-        .headers_stream_dependency(StreamDependency::new(StreamId::ZERO, 41, false))
+        .headers_priority(HeadersPriority::new(HeadersDependency::Root, 41, false))
         .headers_pseudo_order(headers_pseudo_order)
         .settings_order(settings_order)
         .build()

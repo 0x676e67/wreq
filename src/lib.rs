@@ -355,9 +355,12 @@ pub mod http1 {
 pub mod http2 {
     //! HTTP/2 protocol implementation and utilities.
 
-    pub use http2::frame::{
-        Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
-        SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
+    pub use http2::{
+        ext::{HeadersDependency, HeadersPriority},
+        frame::{
+            Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
+            SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
+        },
     };
     pub use netty::http2::{Http2Options, Http2OptionsBuilder};
 }
