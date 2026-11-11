@@ -26,7 +26,7 @@ use std::{
 pub use btls::ssl::{EchGreaseAead, ExtensionType, KeyShare, Tls13Cipher};
 use bytes::{BufMut, Bytes, BytesMut};
 use compress::CertificateCompressor;
-pub(crate) use config::TlsConfig;
+pub(crate) use config::Config;
 use derive_deftly::Deftly;
 use educe::Educe;
 

@@ -21,7 +21,7 @@ use std::{
 use config::ConfigSet;
 pub(crate) use connected::{Connected, HttpInfo};
 use deadline::{Deadline, DeadlineLayer};
-use dialer::{BindOptions, Dialer, TcpConfig};
+use dialer::{BindOptions, Dialer, tcp};
 #[cfg(all(test, feature = "http3"))]
 pub(crate) use quic::test_server_config;
 use request::ConnectRequest;
@@ -41,7 +41,7 @@ use {
 
 use crate::{
     dns::DynResolver, error::map_timeout_to_connector_error, proxy::Matcher as ProxyMatcher,
-    rt::DynRuntime, tls::TlsConfig,
+    rt::DynRuntime, tls,
 };
 
 /// Type-erased transport service retained after custom connector layers are composed.
@@ -67,9 +67,9 @@ pub(crate) struct Builtin {
 }
 
 /// Client-wide connector settings, fixed at build.
-pub(crate) struct ConnectorConfig {
-    pub(crate) tcp: TcpConfig,
-    pub(crate) tls: TlsConfig,
+pub(crate) struct Config {
+    pub(crate) tcp: tcp::Config,
+    pub(crate) tls: tls::Config,
     pub(crate) proxies: Vec<ProxyMatcher>,
     pub(crate) bind_options: BindOptions,
     pub(crate) happy_eyeballs_timeout: Option<Duration>,
@@ -78,13 +78,13 @@ pub(crate) struct ConnectorConfig {
     pub(crate) layers: Vec<BoxedConnectorLayer>,
 }
 
-// ===== impl ConnectorConfig =====
+// ===== impl Config =====
 
-impl Default for ConnectorConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
-            tcp: TcpConfig::default(),
-            tls: TlsConfig::default(),
+            tcp: tcp::Config::default(),
+            tls: tls::Config::default(),
             proxies: Vec::new(),
             bind_options: BindOptions::default(),
             happy_eyeballs_timeout: Some(Duration::from_millis(300)),
@@ -101,7 +101,7 @@ impl Connector {
     /// Compiles client TLS, attaches DNS and assembles both transport paths under one deadline.
     /// QUIC endpoints remain lazy until a connection future is polled.
     pub(crate) fn new(
-        config: ConnectorConfig,
+        config: Config,
         runtime: DynRuntime,
         resolver: DynResolver,
         config_set: &ConfigSet,
@@ -308,8 +308,8 @@ mod tests {
         ])));
         let runtime = DynRuntime::new(crate::rt::tokio::TokioRuntime);
         for delay in [Some(Duration::from_millis(10)), None] {
-            let config = ConnectorConfig {
-                tls: TlsConfig {
+            let config = Config {
+                tls: tls::Config {
                     cert_store: Some(
                         crate::tls::trust::CertStore::from_der_certs([&cert]).unwrap(),
                     ),
@@ -373,7 +373,7 @@ mod tests {
             (vec![proxy()], ConfigSet::default()),
             (Vec::new(), overridden),
         ] {
-            let config = ConnectorConfig {
+            let config = Config {
                 proxies,
                 ..Default::default()
             };

@@ -20,7 +20,7 @@ use tokio_btls::SslStream;
 use tower::{BoxError, Service};
 
 use super::{
-    config::{ContextCache, TlsConfig},
+    config::{Config, ContextCache},
     ext::{SslContextBuilderExt, set_ech_grease_host},
 };
 use crate::{
@@ -47,7 +47,7 @@ pub struct StreamTls {
 
 /// Client TLS policy and its compiled contexts.
 struct Inner {
-    config: TlsConfig,
+    config: Config,
     config_set: ConfigSet,
     options: Option<Arc<TlsOptions>>,
     contexts: ContextCache<SslConnector>,
@@ -76,7 +76,7 @@ pub enum MaybeHttpsStream<T> {
 
 impl StreamTls {
     /// Compiles the client's TLS context while preserving the shared session scope.
-    pub(super) fn new(config: TlsConfig, config_set: ConfigSet) -> crate::Result<Self> {
+    pub(super) fn new(config: Config, config_set: ConfigSet) -> crate::Result<Self> {
         let options = config_set.get_arc::<TlsOptions>();
         let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self {
@@ -414,7 +414,7 @@ where
 
 /// Builds a TCP/Unix context from client policy and optional TLS options.
 /// ALPN selection remains deferred until an individual connection is prepared.
-fn compile(config: &TlsConfig, opts: Option<&TlsOptions>) -> crate::Result<SslConnector> {
+fn compile(config: &Config, opts: Option<&TlsOptions>) -> crate::Result<SslConnector> {
     let max_tls_version = opts
         .and_then(|opts| opts.max_tls_version)
         .or(config.max_version);

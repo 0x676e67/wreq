@@ -25,7 +25,7 @@ use crate::{
 /// The minimum version applies to TCP/Unix. QUIC checks the maximum version against TLS 1.3
 /// and uses its own ALPN. Clones share one session store across both transports.
 #[derive(Clone)]
-pub(crate) struct TlsConfig {
+pub(crate) struct Config {
     pub(crate) min_version: Option<TlsVersion>,
     pub(crate) max_version: Option<TlsVersion>,
     pub(crate) sni: bool,
@@ -52,9 +52,9 @@ pub(super) struct ContextCache<T> {
 const REQUEST_CONTEXTS: NonZeroUsize =
     NonZeroUsize::new(16).expect("request context capacity must be non-zero");
 
-// ===== impl TlsConfig =====
+// ===== impl Config =====
 
-impl TlsConfig {
+impl Config {
     /// Applies the client's identity, trust roots, verification and key log to a context.
     pub(super) fn configure(&self, builder: &mut SslContextBuilder) -> crate::Result<()> {
         builder.set_identity(self.identity.as_ref())?;
@@ -105,7 +105,7 @@ impl TlsConfig {
     }
 }
 
-impl Default for TlsConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             min_version: None,

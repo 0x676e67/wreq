@@ -19,7 +19,7 @@ static INVALID_MISSING_SCHEME: &str = "invalid URI, scheme is missing";
 static INVALID_MISSING_HOST: &str = "invalid URI, host is missing";
 
 /// Socket options the client applies to every TCP dial.
-pub(crate) struct TcpConfig {
+pub(crate) struct Config {
     pub(crate) nodelay: bool,
     pub(crate) reuse_address: bool,
     pub(crate) linger: Option<Duration>,
@@ -95,7 +95,7 @@ fn bind_local_address(
 /// starts connecting it on the runtime.
 pub(super) fn connect_socket(
     addr: &SocketAddr,
-    config: &TcpConfig,
+    config: &Config,
     bind_options: &BindOptions,
     nodelay: bool,
     runtime: &DynRuntime,
@@ -167,9 +167,9 @@ pub(super) fn connect_socket(
     Ok(runtime.connect_tcp(socket.into(), *addr))
 }
 
-// ===== impl TcpConfig =====
+// ===== impl Config =====
 
-impl TcpConfig {
+impl Config {
     /// Returns socket keepalive settings when at least one option is configured.
     fn tcp_keepalive(&self) -> Option<TcpKeepalive> {
         let mut dirty = false;
@@ -229,7 +229,7 @@ impl TcpConfig {
     }
 }
 
-impl Default for TcpConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             nodelay: true,

@@ -11,7 +11,7 @@
 //!
 //! See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305#section-5).
 
-mod tcp;
+pub(crate) mod tcp;
 
 #[cfg(unix)]
 use std::path::Path;
@@ -34,7 +34,6 @@ use futures_util::{
     future::{BoxFuture, Either, ErrInto},
 };
 use http::Uri;
-pub(crate) use tcp::TcpConfig;
 use tower::Service;
 #[cfg(feature = "http3")]
 use {
@@ -63,7 +62,7 @@ pub(crate) struct Dialer {
 struct Inner {
     runtime: DynRuntime,
     resolver: DynResolver,
-    tcp: TcpConfig,
+    tcp: tcp::Config,
     bind_options: BindOptions,
     happy_eyeballs_timeout: Option<Duration>,
 }
@@ -247,7 +246,7 @@ impl Dialer {
     pub(crate) fn new(
         runtime: DynRuntime,
         resolver: DynResolver,
-        tcp: TcpConfig,
+        tcp: tcp::Config,
         bind_options: BindOptions,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
