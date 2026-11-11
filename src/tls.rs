@@ -6,7 +6,7 @@
 #[macro_use]
 mod macros;
 
-pub(super) mod config;
+pub(crate) mod config;
 pub(super) mod connector;
 mod ext;
 #[cfg(feature = "http3")]
@@ -26,7 +26,6 @@ use std::{
 pub use btls::ssl::{EchGreaseAead, ExtensionType, KeyShare, Tls13Cipher};
 use bytes::{BufMut, Bytes, BytesMut};
 use compress::CertificateCompressor;
-pub(crate) use config::Config;
 use derive_deftly::Deftly;
 use educe::Educe;
 

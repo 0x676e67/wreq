@@ -69,7 +69,7 @@ pub(crate) struct Builtin {
 /// Client-wide connector settings, fixed at build.
 pub(crate) struct Config {
     pub(crate) tcp: tcp::Config,
-    pub(crate) tls: tls::Config,
+    pub(crate) tls: tls::config::Config,
     pub(crate) proxies: Vec<ProxyMatcher>,
     pub(crate) bind_options: BindOptions,
     pub(crate) happy_eyeballs_timeout: Option<Duration>,
@@ -84,7 +84,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             tcp: tcp::Config::default(),
-            tls: tls::Config::default(),
+            tls: tls::config::Config::default(),
             proxies: Vec::new(),
             bind_options: BindOptions::default(),
             happy_eyeballs_timeout: Some(Duration::from_millis(300)),
@@ -309,7 +309,7 @@ mod tests {
         let runtime = DynRuntime::new(crate::rt::tokio::TokioRuntime);
         for delay in [Some(Duration::from_millis(10)), None] {
             let config = Config {
-                tls: tls::Config {
+                tls: tls::config::Config {
                     cert_store: Some(
                         crate::tls::trust::CertStore::from_der_certs([&cert]).unwrap(),
                     ),

@@ -614,7 +614,7 @@ mod tests {
         bind_options: BindOptions,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Endpoints {
-        let tls = crate::tls::Config {
+        let tls = crate::tls::config::Config {
             cert_store: Some(CertStore::from_der_certs([cert]).unwrap()),
             ..Default::default()
         };
