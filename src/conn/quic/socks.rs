@@ -138,7 +138,8 @@ pub(super) async fn connect(
 }
 
 /// Each candidate owns its association; cancellation closes the control stream and UDP socket.
-/// Errors name the stage that failed; those of the proxy's stages are proxy connect errors.
+/// Errors name the stage that failed; those of the proxy's stages are proxy connect errors, as
+/// is a connect deadline expiring in them.
 async fn connect_target(
     endpoints: &Endpoints,
     request: &ConnectRequest,
@@ -147,6 +148,7 @@ async fn connect_target(
     target: Address,
 ) -> Result<Conn, ConnectError> {
     let dialer = endpoints.dialer();
+    let stage = request.enter_proxy_stage();
     // The control connection takes the request's bindings, like the relay socket.
     let io = dialer
         .clone()
@@ -257,6 +259,8 @@ async fn connect_target(
     };
 
     let (socket, relay) = open_relay.await.map_err(proxy_error(RELAY_ERROR))?;
+    // The target handshake through the relay is not a proxy stage.
+    drop(stage);
     let ended = socket.shared.ended.clone();
 
     endpoints

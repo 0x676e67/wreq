@@ -14,6 +14,7 @@ use http::{Uri, uri::PathAndQuery};
 
 use super::{
     config::{ConfigSet, ConnectConfig, HASHER, Overrides},
+    deadline::{ProxyStage, ProxyStageGuard},
     dialer::BindOptions,
 };
 use crate::{Protocol, error::BoxError};
@@ -25,6 +26,8 @@ use crate::{Protocol, error::BoxError};
 pub struct ConnectRequest {
     key: ConnectionKey,
     route_uri: Option<Uri>,
+    /// Lets the connect deadline blame the proxy; not part of the identity.
+    proxy_stage: ProxyStage,
 }
 
 /// Reuse identity for pool entries, extended CONNECT probes and QUIC address tokens.
@@ -77,6 +80,7 @@ impl ConnectRequest {
                 bind_options,
             ),
             route_uri: None,
+            proxy_stage: ProxyStage::default(),
         })
     }
 
@@ -154,6 +158,19 @@ impl ConnectRequest {
     pub(crate) fn with_route_uri(mut self, uri: Uri) -> Self {
         self.route_uri = Some(uri);
         self
+    }
+
+    /// Marks reaching or negotiating a proxy until the guard drops. A connect deadline that
+    /// expires meanwhile is a proxy connect error; the target handshake stays outside.
+    pub(crate) fn enter_proxy_stage(&self) -> ProxyStageGuard {
+        self.proxy_stage.enter()
+    }
+
+    /// Replaces the proxy stage with one the connect deadline reads; clones made afterwards
+    /// share it.
+    pub(super) fn track_proxy_stage(&mut self) -> ProxyStage {
+        self.proxy_stage = ProxyStage::tracked();
+        self.proxy_stage.clone()
     }
 }
 

@@ -598,6 +598,131 @@ async fn tunnel_includes_user_agent() {
     );
 }
 
+/// A connect deadline that expires while a proxy is reached or negotiated is a proxy failure,
+/// like a failure of that stage; one that expires in the target's TLS handshake through an open
+/// tunnel is a plain connect failure.
+#[tokio::test]
+async fn connect_timeout_is_classified_by_the_stage_it_interrupts() {
+    use std::{net::SocketAddr, time::Duration};
+
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    // The kernel completes the TCP handshake, but nothing answers.
+    let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let silent = silent.local_addr().map(|addr| (silent, addr)).unwrap();
+
+    // A full accept queue makes the kernel drop SYNs, so the TCP handshake never completes.
+    #[cfg(target_os = "linux")]
+    let pending = {
+        let socket =
+            socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+        socket
+            .bind(&SocketAddr::from(([127, 0, 0, 1], 0)).into())
+            .unwrap();
+        socket.listen(0).unwrap();
+        let addr = socket.local_addr().unwrap().as_socket().unwrap();
+        let queued = std::net::TcpStream::connect(addr).unwrap();
+        (socket, queued, addr)
+    };
+
+    // Opens a CONNECT or SOCKS5 tunnel, then never answers the target's TLS handshake.
+    let tunnel = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let tunnel_addr = tunnel.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = tunnel.accept().await.unwrap();
+            tokio::spawn(async move {
+                if stream.read_u8().await.unwrap() == 5 {
+                    let mut methods = vec![0; usize::from(stream.read_u8().await.unwrap())];
+                    stream.read_exact(&mut methods).await.unwrap();
+                    stream.write_all(&[5, 0]).await.unwrap();
+                    let mut head = [0; 4];
+                    stream.read_exact(&mut head).await.unwrap();
+                    let len = match head[3] {
+                        1 => 4,
+                        4 => 16,
+                        _ => usize::from(stream.read_u8().await.unwrap()),
+                    };
+                    let mut address = vec![0; len + 2];
+                    stream.read_exact(&mut address).await.unwrap();
+                    stream
+                        .write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0])
+                        .await
+                        .unwrap();
+                } else {
+                    let mut head = Vec::new();
+                    while !head.ends_with(b"\r\n\r\n") {
+                        head.push(stream.read_u8().await.unwrap());
+                    }
+                    stream
+                        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                        .await
+                        .unwrap();
+                }
+                let _ = stream.read_to_end(&mut Vec::new()).await;
+            });
+        }
+    });
+
+    let client = Client::builder_tokio()
+        .no_proxy()
+        .resolve("target.test", SocketAddr::from(([127, 0, 0, 1], 443)))
+        .connect_timeout(Duration::from_millis(200))
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let send = |proxy: String, target: &'static str| {
+        client
+            .get(target)
+            .proxy(wreq::Proxy::all(proxy).unwrap())
+            .send()
+    };
+
+    // CONNECT, the TLS handshake with an HTTPS proxy, and the SOCKS handshake stall.
+    let mut stalled = vec![
+        (format!("http://{}", silent.1), "https://target.test/"),
+        (format!("https://{}", silent.1), "https://target.test/"),
+        (format!("https://{}", silent.1), "http://target.test/"),
+    ];
+    #[cfg(feature = "socks")]
+    for scheme in ["socks4", "socks4a", "socks5", "socks5h"] {
+        stalled.push((format!("{scheme}://{}", silent.1), "https://target.test/"));
+    }
+    #[cfg(target_os = "linux")]
+    for (scheme, target) in [
+        ("http", "https://target.test/"),
+        ("http", "http://target.test/"),
+        #[cfg(feature = "socks")]
+        ("socks5h", "https://target.test/"),
+    ] {
+        stalled.push((format!("{scheme}://{}", pending.2), target));
+    }
+    for (proxy, target) in stalled {
+        let error = send(proxy.clone(), target).await.unwrap_err();
+        assert!(
+            error.is_proxy_connect() && error.is_timeout(),
+            "{proxy} -> {target}: {error:?}"
+        );
+    }
+
+    for scheme in [
+        "http",
+        #[cfg(feature = "socks")]
+        "socks5h",
+    ] {
+        let error = send(format!("{scheme}://{tunnel_addr}"), "https://target.test/")
+            .await
+            .unwrap_err();
+        assert!(
+            error.is_connect() && error.is_timeout() && !error.is_proxy_connect(),
+            "{scheme}: {error:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn proxy_tunnel_connect_error() {
     struct Resolver;

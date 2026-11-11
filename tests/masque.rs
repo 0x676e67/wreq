@@ -378,6 +378,9 @@ async fn masque_rejects_authentication_and_missing_extended_connect() {
     }
 }
 
+/// A connect deadline that expires while CONNECT-UDP is unanswered is a proxy failure; one that
+/// expires in the target handshake through an open tunnel is not. Both close the proxy
+/// connection, as cancellation does.
 #[tokio::test]
 async fn masque_connect_timeout_and_cancellation_close_the_proxy_connection() {
     let origin = Server::origin();
@@ -392,13 +395,32 @@ async fn masque_connect_timeout_and_cancellation_close_the_proxy_connection() {
         next(&mut proxy.requests).await;
         if timeout {
             let error = request.await.unwrap().unwrap_err();
-            assert!(error.is_connect() && error.is_timeout(), "{error:?}");
+            assert!(error.is_proxy_connect() && error.is_timeout(), "{error:?}");
         } else {
             request.abort();
             assert!(request.await.unwrap_err().is_cancelled());
         }
         next(&mut closed).await;
     }
+
+    // The tunnel opens, but nothing answers the target's Initial packets.
+    let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let (mut proxy, mut closed) = Server::proxy(Mode::Relay(silent.local_addr().unwrap(), true));
+    let error = proxy
+        .client(&origin, "pass")
+        .connect_timeout(Duration::from_secs(1))
+        .build()
+        .unwrap()
+        .get(ORIGIN_URL)
+        .send()
+        .await
+        .unwrap_err();
+    assert!(
+        error.is_connect() && error.is_timeout() && !error.is_proxy_connect(),
+        "{error:?}"
+    );
+    next(&mut proxy.requests).await;
+    next(&mut closed).await;
 }
 
 #[tokio::test]

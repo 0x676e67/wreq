@@ -491,6 +491,9 @@ async fn proxied_http3_errors_name_the_failed_stage() {
     }
 }
 
+/// A connect deadline that expires while UDP ASSOCIATE is unanswered is a proxy failure; one
+/// that expires in the target handshake through an open association is not. Both close the
+/// control connection, as cancellation does.
 #[tokio::test]
 async fn socks_udp_timeout_and_cancellation_close_the_control_connection() {
     let origin = Origin::new();
@@ -505,7 +508,7 @@ async fn socks_udp_timeout_and_cancellation_close_the_control_connection() {
         next(&mut proxy.associated).await;
         if timeout {
             let error = request.await.unwrap().unwrap_err();
-            assert!(error.is_connect() && error.is_timeout(), "{error:?}");
+            assert!(error.is_proxy_connect() && error.is_timeout(), "{error:?}");
         } else {
             request.abort();
             assert!(request.await.unwrap_err().is_cancelled());
@@ -513,6 +516,32 @@ async fn socks_udp_timeout_and_cancellation_close_the_control_connection() {
         next(&mut proxy.closed).await;
         (&mut proxy.task).await.unwrap();
     }
+
+    // The association opens, but nothing answers the target's Initial packets.
+    let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let silent_addr = silent.local_addr().unwrap();
+    let mut proxy = SocksProxy::new(Mode::Relay {
+        origin: silent_addr,
+        remote: true,
+        address: RelayAddress::Wildcard,
+    })
+    .await;
+    let error = proxy
+        .client(&origin, true, Arc::default())
+        .connect_timeout(Duration::from_secs(1))
+        .build()
+        .unwrap()
+        .get(format!("https://origin.test:{}/", silent_addr.port()))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(
+        error.is_connect() && error.is_timeout() && !error.is_proxy_connect(),
+        "{error:?}"
+    );
+    next(&mut proxy.associated).await;
+    next(&mut proxy.closed).await;
+    (&mut proxy.task).await.unwrap();
 }
 
 #[tokio::test]
