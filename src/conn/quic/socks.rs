@@ -156,6 +156,7 @@ async fn connect_target(
             unix: None,
             bind_options: request.bind_options().clone(),
             secure: false,
+            deadline: request.deadline(),
         })
         .await
         .map_err(proxy_error(PROXY_CONNECT_ERROR))?;

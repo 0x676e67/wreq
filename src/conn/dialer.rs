@@ -26,7 +26,7 @@ use std::{
     pin::{Pin, pin},
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use futures_util::{
@@ -77,6 +77,9 @@ pub struct SocketRequest {
     pub(crate) unix: Option<Arc<Path>>,
     pub(crate) bind_options: Option<Arc<BindOptions>>,
     pub(crate) secure: bool,
+    /// The connect deadline. The dial fails there itself, so the connector that called it
+    /// wraps the timeout like its other errors.
+    pub(crate) deadline: Option<Instant>,
 }
 
 /// Local addresses and interface selected for an outbound socket.
@@ -153,6 +156,33 @@ where
             })
             .collect(),
     ))
+}
+
+/// Runs a dial until the connect deadline. Expiry fails the dial itself, so the connector that
+/// dialed wraps the timeout like its other errors: a proxy connector reports a proxy failure.
+pub(super) fn within_deadline<T, F>(
+    deadline: Option<Instant>,
+    runtime: &DynRuntime,
+    dial: F,
+) -> impl Future<Output = Result<T, BoxError>> + use<T, F>
+where
+    F: Future<Output = Result<T, BoxError>>,
+{
+    let sleep = deadline.map(|deadline| runtime.sleep_until(deadline));
+    async move {
+        let Some(sleep) = sleep else {
+            return dial.await;
+        };
+        // The dial is polled first, so one that completes at the deadline still wins.
+        match futures_util::future::select(pin!(dial), sleep).await {
+            Either::Left((result, _)) => result,
+            Either::Right(_) => Err(ConnectError::new(
+                "connect timeout",
+                io::Error::from(io::ErrorKind::TimedOut),
+            )
+            .into()),
+        }
+    }
 }
 
 /// Tries candidates using transport-specific setup and the selected clock, staggered by
@@ -329,8 +359,9 @@ impl Service<SocketRequest> for Dialer {
         // Disable Nagle during TLS handshakes.
         // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
         let nodelay = req.secure || self.nodelay();
+        let deadline = req.deadline;
         let inner = self.inner.clone();
-        Either::Left(Box::pin(async move {
+        let dial = async move {
             let (host, port) = tcp::get_host_port(&req.uri)?;
             let addrs = resolve(host, port, req.uri.port().is_some(), |name| {
                 inner.resolver.resolve(name)
@@ -350,7 +381,12 @@ impl Service<SocketRequest> for Dialer {
             )
             .await?;
             Ok(stream)
-        }))
+        };
+        Either::Left(Box::pin(within_deadline(
+            deadline,
+            &self.inner.runtime,
+            dial,
+        )))
     }
 }
 

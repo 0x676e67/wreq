@@ -170,6 +170,7 @@ impl Service<ConnectRequest> for StreamConnector {
             let uri = req.uri().clone();
             let secure = uri.is_https();
             let bind_options = req.bind_options().clone();
+            let deadline = req.deadline();
 
             #[cfg(unix)]
             let unix = match &intercepted {
@@ -183,6 +184,7 @@ impl Service<ConnectRequest> for StreamConnector {
                 bind_options: bind_options.clone(),
                 #[cfg(unix)]
                 unix: unix.clone(),
+                deadline,
             });
 
             match intercepted {

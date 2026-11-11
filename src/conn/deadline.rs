@@ -13,7 +13,7 @@ use tower::{BoxError, Layer, Service};
 use crate::{
     conn::request::ConnectRequest,
     error::TimedOut,
-    rt::{BoxSleep, DynRuntime, Timer as _},
+    rt::{BoxSleep, DynRuntime, Timer as _, deadline_after},
 };
 
 /// Middleware layer to use [`Deadline`].
@@ -25,6 +25,7 @@ pub(crate) struct DeadlineLayer {
 
 /// Bounds each connector call by one deadline, started in `call` after readiness waits.
 /// It covers everything beneath: user layers, proxy setup and the transport handshakes.
+/// Dials share its instant through [`ConnectRequest::deadline`] and fail there themselves.
 #[derive(Clone)]
 pub(crate) struct Deadline<S> {
     inner: S,
@@ -81,10 +82,14 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, request: ConnectRequest) -> Self::Future {
+    fn call(&mut self, mut request: ConnectRequest) -> Self::Future {
+        let deadline = self
+            .timeout
+            .map(|timeout| deadline_after(self.runtime.now(), timeout));
+        request.set_deadline(deadline);
         ResponseFuture {
             future: self.inner.call(request),
-            sleep: self.timeout.map(|timeout| self.runtime.sleep(timeout)),
+            sleep: deadline.map(|deadline| self.runtime.sleep_until(deadline)),
         }
     }
 }

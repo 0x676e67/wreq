@@ -8,6 +8,7 @@ use std::{
     fmt,
     hash::{BuildHasher, Hash, Hasher},
     sync::Arc,
+    time::Instant,
 };
 
 use http::{Uri, uri::PathAndQuery};
@@ -25,6 +26,7 @@ use crate::{Protocol, error::BoxError};
 pub struct ConnectRequest {
     key: ConnectionKey,
     route_uri: Option<Uri>,
+    deadline: Option<Instant>,
 }
 
 /// Reuse identity for pool entries, extended CONNECT probes and QUIC address tokens.
@@ -77,6 +79,7 @@ impl ConnectRequest {
                 bind_options,
             ),
             route_uri: None,
+            deadline: None,
         })
     }
 
@@ -154,6 +157,17 @@ impl ConnectRequest {
     pub(crate) fn with_route_uri(mut self, uri: Uri) -> Self {
         self.route_uri = Some(uri);
         self
+    }
+
+    /// Returns when the connect timeout expires, if one bounds this attempt.
+    /// Dials stop there themselves, so a proxy connector classifies their timeout.
+    pub(crate) fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    /// Sets the instant [`Self::deadline`] returns; not part of the reuse identity.
+    pub(super) fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.deadline = deadline;
     }
 }
 

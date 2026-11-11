@@ -901,7 +901,8 @@ impl ClientBuilder {
     ///
     /// The timeout covers connection establishment for every protocol: connector layers,
     /// proxies, DNS resolution, the TCP address race and TLS handshake, or the QUIC handshake.
-    /// The HTTP/3 handshake itself does not wait for the server.
+    /// The HTTP/3 handshake itself does not wait for the server. A timeout while resolving or
+    /// dialing a proxy is a proxy connect error.
     ///
     /// Default is `None`.
     #[inline]

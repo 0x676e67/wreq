@@ -439,9 +439,22 @@ async fn proxied_http3_errors_name_the_failed_stage() {
         .local_addr()
         .unwrap()
         .port();
+    // Never accepts a dial: the full accept queue drops SYNs, and the UDP socket stays silent.
+    #[cfg(target_os = "linux")]
+    let (stalled, _queued, _silent) = {
+        let socket =
+            socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+        socket
+            .bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into())
+            .unwrap();
+        socket.listen(0).unwrap();
+        let addr = socket.local_addr().unwrap().as_socket().unwrap();
+        let queued = std::net::TcpStream::connect(addr).unwrap();
+        (socket, queued, std::net::UdpSocket::bind(addr).unwrap())
+    };
     for scheme in ["socks5", "socks5h", "quic"] {
         let lookups = Arc::new(Mutex::new(Vec::new()));
-        let client = |builder: ClientBuilder| {
+        let client = |builder: ClientBuilder, port: u16| {
             builder
                 .no_proxy()
                 .http3_only()
@@ -459,11 +472,14 @@ async fn proxied_http3_errors_name_the_failed_stage() {
 
         // A local configuration error the connector finds costs no proxy setup and is not a
         // proxy error. HTTP/3 requires TLS 1.3, which only the connector checks.
-        let error = client(Client::builder_tokio().tls_max_version(TlsVersion::TLS_1_2))
-            .get("https://origin.test/")
-            .send()
-            .await
-            .unwrap_err();
+        let error = client(
+            Client::builder_tokio().tls_max_version(TlsVersion::TLS_1_2),
+            port,
+        )
+        .get("https://origin.test/")
+        .send()
+        .await
+        .unwrap_err();
         assert!(
             error.is_connect() && !error.is_proxy_connect(),
             "{scheme}: {error:?}"
@@ -472,7 +488,7 @@ async fn proxied_http3_errors_name_the_failed_stage() {
 
         // A refused proxy is not reported as a failed target handshake.
         if scheme != "quic" {
-            let error = client(Client::builder_tokio())
+            let error = client(Client::builder_tokio(), port)
                 .get("https://origin.test/")
                 .send()
                 .await
@@ -488,9 +504,28 @@ async fn proxied_http3_errors_name_the_failed_stage() {
                 "{scheme}: {messages:?}"
             );
         }
+
+        // A connect deadline that expires while the proxy is dialed fails that dial.
+        #[cfg(target_os = "linux")]
+        {
+            let port = stalled.local_addr().unwrap().as_socket().unwrap().port();
+            let builder = Client::builder_tokio().connect_timeout(Duration::from_millis(300));
+            let error = client(builder, port)
+                .get("https://origin.test/")
+                .send()
+                .await
+                .unwrap_err();
+            assert!(
+                error.is_proxy_connect() && error.is_timeout(),
+                "{scheme}: {error:?}"
+            );
+        }
     }
 }
 
+/// A connect deadline that expires once the proxy accepted the control connection, while UDP
+/// ASSOCIATE or the target handshake is unanswered, is not a failed proxy dial. Both close the
+/// control connection, as cancellation does.
 #[tokio::test]
 async fn socks_udp_timeout_and_cancellation_close_the_control_connection() {
     let origin = Origin::new();
@@ -513,6 +548,32 @@ async fn socks_udp_timeout_and_cancellation_close_the_control_connection() {
         next(&mut proxy.closed).await;
         (&mut proxy.task).await.unwrap();
     }
+
+    // The association opens, but nothing answers the target's Initial packets.
+    let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let silent_addr = silent.local_addr().unwrap();
+    let mut proxy = SocksProxy::new(Mode::Relay {
+        origin: silent_addr,
+        remote: true,
+        address: RelayAddress::Wildcard,
+    })
+    .await;
+    let error = proxy
+        .client(&origin, true, Arc::default())
+        .connect_timeout(Duration::from_secs(1))
+        .build()
+        .unwrap()
+        .get(format!("https://origin.test:{}/", silent_addr.port()))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(
+        error.is_connect() && error.is_timeout() && !error.is_proxy_connect(),
+        "{error:?}"
+    );
+    next(&mut proxy.associated).await;
+    next(&mut proxy.closed).await;
+    (&mut proxy.task).await.unwrap();
 }
 
 #[tokio::test]
