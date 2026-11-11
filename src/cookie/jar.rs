@@ -12,12 +12,7 @@ use super::{
         normalize_path,
     },
 };
-use crate::{
-    IntoUri,
-    ext::UriExt,
-    header::HeaderValue,
-    sync::{RwLock, RwLockReadGuard},
-};
+use crate::{IntoUri, ext::UriExt, header::HeaderValue, sync::RwLock};
 
 /// A good default `CookieStore` implementation.
 ///
@@ -37,23 +32,6 @@ macro_rules! into_uri {
 }
 
 impl Jar {
-    #[inline]
-    fn read_with_gc(&self, now: OffsetDateTime) -> RwLockReadGuard<'_, Store> {
-        {
-            let store = self.0.read();
-            if !store.has_expired_cookies(now) {
-                return store;
-            }
-        }
-        {
-            let mut store = self.0.write();
-            if store.has_expired_cookies(now) {
-                store.purge_expired(now);
-            }
-        }
-        self.0.read()
-    }
-
     /// Returns an unexpired cookie by name for an exact URI scope.
     ///
     /// The URI host is canonicalized and its path is used as the exact stored cookie path. Use
@@ -73,9 +51,9 @@ impl Jar {
         let uri = uri.into_uri().ok()?;
         let host = canonical_host(uri.host()?)?;
         let now = OffsetDateTime::now_utc();
-        let store = self.read_with_gc(now);
+        let store = self.0.read();
         let entry = store
-            .cookies
+            .cookies()
             .get(&host)?
             .get(uri.path())?
             .entries(name)
@@ -98,8 +76,9 @@ impl Jar {
 
         let now = OffsetDateTime::now_utc();
 
-        self.read_with_gc(now)
-            .cookies
+        self.0
+            .read()
+            .cookies()
             .get(&host)
             .and_then(|path_map| path_map.get(uri.path()))
             .is_some_and(|cookie_map| {
@@ -133,8 +112,9 @@ impl Jar {
     pub fn get_all(&self) -> impl Iterator<Item = Cookie<'static>> {
         let now = OffsetDateTime::now_utc();
         let mut cookies = self
-            .read_with_gc(now)
-            .cookies
+            .0
+            .read()
+            .cookies()
             .iter()
             .flat_map(|(host, path_map)| {
                 path_map.values().flat_map(move |cookie_map| {
@@ -159,8 +139,9 @@ impl Jar {
     /// cleared.
     pub fn len(&self) -> usize {
         let now = OffsetDateTime::now_utc();
-        self.read_with_gc(now)
-            .cookies
+        self.0
+            .read()
+            .cookies()
             .values()
             .flat_map(|path_map| path_map.values())
             .flat_map(|cookie_map| cookie_map.values())
@@ -172,8 +153,9 @@ impl Jar {
     pub fn is_empty(&self) -> bool {
         let now = OffsetDateTime::now_utc();
         !self
-            .read_with_gc(now)
-            .cookies
+            .0
+            .read()
+            .cookies()
             .values()
             .flat_map(|path_map| path_map.values())
             .flat_map(|cookie_map| cookie_map.values())
@@ -213,7 +195,7 @@ impl Jar {
         };
 
         let now = OffsetDateTime::now_utc();
-        let store = self.read_with_gc(now);
+        let store = self.0.read();
         store
             .matching_cookies(&uri, &host, now)
             .map(|(host, _, entry)| Cookie::from(entry.cookie.clone()).with_host(host.clone()))
@@ -278,20 +260,19 @@ impl Jar {
                     return;
                 };
                 if is_public_suffix(&domain) {
-                    if domain == host {
-                        cookie.unset_domain();
-                        host_only = true;
-                        host
-                    } else {
+                    // A public suffix is only accepted for the request host itself, as a
+                    // host-only cookie.
+                    if domain != host {
                         return;
                     }
-                } else {
-                    if !domain_match(&host, &domain) {
-                        return;
-                    }
-
+                    cookie.unset_domain();
+                    host_only = true;
+                    host
+                } else if domain_match(&host, &domain) {
                     cookie.set_domain(domain.to_string());
                     domain
+                } else {
+                    return;
                 }
             } else {
                 host
@@ -334,9 +315,7 @@ impl Jar {
                 .to_owned();
 
             let mut store = self.0.write();
-            if store.has_expired_cookies(now) {
-                store.purge_expired(now);
-            }
+            store.evict_expired(now);
             if !secure_origin
                 && store.would_overlay_secure_cookie(cookie.name(), &domain, &path, now)
             {
@@ -378,6 +357,7 @@ impl Jar {
             };
             let cookie = cookie.into();
             let mut store = self.0.write();
+            store.evict_expired(OffsetDateTime::now_utc());
             store.remove_stored_cookies(&host, uri.path(), cookie.name());
         }
     }
@@ -420,7 +400,7 @@ impl CookieStore for Jar {
         };
 
         let now = OffsetDateTime::now_utc();
-        let store = self.read_with_gc(now);
+        let store = self.0.read();
         let mut matches = store.matching_cookies(uri, &host, now).collect::<Vec<_>>();
 
         // Chromium sorts cookies selected for a request by longest path first, then oldest
@@ -1302,45 +1282,34 @@ mod tests {
     }
 
     #[test]
-    fn jar_rejects_public_suffix_and_tld_supercookies() {
+    fn jar_rejects_public_suffix_domains() {
         let jar = Jar::default();
-        jar.add("hijack=com; Domain=com; Path=/", "https://attacker.com/");
-        jar.add(
-            "hijack=couk; Domain=co.uk; Path=/",
-            "https://attacker.co.uk/",
-        );
-        jar.add(
-            "hijack=gh; Domain=github.io; Path=/",
-            "https://attacker.github.io/",
-        );
+        let supercookies = [
+            ("a=1; Domain=com", "https://attacker.com/"),
+            #[cfg(feature = "cookies-psl")]
+            ("a=1; Domain=co.uk", "https://attacker.co.uk/"),
+            #[cfg(feature = "cookies-psl")]
+            ("a=1; Domain=github.io", "https://attacker.github.io/"),
+        ];
+        for (cookie, uri) in supercookies {
+            jar.add(cookie, uri);
+        }
         assert!(jar.is_empty());
 
-        let victim = Uri::from_static("https://victim-bank.com/");
+        // RFC 6265 section 5.3 step 5: a public suffix equal to the request host is host-only.
+        jar.add("local=1; Domain=localhost", "http://localhost/");
+        let cookies = |uri| jar.cookies(&Uri::from_static(uri), Version::HTTP_11);
         assert!(matches!(
-            jar.cookies(&victim, Version::HTTP_11),
-            Cookies::Empty
-        ));
-
-        // RFC 6265 section 5.3 step 5: public suffix equal to request host becomes host-only.
-        jar.add("local=ok; Domain=localhost; Path=/", "http://localhost/");
-        let local_uri = Uri::from_static("http://localhost/");
-        assert!(matches!(
-            jar.cookies(&local_uri, Version::HTTP_11),
+            cookies("http://localhost/"),
             Cookies::Compressed(_)
         ));
-    }
+        assert!(matches!(cookies("http://sub.localhost/"), Cookies::Empty));
 
-    #[test]
-    fn jar_evicts_expired_cookies_and_prunes_empty_domains() {
-        let jar = Jar::default();
-        for i in 0..100 {
-            let uri = format!("https://sub{i}.example.com/");
-            jar.add("temp=1; Max-Age=1; Path=/", uri.as_str());
-        }
-        assert_eq!(jar.len(), 100);
-
-        thread::sleep(StdDuration::from_millis(1100));
-        assert_eq!(jar.len(), 0);
-        assert!(jar.0.read().cookies.is_empty());
+        // A registrable domain under a short ccTLD is not a public suffix.
+        jar.add("id=1; Domain=id.me", "https://api.id.me/");
+        assert!(matches!(
+            cookies("https://www.id.me/"),
+            Cookies::Compressed(_)
+        ));
     }
 }

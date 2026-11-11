@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::HashMap, iter};
 
 use cookie::{
     Cookie as RawCookie,
@@ -10,6 +10,10 @@ use url::Host;
 use crate::ext::UriExt;
 
 pub const DEFAULT_PATH: &str = "/";
+
+/// Minimum time between two eviction passes, which bounds full-store scans when many cookies
+/// expire at staggered times. Expired cookies are filtered on read in the meantime.
+const EVICTION_INTERVAL: Duration = Duration::seconds(60);
 
 /// Canonical immutable host used as a cookie domain key.
 type CanonicalHost = Host<Box<str>>;
@@ -61,19 +65,18 @@ impl CookieScopeMap {
         }
     }
 
-    /// Removes a cookie from the selected host-only or `Domain` scope.
-    pub fn remove(&mut self, name: &str, host_only: bool) {
+    /// Removes and returns a cookie from the selected host-only or `Domain` scope.
+    pub fn remove(&mut self, name: &str, host_only: bool) -> Option<CookieEntry> {
         if host_only {
-            self.host_only.remove(name);
+            self.host_only.remove(name)
         } else {
-            self.domain.remove(name);
+            self.domain.remove(name)
         }
     }
 
-    /// Removes both host-only and `Domain` cookies with the requested name.
-    pub fn remove_all(&mut self, name: &str) {
-        self.host_only.remove(name);
-        self.domain.remove(name);
+    /// Removes and returns both host-only and `Domain` cookies with the requested name.
+    pub fn remove_all(&mut self, name: &str) -> [Option<CookieEntry>; 2] {
+        [self.host_only.remove(name), self.domain.remove(name)]
     }
 
     /// Returns every cookie in this domain and path scope.
@@ -86,100 +89,72 @@ impl CookieScopeMap {
         self.host_only.is_empty() && self.domain.is_empty()
     }
 
-    /// Retains only unexpired cookies and returns the earliest remaining expiration timestamp.
-    fn retain_unexpired(&mut self, now: OffsetDateTime) -> Option<OffsetDateTime> {
-        let mut earliest: Option<OffsetDateTime> = None;
-        let mut update_earliest = |cookie: &RawCookie<'static>| {
-            if let Some(exp) = cookie.expires_datetime() {
-                earliest = Some(earliest.map_or(exp, |cur| cur.min(exp)));
-            }
-        };
-
-        self.host_only.retain(|_, entry| {
-            let keep = !cookie_is_expired(&entry.cookie, now);
-            if keep {
-                update_earliest(&entry.cookie);
-            }
-            keep
-        });
-        self.domain.retain(|_, entry| {
-            let keep = !cookie_is_expired(&entry.cookie, now);
-            if keep {
-                update_earliest(&entry.cookie);
-            }
-            keep
-        });
-
-        earliest
+    /// Keeps only the cookies in both scopes for which `keep` returns `true`.
+    fn retain(&mut self, mut keep: impl FnMut(&CookieEntry) -> bool) {
+        self.host_only.retain(|_, entry| keep(entry));
+        self.domain.retain(|_, entry| keep(entry));
     }
 }
 
 /// Stores cookies by domain, path, host-only scope, and name.
 #[derive(Debug, Default)]
 pub struct Store {
-    pub cookies: DomainMap,
+    /// Mutated only through `Store` methods, which keep `secure` and `next_expiry` in sync.
+    cookies: DomainMap,
     next_creation_index: u64,
-    next_expiration: Option<OffsetDateTime>,
-    secure_domains_by_name: HashMap<Box<str>, HashSet<CanonicalHost>>,
+    /// Earliest expiry among stored cookies. Removals can leave it early, which only costs an
+    /// extra eviction pass.
+    next_expiry: Option<OffsetDateTime>,
+    last_eviction: Option<OffsetDateTime>,
+    secure: SecureIndex,
 }
 
+/// Counts `Secure` cookies by name and domain, so the secure overlay check skips unrelated
+/// domains.
+#[derive(Debug, Default)]
+struct SecureIndex(HashMap<Box<str>, HashMap<CanonicalHost, usize>>);
+
 impl Store {
-    /// Returns `true` if at least one stored cookie has reached its expiration deadline.
+    /// Returns the stored cookies by domain and path.
     #[inline]
-    pub fn has_expired_cookies(&self, now: OffsetDateTime) -> bool {
-        self.next_expiration.is_some_and(|deadline| deadline <= now)
+    pub fn cookies(&self) -> &DomainMap {
+        &self.cookies
     }
 
-    /// Purges all expired cookies, prunes empty path/domain maps, and shrinks excess capacity.
-    pub fn purge_expired(&mut self, now: OffsetDateTime) {
-        let prev_domains = self.cookies.capacity();
-        let mut next_exp: Option<OffsetDateTime> = None;
+    /// Removes expired cookies and empty maps once the earliest stored expiry has passed, at
+    /// most once per [`EVICTION_INTERVAL`].
+    pub fn evict_expired(&mut self, now: OffsetDateTime) {
+        let due = self.next_expiry.is_some_and(|expiry| expiry <= now)
+            && self
+                .last_eviction
+                .is_none_or(|last| now - last >= EVICTION_INTERVAL);
+        if !due {
+            return;
+        }
+        self.last_eviction = Some(now);
 
-        self.cookies.retain(|_, path_map| {
+        let mut next_expiry = None;
+        let secure = &mut self.secure;
+        self.cookies.retain(|domain, path_map| {
             path_map.retain(|_, cookie_map| {
-                if let Some(exp) = cookie_map.retain_unexpired(now) {
-                    next_exp = Some(next_exp.map_or(exp, |cur| cur.min(exp)));
-                }
+                cookie_map.retain(|entry| {
+                    if cookie_is_expired(&entry.cookie, now) {
+                        if is_secure(&entry.cookie) {
+                            secure.remove(entry.cookie.name(), domain);
+                        }
+                        return false;
+                    }
+                    track_expiry(&mut next_expiry, &entry.cookie);
+                    true
+                });
                 !cookie_map.is_empty()
             });
             !path_map.is_empty()
         });
+        self.next_expiry = next_expiry;
 
-        if prev_domains > 16 && self.cookies.len() * 4 <= prev_domains {
+        if self.cookies.capacity() > 16 && self.cookies.len() * 4 <= self.cookies.capacity() {
             self.cookies.shrink_to_fit();
-        }
-
-        // Rebuild or prune the secure cookie name index to keep it compact.
-        self.secure_domains_by_name.clear();
-        for (domain, path_map) in &self.cookies {
-            for cookie_map in path_map.values() {
-                for entry in cookie_map.values() {
-                    if entry.cookie.secure() == Some(true) {
-                        self.secure_domains_by_name
-                            .entry(Box::from(entry.cookie.name()))
-                            .or_default()
-                            .insert(domain.clone());
-                    }
-                }
-            }
-        }
-        if self.secure_domains_by_name.is_empty() {
-            self.secure_domains_by_name.shrink_to_fit();
-        }
-
-        self.next_expiration = next_exp;
-    }
-
-    #[inline]
-    fn track_cookie_metadata(&mut self, domain: &CanonicalHost, cookie: &RawCookie<'static>) {
-        if let Some(exp) = cookie.expires_datetime() {
-            self.next_expiration = Some(self.next_expiration.map_or(exp, |cur| cur.min(exp)));
-        }
-        if cookie.secure() == Some(true) {
-            self.secure_domains_by_name
-                .entry(Box::from(cookie.name()))
-                .or_default()
-                .insert(domain.clone());
         }
     }
 
@@ -191,7 +166,8 @@ impl Store {
         cookie: RawCookie<'static>,
     ) {
         let host_only = cookie.domain().is_none();
-        self.track_cookie_metadata(&domain, &cookie);
+        let secure = is_secure(&cookie);
+        track_expiry(&mut self.next_expiry, &cookie);
 
         // Chromium inherits the creation time only when the replacement keeps the same value. A
         // value change receives a new creation time and therefore moves later among equal-length
@@ -203,12 +179,21 @@ impl Store {
             .and_then(|path_map| path_map.get_mut(path.as_str()))
             .and_then(|cookie_map| cookie_map.get_mut(cookie.name(), host_only))
         {
+            match (is_secure(&entry.cookie), secure) {
+                (false, true) => self.secure.add(cookie.name(), &domain),
+                (true, false) => self.secure.remove(cookie.name(), &domain),
+                _ => {}
+            }
             if entry.cookie.value() != cookie.value() {
                 entry.creation_index = self.next_creation_index;
                 self.next_creation_index = self.next_creation_index.saturating_add(1);
             }
             entry.cookie = cookie;
             return;
+        }
+
+        if secure {
+            self.secure.add(cookie.name(), &domain);
         }
 
         let creation_index = self.next_creation_index;
@@ -255,10 +240,14 @@ impl Store {
     ) {
         let remove_domain = if let Some(path_map) = self.cookies.get_mut(domain) {
             let remove_path = if let Some(cookie_map) = path_map.get_mut(path) {
-                if let Some(host_only) = host_only {
-                    cookie_map.remove(name, host_only);
-                } else {
-                    cookie_map.remove_all(name);
+                let removed = match host_only {
+                    Some(host_only) => [cookie_map.remove(name, host_only), None],
+                    None => cookie_map.remove_all(name),
+                };
+                for entry in removed.iter().flatten() {
+                    if is_secure(&entry.cookie) {
+                        self.secure.remove(name, domain);
+                    }
                 }
                 cookie_map.is_empty()
             } else {
@@ -289,9 +278,7 @@ impl Store {
         request_host: &'a CanonicalHost,
         now: OffsetDateTime,
     ) -> impl Iterator<Item = (&'a CanonicalHost, &'a str, &'a CookieEntry)> + 'a {
-        let candidates = candidate_domains(request_host);
-        candidates
-            .into_iter()
+        candidate_domains(request_host)
             .filter_map(move |candidate| self.cookies.get_key_value(&candidate))
             .flat_map(move |(domain, path_map)| {
                 path_map.iter().flat_map(move |(path, cookie_map)| {
@@ -314,11 +301,7 @@ impl Store {
         path: &str,
         now: OffsetDateTime,
     ) -> bool {
-        let Some(secure_domains) = self.secure_domains_by_name.get(name) else {
-            return false;
-        };
-
-        secure_domains.iter().any(|stored_domain| {
+        self.secure.domains(name).any(|stored_domain| {
             (domain_match(stored_domain, domain) || domain_match(domain, stored_domain))
                 && self.cookies.get(stored_domain).is_some_and(|path_map| {
                     path_map.iter().any(|(stored_path, cookie_map)| {
@@ -333,94 +316,84 @@ impl Store {
     }
 }
 
-/// Generates the candidate domain keys in `Store::cookies` that can domain-match `request_host`.
-fn candidate_domains(request_host: &CanonicalHost) -> Vec<CanonicalHost> {
-    let mut candidates = Vec::with_capacity(4);
-    candidates.push(request_host.clone());
+impl SecureIndex {
+    fn add(&mut self, name: &str, domain: &CanonicalHost) {
+        *self
+            .0
+            .entry(Box::from(name))
+            .or_default()
+            .entry(domain.clone())
+            .or_default() += 1;
+    }
 
-    if let Host::Domain(host_str) = request_host {
-        let mut rest = host_str.as_ref();
-        while let Some(dot) = rest.find('.') {
-            rest = &rest[dot + 1..];
-            if !rest.is_empty() {
-                candidates.push(Host::Domain(Box::from(rest)));
+    fn remove(&mut self, name: &str, domain: &CanonicalHost) {
+        let Some(domains) = self.0.get_mut(name) else {
+            return;
+        };
+        if let Some(count) = domains.get_mut(domain) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                domains.remove(domain);
             }
+        }
+        if domains.is_empty() {
+            self.0.remove(name);
         }
     }
 
-    candidates
+    fn domains(&self, name: &str) -> impl Iterator<Item = &CanonicalHost> {
+        self.0.get(name).into_iter().flat_map(HashMap::keys)
+    }
 }
 
-/// Determines whether `domain` is a top-level domain or public suffix (RFC 6265 section 5.3 step 5).
+#[inline]
+fn is_secure(cookie: &RawCookie<'_>) -> bool {
+    cookie.secure() == Some(true)
+}
+
+/// Lowers `next_expiry` to the cookie's expiry, if it has one.
+#[inline]
+fn track_expiry(next_expiry: &mut Option<OffsetDateTime>, cookie: &RawCookie<'_>) {
+    if let Some(expiry) = cookie.expires_datetime() {
+        *next_expiry = Some(next_expiry.map_or(expiry, |current| current.min(expiry)));
+    }
+}
+
+/// Yields `host` and every parent domain it can domain-match, i.e. the only keys in
+/// `Store::cookies` whose cookies may apply to a request to `host`.
+fn candidate_domains(host: &CanonicalHost) -> impl Iterator<Item = CanonicalHost> + '_ {
+    let name = match host {
+        Host::Domain(name) => name.as_ref(),
+        Host::Ipv4(_) | Host::Ipv6(_) => "",
+    };
+    let parents = name
+        .match_indices('.')
+        .map(move |(dot, _)| &name[dot + 1..])
+        .filter(|parent| !parent.is_empty())
+        .map(|parent| Host::Domain(Box::from(parent)));
+    iter::once(host.clone()).chain(parents)
+}
+
+/// Determines whether `domain` is a public suffix under RFC 6265 section 5.3 step 5.
+///
+/// With the `cookies-psl` feature this uses the Public Suffix List, including its private
+/// section. Without it, only single-label domains such as `com` count.
+///
+/// https://www.rfc-editor.org/rfc/rfc6265.html#section-5.3
 pub fn is_public_suffix(domain: &CanonicalHost) -> bool {
-    let Host::Domain(domain_str) = domain else {
+    let Host::Domain(domain) = domain else {
         return false;
     };
 
-    let s = domain_str.as_ref();
-
-    // 1. Any single-label domain without a dot (e.g., "com", "org", "uk", "localhost")
-    //    is a top-level / public suffix and must not accept cross-host Domain cookies.
-    let Some(first_dot) = s.find('.') else {
-        return true;
-    };
-
-    let first_label = &s[..first_dot];
-    let rest = &s[first_dot + 1..];
-
-    // 2. Two-label domains: check country-code second-level registries (e.g., "co.uk", "com.au",
-    //    "co.jp", "co.in", "com.br") and known shared public suffixes (e.g., "github.io").
-    if !rest.contains('.') {
-        if rest.len() == 2
-            && matches!(
-                first_label,
-                "co" | "com"
-                    | "org"
-                    | "net"
-                    | "gov"
-                    | "edu"
-                    | "ac"
-                    | "mil"
-                    | "or"
-                    | "ne"
-                    | "go"
-                    | "gob"
-                    | "nic"
-                    | "nom"
-                    | "sch"
-                    | "lg"
-                    | "id"
-                    | "me"
-            )
-        {
-            return true;
-        }
-
-        if matches!(
-            s,
-            "github.io"
-                | "gitlab.io"
-                | "pages.dev"
-                | "workers.dev"
-                | "vercel.app"
-                | "netlify.app"
-                | "herokuapp.com"
-                | "appspot.com"
-                | "firebaseapp.com"
-                | "web.app"
-                | "cloudfront.net"
-                | "azurewebsites.net"
-                | "amazonaws.com"
-                | "eu.org"
-                | "ae.org"
-                | "us.com"
-                | "uk.com"
-        ) {
-            return true;
-        }
+    #[cfg(feature = "cookies-psl")]
+    {
+        psl::suffix_str(domain).is_some_and(|suffix| suffix == domain.as_ref())
     }
 
-    false
+    #[cfg(not(feature = "cookies-psl"))]
+    {
+        !domain.contains('.')
+    }
 }
 
 /// Applies the RFC 6265 request selection rules supported by this HTTP client.
@@ -510,4 +483,63 @@ pub fn normalize_path(path: &str) -> &str {
         return &path[..pos];
     }
     DEFAULT_PATH
+}
+
+#[cfg(test)]
+mod tests {
+    use cookie::time::Duration;
+
+    use super::*;
+
+    fn secure_cookie(expiry: Option<OffsetDateTime>) -> RawCookie<'static> {
+        let mut cookie = RawCookie::new("sid", "1");
+        cookie.set_secure(true);
+        if let Some(expiry) = expiry {
+            cookie.set_expires(expiry);
+        }
+        cookie
+    }
+
+    #[test]
+    fn store_evicts_expired_cookies_and_tracks_secure_cookies() {
+        let now = OffsetDateTime::now_utc();
+        let expiry = now + Duration::seconds(1);
+        let host = |name: &str| canonical_host(name).unwrap();
+        let mut store = Store::default();
+        for i in 0..3 {
+            let domain = host(&format!("sub{i}.example.com"));
+            store.insert_stored_cookie(domain, "/".into(), secure_cookie(Some(expiry)));
+        }
+        store.insert_stored_cookie(host("example.com"), "/".into(), secure_cookie(None));
+
+        store.evict_expired(now);
+        assert_eq!(store.cookies.len(), 4);
+
+        // Expired cookies, their empty maps and their index entries are dropped together.
+        store.evict_expired(expiry);
+        assert_eq!(store.cookies.len(), 1);
+        assert_eq!(store.next_expiry, None);
+        assert_eq!(store.secure.domains("sid").count(), 1);
+
+        // Another pass waits for the eviction interval.
+        let later = expiry + Duration::seconds(1);
+        store.insert_stored_cookie(
+            host("late.example.com"),
+            "/".into(),
+            secure_cookie(Some(later)),
+        );
+        store.evict_expired(later);
+        assert_eq!(store.cookies.len(), 2);
+        store.evict_expired(expiry + EVICTION_INTERVAL);
+        assert_eq!(store.cookies.len(), 1);
+
+        // Replacing a secure cookie with an insecure one, or removing it, updates the index.
+        let domain = host("example.com");
+        store.insert_stored_cookie(domain.clone(), "/".into(), RawCookie::new("sid", "2"));
+        assert!(!store.would_overlay_secure_cookie("sid", &domain, "/", now));
+        store.insert_stored_cookie(domain.clone(), "/".into(), secure_cookie(None));
+        assert!(store.would_overlay_secure_cookie("sid", &domain, "/", now));
+        store.remove_stored_cookies(&domain, "/", "sid");
+        assert!(store.secure.0.is_empty());
+    }
 }
