@@ -9,7 +9,12 @@ use super::{
     Cookie, CookieStore, Cookies, IntoCookie,
     store::{DEFAULT_PATH, Store, canonical_host, cookie_is_expired, domain_match, normalize_path},
 };
-use crate::{IntoUri, ext::UriExt, header::HeaderValue, sync::RwLock};
+use crate::{
+    IntoUri,
+    ext::UriExt,
+    header::HeaderValue,
+    sync::{RwLock, RwLockReadGuard},
+};
 
 /// A good default `CookieStore` implementation.
 ///
@@ -29,6 +34,23 @@ macro_rules! into_uri {
 }
 
 impl Jar {
+    #[inline]
+    fn read_with_gc(&self, now: OffsetDateTime) -> RwLockReadGuard<'_, Store> {
+        {
+            let store = self.0.read();
+            if !store.has_expired_cookies(now) {
+                return store;
+            }
+        }
+        {
+            let mut store = self.0.write();
+            if store.has_expired_cookies(now) {
+                store.purge_expired(now);
+            }
+        }
+        self.0.read()
+    }
+
     /// Returns an unexpired cookie by name for an exact URI scope.
     ///
     /// The URI host is canonicalized and its path is used as the exact stored cookie path. Use
@@ -48,7 +70,7 @@ impl Jar {
         let uri = uri.into_uri().ok()?;
         let host = canonical_host(uri.host()?)?;
         let now = OffsetDateTime::now_utc();
-        let store = self.0.read();
+        let store = self.read_with_gc(now);
         let entry = store
             .cookies
             .get(&host)?
@@ -73,8 +95,7 @@ impl Jar {
 
         let now = OffsetDateTime::now_utc();
 
-        self.0
-            .read()
+        self.read_with_gc(now)
             .cookies
             .get(&host)
             .and_then(|path_map| path_map.get(uri.path()))
@@ -109,8 +130,7 @@ impl Jar {
     pub fn get_all(&self) -> impl Iterator<Item = Cookie<'static>> {
         let now = OffsetDateTime::now_utc();
         let mut cookies = self
-            .0
-            .read()
+            .read_with_gc(now)
             .cookies
             .iter()
             .flat_map(|(host, path_map)| {
@@ -136,8 +156,7 @@ impl Jar {
     /// cleared.
     pub fn len(&self) -> usize {
         let now = OffsetDateTime::now_utc();
-        self.0
-            .read()
+        self.read_with_gc(now)
             .cookies
             .values()
             .flat_map(|path_map| path_map.values())
@@ -150,8 +169,7 @@ impl Jar {
     pub fn is_empty(&self) -> bool {
         let now = OffsetDateTime::now_utc();
         !self
-            .0
-            .read()
+            .read_with_gc(now)
             .cookies
             .values()
             .flat_map(|path_map| path_map.values())
@@ -192,7 +210,7 @@ impl Jar {
         };
 
         let now = OffsetDateTime::now_utc();
-        let store = self.0.read();
+        let store = self.read_with_gc(now);
         store
             .matching_cookies(&uri, &host, now)
             .map(|(host, _, entry)| Cookie::from(entry.cookie.clone()).with_host(host.clone()))
@@ -302,6 +320,9 @@ impl Jar {
                 .to_owned();
 
             let mut store = self.0.write();
+            if store.has_expired_cookies(now) {
+                store.purge_expired(now);
+            }
             if !secure_origin
                 && store.would_overlay_secure_cookie(cookie.name(), &domain, &path, now)
             {
@@ -385,7 +406,7 @@ impl CookieStore for Jar {
         };
 
         let now = OffsetDateTime::now_utc();
-        let store = self.0.read();
+        let store = self.read_with_gc(now);
         let mut matches = store.matching_cookies(uri, &host, now).collect::<Vec<_>>();
 
         // Chromium sorts cookies selected for a request by longest path first, then oldest
@@ -1264,5 +1285,19 @@ mod tests {
                 "cookie must NOT leak to {uri_str}"
             );
         }
+    }
+
+    #[test]
+    fn jar_evicts_expired_cookies_and_prunes_empty_domains() {
+        let jar = Jar::default();
+        for i in 0..100 {
+            let uri = format!("https://sub{i}.example.com/");
+            jar.add("temp=1; Max-Age=1; Path=/", uri.as_str());
+        }
+        assert_eq!(jar.len(), 100);
+
+        thread::sleep(StdDuration::from_millis(1100));
+        assert_eq!(jar.len(), 0);
+        assert!(jar.0.read().cookies.is_empty());
     }
 }

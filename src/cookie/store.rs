@@ -85,6 +85,33 @@ impl CookieScopeMap {
     pub fn is_empty(&self) -> bool {
         self.host_only.is_empty() && self.domain.is_empty()
     }
+
+    /// Retains only unexpired cookies and returns the earliest remaining expiration timestamp.
+    fn retain_unexpired(&mut self, now: OffsetDateTime) -> Option<OffsetDateTime> {
+        let mut earliest: Option<OffsetDateTime> = None;
+        let mut update_earliest = |cookie: &RawCookie<'static>| {
+            if let Some(exp) = cookie.expires_datetime() {
+                earliest = Some(earliest.map_or(exp, |cur| cur.min(exp)));
+            }
+        };
+
+        self.host_only.retain(|_, entry| {
+            let keep = !cookie_is_expired(&entry.cookie, now);
+            if keep {
+                update_earliest(&entry.cookie);
+            }
+            keep
+        });
+        self.domain.retain(|_, entry| {
+            let keep = !cookie_is_expired(&entry.cookie, now);
+            if keep {
+                update_earliest(&entry.cookie);
+            }
+            keep
+        });
+
+        earliest
+    }
 }
 
 /// Stores cookies by domain, path, host-only scope, and name.
@@ -92,9 +119,45 @@ impl CookieScopeMap {
 pub struct Store {
     pub cookies: DomainMap,
     next_creation_index: u64,
+    next_expiration: Option<OffsetDateTime>,
 }
 
 impl Store {
+    /// Returns `true` if at least one stored cookie has reached its expiration deadline.
+    #[inline]
+    pub fn has_expired_cookies(&self, now: OffsetDateTime) -> bool {
+        self.next_expiration.is_some_and(|deadline| deadline <= now)
+    }
+
+    /// Purges all expired cookies, prunes empty path/domain maps, and shrinks excess capacity.
+    pub fn purge_expired(&mut self, now: OffsetDateTime) {
+        let prev_domains = self.cookies.capacity();
+        let mut next_exp: Option<OffsetDateTime> = None;
+
+        self.cookies.retain(|_, path_map| {
+            path_map.retain(|_, cookie_map| {
+                if let Some(exp) = cookie_map.retain_unexpired(now) {
+                    next_exp = Some(next_exp.map_or(exp, |cur| cur.min(exp)));
+                }
+                !cookie_map.is_empty()
+            });
+            !path_map.is_empty()
+        });
+
+        if prev_domains > 16 && self.cookies.len() * 4 <= prev_domains {
+            self.cookies.shrink_to_fit();
+        }
+
+        self.next_expiration = next_exp;
+    }
+
+    #[inline]
+    fn track_cookie_metadata(&mut self, cookie: &RawCookie<'static>) {
+        if let Some(exp) = cookie.expires_datetime() {
+            self.next_expiration = Some(self.next_expiration.map_or(exp, |cur| cur.min(exp)));
+        }
+    }
+
     /// Inserts or replaces a cookie in its domain and path scope.
     pub fn insert_stored_cookie(
         &mut self,
@@ -103,6 +166,7 @@ impl Store {
         cookie: RawCookie<'static>,
     ) {
         let host_only = cookie.domain().is_none();
+        self.track_cookie_metadata(&cookie);
 
         // Chromium inherits the creation time only when the replacement keeps the same value. A
         // value change receives a new creation time and therefore moves later among equal-length
