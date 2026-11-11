@@ -611,7 +611,7 @@ impl RequestBuilder {
     /// Sets the HTTP version for this request.
     ///
     /// HTTP/2 over HTTPS is a preference and may negotiate HTTP/1.1, unless the
-    /// client uses [`ClientBuilder::http2_only`](crate::ClientBuilder::http2_only).
+    /// client uses [`ClientBuilder::http2_only`](crate::ClientBuilder#method.http2_only).
     /// This preference preserves the configured TLS ALPN list and its order.
     /// Cleartext HTTP/2 uses prior knowledge without an HTTP/1 Upgrade.
     /// Negotiation does not rewrite an HTTP/2 WebSocket handshake into HTTP/1 Upgrade.
