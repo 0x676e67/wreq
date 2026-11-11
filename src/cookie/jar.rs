@@ -7,7 +7,10 @@ use http::{Uri, Version};
 
 use super::{
     Cookie, CookieStore, Cookies, IntoCookie,
-    store::{DEFAULT_PATH, Store, canonical_host, cookie_is_expired, domain_match, normalize_path},
+    store::{
+        DEFAULT_PATH, Store, canonical_host, cookie_is_expired, domain_match, is_public_suffix,
+        normalize_path,
+    },
 };
 use crate::{
     IntoUri,
@@ -260,10 +263,11 @@ impl Jar {
             let Some(host) = uri.host().and_then(canonical_host) else {
                 return;
             };
-            let host_only = cookie.domain().is_none();
+            let mut host_only = cookie.domain().is_none();
 
             // If the canonicalized request-host does not domain-match the
-            // domain-attribute:
+            // domain-attribute, or if the domain-attribute is a public suffix
+            // and does not equal the canonicalized request-host:
             //    Ignore the cookie entirely and abort these steps.
             //
             // RFC 6265 §5.3 + §5.1.3:
@@ -273,12 +277,22 @@ impl Jar {
                 let Some(domain) = canonical_host(raw_domain) else {
                     return;
                 };
-                if !domain_match(&host, &domain) {
-                    return;
-                }
+                if is_public_suffix(&domain) {
+                    if domain == host {
+                        cookie.unset_domain();
+                        host_only = true;
+                        host
+                    } else {
+                        return;
+                    }
+                } else {
+                    if !domain_match(&host, &domain) {
+                        return;
+                    }
 
-                cookie.set_domain(domain.to_string());
-                domain
+                    cookie.set_domain(domain.to_string());
+                    domain
+                }
             } else {
                 host
             };
@@ -1285,6 +1299,35 @@ mod tests {
                 "cookie must NOT leak to {uri_str}"
             );
         }
+    }
+
+    #[test]
+    fn jar_rejects_public_suffix_and_tld_supercookies() {
+        let jar = Jar::default();
+        jar.add("hijack=com; Domain=com; Path=/", "https://attacker.com/");
+        jar.add(
+            "hijack=couk; Domain=co.uk; Path=/",
+            "https://attacker.co.uk/",
+        );
+        jar.add(
+            "hijack=gh; Domain=github.io; Path=/",
+            "https://attacker.github.io/",
+        );
+        assert!(jar.is_empty());
+
+        let victim = Uri::from_static("https://victim-bank.com/");
+        assert!(matches!(
+            jar.cookies(&victim, Version::HTTP_11),
+            Cookies::Empty
+        ));
+
+        // RFC 6265 section 5.3 step 5: public suffix equal to request host becomes host-only.
+        jar.add("local=ok; Domain=localhost; Path=/", "http://localhost/");
+        let local_uri = Uri::from_static("http://localhost/");
+        assert!(matches!(
+            jar.cookies(&local_uri, Version::HTTP_11),
+            Cookies::Compressed(_)
+        ));
     }
 
     #[test]

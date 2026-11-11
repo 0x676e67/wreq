@@ -351,6 +351,78 @@ fn candidate_domains(request_host: &CanonicalHost) -> Vec<CanonicalHost> {
     candidates
 }
 
+/// Determines whether `domain` is a top-level domain or public suffix (RFC 6265 section 5.3 step 5).
+pub fn is_public_suffix(domain: &CanonicalHost) -> bool {
+    let Host::Domain(domain_str) = domain else {
+        return false;
+    };
+
+    let s = domain_str.as_ref();
+
+    // 1. Any single-label domain without a dot (e.g., "com", "org", "uk", "localhost")
+    //    is a top-level / public suffix and must not accept cross-host Domain cookies.
+    let Some(first_dot) = s.find('.') else {
+        return true;
+    };
+
+    let first_label = &s[..first_dot];
+    let rest = &s[first_dot + 1..];
+
+    // 2. Two-label domains: check country-code second-level registries (e.g., "co.uk", "com.au",
+    //    "co.jp", "co.in", "com.br") and known shared public suffixes (e.g., "github.io").
+    if !rest.contains('.') {
+        if rest.len() == 2
+            && matches!(
+                first_label,
+                "co" | "com"
+                    | "org"
+                    | "net"
+                    | "gov"
+                    | "edu"
+                    | "ac"
+                    | "mil"
+                    | "or"
+                    | "ne"
+                    | "go"
+                    | "gob"
+                    | "nic"
+                    | "nom"
+                    | "sch"
+                    | "lg"
+                    | "id"
+                    | "me"
+            )
+        {
+            return true;
+        }
+
+        if matches!(
+            s,
+            "github.io"
+                | "gitlab.io"
+                | "pages.dev"
+                | "workers.dev"
+                | "vercel.app"
+                | "netlify.app"
+                | "herokuapp.com"
+                | "appspot.com"
+                | "firebaseapp.com"
+                | "web.app"
+                | "cloudfront.net"
+                | "azurewebsites.net"
+                | "amazonaws.com"
+                | "eu.org"
+                | "ae.org"
+                | "us.com"
+                | "uk.com"
+        ) {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Applies the RFC 6265 request selection rules supported by this HTTP client.
 fn request_matches_cookie(
     uri: &Uri,
