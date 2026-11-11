@@ -20,7 +20,7 @@ use tokio_btls::SslStream;
 use tower::{BoxError, Service};
 
 use super::{
-    config::{Config, ContextCache},
+    Config, ContextCache,
     ext::{SslContextBuilderExt, set_ech_grease_host},
 };
 use crate::{

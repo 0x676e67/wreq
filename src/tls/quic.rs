@@ -15,8 +15,7 @@ use quic::{
 };
 
 use super::{
-    AlpnProtocol, AlpsProtocol, TlsVersion,
-    config::{Config, ContextCache},
+    AlpnProtocol, AlpsProtocol, Config, ContextCache, TlsVersion,
     ext::{SslContextBuilderExt as _, set_ech_grease_host},
     session::{Key, SessionTarget, Tickets},
 };
