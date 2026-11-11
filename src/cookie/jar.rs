@@ -1286,6 +1286,7 @@ mod tests {
         let jar = Jar::default();
         let supercookies = [
             ("a=1; Domain=com", "https://attacker.com/"),
+            ("a=1; Domain=com.", "https://attacker.com./"),
             #[cfg(feature = "cookies-psl")]
             ("a=1; Domain=co.uk", "https://attacker.co.uk/"),
             #[cfg(feature = "cookies-psl")]

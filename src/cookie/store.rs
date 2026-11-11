@@ -105,6 +105,7 @@ pub struct Store {
     /// Earliest expiry among stored cookies. Removals can leave it early, which only costs an
     /// extra eviction pass.
     next_expiry: Option<OffsetDateTime>,
+    /// When the last eviction pass ran, used to space passes by [`EVICTION_INTERVAL`].
     last_eviction: Option<OffsetDateTime>,
     secure: SecureIndex,
 }
@@ -317,15 +318,23 @@ impl Store {
 }
 
 impl SecureIndex {
+    /// Records one more `Secure` cookie named `name` under `domain`.
     fn add(&mut self, name: &str, domain: &CanonicalHost) {
-        *self
-            .0
-            .entry(Box::from(name))
-            .or_default()
-            .entry(domain.clone())
-            .or_default() += 1;
+        // Look up before inserting so existing keys are not allocated again.
+        let Some(domains) = self.0.get_mut(name) else {
+            self.0
+                .insert(Box::from(name), HashMap::from([(domain.clone(), 1)]));
+            return;
+        };
+        match domains.get_mut(domain) {
+            Some(count) => *count += 1,
+            None => {
+                domains.insert(domain.clone(), 1);
+            }
+        }
     }
 
+    /// Records one fewer `Secure` cookie, dropping entries whose count reaches zero.
     fn remove(&mut self, name: &str, domain: &CanonicalHost) {
         let Some(domains) = self.0.get_mut(name) else {
             return;
@@ -341,11 +350,13 @@ impl SecureIndex {
         }
     }
 
+    /// Returns the domains that hold at least one `Secure` cookie named `name`.
     fn domains(&self, name: &str) -> impl Iterator<Item = &CanonicalHost> {
         self.0.get(name).into_iter().flat_map(HashMap::keys)
     }
 }
 
+/// Returns `true` if the cookie has the `Secure` attribute.
 #[inline]
 fn is_secure(cookie: &RawCookie<'_>) -> bool {
     cookie.secure() == Some(true)
@@ -384,10 +395,12 @@ pub fn is_public_suffix(domain: &CanonicalHost) -> bool {
     let Host::Domain(domain) = domain else {
         return false;
     };
+    // A trailing dot names the same suffix, e.g. `com.` for `com`.
+    let domain = domain.strip_suffix('.').unwrap_or(domain);
 
     #[cfg(feature = "cookies-psl")]
     {
-        psl::suffix_str(domain).is_some_and(|suffix| suffix == domain.as_ref())
+        psl::suffix_str(domain).is_some_and(|suffix| suffix == domain)
     }
 
     #[cfg(not(feature = "cookies-psl"))]
