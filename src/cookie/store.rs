@@ -165,14 +165,14 @@ impl Store {
         domain: CanonicalHost,
         path: String,
         cookie: RawCookie<'static>,
+        now: OffsetDateTime,
     ) {
         let host_only = cookie.domain().is_none();
         let secure = is_secure(&cookie);
         track_expiry(&mut self.next_expiry, &cookie);
 
-        // Chromium inherits the creation time only when the replacement keeps the same value. A
-        // value change receives a new creation time and therefore moves later among equal-length
-        // paths.
+        // An expired entry can remain between eviction passes, but must not retain its order.
+        // Chromium inherits the creation time for a live replacement with an unchanged value.
         // https://chromium.googlesource.com/chromium/src/+/main/net/cookies/cookie_monster.cc
         if let Some(entry) = self
             .cookies
@@ -185,7 +185,7 @@ impl Store {
                 (true, false) => self.secure.remove(cookie.name(), &domain),
                 _ => {}
             }
-            if entry.cookie.value() != cookie.value() {
+            if cookie_is_expired(&entry.cookie, now) || entry.cookie.value() != cookie.value() {
                 entry.creation_index = self.next_creation_index;
                 self.next_creation_index = self.next_creation_index.saturating_add(1);
             }
@@ -279,8 +279,15 @@ impl Store {
         request_host: &'a CanonicalHost,
         now: OffsetDateTime,
     ) -> impl Iterator<Item = (&'a CanonicalHost, &'a str, &'a CookieEntry)> + 'a {
-        candidate_domains(request_host)
-            .filter_map(move |candidate| self.cookies.get_key_value(&candidate))
+        (!self.cookies.is_empty())
+            .then_some(request_host)
+            .into_iter()
+            .flat_map(move |host| {
+                iter::once(self.cookies.get_key_value(host)).chain(
+                    parent_domains(host).map(move |parent| self.cookies.get_key_value(&parent)),
+                )
+            })
+            .flatten()
             .flat_map(move |(domain, path_map)| {
                 path_map.iter().flat_map(move |(path, cookie_map)| {
                     cookie_map.values().filter_map(move |entry| {
@@ -370,19 +377,16 @@ fn track_expiry(next_expiry: &mut Option<OffsetDateTime>, cookie: &RawCookie<'_>
     }
 }
 
-/// Yields `host` and every parent domain it can domain-match, i.e. the only keys in
-/// `Store::cookies` whose cookies may apply to a request to `host`.
-fn candidate_domains(host: &CanonicalHost) -> impl Iterator<Item = CanonicalHost> + '_ {
+/// Yields the parent domains that `host` can domain-match.
+fn parent_domains(host: &CanonicalHost) -> impl Iterator<Item = CanonicalHost> + '_ {
     let name = match host {
         Host::Domain(name) => name.as_ref(),
         Host::Ipv4(_) | Host::Ipv6(_) => "",
     };
-    let parents = name
-        .match_indices('.')
+    name.match_indices('.')
         .map(move |(dot, _)| &name[dot + 1..])
         .filter(|parent| !parent.is_empty())
-        .map(|parent| Host::Domain(Box::from(parent)));
-    iter::once(host.clone()).chain(parents)
+        .map(|parent| Host::Domain(Box::from(parent)))
 }
 
 /// Determines whether `domain` is a public suffix under RFC 6265 section 5.3 step 5.
@@ -521,9 +525,9 @@ mod tests {
         let mut store = Store::default();
         for i in 0..3 {
             let domain = host(&format!("sub{i}.example.com"));
-            store.insert_stored_cookie(domain, "/".into(), secure_cookie(Some(expiry)));
+            store.insert_stored_cookie(domain, "/".into(), secure_cookie(Some(expiry)), now);
         }
-        store.insert_stored_cookie(host("example.com"), "/".into(), secure_cookie(None));
+        store.insert_stored_cookie(host("example.com"), "/".into(), secure_cookie(None), now);
 
         store.evict_expired(now);
         assert_eq!(store.cookies.len(), 4);
@@ -540,17 +544,48 @@ mod tests {
             host("late.example.com"),
             "/".into(),
             secure_cookie(Some(later)),
+            expiry,
         );
         store.evict_expired(later);
         assert_eq!(store.cookies.len(), 2);
         store.evict_expired(expiry + EVICTION_INTERVAL);
         assert_eq!(store.cookies.len(), 1);
 
+        // Reinsert an expired cookie before another sweep is allowed.
+        let domain = host("example.com");
+        let now = expiry + EVICTION_INTERVAL;
+        let deadline = now + Duration::seconds(1);
+        store.insert_stored_cookie(
+            domain.clone(),
+            "/".into(),
+            secure_cookie(Some(deadline)),
+            now,
+        );
+        let other = host("sub.example.com");
+        store.insert_stored_cookie(other.clone(), "/".into(), secure_cookie(None), now);
+        store.evict_expired(deadline);
+        assert_eq!(store.cookies.len(), 2);
+        store.insert_stored_cookie(domain.clone(), "/".into(), secure_cookie(None), deadline);
+        let index = |host| {
+            store.cookies[host]["/"]
+                .entries("sid")
+                .next()
+                .unwrap()
+                .creation_index
+        };
+        assert!(index(&domain) > index(&other));
+        store.remove_stored_cookies(&other, "/", "sid");
+
         // Replacing a secure cookie with an insecure one, or removing it, updates the index.
         let domain = host("example.com");
-        store.insert_stored_cookie(domain.clone(), "/".into(), RawCookie::new("sid", "2"));
+        store.insert_stored_cookie(
+            domain.clone(),
+            "/".into(),
+            RawCookie::new("sid", "2"),
+            deadline,
+        );
         assert!(!store.would_overlay_secure_cookie("sid", &domain, "/", now));
-        store.insert_stored_cookie(domain.clone(), "/".into(), secure_cookie(None));
+        store.insert_stored_cookie(domain.clone(), "/".into(), secure_cookie(None), deadline);
         assert!(store.would_overlay_secure_cookie("sid", &domain, "/", now));
         store.remove_stored_cookies(&domain, "/", "sid");
         assert!(store.secure.0.is_empty());

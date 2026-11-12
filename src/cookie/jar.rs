@@ -326,7 +326,7 @@ impl Jar {
                 store.remove_stored_cookie(&domain, &path, cookie.name(), host_only);
             } else {
                 cookie.set_path(path.clone());
-                store.insert_stored_cookie(domain, path, cookie);
+                store.insert_stored_cookie(domain, path, cookie, now);
             }
         }
     }
