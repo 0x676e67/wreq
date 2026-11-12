@@ -11,12 +11,7 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Service, ServiceBuilder};
 #[cfg(feature = "http3")]
-use {
-    super::quic::QuicRouter,
-    crate::protocol::TransportKind,
-    futures_util::future::Either,
-    std::fmt::{self, Formatter},
-};
+use {super::quic::QuicRouter, crate::protocol::TransportKind, futures_util::future::Either};
 
 use super::{
     Conn,
@@ -70,13 +65,6 @@ pub(crate) enum Transport {
 pub(crate) trait Io: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
 
 impl<T> Io for T where T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
-
-/// A connector returned a transport other than the one the selected protocol runs over.
-#[cfg(feature = "http3")]
-#[derive(Debug)]
-pub(crate) struct TransportMismatch {
-    expected: TransportKind,
-}
 
 // ===== impl TransportConnector =====
 
@@ -145,18 +133,17 @@ impl Service<TransportRequest> for TransportConnector {
 
 impl Transport {
     /// Takes the byte stream for an HTTP/1 or HTTP/2 handshake.
+    /// Fails only if a connector layer returned a QUIC connection for a stream protocol.
     pub(crate) fn into_stream(self) -> Result<Box<dyn Io>, BoxError> {
         match self {
             Self::Stream(io) => Ok(io),
             #[cfg(feature = "http3")]
-            Self::Quic { .. } => Err(TransportMismatch {
-                expected: TransportKind::Stream,
-            }
-            .into()),
+            Self::Quic { .. } => Err("stream connection returned QUIC".into()),
         }
     }
 
     /// Takes the QUIC connection and its endpoint for an HTTP/3 handshake.
+    /// Fails only if a connector layer returned a stream for HTTP/3.
     #[cfg(feature = "http3")]
     pub(crate) fn into_quic(self) -> Result<(::quic::Connection, ::quic::Endpoint), BoxError> {
         match self {
@@ -164,25 +151,7 @@ impl Transport {
                 connection,
                 endpoint,
             } => Ok((connection, endpoint)),
-            Self::Stream(_) => Err(TransportMismatch {
-                expected: TransportKind::Quic,
-            }
-            .into()),
+            Self::Stream(_) => Err("QUIC connection returned a stream".into()),
         }
-    }
-}
-
-// ===== impl TransportMismatch =====
-
-#[cfg(feature = "http3")]
-impl std::error::Error for TransportMismatch {}
-
-#[cfg(feature = "http3")]
-impl fmt::Display for TransportMismatch {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(match self.expected {
-            TransportKind::Stream => "stream connection returned QUIC",
-            TransportKind::Quic => "QUIC connection returned a stream",
-        })
     }
 }

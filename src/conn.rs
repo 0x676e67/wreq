@@ -19,14 +19,14 @@ use std::time::Duration;
 pub(crate) use connected::{Connected, HttpInfo};
 use dialer::{BindOptions, Dialer, tcp};
 use layer::deadline::{Deadline, DeadlineLayer};
+#[cfg(all(test, feature = "http3"))]
+pub(crate) use quic::test_server_config;
 pub(crate) use svc::{Io, Transport};
 use svc::{TransportConnector, TransportRequest};
 use tower::{
     BoxError, Layer, ServiceBuilder, ServiceExt,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either},
 };
-#[cfg(all(test, feature = "http3"))]
-pub(crate) use {quic::test_server_config, svc::TransportMismatch};
 
 use crate::{
     config::connect::ConfigSet, dns::DynResolver, error::map_timeout_to_connector_error,
