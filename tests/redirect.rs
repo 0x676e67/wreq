@@ -745,3 +745,53 @@ async fn test_redirect_location_is_encoded() {
     assert_eq!(res.uri(), dst.as_str());
     assert_eq!(res.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_redirect_drains_bounded_body_and_reuses_connection() {
+    let mut server = server::http(move |req| async move {
+        match req.uri().path() {
+            "/hop1" => http::Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, "/hop2")
+                .body(wreq::Body::from(vec![b'a'; 64 * 1024]))
+                .unwrap(),
+            "/hop2" => http::Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, "/hop3")
+                .body(wreq::Body::from(vec![b'b'; 64 * 1024]))
+                .unwrap(),
+            "/hop3" => http::Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, "/dst")
+                .body(wreq::Body::from(vec![b'c'; 64 * 1024]))
+                .unwrap(),
+            "/dst" => http::Response::builder()
+                .status(StatusCode::OK)
+                .body(wreq::Body::from("ok"))
+                .unwrap(),
+            _ => http::Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(wreq::Body::default())
+                .unwrap(),
+        }
+    });
+
+    let url = format!("http://{}/hop1", server.addr());
+    let dst = format!("http://{}/dst", server.addr());
+
+    let client = Client::builder()
+        .redirect(Policy::default())
+        .build()
+        .unwrap();
+
+    for _ in 0..3 {
+        let res = client.get(&url).send().await.unwrap();
+        assert_eq!(res.uri(), dst.as_str());
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.bytes().await.unwrap().as_ref(), b"ok");
+    }
+
+    // Because each 64 KiB redirect body was drained cleanly, the single HTTP/1.1
+    // keep-alive connection was reused across all hops and never prematurely closed.
+    assert!(server.events().is_empty());
+}
