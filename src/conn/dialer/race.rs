@@ -9,11 +9,17 @@
 
 use std::{
     collections::VecDeque,
-    future::{Future, poll_fn},
+    future::Future,
+    iter,
     net::SocketAddr,
     pin::{Pin, pin},
     task::{Context, Poll},
     time::Duration,
+};
+
+use futures_util::{
+    Stream, StreamExt,
+    future::{self, Either},
 };
 
 use super::{BindOptions, ConnectError};
@@ -21,28 +27,15 @@ use crate::dns::SocketAddrs;
 
 const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
 
-/// Owns the pending candidates and active attempts for one connection race.
-/// Dropping it cancels every unfinished attempt, including after a winner is selected.
-struct Race<F> {
-    addr_families: (SocketAddrs, SocketAddrs),
-    next_fallback: bool,
-    attempts: VecDeque<Attempt<F>>,
-    next_order: usize,
-    first_error: Option<(usize, ConnectError)>,
-}
+/// The attempts in flight, oldest first. As a stream it yields the launch order and outcome of
+/// each attempt that completes; dropping it cancels the rest.
+struct Attempts<F>(VecDeque<Attempt<F>>);
 
 /// One active connection attempt and its launch order.
 struct Attempt<F> {
     addr: SocketAddr,
     order: usize,
     future: F,
-}
-
-enum Event<C> {
-    Connected(C),
-    Terminal(ConnectError),
-    AllAttemptsFailed,
-    DelayElapsed,
 }
 
 /// Tries candidates using transport-specific setup and the selected clock, staggered by
@@ -66,7 +59,7 @@ where
         _ => addrs,
     };
     // Avoid allocating an active set when no overlapping attempts are needed.
-    if happy_eyeballs_timeout.is_none() || addrs.len() <= 1 {
+    let Some(delay) = happy_eyeballs_timeout.filter(|_| addrs.len() > 1) else {
         let mut first_error = None;
         for addr in addrs {
             let result = match start(addr) {
@@ -86,146 +79,114 @@ where
             }
         }
         return Err(first_error.unwrap_or_else(ConnectError::network_unreachable));
-    }
-
-    let mut race = Race {
-        addr_families: addrs.split_by_preference(None, None),
-        next_fallback: false,
-        attempts: VecDeque::with_capacity(MAX_PARALLEL_CONNECT_ATTEMPTS),
-        next_order: 0,
-        first_error: None,
     };
-    race.connect(happy_eyeballs_timeout, &mut start, sleep)
-        .await
-}
 
-impl<C, F> Race<F>
-where
-    F: Future<Output = Result<C, ConnectError>> + Unpin,
-{
-    fn has_remaining(&self) -> bool {
-        let (preferred, fallback) = &self.addr_families;
-        !preferred.is_empty() || !fallback.is_empty()
-    }
-
-    fn next_addr(&mut self) -> Option<SocketAddr> {
-        let (preferred, fallback) = &mut self.addr_families;
-        let use_fallback = match (
-            self.next_fallback,
-            !preferred.is_empty(),
-            !fallback.is_empty(),
-        ) {
-            (_, false, false) => return None,
-            (true, _, true) | (_, false, true) => true,
-            _ => false,
-        };
-        self.next_fallback = !use_fallback;
+    // Families alternate, starting with the preferred one; the longer one finishes alone.
+    let (mut preferred, mut fallback) = addrs.split_by_preference(None, None);
+    let mut fallback_next = false;
+    let mut candidates = iter::from_fn(move || {
+        let use_fallback = !fallback.is_empty() && (fallback_next || preferred.is_empty());
+        fallback_next = !use_fallback;
         if use_fallback {
             fallback.next()
         } else {
             preferred.next()
         }
-    }
+    })
+    .enumerate()
+    .peekable();
+    let mut attempts = Attempts(VecDeque::with_capacity(MAX_PARALLEL_CONNECT_ATTEMPTS));
+    let mut first_error = None;
 
-    fn record_error(&mut self, order: usize, error: ConnectError) {
-        match &self.first_error {
-            Some((first_order, _)) if *first_order <= order => {}
-            _ => self.first_error = Some((order, error)),
-        }
-    }
-
-    fn launch_next(
-        &mut self,
-        start: &mut impl FnMut(SocketAddr) -> Result<F, ConnectError>,
-    ) -> bool {
-        while let Some(addr) = self.next_addr() {
-            let order = self.next_order;
-            self.next_order = self.next_order.saturating_add(1);
+    loop {
+        // Start the next candidate; one whose setup fails gives way to the one after it.
+        for (order, addr) in candidates.by_ref() {
             match start(addr) {
                 Ok(future) => {
-                    self.attempts.push_back(Attempt {
+                    attempts.0.push_back(Attempt {
                         addr,
                         order,
                         future,
                     });
-                    return true;
+                    break;
                 }
-                Err(error) => self.record_error(order, error.with_addr(addr)),
+                Err(error) => record(&mut first_error, order, error.with_addr(addr)),
             }
         }
-        false
-    }
-
-    fn poll_attempts(&mut self, cx: &mut Context<'_>) -> Poll<Event<C>> {
-        let mut index = 0;
-        let mut failed = false;
-        while let Some(attempt) = self.attempts.get_mut(index) {
-            let addr = attempt.addr;
-            let order = attempt.order;
-            match Pin::new(&mut attempt.future).poll(cx) {
-                Poll::Pending => index += 1,
-                Poll::Ready(result) => {
-                    let _ = self.attempts.remove(index);
-                    match result {
-                        Ok(connection) => return Poll::Ready(Event::Connected(connection)),
-                        Err(error) => {
-                            let error = error.with_addr(addr);
-                            trace!("connect error for {}: {:?}", addr, error);
-                            if error.terminal {
-                                return Poll::Ready(Event::Terminal(error));
-                            }
-                            self.record_error(order, error);
-                            failed = true;
-                        }
-                    }
-                }
-            }
+        if attempts.0.is_empty() {
+            return Err(first_error
+                .map(|(_, error)| error)
+                .unwrap_or_else(ConnectError::network_unreachable));
         }
-        if failed && self.attempts.is_empty() {
-            Poll::Ready(Event::AllAttemptsFailed)
-        } else {
-            Poll::Pending
-        }
-    }
 
-    async fn connect<S: Future<Output = ()>>(
-        &mut self,
-        delay: Option<Duration>,
-        start: &mut impl FnMut(SocketAddr) -> Result<F, ConnectError>,
-        sleep: impl Fn(Duration) -> S,
-    ) -> Result<C, ConnectError> {
+        // The next candidate starts after the delay, or at once when every attempt has failed.
+        let mut timer = pin!(match candidates.peek() {
+            Some(_) => Either::Left(sleep(delay)),
+            None => Either::Right(future::pending()),
+        });
         loop {
-            if self.attempts.is_empty() && !self.launch_next(start) {
-                return Err(self
-                    .first_error
-                    .take()
-                    .map(|(_, error)| error)
-                    .unwrap_or_else(ConnectError::network_unreachable));
-            }
-            let event = match (delay, self.has_remaining()) {
-                (Some(delay), true) => {
-                    let mut sleep = pin!(sleep(delay));
-                    poll_fn(|cx| match self.poll_attempts(cx) {
-                        Poll::Ready(event) => Poll::Ready(event),
-                        Poll::Pending => sleep.as_mut().poll(cx).map(|()| Event::DelayElapsed),
-                    })
-                    .await
-                }
-                _ => poll_fn(|cx| self.poll_attempts(cx)).await,
-            };
-            match event {
-                Event::Connected(connection) => return Ok(connection),
-                Event::Terminal(error) => return Err(error),
-                Event::AllAttemptsFailed => {}
-                Event::DelayElapsed => {
-                    if self.attempts.len() >= MAX_PARALLEL_CONNECT_ATTEMPTS {
-                        // Dropping the oldest pending future gives later addresses a slot.
-                        self.attempts.pop_front();
+            match future::select(attempts.next(), &mut timer).await {
+                Either::Left((Some((_, Ok(connection))), _)) => return Ok(connection),
+                Either::Left((Some((order, Err(error))), _)) => {
+                    if error.terminal {
+                        return Err(error);
+                    }
+                    record(&mut first_error, order, error);
+                    if attempts.0.is_empty() {
+                        break;
                     }
                 }
+                Either::Left((None, _)) => break,
+                Either::Right(_) => {
+                    if attempts.0.len() >= MAX_PARALLEL_CONNECT_ATTEMPTS {
+                        // Dropping the oldest pending future gives later addresses a slot.
+                        attempts.0.pop_front();
+                    }
+                    break;
+                }
             }
-            self.launch_next(start);
         }
+    }
+}
+
+/// Keeps the error of the earliest launched attempt, whichever attempt fails first.
+fn record(first: &mut Option<(usize, ConnectError)>, order: usize, error: ConnectError) {
+    if first.as_ref().is_none_or(|(earliest, _)| order < *earliest) {
+        *first = Some((order, error));
+    }
+}
+
+impl<C, F> Stream for Attempts<F>
+where
+    F: Future<Output = Result<C, ConnectError>> + Unpin,
+{
+    type Item = (usize, Result<C, ConnectError>);
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let attempts = &mut self.get_mut().0;
+        if attempts.is_empty() {
+            return Poll::Ready(None);
+        }
+        // Oldest first, so attempts that finish together are reported in launch order.
+        let ready = attempts
+            .iter_mut()
+            .enumerate()
+            .find_map(
+                |(index, attempt)| match Pin::new(&mut attempt.future).poll(cx) {
+                    Poll::Ready(result) => Some((index, attempt.addr, attempt.order, result)),
+                    Poll::Pending => None,
+                },
+            );
+        let Some((index, addr, order, result)) = ready else {
+            return Poll::Pending;
+        };
+        attempts.remove(index);
+        let result = result.map_err(|error| {
+            let error = error.with_addr(addr);
+            trace!("connect error for {}: {:?}", addr, error);
+            error
+        });
+        Poll::Ready(Some((order, result)))
     }
 }
 
