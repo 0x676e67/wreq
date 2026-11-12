@@ -1,9 +1,9 @@
-//! Connector contract and composition: [`Connector::new`] puts [`Builtin`] under one
-//! [`deadline`], which routes each request to the [`stream`] or QUIC path. Both paths reach hosts
+//! Connector contract and composition: [`Connector::new`] stacks the [`layer`] middleware over
+//! [`Builtin`], which routes each request to the [`stream`] or QUIC path. Both paths reach hosts
 //! through the shared [`dialer`] and return a [`Conn`] with the [`Connected`] metadata they build.
 
 mod connected;
-mod deadline;
+mod layer;
 #[cfg(feature = "http3")]
 mod quic;
 mod stream;
@@ -20,12 +20,16 @@ use std::{
 
 use config::ConfigSet;
 pub(crate) use connected::{Connected, HttpInfo};
-use deadline::{Deadline, DeadlineLayer};
 use dialer::{BindOptions, Dialer, tcp};
+use layer::{
+    deadline::{Deadline, DeadlineLayer},
+    tls::{Tls, TlsLayer},
+    verbose::{Verbose, VerboseLayer},
+};
 #[cfg(all(test, feature = "http3"))]
 pub(crate) use quic::test_server_config;
 use request::ConnectRequest;
-use stream::StreamConnector;
+use stream::StreamRouter;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
@@ -56,6 +60,9 @@ pub type BoxedConnectorLayer =
 /// behind [`Unnameable`]. Clones share the transports' state.
 pub(crate) type Connector =
     Deadline<ServiceEither<Builtin, BoxCloneSyncService<ConnectRequest, Conn, BoxError>>>;
+
+/// The stream path: its routes, then target TLS and optional I/O tracing.
+type StreamConnector = Verbose<Tls<StreamRouter>>;
 
 /// The built-in transports: routes each request to the stream or QUIC path its protocol
 /// runs over. Clones share each path's state.
@@ -121,12 +128,10 @@ impl Connector {
             config.tls.clone().quic(config_set)?,
             proxies.clone(),
         )?;
-        let stream = StreamConnector::new(
-            dialer,
-            config.tls.stream(config_set)?,
-            proxies,
-            config.verbose,
-        );
+        let stream = ServiceBuilder::new()
+            .layer(VerboseLayer::new(config.verbose))
+            .layer(TlsLayer::new(config.tls.stream(config_set)?))
+            .service(StreamRouter::new(dialer, proxies));
         let builtin = Builtin {
             stream,
             #[cfg(feature = "http3")]

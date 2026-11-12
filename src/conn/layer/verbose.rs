@@ -1,38 +1,125 @@
 //! Optional I/O tracing for established stream connections.
 
-use crate::conn::AsyncConn;
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll, ready},
+};
 
-/// Controls whether to enable verbose tracing for connections.
-///
-/// When enabled (with the `tracing` feature), connections are wrapped to log I/O operations for
-/// debugging.
+use pin_project_lite::pin_project;
+use tower::{Layer, Service};
+
+use crate::conn::{Conn, request::ConnectRequest};
+
+/// Middleware layer to use [`Verbose`].
 #[derive(Clone, Copy)]
-pub struct Verbose(
-    #[cfg_attr(
-        not(feature = "tracing"),
-        expect(
-            dead_code,
-            reason = "The I/O wrapper reads this flag only with tracing enabled"
-        )
-    )]
-    pub(super) bool,
-);
+pub(crate) struct VerboseLayer {
+    enabled: bool,
+}
 
-impl Verbose {
-    #[cfg_attr(not(feature = "tracing"), inline(always))]
-    pub(super) fn wrap<T>(&self, conn: T) -> Box<dyn AsyncConn>
-    where
-        T: AsyncConn,
-    {
-        #[cfg(feature = "tracing")]
-        if self.0 {
-            return Box::new(sealed::Wrapper {
-                id: crate::util::fast_random(),
-                inner: conn,
-            });
+/// Traces the I/O of each stream the inner service establishes, when enabled with the
+/// `tracing` feature. Other connections pass through unchanged.
+#[derive(Clone)]
+pub(crate) struct Verbose<S> {
+    inner: S,
+    enabled: bool,
+}
+
+pin_project! {
+    /// Wraps the established stream once the inner connection completes.
+    pub struct ResponseFuture<F> {
+        #[pin]
+        future: F,
+        enabled: bool,
+    }
+}
+
+/// Wraps a stream so its reads and writes are logged; QUIC transports pass through.
+#[cfg(feature = "tracing")]
+fn trace(conn: Conn) -> Conn {
+    use crate::conn::Transport;
+
+    let Conn {
+        transport,
+        connected,
+    } = conn;
+    let transport = match transport {
+        Transport::Stream(io) => Transport::Stream(Box::new(sealed::Wrapper {
+            id: crate::util::fast_random(),
+            inner: io,
+        })),
+        #[cfg(feature = "http3")]
+        quic @ Transport::Quic { .. } => quic,
+    };
+    Conn {
+        transport,
+        connected,
+    }
+}
+
+/// Tracing is compiled out without the `tracing` feature.
+#[cfg(not(feature = "tracing"))]
+#[inline(always)]
+fn trace(conn: Conn) -> Conn {
+    conn
+}
+
+// ===== impl VerboseLayer =====
+
+impl VerboseLayer {
+    pub(crate) fn new(enabled: bool) -> Self {
+        Self { enabled }
+    }
+}
+
+impl<S> Layer<S> for VerboseLayer {
+    type Service = Verbose<S>;
+
+    #[inline(always)]
+    fn layer(&self, inner: S) -> Self::Service {
+        Verbose {
+            inner,
+            enabled: self.enabled,
         }
+    }
+}
 
-        Box::new(conn)
+// ===== impl Verbose =====
+
+impl<S> Service<ConnectRequest> for Verbose<S>
+where
+    S: Service<ConnectRequest, Response = Conn>,
+{
+    type Response = Conn;
+    type Error = S::Error;
+    type Future = ResponseFuture<S::Future>;
+
+    #[inline(always)]
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    #[inline]
+    fn call(&mut self, request: ConnectRequest) -> Self::Future {
+        ResponseFuture {
+            future: self.inner.call(request),
+            enabled: self.enabled,
+        }
+    }
+}
+
+// ===== impl ResponseFuture =====
+
+impl<F, E> Future for ResponseFuture<F>
+where
+    F: Future<Output = Result<Conn, E>>,
+{
+    type Output = Result<Conn, E>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        let conn = ready!(this.future.poll(cx))?;
+        Poll::Ready(Ok(if *this.enabled { trace(conn) } else { conn }))
     }
 }
 

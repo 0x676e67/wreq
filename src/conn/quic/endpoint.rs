@@ -555,7 +555,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        conn::{config::ConfigSet, deadline::DeadlineLayer, dialer::tcp},
+        conn::{config::ConfigSet, dialer::tcp, layer::deadline::DeadlineLayer},
         dns::{Addrs, DynResolver, Name, Resolve, Resolving},
         rt::{DynRuntime, tokio::TokioRuntime},
         tls::{self, trust::CertStore},

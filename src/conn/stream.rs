@@ -1,7 +1,6 @@
-//! The stream path: direct, CONNECT tunnel, forward-proxy, SOCKS4/5 and Unix routes, then
-//! target TLS. Every route ends in one place that finishes TLS and builds the [`Conn`].
-
-mod verbose;
+//! The stream path's routes: direct, CONNECT tunnel, forward-proxy, SOCKS4/5 and Unix. Each
+//! yields a [`Routed`] stream, which [`Tls`](super::layer::tls::Tls) finishes into a
+//! [`Conn`](super::Conn).
 
 use std::{
     sync::Arc,
@@ -14,12 +13,9 @@ use http::Uri;
 use netty::proxy::socks;
 use netty::proxy::tunnel;
 use tower::{BoxError, Service, ServiceExt, util::MapRequest};
-use verbose::Verbose;
 
-use super::connected::tls_info;
 use crate::{
     conn::{
-        AsyncConn, Conn, Connected, HttpInfo, Transport,
         dialer::{Dialer, SocketRequest},
         request::ConnectRequest,
     },
@@ -27,25 +23,48 @@ use crate::{
     ext::UriExt,
     proxy::{Intercepted, Matcher, matcher::Intercept},
     rt::{self, BoxConnection},
-    tls::{
-        AlpnProtocol,
-        connector::{HttpsConnector, MaybeHttpsStream, StreamTls},
-    },
+    tls::connector::{HttpsConnector, MaybeHttpsStream},
 };
 
-/// Establishes a direct socket, a forward-proxy connection, or a proxy tunnel,
-/// then finishes target TLS and returns the stream for the HTTP/1 or HTTP/2 pool.
-/// Clones share the dialer, compiled TLS and proxy rules.
+/// Selects the request's route from its proxy rules and establishes a stream over it: a direct
+/// socket, a forward-proxy connection or a proxy tunnel. Target TLS is left to the caller.
+/// Clones share the dialer and proxy rules.
 #[derive(Clone)]
-pub(crate) struct StreamConnector {
+pub(crate) struct StreamRouter {
     dialer: Dialer,
-    tls: StreamTls,
     proxies: Arc<Vec<Matcher>>,
-    verbose: Verbose,
+}
+
+/// A connection request with the TLS selected for it, which an HTTPS proxy hop reuses.
+pub(crate) struct RouteRequest {
+    pub(super) request: ConnectRequest,
+    pub(super) tls: HttpsConnector<()>,
+}
+
+/// A stream a route established, before target TLS, with what finishing it needs.
+pub(crate) struct Routed {
+    pub(super) io: RoutedIo,
+    /// The request, re-routed to the proxy when `proxy` is set.
+    pub(super) request: ConnectRequest,
+    /// The request's TLS, without ALPN when `proxy` is set.
+    pub(super) tls: HttpsConnector<()>,
+    /// The forward proxy `io` reaches; it is then the TLS peer and names the connection.
+    pub(super) proxy: Option<Intercept>,
+    /// TCP routes turn Nagle back on after TLS unless the client disables it.
+    pub(super) restore_nagle: bool,
+}
+
+/// The stream types routes produce. Finishing matches once, so neither costs the other a
+/// branch per read or write.
+pub(crate) enum RoutedIo {
+    /// A dialed socket, or a SOCKS tunnel over one.
+    Socket(BoxConnection),
+    /// A CONNECT tunnel, whose proxy hop may carry TLS.
+    Hop(MaybeHttpsStream<BoxConnection>),
 }
 
 /// A dialed stream whose socket stays reachable beneath any proxy TLS.
-trait Dialed {
+pub(crate) trait Dialed {
     /// Returns the socket dialed by the runtime.
     fn socket(&self) -> &dyn rt::Connection;
 }
@@ -63,101 +82,29 @@ fn proxy_hop<S>(
     MapRequest::new(connector, move |uri| route.clone().with_route_uri(uri))
 }
 
-/// Finishes TLS over an established route and restores Nagle once when `restore_nagle` is set.
-/// Builds the metadata from the dialed socket's addresses, the target TLS session and the
-/// identity of `proxy`, the forward proxy `io` reaches. An `http` route skips TLS.
-async fn finish<IO>(
-    verbose: Verbose,
-    io: IO,
-    req: ConnectRequest,
-    tls: HttpsConnector<()>,
-    restore_nagle: bool,
-    proxy: Option<Intercept>,
-) -> Result<Conn, BoxError>
-where
-    IO: AsyncConn + Dialed,
-{
-    let socket = io.socket();
-    let (local_addr, remote_addr) = (socket.local_addr(), socket.peer_addr());
-    let stream = tls
-        .handshake(io, req, remote_addr.map(|addr| addr.ip()))
-        .await?;
+// ===== impl StreamRouter =====
 
-    let mut connected = Connected::new();
-    if let (Some(local_addr), Some(remote_addr)) = (local_addr, remote_addr) {
-        connected = connected.extra(HttpInfo {
-            remote_addr,
-            local_addr,
-        });
-    }
-    if let Some(proxy) = proxy {
-        connected = connected.proxy(proxy);
-    }
-    let stream = match stream {
-        MaybeHttpsStream::Http(stream) => verbose.wrap(stream),
-        MaybeHttpsStream::Https(stream) => {
-            if restore_nagle {
-                stream.get_ref().socket().set_nodelay(false)?;
-            }
-            let ssl = stream.ssl();
-            if ssl
-                .selected_alpn_protocol()
-                .is_some_and(|alpn| AlpnProtocol::HTTP2.eq(alpn))
-            {
-                connected = connected.negotiated_h2();
-            }
-            if tls.tls_info() {
-                connected = connected.extra(tls_info(
-                    ssl.peer_certificate().as_deref(),
-                    ssl.peer_cert_chain(),
-                ));
-            }
-            verbose.wrap(stream)
-        }
-    };
-    Ok(Conn {
-        transport: Transport::Stream(stream),
-        connected,
-    })
-}
-
-// ===== impl StreamConnector =====
-
-impl StreamConnector {
-    /// Creates the stream path over `dialer` with the client's stream TLS and proxy rules.
-    /// `verbose` traces each connection's I/O.
-    pub(crate) fn new(
-        dialer: Dialer,
-        tls: StreamTls,
-        proxies: Arc<Vec<Matcher>>,
-        verbose: bool,
-    ) -> Self {
-        Self {
-            dialer,
-            tls,
-            proxies,
-            verbose: Verbose(verbose),
-        }
+impl StreamRouter {
+    /// Creates the stream routes over `dialer` with the client's proxy rules.
+    pub(crate) fn new(dialer: Dialer, proxies: Arc<Vec<Matcher>>) -> Self {
+        Self { dialer, proxies }
     }
 }
 
-impl Service<ConnectRequest> for StreamConnector {
-    type Response = Conn;
+impl Service<RouteRequest> for StreamRouter {
+    type Response = Routed;
     type Error = BoxError;
-    type Future = BoxFuture<'static, Result<Conn, BoxError>>;
+    type Future = BoxFuture<'static, Result<Routed, BoxError>>;
 
     #[inline]
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: ConnectRequest) -> Self::Future {
+    fn call(&mut self, RouteRequest { request: req, tls }: RouteRequest) -> Self::Future {
         let dialer = self.dialer.clone();
         let proxies = self.proxies.clone();
-        let verbose = self.verbose;
-        // TCP routes turn Nagle back on after TLS unless the client disables it.
         let restore_nagle = !self.dialer.nodelay();
-        let tls = self.tls.clone();
         #[cfg(feature = "socks")]
         let resolver = self.dialer.resolver().clone();
 
@@ -189,9 +136,14 @@ impl Service<ConnectRequest> for StreamConnector {
 
             match intercepted {
                 None => {
-                    let tls = tls.for_request(&req)?;
                     let io = dialer.oneshot(req.route_uri().clone()).await?;
-                    finish(verbose, io, req, tls, restore_nagle, None).await
+                    Ok(Routed {
+                        io: RoutedIo::Socket(io),
+                        request: req,
+                        tls,
+                        proxy: None,
+                        restore_nagle,
+                    })
                 }
                 Some(Intercepted::Proxy(proxy)) => {
                     let proxy_uri = proxy.uri().clone();
@@ -216,12 +168,16 @@ impl Service<ConnectRequest> for StreamConnector {
                         connector.set_dns_mode(dns);
 
                         let io = connector.oneshot(uri).await?;
-                        let tls = tls.for_request(&req)?;
-                        return finish(verbose, io, req, tls, restore_nagle, None).await;
+                        return Ok(Routed {
+                            io: RoutedIo::Socket(io),
+                            request: req,
+                            tls,
+                            proxy: None,
+                            restore_nagle,
+                        });
                     }
 
                     if secure {
-                        let tls = tls.for_request(&req)?;
                         let mut tunnel =
                             tunnel::TunnelConnector::new(proxy_uri, proxy_hop(&tls, dialer, &req));
 
@@ -234,37 +190,49 @@ impl Service<ConnectRequest> for StreamConnector {
                         }
 
                         let io = tunnel.oneshot(uri).await?;
-                        finish(verbose, io, req, tls, restore_nagle, None).await
+                        Ok(Routed {
+                            io: RoutedIo::Hop(io),
+                            request: req,
+                            tls,
+                            proxy: None,
+                            restore_nagle,
+                        })
                     } else {
                         // HTTP/1 forwarding to an HTTPS proxy must not negotiate target ALPN.
-                        let mut tls = tls
-                            .for_request(&req)
-                            .map_err(|err| ProxyConnect::Source(err.into()))?;
+                        let mut tls = tls;
                         tls.no_alpn();
                         let req = req.with_route_uri(proxy_uri);
                         let io = dialer
                             .oneshot(req.route_uri().clone())
                             .await
                             .map_err(ProxyConnect::Source)?;
-                        finish(verbose, io, req, tls, restore_nagle, Some(proxy))
-                            .await
-                            .map_err(|err| ProxyConnect::Source(err).into())
+                        Ok(Routed {
+                            io: RoutedIo::Socket(io),
+                            request: req,
+                            tls,
+                            proxy: Some(proxy),
+                            restore_nagle,
+                        })
                     }
                 }
                 #[cfg(unix)]
                 Some(Intercepted::Unix(_)) => {
-                    let tls = tls.for_request(&req)?;
-                    if secure {
+                    let io = if secure {
                         let tunnel = tunnel::TunnelConnector::new(
                             Uri::from_static("http://localhost"),
                             proxy_hop(&tls, dialer, &req),
                         );
-                        let io = tunnel.oneshot(uri).await?;
-                        finish(verbose, io, req, tls, false, None).await
+                        RoutedIo::Hop(tunnel.oneshot(uri).await?)
                     } else {
-                        let io = dialer.oneshot(req.route_uri().clone()).await?;
-                        finish(verbose, io, req, tls, false, None).await
-                    }
+                        RoutedIo::Socket(dialer.oneshot(req.route_uri().clone()).await?)
+                    };
+                    Ok(Routed {
+                        io,
+                        request: req,
+                        tls,
+                        proxy: None,
+                        restore_nagle: false,
+                    })
                 }
             }
         })
