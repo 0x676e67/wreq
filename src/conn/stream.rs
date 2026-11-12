@@ -122,7 +122,11 @@ impl Service<RouteRequest> for StreamRouter {
         } = req;
         let route = Route::select(&request, &self.proxies);
         let dialer = RouteDialer::new(&self.dialer, &request, &route, deadline);
-        let mut restore_nagle = !self.dialer.nodelay();
+        // A Unix socket has no Nagle to restore.
+        let restore_nagle = cfg_select! {
+            unix => !self.dialer.nodelay() && !matches!(route, Route::Unix(_)),
+            _ => !self.dialer.nodelay(),
+        };
         #[cfg(feature = "socks")]
         let resolver = self.dialer.resolver().clone();
 
@@ -175,7 +179,6 @@ impl Service<RouteRequest> for StreamRouter {
                 }
                 #[cfg(unix)]
                 Route::Unix(_) => {
-                    restore_nagle = false;
                     if target.is_https() {
                         let tunnel = tunnel::TunnelConnector::new(
                             Uri::from_static("http://localhost"),
