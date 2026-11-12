@@ -245,6 +245,38 @@ impl Error {
         false
     }
 
+    /// Returns true if the error was caused by a proxy that requires
+    /// authentication.
+    ///
+    /// This covers HTTP CONNECT proxies responding with `407 Proxy
+    /// Authentication Required`, and SOCKS5 proxies either rejecting the
+    /// supplied credentials or requiring them when none were given.
+    pub fn is_proxy_auth_required(&self) -> bool {
+        use crate::conn::proxy::tunnel::TunnelError;
+
+        let mut source = self.source();
+
+        while let Some(err) = source {
+            if let Some(TunnelError::ProxyAuthRequired) = err.downcast_ref::<TunnelError>() {
+                return true;
+            }
+
+            #[cfg(feature = "socks")]
+            if let Some(
+                tokio_socks::Error::PasswordAuthFailure(_)
+                | tokio_socks::Error::AuthorizationRequired
+                | tokio_socks::Error::NoAcceptableAuthMethods,
+            ) = err.downcast_ref::<tokio_socks::Error>()
+            {
+                return true;
+            }
+
+            source = err.source();
+        }
+
+        false
+    }
+
     /// Returns true if the error is related to a connection reset.
     pub fn is_connection_reset(&self) -> bool {
         let mut source = self.source();
@@ -544,6 +576,63 @@ mod tests {
         let io = io::Error::from(io::ErrorKind::TimedOut);
         let nested = Error::request(io);
         assert!(nested.is_timeout());
+    }
+
+    #[test]
+    fn is_proxy_auth_required() {
+        use crate::conn::proxy::tunnel::TunnelError;
+
+        let err = Error::request(ProxyConnect(Box::new(TunnelError::ProxyAuthRequired)));
+        assert!(err.is_proxy_auth_required());
+
+        let err = Error::request(ProxyConnect(Box::new(TunnelError::TunnelUnsuccessful)));
+        assert!(!err.is_proxy_auth_required());
+    }
+
+    #[cfg(feature = "socks")]
+    #[test]
+    fn is_proxy_auth_required_socks() {
+        use crate::conn::proxy::socks::SocksError;
+
+        let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
+            tokio_socks::Error::PasswordAuthFailure(1),
+        ))));
+        assert!(err.is_proxy_auth_required());
+
+        let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
+            tokio_socks::Error::AuthorizationRequired,
+        ))));
+        assert!(err.is_proxy_auth_required());
+
+        let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
+            tokio_socks::Error::NoAcceptableAuthMethods,
+        ))));
+        assert!(err.is_proxy_auth_required());
+
+        let err = Error::request(ProxyConnect(Box::new(SocksError::MissingHost)));
+        assert!(!err.is_proxy_auth_required());
+    }
+
+    #[cfg(feature = "socks")]
+    #[test]
+    fn socks_connect_failure_exposes_its_io_error() {
+        use crate::conn::proxy::socks::SocksError;
+
+        let refused = io::Error::from(io::ErrorKind::ConnectionRefused);
+        let err = Error::request(ProxyConnect(Box::new(SocksError::ConnectFailed(Box::new(
+            refused,
+        )))));
+
+        let mut source = err.source();
+        let mut kind = None;
+        while let Some(inner) = source {
+            if let Some(io) = inner.downcast_ref::<io::Error>() {
+                kind = Some(io.kind());
+            }
+            source = inner.source();
+        }
+
+        assert_eq!(kind, Some(io::ErrorKind::ConnectionRefused));
     }
 
     #[test]
