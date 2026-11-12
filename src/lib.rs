@@ -223,7 +223,10 @@
 //!
 //! - **http2** *(enabled by default)*: Provides HTTP/2 support. Without it, ALPN only offers
 //!   `http/1.1`.
-//! - **cookies**: Provides cookie session support.
+//! - **cookies**: Provides cookie session support. Cookies scoped to a single-label domain such as
+//!   `com` are rejected unless it is the request host.
+//! - **cookies-psl**: Also rejects cookies scoped to any public suffix, using the Public Suffix
+//!   List.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **brotli**: Provides response body brotli decompression.
 //! - **zstd**: Provides response body zstd decompression.

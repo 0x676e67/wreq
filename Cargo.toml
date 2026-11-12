@@ -42,6 +42,9 @@ charset = ["dep:encoding_rs", "dep:mime"]
 # Enable cookies store support.
 cookies = ["dep:cookie"]
 
+# Reject cookies scoped to public suffixes using the Public Suffix List.
+cookies-psl = ["cookies", "dep:psl"]
+
 # Enable gzip decompression support.
 gzip = ["dep:tower-http", "tower-http?/decompression-gzip"]
 
@@ -149,6 +152,7 @@ chromium-roots = { version = "0.1.1", optional = true }
 
 ## cookies
 cookie = { version = "0.18", optional = true }
+psl = { version = "2.1", optional = true }
 
 ## tower http
 tower-http = { version = "0.7.1", default-features = false, optional = true }
