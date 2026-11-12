@@ -68,7 +68,7 @@ use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Protocol, Proxy,
     conn::{
-        BoxedTransportConnector, Conn, Connector, ConnectorConfig, Unnameable, config::ConfigSet,
+        self, BoxedTransportConnector, Conn, Connector, Unnameable, config::ConfigSet,
         dialer::BindOptions,
     },
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
@@ -163,7 +163,7 @@ struct Config {
         feature = "deflate",
     ))]
     accept_encoding: AcceptEncoding,
-    connect: ConnectorConfig,
+    connect: conn::Config,
     pool_idle_timeout: Option<Duration>,
     pool_max_idle_per_host: usize,
     pool_max_size: Option<NonZeroUsize>,
@@ -221,7 +221,7 @@ impl Client {
                     feature = "deflate",
                 ))]
                 accept_encoding: AcceptEncoding::default(),
-                connect: ConnectorConfig::default(),
+                connect: conn::Config::default(),
                 pool_idle_timeout: Some(Duration::from_secs(90)),
                 pool_max_idle_per_host: usize::MAX,
                 pool_max_size: None,

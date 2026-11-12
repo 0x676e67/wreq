@@ -204,7 +204,7 @@
 //! ## Cookies
 //!
 //! The automatic storing and sending of session cookies can be enabled with
-//! the [`cookie_store`][ClientBuilder::cookie_store] method on `ClientBuilder`.
+//! the [`cookie_store`][cookie_store] method on `ClientBuilder`.
 //!
 //! ## Proxies
 //!
@@ -291,6 +291,8 @@
 //! [serde]: http://serde.rs
 //! [redirect]: crate::redirect
 //! [Proxy]: ./struct.Proxy.html
+//! [multipart]: ./multipart/index.html
+//! [cookie_store]: ./struct.ClientBuilder.html#method.cookie_store
 //! [cargo-features]: https://doc.rust-lang.org/stable/cargo/reference/manifest.html#the-features-section
 
 #[macro_use]

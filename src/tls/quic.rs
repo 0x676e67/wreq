@@ -15,8 +15,7 @@ use quic::{
 };
 
 use super::{
-    AlpnProtocol, AlpsProtocol, TlsConfig, TlsVersion,
-    config::ContextCache,
+    AlpnProtocol, AlpsProtocol, Config, ContextCache, TlsVersion,
     ext::{SslContextBuilderExt as _, set_ech_grease_host},
     session::{Key, SessionTarget, Tickets},
 };
@@ -38,7 +37,7 @@ pub(crate) struct QuicTls(Arc<Inner>);
 
 /// Client policy, QUIC options and compiled TLS contexts.
 struct Inner {
-    config: TlsConfig,
+    config: Config,
     config_set: ConfigSet,
     options: Option<Arc<QuicOptions>>,
     contexts: ContextCache<QuicClientConfig>,
@@ -86,7 +85,7 @@ struct Attempt {
 // ===== impl QuicTls =====
 
 impl QuicTls {
-    pub(super) fn new(config: TlsConfig, config_set: ConfigSet) -> Result<Self> {
+    pub(super) fn new(config: Config, config_set: ConfigSet) -> Result<Self> {
         let options = config_set.get_arc::<QuicOptions>();
         let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self(Arc::new(Inner {
@@ -264,7 +263,7 @@ impl Handshake {
 
 /// Compiles a QUIC context from the client policy and the context options of `options`.
 /// Callbacks and the session cache are configured for each connection attempt.
-fn compile(config: &TlsConfig, options: Option<&QuicOptions>) -> Result<QuicClientConfig> {
+fn compile(config: &Config, options: Option<&QuicOptions>) -> Result<QuicClientConfig> {
     let mut builder = SslContextBuilder::new(SslMethod::tls()).map_err(Error::tls)?;
     config.configure(&mut builder)?;
     if let Some(options) = options {
@@ -403,7 +402,7 @@ mod tests {
             let uri = Uri::from_static("https://localhost/");
             ConnectRequest::test(uri, Some(Protocol::Http3), config_set)
         };
-        let tls = TlsConfig::default().quic(&ConfigSet::default()).unwrap();
+        let tls = Config::default().quic(&ConfigSet::default()).unwrap();
         let [client, first, second, other] = [None, Some(false), Some(false), Some(true)]
             .map(|grease| tls.config(&request(grease)).unwrap());
         let context = |config: &QuicConfig| -> *const SslContextRef { &**config.crypto.ctx() };

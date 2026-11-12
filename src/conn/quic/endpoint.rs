@@ -555,10 +555,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        conn::{config::ConfigSet, deadline::DeadlineLayer, dialer::TcpConfig},
+        conn::{config::ConfigSet, deadline::DeadlineLayer, dialer::tcp},
         dns::{Addrs, DynResolver, Name, Resolve, Resolving},
         rt::{DynRuntime, tokio::TokioRuntime},
-        tls::trust::CertStore,
+        tls::{self, trust::CertStore},
     };
 
     struct Resolver {
@@ -614,14 +614,14 @@ mod tests {
         bind_options: BindOptions,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Endpoints {
-        let tls = crate::tls::TlsConfig {
+        let tls = tls::Config {
             cert_store: Some(CertStore::from_der_certs([cert]).unwrap()),
             ..Default::default()
         };
         let dialer = Dialer::new(
             DynRuntime::new(TokioRuntime),
             DynResolver::new(resolver),
-            TcpConfig::default(),
+            tcp::Config::default(),
             bind_options,
             happy_eyeballs_timeout,
         );
@@ -875,7 +875,7 @@ mod tests {
             *dialer = Dialer::new(
                 dialer.runtime().clone(),
                 dialer.resolver().clone(),
-                TcpConfig::default(),
+                tcp::Config::default(),
                 bind_options,
                 None,
             );
