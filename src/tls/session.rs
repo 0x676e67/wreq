@@ -25,11 +25,8 @@ pub(crate) use store::Tickets;
 use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 
 use crate::{
-    conn::{
-        config::{ConfigSet, HASHER, Overrides},
-        dialer::BindOptions,
-        request::ConnectRequest,
-    },
+    config::connect::{ConfigSet, HASHER, Overrides},
+    conn::{dialer::BindOptions, request::ConnectRequest},
     protocol::TransportKind,
     sync::Mutex,
     tls::TlsVersion,
@@ -141,11 +138,17 @@ pub struct LruTlsSessionStore {
 // ===== impl SessionKey =====
 
 impl SessionKey {
-    /// Derives the TLS identity of a connection request over `transport`.
-    fn new(req: &ConnectRequest, config_set: &ConfigSet, transport: TransportKind) -> Self {
+    /// Derives the TLS identity of a connection request over `transport`, authenticating
+    /// `route`: the origin itself, or the proxy hop that carries it.
+    fn new(
+        req: &ConnectRequest,
+        route: &Uri,
+        config_set: &ConfigSet,
+        transport: TransportKind,
+    ) -> Self {
         let overrides = Overrides::for_session(req.config_set().clone(), config_set, transport);
         let origin = req.uri().clone();
-        let route = req.route_uri().clone();
+        let route = route.clone();
         let bind_options = req.bind_options().clone();
         let hash = HASHER.hash_one((transport, &origin, &route, overrides.hash(), &bind_options));
         Self {
@@ -181,9 +184,11 @@ impl Hash for SessionKey {
 // ===== impl SessionTarget =====
 
 impl SessionTarget {
-    /// Identifies a connection for `req` to `remote_ip` within a client's session scope.
+    /// Identifies a connection for `req` that authenticates `route` at `remote_ip`, within a
+    /// client's session scope.
     pub(crate) fn new(
         req: &ConnectRequest,
+        route: &Uri,
         config_set: &ConfigSet,
         transport: TransportKind,
         remote_ip: Option<IpAddr>,
@@ -191,7 +196,7 @@ impl SessionTarget {
     ) -> Self {
         Self {
             key: Key {
-                session: SessionKey::new(req, config_set, transport),
+                session: SessionKey::new(req, route, config_set, transport),
                 remote_ip: None,
                 session_id_context,
             },
@@ -404,7 +409,16 @@ mod tests {
         let config_set = ConfigSet::default();
         let req = request(None, ConfigSet::default(), &config_set);
         let context = [1; SESSION_ID_CONTEXT_LENGTH];
-        let target = |ip| SessionTarget::new(&req, &config_set, TransportKind::Stream, ip, context);
+        let target = |ip| {
+            SessionTarget::new(
+                &req,
+                req.uri(),
+                &config_set,
+                TransportKind::Stream,
+                ip,
+                context,
+            )
+        };
         let known = target(Some(IpAddr::from([192, 0, 2, 1])));
 
         let rsa = known.key_for(Some(Nid::KX_RSA)).unwrap();
@@ -419,8 +433,10 @@ mod tests {
     fn session_keys_ignore_negotiation_and_inherit_client_options() {
         let client_config_set = tls(TlsOptions::builder());
         let key = |protocol, config_set: ConfigSet| {
+            let request = request(protocol, config_set, &client_config_set);
             SessionKey::new(
-                &request(protocol, config_set, &client_config_set),
+                &request,
+                request.uri(),
                 &client_config_set,
                 TransportKind::Stream,
             )
@@ -443,8 +459,7 @@ mod tests {
 
         let mut grouped = ConfigSet::default();
         grouped.insert(Group::new("tenant"));
-        let proxied = request(None, ConfigSet::default(), &client_config_set)
-            .with_route_uri(Uri::from_static("https://proxy:8443"));
+        let origin = request(None, ConfigSet::default(), &client_config_set);
         let others = [
             key(
                 None,
@@ -452,10 +467,16 @@ mod tests {
             ),
             key(None, tls(TlsOptions::builder().key_shares(Vec::new()))),
             key(None, grouped),
-            SessionKey::new(&proxied, &client_config_set, TransportKind::Stream),
+            SessionKey::new(
+                &origin,
+                &Uri::from_static("https://proxy:8443"),
+                &client_config_set,
+                TransportKind::Stream,
+            ),
             #[cfg(feature = "http3")]
             SessionKey::new(
-                &request(None, ConfigSet::default(), &client_config_set),
+                &origin,
+                origin.uri(),
                 &client_config_set,
                 TransportKind::Quic,
             ),
@@ -491,10 +512,20 @@ mod tests {
             ..Default::default()
         })));
         let assert_bindings = |transport: TransportKind| {
-            let inherited_key = SessionKey::new(&inherited, &client_config_set, transport);
-            assert!(inherited_key == SessionKey::new(&equal, &client_config_set, transport));
-            assert!(inherited_key == SessionKey::new(&partial, &client_config_set, transport));
-            assert!(inherited_key != SessionKey::new(&changed, &client_config_set, transport));
+            let inherited_key =
+                SessionKey::new(&inherited, inherited.uri(), &client_config_set, transport);
+            assert!(
+                inherited_key
+                    == SessionKey::new(&equal, equal.uri(), &client_config_set, transport)
+            );
+            assert!(
+                inherited_key
+                    == SessionKey::new(&partial, partial.uri(), &client_config_set, transport)
+            );
+            assert!(
+                inherited_key
+                    != SessionKey::new(&changed, changed.uri(), &client_config_set, transport)
+            );
 
             // Bindings separate tickets without compiling another TLS context.
             let context = |req: &ConnectRequest| {

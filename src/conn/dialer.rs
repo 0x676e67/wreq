@@ -2,14 +2,9 @@
 //! local bindings and TCP socket options; it opens TCP and Unix streams and binds the UDP sockets
 //! QUIC uses.
 //!
-//! DNS completes before racing addresses. With Happy Eyeballs enabled, families
-//! alternate and attempts are staggered, with at most six active attempts.
-//! If every active attempt fails, the next starts immediately; success drops pending attempts,
-//! and so does a failure that every address would repeat, such as a refused QUIC handshake.
-//! The connector's deadline covers DNS and the whole race. Disabling racing preserves resolver
-//! order.
-//!
-//! See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305#section-5).
+//! DNS completes before the [`race()`], and the connector's deadline covers both.
+
+mod race;
 
 pub(crate) mod tcp;
 
@@ -17,13 +12,12 @@ pub(crate) mod tcp;
 use std::path::Path;
 use std::{
     borrow::Cow,
-    collections::VecDeque,
     error::Error as StdError,
     fmt,
-    future::{Future, poll_fn},
+    future::Future,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    pin::{Pin, pin},
+    pin::pin,
     sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant},
@@ -42,13 +36,12 @@ use {
     std::net::UdpSocket,
 };
 
+pub(super) use self::race::race;
 use crate::{
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
     rt::{BoxConnection, Connecting, DynRuntime, Timer as _},
 };
-
-const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
 
 /// Reaches addresses from this host: resolves names, races addresses and applies local
 /// bindings and TCP socket options. As a service it opens the TCP or Unix stream of a
@@ -91,23 +84,6 @@ pub(crate) struct BindOptions {
     pub(crate) ipv6_address: Option<Ipv6Addr>,
 }
 
-/// Owns the pending candidates and active attempts for one connection race.
-/// Dropping it cancels every unfinished attempt, including after a winner is selected.
-struct Race<F> {
-    addr_families: (SocketAddrs, SocketAddrs),
-    next_fallback: bool,
-    attempts: VecDeque<Attempt<F>>,
-    next_order: usize,
-    first_error: Option<(usize, ConnectError)>,
-}
-
-/// One active connection attempt and its launch order.
-struct Attempt<F> {
-    addr: SocketAddr,
-    order: usize,
-    future: F,
-}
-
 /// Connection failure with an optional attempted address and underlying cause.
 pub struct ConnectError {
     pub(crate) msg: &'static str,
@@ -115,13 +91,6 @@ pub struct ConnectError {
     pub(crate) cause: Option<BoxError>,
     /// Every other address of the host would fail the same way, so the race ends here.
     pub(super) terminal: bool,
-}
-
-enum Event<C> {
-    Connected(C),
-    Terminal(ConnectError),
-    AllAttemptsFailed,
-    DelayElapsed,
 }
 
 /// Resolves one host through `lookup`, preserving custom DNS ports unless the URI supplies a
@@ -182,60 +151,6 @@ where
             .into()),
         }
     }
-}
-
-/// Tries candidates using transport-specific setup and the selected clock, staggered by
-/// `happy_eyeballs_timeout` or one at a time without it. Bindings of one family drop the
-/// other family's candidates. Setup errors and failed futures advance through addresses; a
-/// terminal error ends the race at once and cancels the other attempts.
-pub(super) async fn race<C, F, S>(
-    addrs: SocketAddrs,
-    bind_options: &BindOptions,
-    happy_eyeballs_timeout: Option<Duration>,
-    mut start: impl FnMut(SocketAddr) -> Result<F, ConnectError>,
-    sleep: impl Fn(Duration) -> S,
-) -> Result<C, ConnectError>
-where
-    F: Future<Output = Result<C, ConnectError>> + Unpin,
-    S: Future<Output = ()>,
-{
-    let addrs = match (bind_options.ipv4_address, bind_options.ipv6_address) {
-        (Some(_), None) => addrs.filter(SocketAddr::is_ipv4),
-        (None, Some(_)) => addrs.filter(SocketAddr::is_ipv6),
-        _ => addrs,
-    };
-    // Avoid allocating an active set when no overlapping attempts are needed.
-    if happy_eyeballs_timeout.is_none() || addrs.len() <= 1 {
-        let mut first_error = None;
-        for addr in addrs {
-            let result = match start(addr) {
-                Ok(future) => future.await,
-                Err(error) => Err(error),
-            };
-            match result {
-                Ok(connection) => return Ok(connection),
-                Err(error) => {
-                    let error = error.with_addr(addr);
-                    trace!("connect error for {}: {:?}", addr, error);
-                    if error.terminal {
-                        return Err(error);
-                    }
-                    first_error.get_or_insert(error);
-                }
-            }
-        }
-        return Err(first_error.unwrap_or_else(ConnectError::network_unreachable));
-    }
-
-    let mut race = Race {
-        addr_families: addrs.split_by_preference(None, None),
-        next_fallback: false,
-        attempts: VecDeque::with_capacity(MAX_PARALLEL_CONNECT_ATTEMPTS),
-        next_order: 0,
-        first_error: None,
-    };
-    race.connect(happy_eyeballs_timeout, &mut start, sleep)
-        .await
 }
 
 // ===== impl Dialer =====
@@ -337,24 +252,22 @@ impl Dialer {
     }
 }
 
-impl Service<SocketRequest> for Dialer {
-    type Response = BoxConnection;
-    type Error = BoxError;
-    // A Unix socket keeps the runtime's own boxed future.
-    type Future =
-        Either<BoxFuture<'static, Result<BoxConnection, BoxError>>, ErrInto<Connecting, BoxError>>;
-
-    #[inline]
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: SocketRequest) -> Self::Future {
+impl Dialer {
+    /// Dials `req` without boxing the future, for callers that await it inside their own.
+    /// The [`Service`] form boxes it for connectors that need a nameable future.
+    pub(crate) async fn dial(&self, req: SocketRequest) -> Result<BoxConnection, BoxError> {
         #[cfg(unix)]
         if let Some(path) = req.unix {
-            return Either::Right(self.inner.runtime.connect_unix(path).err_into());
+            return Ok(self.inner.runtime.connect_unix(path).await?);
         }
+        self.dial_tcp(req).await
+    }
 
+    /// Resolves the host and races its addresses until the request's deadline.
+    fn dial_tcp(
+        &self,
+        req: SocketRequest,
+    ) -> impl Future<Output = Result<BoxConnection, BoxError>> + use<> {
         // Disable Nagle during TLS handshakes.
         // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
         let nodelay = req.secure || self.nodelay();
@@ -381,11 +294,28 @@ impl Service<SocketRequest> for Dialer {
             .await?;
             Ok(stream)
         };
-        Either::Left(Box::pin(within_deadline(
-            deadline,
-            &self.inner.runtime,
-            dial,
-        )))
+        within_deadline(deadline, &self.inner.runtime, dial)
+    }
+}
+
+impl Service<SocketRequest> for Dialer {
+    type Response = BoxConnection;
+    type Error = BoxError;
+    // A Unix socket keeps the runtime's own boxed future.
+    type Future =
+        Either<BoxFuture<'static, Result<BoxConnection, BoxError>>, ErrInto<Connecting, BoxError>>;
+
+    #[inline]
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: SocketRequest) -> Self::Future {
+        #[cfg(unix)]
+        if let Some(path) = req.unix {
+            return Either::Right(self.inner.runtime.connect_unix(path).err_into());
+        }
+        Either::Left(Box::pin(self.dial_tcp(req)))
     }
 }
 
@@ -495,138 +425,6 @@ cfg_select! {
     }
 }
 
-// ===== impl Race =====
-
-impl<C, F> Race<F>
-where
-    F: Future<Output = Result<C, ConnectError>> + Unpin,
-{
-    fn has_remaining(&self) -> bool {
-        let (preferred, fallback) = &self.addr_families;
-        !preferred.is_empty() || !fallback.is_empty()
-    }
-
-    fn next_addr(&mut self) -> Option<SocketAddr> {
-        let (preferred, fallback) = &mut self.addr_families;
-        let use_fallback = match (
-            self.next_fallback,
-            !preferred.is_empty(),
-            !fallback.is_empty(),
-        ) {
-            (_, false, false) => return None,
-            (true, _, true) | (_, false, true) => true,
-            _ => false,
-        };
-        self.next_fallback = !use_fallback;
-        if use_fallback {
-            fallback.next()
-        } else {
-            preferred.next()
-        }
-    }
-
-    fn record_error(&mut self, order: usize, error: ConnectError) {
-        match &self.first_error {
-            Some((first_order, _)) if *first_order <= order => {}
-            _ => self.first_error = Some((order, error)),
-        }
-    }
-
-    fn launch_next(
-        &mut self,
-        start: &mut impl FnMut(SocketAddr) -> Result<F, ConnectError>,
-    ) -> bool {
-        while let Some(addr) = self.next_addr() {
-            let order = self.next_order;
-            self.next_order = self.next_order.saturating_add(1);
-            match start(addr) {
-                Ok(future) => {
-                    self.attempts.push_back(Attempt {
-                        addr,
-                        order,
-                        future,
-                    });
-                    return true;
-                }
-                Err(error) => self.record_error(order, error.with_addr(addr)),
-            }
-        }
-        false
-    }
-
-    fn poll_attempts(&mut self, cx: &mut Context<'_>) -> Poll<Event<C>> {
-        let mut index = 0;
-        let mut failed = false;
-        while let Some(attempt) = self.attempts.get_mut(index) {
-            let addr = attempt.addr;
-            let order = attempt.order;
-            match Pin::new(&mut attempt.future).poll(cx) {
-                Poll::Pending => index += 1,
-                Poll::Ready(result) => {
-                    let _ = self.attempts.remove(index);
-                    match result {
-                        Ok(connection) => return Poll::Ready(Event::Connected(connection)),
-                        Err(error) => {
-                            let error = error.with_addr(addr);
-                            trace!("connect error for {}: {:?}", addr, error);
-                            if error.terminal {
-                                return Poll::Ready(Event::Terminal(error));
-                            }
-                            self.record_error(order, error);
-                            failed = true;
-                        }
-                    }
-                }
-            }
-        }
-        if failed && self.attempts.is_empty() {
-            Poll::Ready(Event::AllAttemptsFailed)
-        } else {
-            Poll::Pending
-        }
-    }
-
-    async fn connect<S: Future<Output = ()>>(
-        &mut self,
-        delay: Option<Duration>,
-        start: &mut impl FnMut(SocketAddr) -> Result<F, ConnectError>,
-        sleep: impl Fn(Duration) -> S,
-    ) -> Result<C, ConnectError> {
-        loop {
-            if self.attempts.is_empty() && !self.launch_next(start) {
-                return Err(self
-                    .first_error
-                    .take()
-                    .map(|(_, error)| error)
-                    .unwrap_or_else(ConnectError::network_unreachable));
-            }
-            let event = match (delay, self.has_remaining()) {
-                (Some(delay), true) => {
-                    let mut sleep = pin!(sleep(delay));
-                    poll_fn(|cx| match self.poll_attempts(cx) {
-                        Poll::Ready(event) => Poll::Ready(event),
-                        Poll::Pending => sleep.as_mut().poll(cx).map(|()| Event::DelayElapsed),
-                    })
-                    .await
-                }
-                _ => poll_fn(|cx| self.poll_attempts(cx)).await,
-            };
-            match event {
-                Event::Connected(connection) => return Ok(connection),
-                Event::Terminal(error) => return Err(error),
-                Event::AllAttemptsFailed => {}
-                Event::DelayElapsed => {
-                    if self.attempts.len() >= MAX_PARALLEL_CONNECT_ATTEMPTS {
-                        // Dropping the oldest pending future gives later addresses a slot.
-                        self.attempts.pop_front();
-                    }
-                }
-            }
-            self.launch_next(start);
-        }
-    }
-}
-
 // ===== impl ConnectError =====
 
 impl ConnectError {
@@ -687,71 +485,18 @@ impl StdError for ConnectError {
 }
 
 #[cfg(test)]
-mod bind_tests {
-    use super::*;
-
-    #[test]
-    fn bindings_merge_only_specified_fields() {
-        let mut bindings = BindOptions::default();
-        bindings.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
-        bindings.interface = Some("eth0".into());
-        let inherited = bindings.clone();
-
-        bindings.merge(&BindOptions::default());
-        assert_eq!(bindings, inherited);
-
-        bindings.merge(&BindOptions {
-            ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
-            ..Default::default()
-        });
-        assert_eq!(bindings.ipv4_address, Some(Ipv4Addr::UNSPECIFIED));
-        assert_eq!(bindings.ipv6_address, Some(Ipv6Addr::LOCALHOST));
-        assert_eq!(bindings.interface, inherited.interface);
-
-        bindings.merge(&BindOptions {
-            interface: Some("eth1".into()),
-            ..Default::default()
-        });
-        assert_eq!(bindings.interface.as_deref(), Some("eth1"));
-        assert_eq!(bindings.ipv4_address, Some(Ipv4Addr::UNSPECIFIED));
-        assert_eq!(bindings.ipv6_address, Some(Ipv6Addr::LOCALHOST));
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use std::{
-        future::{pending, ready},
-        net::{Ipv4Addr, Ipv6Addr},
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
+        future::ready,
+        sync::atomic::{AtomicUsize, Ordering},
     };
 
-    use futures_util::{FutureExt, poll};
-    use tower::{Service, service_fn};
+    use tower::service_fn;
 
     use super::*;
 
     const V4: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 443);
     const V6: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 443);
-    const DELAY: Duration = Duration::from_millis(10);
-
-    struct Active(Arc<AtomicUsize>);
-
-    impl Active {
-        fn new(active: &Arc<AtomicUsize>) -> Self {
-            active.fetch_add(1, Ordering::SeqCst);
-            Self(active.clone())
-        }
-    }
-
-    impl Drop for Active {
-        fn drop(&mut self) {
-            self.0.fetch_sub(1, Ordering::SeqCst);
-        }
-    }
 
     #[tokio::test]
     async fn resolves_literals_and_preserves_dns_port_contract() {
@@ -801,175 +546,30 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn races_addresses_with_ordered_pacing_and_bounded_concurrency() {
-        let v4: Vec<_> = (1..=6).map(|port| SocketAddr::new(V4.ip(), port)).collect();
-        let v6: Vec<_> = (1..=2).map(|port| SocketAddr::new(V6.ip(), port)).collect();
-        let interleaved = [v4[0], v6[0], v4[1], v6[1], v4[2], v4[3], v4[4], v4[5]];
-        let failed = v6[0];
-        let winner = v4[5];
-        for happy_eyeballs_timeout in [None, Some(DELAY)] {
-            let parallel = happy_eyeballs_timeout.is_some();
-            let active = Arc::new(AtomicUsize::new(0));
-            let mut launched = Vec::new();
-            let mut max_active = 0;
-            let started = tokio::time::Instant::now();
-            let result = race(
-                SocketAddrs::new([v4.as_slice(), v6.as_slice()].concat()),
-                &BindOptions::default(),
-                happy_eyeballs_timeout,
-                |addr| {
-                    launched.push(addr);
-                    let attempt = Active::new(&active);
-                    max_active = max_active.max(active.load(Ordering::SeqCst));
-                    Ok(async move {
-                        let _attempt = attempt;
-                        if addr == winner {
-                            Ok(addr)
-                        } else if parallel && addr != failed {
-                            pending().await
-                        } else {
-                            tokio::time::sleep(if parallel { DELAY / 10 } else { DELAY / 2 }).await;
-                            Err(ConnectError::new(
-                                "attempt failed",
-                                io::Error::from(io::ErrorKind::ConnectionRefused),
-                            ))
-                        }
-                    }
-                    .boxed())
-                },
-                tokio::time::sleep,
-            )
-            .await
-            .unwrap();
-            assert_eq!(result, winner);
-            assert_eq!(
-                started.elapsed(),
-                if parallel { DELAY * 7 } else { DELAY * 5 / 2 }
-            );
-            assert_eq!(launched, if parallel { &interleaved[..] } else { &v4 });
-            assert_eq!(max_active, if parallel { 6 } else { 1 });
-            assert_eq!(active.load(Ordering::SeqCst), 0);
-        }
-    }
+    #[test]
+    fn bindings_merge_only_specified_fields() {
+        let mut bindings = BindOptions::default();
+        bindings.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
+        bindings.interface = Some("eth0".into());
+        let inherited = bindings.clone();
 
-    #[tokio::test(start_paused = true)]
-    async fn reports_the_error_of_the_first_launched_attempt() {
-        let started = tokio::time::Instant::now();
-        let error = race(
-            SocketAddrs::new(vec![V4, V6]),
-            &BindOptions::default(),
-            Some(DELAY),
-            |addr| {
-                Ok(async move {
-                    if addr == V4 {
-                        tokio::time::sleep(DELAY * 3).await;
-                    }
-                    Err::<(), _>(ConnectError::new(
-                        "attempt failed",
-                        io::Error::from(io::ErrorKind::ConnectionRefused),
-                    ))
-                }
-                .boxed())
-            },
-            tokio::time::sleep,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(
-            error.addr,
-            Some(V4),
-            "launch order wins over failure completion order"
-        );
-        assert_eq!(started.elapsed(), DELAY * 3);
-    }
+        bindings.merge(&BindOptions::default());
+        assert_eq!(bindings, inherited);
 
-    #[tokio::test(start_paused = true)]
-    async fn selects_candidates_and_skips_setup_failures() {
-        for happy_eyeballs_timeout in [None, Some(DELAY)] {
-            for (ipv4, ipv6, expected) in [
-                (None, None, V6),
-                (Some(Ipv4Addr::LOCALHOST), None, V4),
-                (None, Some(Ipv6Addr::LOCALHOST), V6),
-            ] {
-                let mut bindings = BindOptions::default();
-                bindings.set_local_addresses(ipv4, ipv6);
-                let mut launched = Vec::new();
-                let started = tokio::time::Instant::now();
-                let result = race(
-                    SocketAddrs::new(vec![V4, V6]),
-                    &bindings,
-                    happy_eyeballs_timeout,
-                    |addr| {
-                        launched.push(addr);
-                        if addr == expected {
-                            Ok(ready(Ok(addr)))
-                        } else {
-                            Err(ConnectError::new(
-                                "setup failed",
-                                io::Error::from(io::ErrorKind::AddrNotAvailable),
-                            ))
-                        }
-                    },
-                    tokio::time::sleep,
-                )
-                .await
-                .unwrap();
-                assert_eq!(result, expected);
-                assert_eq!(started.elapsed(), Duration::ZERO);
-                assert_eq!(
-                    launched,
-                    if ipv4.is_some() || ipv6.is_some() {
-                        vec![expected]
-                    } else {
-                        vec![V4, V6]
-                    }
-                );
-            }
-        }
+        bindings.merge(&BindOptions {
+            ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
+            ..Default::default()
+        });
+        assert_eq!(bindings.ipv4_address, Some(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(bindings.ipv6_address, Some(Ipv6Addr::LOCALHOST));
+        assert_eq!(bindings.interface, inherited.interface);
 
-        let error = race(
-            SocketAddrs::new(Vec::new()),
-            &BindOptions::default(),
-            Some(DELAY),
-            |addr| Ok(ready(Ok(addr))),
-            tokio::time::sleep,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.addr, None);
-        assert_eq!(
-            error.cause.unwrap().downcast::<io::Error>().unwrap().kind(),
-            io::ErrorKind::NotConnected
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn dropping_the_race_cancels_pending_attempts() {
-        let active = Arc::new(AtomicUsize::new(0));
-        let mut launched = 0;
-        let bindings = BindOptions::default();
-        let mut race = Box::pin(race(
-            SocketAddrs::new((1..=4).map(|port| SocketAddr::new(V4.ip(), port)).collect()),
-            &bindings,
-            Some(DELAY),
-            |_| {
-                launched += 1;
-                let guard = Active::new(&active);
-                Ok(async move {
-                    let _guard = guard;
-                    pending::<Result<(), ConnectError>>().await
-                }
-                .boxed())
-            },
-            tokio::time::sleep,
-        ));
-        assert!(poll!(race.as_mut()).is_pending());
-        tokio::time::advance(DELAY).await;
-        assert!(poll!(race.as_mut()).is_pending());
-        assert_eq!(active.load(Ordering::SeqCst), 2);
-        drop(race);
-        assert_eq!(launched, 2);
-        assert_eq!(active.load(Ordering::SeqCst), 0);
+        bindings.merge(&BindOptions {
+            interface: Some("eth1".into()),
+            ..Default::default()
+        });
+        assert_eq!(bindings.interface.as_deref(), Some("eth1"));
+        assert_eq!(bindings.ipv4_address, Some(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(bindings.ipv6_address, Some(Ipv6Addr::LOCALHOST));
     }
 }

@@ -81,12 +81,12 @@ derive_deftly::define_derive_deftly! {
         }
     }
 
-    impl $crate::conn::config::ConnectConfig for $ttype {
-        const SCOPE: $crate::conn::config::ConfigScope = ${tmeta(config_key(scope)) as expr};
+    impl $crate::config::connect::ConnectConfig for $ttype {
+        const SCOPE: $crate::config::connect::ConfigScope = ${tmeta(config_key(scope)) as expr};
 
         fn hash_parts(&self) -> [u64; 3] {
             use std::hash::{BuildHasher, Hash, Hasher};
-            use $crate::conn::config::HASHER;
+            use $crate::config::connect::HASHER;
 
             let mut hash = HASHER.build_hasher();
             let state = &mut hash;
@@ -108,8 +108,8 @@ derive_deftly::define_derive_deftly! {
             [hash.finish(), session, context]
         }
 
-        fn eq_part(&self, other: &Self, part: $crate::conn::config::KeyPart) -> bool {
-            use $crate::conn::config::KeyPart;
+        fn eq_part(&self, other: &Self, part: $crate::config::connect::KeyPart) -> bool {
+            use $crate::config::connect::KeyPart;
 
             true
                 ${for fields { ${when fmeta(config_key(context))} && $SAME_FIELD }}

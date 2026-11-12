@@ -7,16 +7,17 @@ use tower::{BoxError, Layer, Service};
 
 use crate::{
     conn::{
-        AsyncConn, Conn, Connected, HttpInfo, Transport,
+        Conn, Connected, HttpInfo, Io, Transport,
         connected::tls_info,
         request::ConnectRequest,
         stream::{Dialed, RouteRequest, Routed, RoutedIo},
+        svc::TransportRequest,
     },
     error::ProxyConnect,
     proxy::matcher::Intercept,
     tls::{
         AlpnProtocol,
-        connector::{HttpsConnector, MaybeHttpsStream, StreamTls},
+        connector::{MaybeHttpsStream, StreamTls, TlsConnector},
     },
 };
 
@@ -36,22 +37,24 @@ pub(crate) struct Tls<S> {
 }
 
 /// Finishes TLS over an established route and restores Nagle once when `restore_nagle` is set.
-/// Builds the metadata from the dialed socket's addresses, the TLS session and the identity of
-/// `proxy`, the forward proxy `io` reaches. An `http` route skips TLS.
-async fn finish<IO>(
-    io: IO,
+/// The TLS peer is `proxy`, the forward proxy `io` reaches, or else the origin; an `http` peer
+/// skips TLS. Builds the metadata from the dialed socket's addresses, the TLS session and the
+/// proxy's identity.
+async fn finish<S>(
+    io: S,
     request: ConnectRequest,
-    tls: HttpsConnector<()>,
+    tls: TlsConnector,
     restore_nagle: bool,
     proxy: Option<Intercept>,
 ) -> Result<Conn, BoxError>
 where
-    IO: AsyncConn + Dialed,
+    S: Io + Dialed,
 {
     let socket = io.socket();
     let (local_addr, remote_addr) = (socket.local_addr(), socket.peer_addr());
+    let route = proxy.as_ref().map_or(request.uri(), Intercept::uri);
     let stream = tls
-        .handshake(io, request, remote_addr.map(|addr| addr.ip()))
+        .handshake(io, &request, route, remote_addr.map(|addr| addr.ip()))
         .await?;
 
     let mut connected = Connected::new();
@@ -64,7 +67,7 @@ where
     if let Some(proxy) = proxy {
         connected = connected.proxy(proxy);
     }
-    let stream: Box<dyn AsyncConn> = match stream {
+    let stream: Box<dyn Io> = match stream {
         MaybeHttpsStream::Http(stream) => Box::new(stream),
         MaybeHttpsStream::Https(stream) => {
             if restore_nagle {
@@ -95,6 +98,7 @@ where
 // ===== impl TlsLayer =====
 
 impl TlsLayer {
+    /// Creates a layer that finishes routed streams with the client's compiled stream TLS.
     pub(crate) fn new(tls: StreamTls) -> Self {
         Self { tls }
     }
@@ -114,7 +118,7 @@ impl<S> Layer<S> for TlsLayer {
 
 // ===== impl Tls =====
 
-impl<S> Service<ConnectRequest> for Tls<S>
+impl<S> Service<TransportRequest> for Tls<S>
 where
     S: Service<RouteRequest, Response = Routed>,
     S::Error: Into<BoxError>,
@@ -129,12 +133,16 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, request: ConnectRequest) -> Self::Future {
+    fn call(&mut self, TransportRequest { request, deadline }: TransportRequest) -> Self::Future {
         let tls = match self.tls.clone().for_request(&request) {
             Ok(tls) => tls,
             Err(error) => return Box::pin(future::ready(Err(error.into()))),
         };
-        let routing = self.inner.call(RouteRequest { request, tls });
+        let routing = self.inner.call(RouteRequest {
+            request,
+            tls,
+            deadline,
+        });
 
         Box::pin(async move {
             let Routed {

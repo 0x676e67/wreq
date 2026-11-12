@@ -4,6 +4,7 @@
 
 use std::{
     collections::VecDeque, net::SocketAddr, num::NonZeroUsize, ops::Deref, pin::pin, sync::Arc,
+    time::Instant,
 };
 
 use ::quic::{
@@ -219,7 +220,7 @@ impl Endpoints {
         let config = self.config(request, Path::Direct)?;
         let (connection, endpoint) = self
             .dial(
-                request.route_uri(),
+                request.uri(),
                 self.dialer.bind_options(request),
                 &config,
                 request.bind_options().is_none(),
@@ -228,19 +229,19 @@ impl Endpoints {
         self.connection(connection, endpoint)
     }
 
-    /// Dials the proxy without using target-scoped address tokens or endpoint slots.
-    /// TLS tickets retain the original request identity and the proxy's distinct route.
+    /// Dials the proxy until `deadline`, without using target-scoped address tokens or
+    /// endpoint slots. TLS tickets retain the original request identity and the proxy's
+    /// distinct route.
     pub(super) async fn connect_proxy(
         &self,
         request: &ConnectRequest,
         uri: &Uri,
+        deadline: Option<Instant>,
     ) -> Result<(Connection, Endpoint), BoxError> {
-        let mut config = self
-            .tls
-            .config(&request.clone().with_route_uri(uri.clone()))?;
+        let mut config = self.tls.config(request, uri)?;
         config.transport_config(self.transport(request, Path::Proxy)?);
         let dial = self.dial(uri, self.dialer.bind_options(request), &config, false);
-        within_deadline(request.deadline(), self.dialer.runtime(), dial).await
+        within_deadline(deadline, self.dialer.runtime(), dial).await
     }
 
     /// Returns the target's configuration over a tunnel, built before the tunnel so a local
@@ -269,9 +270,8 @@ impl Endpoints {
             Box::new(socket),
             self.dialer.runtime().quic(),
         )?;
-        let host = crate::util::strip_ipv6_brackets(
-            request.route_uri().host().ok_or("HTTP/3 URI has no host")?,
-        );
+        let host =
+            crate::util::strip_ipv6_brackets(request.uri().host().ok_or("HTTP/3 URI has no host")?);
         let connecting = endpoint
             .connect_with(config.client(), remote, host)
             .map_err(|error| session_error(error, config))?;
@@ -334,7 +334,7 @@ impl Endpoints {
     /// Attaches the transport of `path` and single-use address tokens to the original
     /// target's TLS configuration.
     fn config(&self, request: &ConnectRequest, path: Path) -> Result<QuicConfig, BoxError> {
-        let mut config = self.tls.config(request)?;
+        let mut config = self.tls.config(request, request.uri())?;
         config.transport_config(self.transport(request, path)?);
         config.token_store(Arc::new(ScopedTokens {
             tokens: self.tokens.clone(),
@@ -555,7 +555,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        conn::{config::ConfigSet, dialer::tcp, layer::deadline::DeadlineLayer},
+        config::connect::ConfigSet,
+        conn::{dialer::tcp, layer::deadline::DeadlineLayer, svc::TransportRequest},
         dns::{Addrs, DynResolver, Name, Resolve, Resolving},
         rt::{DynRuntime, tokio::TokioRuntime},
         tls::{self, trust::CertStore},
@@ -661,7 +662,7 @@ mod tests {
         request(format!("https://{address}/").parse().unwrap(), None)
     }
 
-    fn configured<T: crate::conn::config::ConnectConfig>(value: T) -> ConnectRequest {
+    fn configured<T: crate::config::connect::ConnectConfig>(value: T) -> ConnectRequest {
         let mut config_set = ConfigSet::default();
         config_set.insert(value);
         let uri = Uri::from_static("https://localhost/");
@@ -900,7 +901,7 @@ mod tests {
             Some(Duration::from_millis(30)),
             endpoints.dialer().runtime().clone(),
         )
-        .layer(service_fn(|request: ConnectRequest| {
+        .layer(service_fn(|TransportRequest { request, .. }| {
             let endpoints = &endpoints;
             async move { endpoints.connect(&request).await }
         }))

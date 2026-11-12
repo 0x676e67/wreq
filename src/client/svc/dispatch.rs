@@ -34,7 +34,7 @@ use crate::{
         error::{Error, ErrorKind},
         pool::{self, TransportConnector},
     },
-    conn::config::ConfigSet,
+    config::connect::ConfigSet,
     ext::UriExt,
     rt::DynRuntime,
 };

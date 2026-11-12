@@ -11,7 +11,7 @@ use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 
 use crate::{
-    conn::request::ConnectRequest,
+    conn::{request::ConnectRequest, svc::TransportRequest},
     error::TimedOut,
     rt::{BoxSleep, DynRuntime, Timer as _, deadline_after},
 };
@@ -25,7 +25,8 @@ pub(crate) struct DeadlineLayer {
 
 /// Bounds each connector call by one deadline, started in `call` after readiness waits.
 /// It covers everything beneath: user layers, proxy setup and the transport handshakes.
-/// Dials share its instant through [`ConnectRequest::deadline`] and fail there themselves.
+/// Proxy dials share its instant through the [`TransportRequest`] it passes on and fail there
+/// themselves; every other expiry is reported here.
 #[derive(Clone)]
 pub(crate) struct Deadline<S> {
     inner: S,
@@ -48,6 +49,8 @@ pin_project! {
 // ===== impl DeadlineLayer =====
 
 impl DeadlineLayer {
+    /// Creates a layer that bounds each connector call by `timeout`, measured on `runtime`'s
+    /// clock. `None` leaves calls unbounded.
     pub(crate) fn new(timeout: Option<Duration>, runtime: DynRuntime) -> Self {
         Self { timeout, runtime }
     }
@@ -70,7 +73,7 @@ impl<S> Layer<S> for DeadlineLayer {
 
 impl<S> Service<ConnectRequest> for Deadline<S>
 where
-    S: Service<ConnectRequest>,
+    S: Service<TransportRequest>,
     S::Error: Into<BoxError>,
 {
     type Response = S::Response;
@@ -82,13 +85,12 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, mut request: ConnectRequest) -> Self::Future {
+    fn call(&mut self, request: ConnectRequest) -> Self::Future {
         let deadline = self
             .timeout
             .map(|timeout| deadline_after(self.runtime.now(), timeout));
-        request.set_deadline(deadline);
         ResponseFuture {
-            future: self.inner.call(request),
+            future: self.inner.call(TransportRequest { request, deadline }),
             sleep: deadline.map(|deadline| self.runtime.sleep_until(deadline)),
         }
     }

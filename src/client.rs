@@ -67,10 +67,8 @@ use crate::cookie;
 use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Protocol, Proxy,
-    conn::{
-        self, BoxedTransportConnector, Conn, Connector, Unnameable, config::ConfigSet,
-        dialer::BindOptions,
-    },
+    config::connect::ConfigSet,
+    conn::{self, BoxedTransportConnector, Conn, Connector, Unnameable, dialer::BindOptions},
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
     header::OrigHeaderMap,

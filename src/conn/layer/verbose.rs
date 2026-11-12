@@ -1,36 +1,27 @@
 //! Optional I/O tracing for established stream connections.
 
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll, ready},
-};
+use tower::util::{Either, MapResponse, MapResponseLayer};
 
-use pin_project_lite::pin_project;
-use tower::{Layer, Service};
+use crate::conn::Conn;
 
-use crate::conn::{Conn, request::ConnectRequest};
+/// Maps an established connection to one whose stream I/O is traced.
+type Trace = fn(Conn) -> Conn;
 
-/// Middleware layer to use [`Verbose`].
-#[derive(Clone, Copy)]
-pub(crate) struct VerboseLayer {
+/// A service whose established streams are traced when the layer is in place.
+pub(crate) type Verbose<S> = Either<MapResponse<S, Trace>, S>;
+
+/// Returns the layer that traces the I/O of each stream the inner service establishes, when
+/// `enabled` with the `tracing` feature. Without it the inner service is used as is.
+pub(crate) fn layer(
+    #[cfg_attr(
+        not(feature = "tracing"),
+        expect(unused_variables, reason = "Tracing is compiled out")
+    )]
     enabled: bool,
-}
-
-/// Traces the I/O of each stream the inner service establishes, when enabled with the
-/// `tracing` feature. Other connections pass through unchanged.
-#[derive(Clone)]
-pub(crate) struct Verbose<S> {
-    inner: S,
-    enabled: bool,
-}
-
-pin_project! {
-    /// Wraps the established stream once the inner connection completes.
-    pub struct ResponseFuture<F> {
-        #[pin]
-        future: F,
-        enabled: bool,
+) -> Option<MapResponseLayer<Trace>> {
+    cfg_select! {
+        feature = "tracing" => enabled.then(|| MapResponseLayer::new(trace as Trace)),
+        _ => None,
     }
 }
 
@@ -54,72 +45,6 @@ fn trace(conn: Conn) -> Conn {
     Conn {
         transport,
         connected,
-    }
-}
-
-/// Tracing is compiled out without the `tracing` feature.
-#[cfg(not(feature = "tracing"))]
-#[inline(always)]
-fn trace(conn: Conn) -> Conn {
-    conn
-}
-
-// ===== impl VerboseLayer =====
-
-impl VerboseLayer {
-    pub(crate) fn new(enabled: bool) -> Self {
-        Self { enabled }
-    }
-}
-
-impl<S> Layer<S> for VerboseLayer {
-    type Service = Verbose<S>;
-
-    #[inline(always)]
-    fn layer(&self, inner: S) -> Self::Service {
-        Verbose {
-            inner,
-            enabled: self.enabled,
-        }
-    }
-}
-
-// ===== impl Verbose =====
-
-impl<S> Service<ConnectRequest> for Verbose<S>
-where
-    S: Service<ConnectRequest, Response = Conn>,
-{
-    type Response = Conn;
-    type Error = S::Error;
-    type Future = ResponseFuture<S::Future>;
-
-    #[inline(always)]
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
-    }
-
-    #[inline]
-    fn call(&mut self, request: ConnectRequest) -> Self::Future {
-        ResponseFuture {
-            future: self.inner.call(request),
-            enabled: self.enabled,
-        }
-    }
-}
-
-// ===== impl ResponseFuture =====
-
-impl<F, E> Future for ResponseFuture<F>
-where
-    F: Future<Output = Result<Conn, E>>,
-{
-    type Output = Result<Conn, E>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        let conn = ready!(this.future.poll(cx))?;
-        Poll::Ready(Ok(if *this.enabled { trace(conn) } else { conn }))
     }
 }
 

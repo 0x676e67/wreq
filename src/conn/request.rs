@@ -8,25 +8,23 @@ use std::{
     fmt,
     hash::{BuildHasher, Hash, Hasher},
     sync::Arc,
-    time::Instant,
 };
 
 use http::{Uri, uri::PathAndQuery};
 
-use super::{
-    config::{ConfigSet, ConnectConfig, HASHER, Overrides},
-    dialer::BindOptions,
+use super::dialer::BindOptions;
+use crate::{
+    Protocol,
+    config::connect::{ConfigSet, ConnectConfig, HASHER, Overrides},
+    error::BoxError,
 };
-use crate::{Protocol, error::BoxError};
 
 /// Connection request shared by pool lookup and transport connection attempts.
 /// Keeps the origin, protocol choice, bindings and typed configuration fixed for an attempt.
-/// A proxy may change the route without changing the original reuse identity.
+/// Proxy routes connect and authenticate other hosts without changing this identity.
 #[derive(Debug, Clone)]
 pub struct ConnectRequest {
     key: ConnectionKey,
-    route_uri: Option<Uri>,
-    deadline: Option<Instant>,
 }
 
 /// Reuse identity for pool entries, extended CONNECT probes and QUIC address tokens.
@@ -78,14 +76,12 @@ impl ConnectRequest {
                 client_config_set,
                 bind_options,
             ),
-            route_uri: None,
-            deadline: None,
         })
     }
 
     /// Returns the original scheme and authority with `/` as the path.
     /// Pool and session keys use this origin, not the request's path or query.
-    /// Proxy routing leaves it unchanged; use `route_uri` for transport setup.
+    /// Proxy routing leaves it unchanged.
     pub(crate) fn uri(&self) -> &Uri {
         &self.key.origin
     }
@@ -142,32 +138,6 @@ impl ConnectRequest {
             client_config_set,
             self.key.bind_options.clone(),
         )
-    }
-
-    /// Returns the address used for transport setup and TLS host selection.
-    /// It defaults to the original origin until a proxy supplies another route.
-    /// Routing does not participate in the original connection's reuse identity.
-    pub(crate) fn route_uri(&self) -> &Uri {
-        self.route_uri.as_ref().unwrap_or_else(|| self.uri())
-    }
-
-    /// Changes the transport address without changing origin or reuse identity.
-    /// Proxy connectors supply an already validated URI for the next hop.
-    /// Consuming this request leaves sibling clones and their routes unchanged.
-    pub(crate) fn with_route_uri(mut self, uri: Uri) -> Self {
-        self.route_uri = Some(uri);
-        self
-    }
-
-    /// Returns when the connect timeout expires, if one bounds this attempt.
-    /// Dials stop there themselves, so a proxy connector classifies their timeout.
-    pub(crate) fn deadline(&self) -> Option<Instant> {
-        self.deadline
-    }
-
-    /// Sets the instant [`Self::deadline`] returns; not part of the reuse identity.
-    pub(super) fn set_deadline(&mut self, deadline: Option<Instant>) {
-        self.deadline = deadline;
     }
 }
 
@@ -311,14 +281,7 @@ mod tests {
         assert_ne!(plain, changed.key());
         assert!(changed.config_override::<TlsOptions>().is_some());
 
-        let rerouted = changed
-            .clone()
-            .with_route_uri(Uri::from_static("https://proxy:8443/"));
-        assert_eq!(rerouted.uri(), "https://localhost/");
-        assert_eq!(rerouted.route_uri(), "https://proxy:8443/");
-        assert_eq!(rerouted.key(), changed.key());
-
-        // Preferences that resolve to one protocol share a key, which proxy routing keeps.
+        // Preferences that resolve to one protocol share a key.
         let keys = [
             (Protocol::Auto, None, Protocol::Auto),
             (Protocol::Auto, Some(Protocol::Auto), Protocol::Auto),
@@ -353,11 +316,8 @@ mod tests {
                 &BindOptions::default(),
             )
             .unwrap();
-            let key = request.key();
-            let rerouted = request.with_route_uri(Uri::from_static("https://proxy:8443/"));
-            assert_eq!(rerouted.resolved_protocol(), resolved);
-            assert_eq!(rerouted.key(), key);
-            (resolved, key)
+            assert_eq!(request.resolved_protocol(), resolved);
+            (resolved, request.key())
         });
         for (resolved, key) in &keys {
             for (other, other_key) in &keys {
@@ -443,13 +403,6 @@ mod tests {
             assert_eq!(request(Some(&merged)).key(), changed.key());
             assert_eq!(
                 changed.key_with_protocol(changed.resolved_protocol(), &client_config_set),
-                changed.key()
-            );
-            assert_eq!(
-                changed
-                    .clone()
-                    .with_route_uri(Uri::from_static("https://proxy:8443/"))
-                    .key(),
                 changed.key()
             );
 
@@ -538,7 +491,7 @@ mod tests {
     #[test]
     fn compressor_identity_uses_ordered_algorithms() {
         use crate::{
-            conn::config::KeyPart,
+            config::connect::KeyPart,
             tls::compress::{CertificateCompressionAlgorithm, CertificateCompressor, Codec},
         };
 

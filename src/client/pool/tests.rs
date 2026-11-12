@@ -10,7 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(feature = "http2")]
 use {
     super::entry::Checkout,
-    crate::conn::config::ConfigScope,
+    crate::config::connect::ConfigScope,
     bytes::Bytes,
     http::Response,
     http_body_util::Empty,

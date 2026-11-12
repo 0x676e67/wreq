@@ -70,9 +70,9 @@ use self::{
 use super::proto::{Established, http1};
 use crate::{
     Protocol,
+    config::connect::{ConfigSet, ConnectConfig},
     conn::{
         Conn,
-        config::{ConfigSet, ConnectConfig},
         request::{ConnectRequest, ConnectionKey},
     },
     rt::DynRuntime,

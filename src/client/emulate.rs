@@ -3,7 +3,7 @@ use http::HeaderMap;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
-    conn::config::{ConfigSet, ConnectConfig},
+    config::connect::{ConfigSet, ConnectConfig},
     header::OrigHeaderMap,
     http1::Http1Options,
     tls::TlsOptions,

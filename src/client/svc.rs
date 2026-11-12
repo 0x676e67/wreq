@@ -35,8 +35,8 @@ use super::{
 use crate::protocol::TransportKind;
 use crate::{
     Protocol,
-    config::RequestConfig,
-    conn::{config::ConfigSet, dialer::BindOptions, request::ConnectRequest},
+    config::{RequestConfig, connect::ConfigSet},
+    conn::{dialer::BindOptions, request::ConnectRequest},
     ext::UriExt,
 };
 
