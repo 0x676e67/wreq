@@ -302,6 +302,7 @@ impl Jar {
                 .to_owned();
 
             let mut store = self.0.write();
+            store.evict_expired(now);
             if !secure_origin
                 && store.would_overlay_secure_cookie(cookie.name(), &domain, &path, now)
             {
@@ -312,7 +313,7 @@ impl Jar {
                 store.remove_stored_cookie(&domain, &path, cookie.name(), host_only);
             } else {
                 cookie.set_path(path.clone());
-                store.insert_stored_cookie(domain, path, cookie);
+                store.insert_stored_cookie(domain, path, cookie, now);
             }
         }
     }
@@ -343,6 +344,7 @@ impl Jar {
             };
             let cookie = cookie.into();
             let mut store = self.0.write();
+            store.evict_expired(OffsetDateTime::now_utc());
             store.remove_stored_cookies(&host, uri.path(), cookie.name());
         }
     }
@@ -985,6 +987,51 @@ mod tests {
 
         match jar.cookies(&uri, Version::HTTP_11) {
             Cookies::Compressed(value) => assert_eq!(value, "A=value; B=new"),
+            other => panic!("expected compressed Cookie field, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn jar_evicts_expired_cookies_and_reorders_reinserted_cookies() {
+        use cookie::{
+            Cookie as RawCookie,
+            time::{Duration, OffsetDateTime},
+        };
+
+        use super::canonical_host;
+
+        let jar = Jar::default();
+        let host = canonical_host("example.com").unwrap();
+        let expired_host = canonical_host("expired.example.com").unwrap();
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let first_expiry = now + Duration::seconds(1);
+        let expiry = first_expiry + Duration::seconds(1);
+        {
+            let mut store = jar.0.write();
+            let mut obsolete = RawCookie::new("obsolete", "1");
+            obsolete.set_expires(first_expiry);
+            store.insert_stored_cookie(expired_host.clone(), "/".into(), obsolete.clone(), now);
+            store.insert_stored_cookie(host.clone(), "/obsolete".into(), obsolete, now);
+
+            let mut session = RawCookie::new("session", "1");
+            session.set_expires(expiry);
+            store.insert_stored_cookie(host.clone(), "/".into(), session, now);
+            store.insert_stored_cookie(host.clone(), "/".into(), RawCookie::new("other", "1"), now);
+
+            store.evict_expired(first_expiry);
+            assert!(!store.cookies.contains_key(&expired_host));
+            assert!(!store.cookies[&host].contains_key("/obsolete"));
+
+            // The next sweep is rate limited, so insertion must recognize the expired entry.
+            store.evict_expired(expiry);
+            let scope = &store.cookies[&host]["/"];
+            assert!(scope.entries("session").next().is_some());
+            store.insert_stored_cookie(host, "/".into(), RawCookie::new("session", "1"), expiry);
+        }
+
+        let uri = Uri::from_static("https://example.com/");
+        match jar.cookies(&uri, Version::HTTP_11) {
+            Cookies::Compressed(value) => assert_eq!(value, "other=1; session=1"),
             other => panic!("expected compressed Cookie field, got {other:?}"),
         }
     }
