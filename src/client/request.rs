@@ -692,7 +692,8 @@ impl RequestBuilder {
         self
     }
 
-    /// Set the local address for this request.
+    /// Sets this request's local IP address for one address family.
+    /// An unset family inherits the client's setting. Passing `None` keeps any earlier override.
     pub fn local_address<V>(mut self, local_address: V) -> RequestBuilder
     where
         V: Into<Option<IpAddr>>,
@@ -703,7 +704,8 @@ impl RequestBuilder {
         self
     }
 
-    /// Set the local addresses for this request.
+    /// Sets this request's local IPv4 and IPv6 addresses.
+    /// For either family, `None` keeps an earlier override or inherits the client's setting.
     pub fn local_addresses<V4, V6>(mut self, ipv4_address: V4, ipv6_address: V6) -> RequestBuilder
     where
         V4: Into<Option<Ipv4Addr>>,
@@ -719,7 +721,7 @@ impl RequestBuilder {
         self
     }
 
-    /// Bind connections only on the specified network interface.
+    /// Overrides the client's network interface for this request.
     ///
     /// This option is only available on the following operating systems:
     ///
@@ -744,10 +746,8 @@ impl RequestBuilder {
     /// use wreq::Client;
     ///
     /// # fn doc() -> Result<(), wreq::Error> {
-    /// let interface = "lo";
-    /// let client = Client::builder_tokio()
-    ///     .interface(interface)
-    ///     .build()?;
+    /// let client = Client::builder_tokio().build()?;
+    /// let request = client.get("http://localhost").interface("lo").build()?;
     /// # Ok(())
     /// # }
     /// # }

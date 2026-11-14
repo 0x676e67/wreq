@@ -86,9 +86,9 @@ pub trait Runtime: Timer + Debug + 'static {
     /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error, which fails
     /// HTTP/3 connections without affecting HTTP/1 or HTTP/2.
     ///
-    /// A client reuses the socket for later HTTP/3 connections, so the task it then spawns with
-    /// [`execute`](Self::execute) to receive on the socket must keep running while the client
-    /// opens them.
+    /// Direct HTTP/3 connections with the client's bindings can reuse the socket.
+    /// Keep the receive task spawned with [`execute`](Self::execute) running while the socket
+    /// is in use.
     #[cfg(feature = "http3")]
     fn udp_socket(&self, _socket: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
         Err(io::Error::new(

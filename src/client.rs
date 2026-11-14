@@ -893,14 +893,14 @@ impl ClientBuilder {
         self
     }
 
-    /// Set a timeout for only the connect phase of a `Client`.
+    /// Sets a time limit for establishing a connection.
     ///
-    /// The timeout covers connection establishment for every protocol: connector layers,
-    /// proxies, DNS resolution, the TCP address race and TLS handshake, or the QUIC handshake.
-    /// The HTTP/3 handshake itself does not wait for the server. A timeout while resolving or
-    /// dialing a proxy is a proxy connect error.
+    /// The timer starts after connector readiness and covers connector layers, DNS resolution,
+    /// proxy setup, TCP dialing and TLS, and QUIC handshakes.
+    /// A timeout reported while resolving or dialing a proxy is a [proxy connect
+    /// error](Error::is_proxy_connect).
     ///
-    /// Default is `None`.
+    /// By default there is no connection timeout.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.connect.connect_timeout = Some(timeout);
@@ -1209,7 +1209,8 @@ impl ClientBuilder {
         self
     }
 
-    /// Bind to a local IP Address.
+    /// Sets the local IP address for one address family.
+    /// The other family keeps its setting. Passing `None` leaves both unchanged.
     ///
     /// # Example
     ///
@@ -1234,11 +1235,11 @@ impl ClientBuilder {
         self
     }
 
-    /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
-    /// preferences) before connection.
+    /// Sets the local IPv4 and IPv6 addresses for new IP sockets.
+    /// Passing `None` for either family keeps its current setting.
     ///
-    ///  # Example
-    /// ///
+    /// # Example
+    ///
     /// ```
     /// # #[cfg(feature = "tokio-rt")] {
     /// use std::net::{Ipv4Addr, Ipv6Addr};
@@ -1280,9 +1281,9 @@ impl ClientBuilder {
     /// Note that connections will fail if the provided interface name is not a
     /// network interface that currently exists when a connection is established.
     ///
-    /// HTTP/3 connections share one UDP socket per address family, bound to the interface
-    /// when the first one opens. If the interface is removed and re-created, that socket
-    /// keeps the old one, so rebuild the client to use HTTP/3 over the new interface.
+    /// Direct HTTP/3 connections whose bindings match the client's share one UDP socket per
+    /// address family. If the interface is removed and re-created, rebuild the client to bind
+    /// those sockets to the new interface.
     ///
     /// # Example
     ///
@@ -1566,8 +1567,9 @@ impl ClientBuilder {
     ///
     /// Each subsequent invocation of this function will wrap previous layers.
     ///
-    /// If configured, `connect_timeout` wraps the layer stack. It starts when the
-    /// service is called, after readiness waits such as concurrency admission.
+    /// A TCP dial can return its timeout through the layer stack. The outer
+    /// [`connection timeout`](Self::connect_timeout) cancels a call that is still pending
+    /// when the deadline expires.
     ///
     /// Example usage:
     /// ```
