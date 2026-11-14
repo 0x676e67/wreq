@@ -11,7 +11,7 @@ use std::{
     collections::VecDeque,
     future::Future,
     iter,
-    net::SocketAddr,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::{Pin, pin},
     task::{Context, Poll},
     time::Duration,
@@ -22,7 +22,7 @@ use futures_util::{
     future::{self, Either},
 };
 
-use super::{BindOptions, ConnectError};
+use super::ConnectError;
 use crate::dns::SocketAddrs;
 
 const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
@@ -44,7 +44,7 @@ struct Attempt<F> {
 /// terminal error ends the race at once and cancels the other attempts.
 pub(crate) async fn race<C, F, S>(
     addrs: SocketAddrs,
-    bind_options: &BindOptions,
+    addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
     happy_eyeballs_timeout: Option<Duration>,
     mut start: impl FnMut(SocketAddr) -> Result<F, ConnectError>,
     sleep: impl Fn(Duration) -> S,
@@ -53,7 +53,7 @@ where
     F: Future<Output = Result<C, ConnectError>> + Unpin,
     S: Future<Output = ()>,
 {
-    let addrs = match (bind_options.ipv4_address, bind_options.ipv6_address) {
+    let addrs = match addresses {
         (Some(_), None) => addrs.filter(SocketAddr::is_ipv4),
         (None, Some(_)) => addrs.filter(SocketAddr::is_ipv6),
         _ => addrs,
@@ -240,7 +240,7 @@ mod tests {
             let started = tokio::time::Instant::now();
             let result = race(
                 SocketAddrs::new([v4.as_slice(), v6.as_slice()].concat()),
-                &BindOptions::default(),
+                (None, None),
                 happy_eyeballs_timeout,
                 |addr| {
                     launched.push(addr);
@@ -282,7 +282,7 @@ mod tests {
         let started = tokio::time::Instant::now();
         let error = race(
             SocketAddrs::new(vec![V4, V6]),
-            &BindOptions::default(),
+            (None, None),
             Some(DELAY),
             |addr| {
                 Ok(async move {
@@ -316,13 +316,12 @@ mod tests {
                 (Some(Ipv4Addr::LOCALHOST), None, V4),
                 (None, Some(Ipv6Addr::LOCALHOST), V6),
             ] {
-                let mut bindings = BindOptions::default();
-                bindings.set_local_addresses(ipv4, ipv6);
+                let bindings = (ipv4, ipv6);
                 let mut launched = Vec::new();
                 let started = tokio::time::Instant::now();
                 let result = race(
                     SocketAddrs::new(vec![V4, V6]),
-                    &bindings,
+                    bindings,
                     happy_eyeballs_timeout,
                     |addr| {
                         launched.push(addr);
@@ -354,7 +353,7 @@ mod tests {
 
         let error = race(
             SocketAddrs::new(Vec::new()),
-            &BindOptions::default(),
+            (None, None),
             Some(DELAY),
             |addr| Ok(ready(Ok(addr))),
             tokio::time::sleep,
@@ -372,10 +371,10 @@ mod tests {
     async fn dropping_the_race_cancels_pending_attempts() {
         let active = Arc::new(AtomicUsize::new(0));
         let mut launched = 0;
-        let bindings = BindOptions::default();
+        let bindings = (None, None);
         let mut race = Box::pin(race(
             SocketAddrs::new((1..=4).map(|port| SocketAddr::new(V4.ip(), port)).collect()),
-            &bindings,
+            bindings,
             Some(DELAY),
             |_| {
                 launched += 1;

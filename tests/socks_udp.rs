@@ -45,6 +45,7 @@ enum Mode {
         origin: SocketAddr,
         remote: bool,
         address: RelayAddress,
+        source: Option<Ipv4Addr>,
     },
     Reject,
     Stall,
@@ -181,7 +182,7 @@ impl SocksProxy {
         let (closed_sender, closed) = mpsc::unbounded_channel();
         let (shutdown, mut stopped) = oneshot::channel();
         let task = tokio::spawn(async move {
-            let (mut control, _) = listener.accept().await.unwrap();
+            let (mut control, peer) = listener.accept().await.unwrap();
             assert_eq!(control.read_u8().await.unwrap(), 5);
             let mut methods = vec![0; usize::from(control.read_u8().await.unwrap())];
             control.read_exact(&mut methods).await.unwrap();
@@ -209,8 +210,12 @@ impl SocksProxy {
                 origin,
                 remote,
                 address: relay_address,
+                source,
             } = mode
             {
+                if let Some(source) = source {
+                    assert_eq!(peer.ip(), source);
+                }
                 let relay = UdpSocket::bind("127.0.0.1:0").await.unwrap();
                 let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap();
                 upstream.connect(origin).await.unwrap();
@@ -234,6 +239,9 @@ impl SocksProxy {
                     tokio::select! {
                         received = relay.recv_from(&mut outbound) => {
                             let (len, sender) = received.unwrap();
+                            if let Some(source) = source {
+                                assert_eq!(sender.ip(), source);
+                            }
                             if let Some(client) = client {
                                 assert_eq!(sender, client, "one association must use one UDP socket");
                             } else {
@@ -360,20 +368,28 @@ async fn socks_udp_authentication_dns_and_pool_reuse() {
         (true, RelayAddress::Wildcard),
         (true, RelayAddress::Domain),
     ] {
+        let source = cfg!(target_os = "linux").then_some(Ipv4Addr::new(127, 0, 0, 2));
         let mut origin = Origin::new();
         let mut proxy = SocksProxy::new(Mode::Relay {
             origin: origin.addr(),
             remote,
             address,
+            source,
         })
         .await;
         let lookups = Arc::new(Mutex::new(Vec::new()));
         let client = proxy
             .client(&origin, remote, lookups.clone())
+            .local_address(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST))
             .build()
             .unwrap();
         for _ in 0..2 {
-            let response = client.get(origin.url()).send().await.unwrap();
+            let response = client
+                .get(origin.url())
+                .local_address(source.map(std::net::IpAddr::V4))
+                .send()
+                .await
+                .unwrap();
             assert_eq!(response.version(), Version::HTTP_3);
             assert_eq!(response.text().await.unwrap(), "through socks udp");
             let request = next(&mut origin.requests).await;
@@ -396,7 +412,12 @@ async fn socks_udp_authentication_dns_and_pool_reuse() {
             }
         );
 
-        let mut request = tokio::spawn(client.post(format!("{}stall", origin.url())).send());
+        let mut request = tokio::spawn(
+            client
+                .post(format!("{}stall", origin.url()))
+                .local_address(source.map(std::net::IpAddr::V4))
+                .send(),
+        );
         let received = tokio::select! {
             received = next(&mut origin.requests) => received,
             result = &mut request => panic!("stalled request completed early: {result:?}"),
@@ -556,6 +577,7 @@ async fn socks_udp_timeout_and_cancellation_close_the_control_connection() {
         origin: silent_addr,
         remote: true,
         address: RelayAddress::Wildcard,
+        source: None,
     })
     .await;
     let error = proxy
@@ -590,6 +612,7 @@ async fn socks_udp_relay_dns_and_control_connection_share_the_attempt_lifetime()
             origin: origin.addr(),
             remote: true,
             address: RelayAddress::Domain,
+            source: None,
         })
         .await;
         let lookups = Arc::new(Mutex::new(Vec::new()));

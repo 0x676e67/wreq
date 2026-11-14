@@ -109,7 +109,7 @@ mod sealed {
                     trace!(
                         "{:08x} write (vectored): {:?}",
                         self.id,
-                        Vectored { bufs, nwritten }
+                        fmt::from_fn(|f| fmt_vectored(f, bufs, nwritten))
                     );
                     Poll::Ready(Ok(nwritten))
                 }
@@ -134,23 +134,20 @@ mod sealed {
         }
     }
 
-    struct Vectored<'a, 'b> {
-        bufs: &'a [IoSlice<'b>],
+    fn fmt_vectored(
+        f: &mut fmt::Formatter<'_>,
+        bufs: &[IoSlice<'_>],
         nwritten: usize,
-    }
-
-    impl fmt::Debug for Vectored<'_, '_> {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            let mut left = self.nwritten;
-            for buf in self.bufs.iter() {
-                if left == 0 {
-                    break;
-                }
-                let n = std::cmp::min(left, buf.len());
-                Escape::new(&buf[..n]).fmt(f)?;
-                left -= n;
+    ) -> fmt::Result {
+        let mut left = nwritten;
+        for buf in bufs {
+            if left == 0 {
+                break;
             }
-            Ok(())
+            let n = std::cmp::min(left, buf.len());
+            fmt::Debug::fmt(&Escape::new(&buf[..n]), f)?;
+            left -= n;
         }
+        Ok(())
     }
 }

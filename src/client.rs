@@ -68,7 +68,7 @@ use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Protocol, Proxy,
     config::connect::ConfigSet,
-    conn::{self, BoxedTransportConnector, Conn, Connector, Unnameable, dialer::BindOptions},
+    conn::{self, BoxedTransportConnector, Conn, Connector, Unnameable, dialer},
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
     header::OrigHeaderMap,
@@ -439,7 +439,6 @@ impl ClientBuilder {
             };
 
             // The request stack inherits the client's bindings.
-            let bind_options = self.config.connect.bind_options.clone();
             let connector = Connector::new(
                 self.config.connect,
                 self.runtime.clone(),
@@ -454,7 +453,6 @@ impl ClientBuilder {
                 )
                 .config_set(self.config.config_set)
                 .protocol(self.config.protocol)
-                .bind_options(bind_options)
                 .pool_idle_timeout(self.config.pool_idle_timeout)
                 .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
                 .pool_max_size(self.config.pool_max_size)
@@ -464,7 +462,6 @@ impl ClientBuilder {
 
         // Configured client service with layers
         let client = {
-            // Retries sit below redirects, so a rejected hop replays itself, not the first request.
             let service = ServiceBuilder::new()
                 .layer({
                     let policy = FollowRedirectPolicy::new(self.config.redirect_policy)
@@ -1232,7 +1229,7 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.config.connect.bind_options.set_local_address(addr);
+        dialer::set_local_address(&mut self.config.config_set, addr.into());
         self
     }
 
@@ -1260,10 +1257,7 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.config
-            .connect
-            .bind_options
-            .set_local_addresses(ipv4, ipv6);
+        dialer::set_local_addresses(&mut self.config.config_set, ipv4.into(), ipv6.into());
         self
     }
 
@@ -1339,7 +1333,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.connect.bind_options.set_interface(interface);
+        dialer::set_interface(&mut self.config.config_set, interface.into());
         self
     }
 
@@ -1640,7 +1634,6 @@ mod sealed {
         /// Protocol, options and socket bindings that requests inherit.
         protocol: Protocol,
         config_set: ConfigSet,
-        bind_options: BindOptions,
 
         /// Connection-pool reuse and retention policy.
         pool_config: pool::Config,
@@ -1658,7 +1651,6 @@ mod sealed {
             Self {
                 protocol: Protocol::Auto,
                 config_set: ConfigSet::default(),
-                bind_options: BindOptions::default(),
                 pool_config: pool::Config {
                     idle_timeout: Some(Duration::from_secs(90)),
                     max_idle_per_host: usize::MAX,
@@ -1718,22 +1710,12 @@ mod sealed {
             self
         }
 
-        /// Sets the client's protocol options.
+        /// Sets the connection options inherited by requests.
         ///
-        /// Protocol builders start from these options. Requests count only the
-        /// options that differ from them, both for pool reuse and for handshakes.
+        /// Pool and session identities count only request values that differ from these.
         #[inline]
         pub fn config_set(mut self, config_set: ConfigSet) -> Self {
             self.config_set = config_set;
-            self
-        }
-
-        /// Sets the socket bindings that requests inherit.
-        ///
-        /// Pool keys count only request bindings that differ from these.
-        #[inline]
-        pub fn bind_options(mut self, bind_options: BindOptions) -> Self {
-            self.bind_options = bind_options;
             self
         }
 
@@ -1771,12 +1753,7 @@ mod sealed {
                 self.runtime,
             );
             ServiceBuilder::new()
-                .layer(svc::layer(
-                    self.protocol,
-                    self.config_set,
-                    self.bind_options,
-                    true,
-                ))
+                .layer(svc::layer(self.protocol, self.config_set, true))
                 .service(dispatch)
         }
     }

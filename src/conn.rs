@@ -17,7 +17,7 @@ pub(crate) mod request;
 use std::time::Duration;
 
 pub(crate) use connected::{Connected, HttpInfo};
-use dialer::{BindOptions, Dialer, tcp};
+use dialer::{Dialer, tcp};
 use layer::deadline::{Deadline, DeadlineLayer};
 #[cfg(all(test, feature = "http3"))]
 pub(crate) use quic::test_server_config;
@@ -51,7 +51,6 @@ pub(crate) struct Config {
     pub(crate) tcp: tcp::Config,
     pub(crate) tls: tls::Config,
     pub(crate) proxies: Vec<ProxyMatcher>,
-    pub(crate) bind_options: BindOptions,
     pub(crate) happy_eyeballs_timeout: Option<Duration>,
     pub(crate) connect_timeout: Option<Duration>,
     pub(crate) verbose: bool,
@@ -78,7 +77,6 @@ impl Default for Config {
             tcp: tcp::Config::default(),
             tls: tls::Config::default(),
             proxies: Vec::new(),
-            bind_options: BindOptions::default(),
             happy_eyeballs_timeout: Some(Duration::from_millis(300)),
             connect_timeout: None,
             verbose: false,
@@ -102,7 +100,7 @@ impl Connector {
             runtime.clone(),
             resolver,
             config.tcp,
-            config.bind_options,
+            config_set.clone(),
             config.happy_eyeballs_timeout,
         );
         let connector = TransportConnector::new(

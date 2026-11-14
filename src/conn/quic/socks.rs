@@ -33,7 +33,7 @@ use super::endpoint::{Endpoints, TUNNEL_MTU, handshake_error};
 use crate::{
     conn::{
         Conn,
-        dialer::{BindOptions, ConnectError, Dialer, SocketRequest, race, resolve},
+        dialer::{self, ConnectError, Dialer, SocketRequest, race, resolve},
         request::ConnectRequest,
     },
     error::ProxyConnect,
@@ -130,7 +130,7 @@ pub(super) async fn connect(
     // Target families are independent of the physical proxy's bindings.
     Ok(race(
         addresses,
-        &BindOptions::default(),
+        (None, None),
         dialer.happy_eyeballs_timeout(),
         |address| {
             let target = Address::Ip(address);
@@ -157,11 +157,9 @@ async fn connect_target(
     let dialer = endpoints.dialer();
     // The control connection takes the request's bindings, like the relay socket.
     let io = dialer
-        .dial(SocketRequest {
+        .dial(SocketRequest::Tcp {
             uri: proxy.uri().clone(),
-            #[cfg(unix)]
-            unix: None,
-            bind_options: request.bind_options().clone(),
+            config_set: request.config_set().clone(),
             secure: false,
             deadline,
         })
@@ -279,16 +277,17 @@ fn relay_socket(
     request: &ConnectRequest,
     remote: SocketAddr,
 ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-    let bind_options = dialer.bind_options(request);
+    let config_set = request.config_set();
+    let (ipv4, ipv6) = dialer::local_addresses(config_set, dialer.config_set());
     if matches!(
-        (bind_options.ipv4_address, bind_options.ipv6_address, remote),
+        (ipv4, ipv6, remote),
         (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
     ) {
         return Err("relay address does not match local bindings".into());
     }
     Ok(dialer
         .runtime()
-        .udp_socket(dialer.bind_udp(bind_options, remote)?)?)
+        .udp_socket(dialer.bind_udp(config_set, remote)?)?)
 }
 
 /// Labels a failed proxy stage, keeping it a proxy connect error.

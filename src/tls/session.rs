@@ -26,7 +26,7 @@ use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 
 use crate::{
     config::connect::{ConfigSet, HASHER, Overrides},
-    conn::{dialer::BindOptions, request::ConnectRequest},
+    conn::request::ConnectRequest,
     protocol::TransportKind,
     sync::Mutex,
     tls::TlsVersion,
@@ -71,7 +71,6 @@ struct SessionKey {
     origin: Uri,
     route: Uri,
     overrides: Overrides,
-    bind_options: Option<Arc<BindOptions>>,
     hash: u64,
 }
 
@@ -149,14 +148,12 @@ impl SessionKey {
         let overrides = Overrides::for_session(req.config_set().clone(), config_set, transport);
         let origin = req.uri().clone();
         let route = route.clone();
-        let bind_options = req.bind_options().clone();
-        let hash = HASHER.hash_one((transport, &origin, &route, overrides.hash(), &bind_options));
+        let hash = HASHER.hash_one((transport, &origin, &route, overrides.hash()));
         Self {
             transport,
             origin,
             route,
             overrides,
-            bind_options,
             hash,
         }
     }
@@ -169,7 +166,6 @@ impl PartialEq for SessionKey {
             && self.origin == other.origin
             && self.route == other.route
             && self.overrides == other.overrides
-            && self.bind_options == other.bind_options
     }
 }
 
@@ -392,8 +388,6 @@ mod tests {
             Protocol::Auto,
             config_set,
             client_config_set,
-            None,
-            &BindOptions::default(),
         )
         .unwrap()
     }
@@ -485,32 +479,21 @@ mod tests {
             assert!(plain != other);
         }
 
-        let mut bind_options = BindOptions::default();
-        bind_options.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
+        let mut client_config_set = client_config_set;
+        client_config_set.insert(Ipv4Addr::LOCALHOST);
+        client_config_set.insert(Ipv6Addr::LOCALHOST);
         let uri = Uri::from_static("https://example.com/");
         let frozen = |requested| {
-            ConnectRequest::new(
-                &uri,
-                None,
-                Protocol::Auto,
-                ConfigSet::default(),
-                &client_config_set,
-                requested,
-                &bind_options,
-            )
-            .unwrap()
+            ConnectRequest::new(&uri, None, Protocol::Auto, requested, &client_config_set).unwrap()
         };
-        let inherited = frozen(None);
-        let equal = frozen(Some(Arc::new(bind_options.clone())));
-        // Merges to the client's bindings.
-        let partial = frozen(Some(Arc::new(BindOptions {
-            ipv4_address: Some(Ipv4Addr::LOCALHOST),
-            ..Default::default()
-        })));
-        let changed = frozen(Some(Arc::new(BindOptions {
-            ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
-            ..Default::default()
-        })));
+        let inherited = frozen(ConfigSet::default());
+        let equal = frozen(client_config_set.clone());
+        let mut partial = ConfigSet::default();
+        partial.insert(Ipv4Addr::LOCALHOST);
+        let partial = frozen(partial);
+        let mut changed = ConfigSet::default();
+        changed.insert(Ipv4Addr::UNSPECIFIED);
+        let changed = frozen(changed);
         let assert_bindings = |transport: TransportKind| {
             let inherited_key =
                 SessionKey::new(&inherited, inherited.uri(), &client_config_set, transport);

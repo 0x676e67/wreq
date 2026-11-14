@@ -11,7 +11,7 @@
 
 > 🚀 Help me work seamlessly with open source sharing by [sponsoring me on GitHub](https://github.com/0x676e67/0x676e67/blob/main/SPONSOR.md)
 
-An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, featuring customizable TLS, JA3/JA4, and HTTP/2 signature capabilities.
+An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, featuring customizable TLS/QUIC, JA3/JA4, and HTTP2/HTTP3 signature capabilities.
 
 ## Features
 

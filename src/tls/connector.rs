@@ -271,7 +271,9 @@ impl TlsConnector {
         let ssl =
             self.tls
                 .ssl_for_connection(req, route, remote_ip, &self.context, self.alpn_enabled)?;
-        perform_handshake(ssl, io).await
+        let mut stream = SslStream::new(ssl, io)?;
+        Pin::new(&mut stream).connect().await?;
+        Ok(MaybeHttpsStream::Https(stream))
     }
 }
 
@@ -412,13 +414,4 @@ fn target_index() -> Result<Index<Ssl, SessionTarget>, ErrorStack> {
     static IDX: LazyLock<Result<Index<Ssl, SessionTarget>, ErrorStack>> =
         LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
-}
-
-async fn perform_handshake<T>(ssl: Ssl, conn: T) -> Result<MaybeHttpsStream<T>, BoxError>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    let mut stream = SslStream::new(ssl, conn)?;
-    Pin::new(&mut stream).connect().await?;
-    Ok(MaybeHttpsStream::Https(stream))
 }

@@ -16,24 +16,18 @@ use {super::quic::QuicRouter, crate::protocol::TransportKind, futures_util::futu
 use super::{
     Conn,
     dialer::Dialer,
-    layer::{
-        tls::{Tls, TlsLayer},
-        verbose::{self, Verbose},
-    },
+    layer::verbose::{self, Verbose},
     request::ConnectRequest,
-    stream::StreamRouter,
+    stream::StreamConnector,
 };
 use crate::{config::connect::ConfigSet, proxy::Matcher, tls};
-
-/// The stream path: its routes, then target TLS and optional I/O tracing.
-type StreamConnector = Verbose<Tls<StreamRouter>>;
 
 /// Connects every transport behind one service. Each request goes to the stream or QUIC path
 /// its protocol runs over; how a path is composed stays private. Clones share each path's
 /// state.
 #[derive(Clone)]
 pub(crate) struct TransportConnector {
-    stream: StreamConnector,
+    stream: Verbose<StreamConnector>,
     #[cfg(feature = "http3")]
     quic: QuicRouter,
 }
@@ -79,22 +73,20 @@ impl TransportConnector {
         config_set: &ConfigSet,
     ) -> crate::Result<Self> {
         let proxies = Arc::new(proxies);
-
-        #[cfg(feature = "http3")]
-        let quic = QuicRouter::new(
-            dialer.clone(),
-            tls.clone().quic(config_set)?,
-            proxies.clone(),
-        )?;
-        let stream = ServiceBuilder::new()
-            .option_layer(verbose::layer(verbose))
-            .layer(TlsLayer::new(tls.stream(config_set)?))
-            .service(StreamRouter::new(dialer, proxies));
-
         Ok(Self {
-            stream,
             #[cfg(feature = "http3")]
-            quic,
+            quic: QuicRouter::new(
+                dialer.clone(),
+                tls.clone().quic(config_set)?,
+                proxies.clone(),
+            )?,
+            stream: ServiceBuilder::new()
+                .option_layer(verbose::layer(verbose))
+                .service(StreamConnector::new(
+                    dialer,
+                    proxies,
+                    tls.stream(config_set)?,
+                )),
         })
     }
 }
@@ -104,11 +96,11 @@ impl Service<TransportRequest> for TransportConnector {
     type Error = BoxError;
     #[cfg(feature = "http3")]
     type Future = Either<
-        <StreamConnector as Service<TransportRequest>>::Future,
+        <Verbose<StreamConnector> as Service<TransportRequest>>::Future,
         <QuicRouter as Service<TransportRequest>>::Future,
     >;
     #[cfg(not(feature = "http3"))]
-    type Future = <StreamConnector as Service<TransportRequest>>::Future;
+    type Future = <Verbose<StreamConnector> as Service<TransportRequest>>::Future;
 
     #[inline]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

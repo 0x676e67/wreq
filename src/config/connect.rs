@@ -15,14 +15,17 @@ use lru::DefaultHasher;
 
 use crate::{Protocol, protocol::TransportKind};
 
-/// Implements whole-value identity for one protocol configuration type.
+/// Implements whole-value identity for one connection configuration type.
 macro_rules! impl_connect_config {
     ($type:ty, $scope:ident) => {
-        impl ConnectConfig for $type {
-            const SCOPE: ConfigScope = ConfigScope::$scope;
+        impl $crate::config::connect::ConnectConfig for $type {
+            const SCOPE: $crate::config::connect::ConfigScope =
+                $crate::config::connect::ConfigScope::$scope;
         }
     };
 }
+
+pub(crate) use impl_connect_config;
 
 derive_deftly::define_derive_deftly! {
     /// Derives full and scoped equality/hashing, requiring exactly one group per field.
@@ -225,6 +228,7 @@ impl ConfigScope {
     pub const HTTP1: Self = Self(1 << 2);
     pub const HTTP2: Self = Self(1 << 3);
     pub const HTTP3: Self = Self(1 << 4);
+    pub const SOCKET: Self = Self(1 << 5);
     pub const ROUTE: Self = Self(1 << 6);
     pub const GROUP: Self = Self(1 << 7);
 

@@ -29,6 +29,7 @@ pub use ::quic::{
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::future::BoxFuture;
 use pin_project_lite::pin_project;
+use tokio_btls::SslStream;
 
 pub(crate) use self::handle::DynRuntime;
 use crate::dns::Resolve;
@@ -172,6 +173,40 @@ pin_project! {
 }
 
 // ===== impl Connection =====
+
+impl Connection for BoxConnection {
+    #[inline]
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        self.as_ref().peer_addr()
+    }
+
+    #[inline]
+    fn local_addr(&self) -> Option<SocketAddr> {
+        self.as_ref().local_addr()
+    }
+
+    #[inline]
+    fn set_nodelay(&self, value: bool) -> io::Result<()> {
+        self.as_ref().set_nodelay(value)
+    }
+}
+
+impl<T: Connection> Connection for SslStream<T> {
+    #[inline]
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        self.get_ref().peer_addr()
+    }
+
+    #[inline]
+    fn local_addr(&self) -> Option<SocketAddr> {
+        self.get_ref().local_addr()
+    }
+
+    #[inline]
+    fn set_nodelay(&self, value: bool) -> io::Result<()> {
+        self.get_ref().set_nodelay(value)
+    }
+}
 
 impl Debug for dyn Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

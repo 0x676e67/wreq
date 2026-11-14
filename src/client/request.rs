@@ -3,7 +3,6 @@ use std::{
     fmt,
     future::Future,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::Arc,
     time::Duration,
 };
 
@@ -33,7 +32,7 @@ use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue, connect::ConfigSet},
-    conn::dialer::BindOptions,
+    conn::dialer,
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -197,14 +196,6 @@ impl Request {
     #[inline]
     fn config_set_mut(&mut self) -> &mut ConfigSet {
         self.extensions_mut().get_or_insert_default::<ConfigSet>()
-    }
-
-    #[inline]
-    fn bind_options_mut(&mut self) -> &mut BindOptions {
-        Arc::make_mut(
-            self.extensions_mut()
-                .get_or_insert_default::<Arc<BindOptions>>(),
-        )
     }
 }
 
@@ -707,7 +698,7 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.bind_options_mut().set_local_address(local_address);
+            dialer::set_local_address(req.config_set_mut(), local_address.into());
         }
         self
     }
@@ -719,8 +710,11 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.bind_options_mut()
-                .set_local_addresses(ipv4_address, ipv6_address);
+            dialer::set_local_addresses(
+                req.config_set_mut(),
+                ipv4_address.into(),
+                ipv6_address.into(),
+            );
         }
         self
     }
@@ -793,7 +787,7 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.bind_options_mut().set_interface(interface);
+            dialer::set_interface(req.config_set_mut(), interface.into());
         }
         self
     }

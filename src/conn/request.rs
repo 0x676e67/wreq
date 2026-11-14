@@ -1,18 +1,18 @@
 //! Frozen connection identity shared by pool lookup and transport setup.
 //!
 //! Request configuration is editable until a [`ConnectRequest`] is built. Its key then counts
-//! the resolved protocol, and the socket bindings and typed entries that differ from the
+//! the resolved protocol and typed entries (including socket bindings) that differ from the
 //! client's configuration.
 
+#[cfg(feature = "http3")]
+use std::sync::Arc;
 use std::{
     fmt,
     hash::{BuildHasher, Hash, Hasher},
-    sync::Arc,
 };
 
 use http::{Uri, uri::PathAndQuery};
 
-use super::dialer::BindOptions;
 use crate::{
     Protocol,
     config::connect::{ConfigSet, ConnectConfig, HASHER, Overrides},
@@ -28,13 +28,12 @@ pub struct ConnectRequest {
 }
 
 /// Reuse identity for pool entries, extended CONNECT probes and QUIC address tokens.
-/// Clones share configuration values and socket bindings.
+/// Clones share configuration values.
 #[derive(Clone)]
 pub(crate) struct ConnectionKey {
     origin: Uri,
     /// Selection after inheriting the client's; configuration, not the negotiated version.
     protocol: Protocol,
-    bind_options: Option<Arc<BindOptions>>,
     overrides: Overrides,
     hash: u64,
 }
@@ -46,7 +45,6 @@ impl ConnectRequest {
     ///
     /// The origin keeps scheme and authority with `/` as the path. The key counts the
     /// request entries the resolved protocol can use that differ from `client_config_set`.
-    /// Request bindings are merged over the client's and kept only if the result differs.
     ///
     /// Returns an error if the URI lacks a scheme or authority.
     pub(crate) fn new(
@@ -55,26 +53,18 @@ impl ConnectRequest {
         client_protocol: Protocol,
         config_set: ConfigSet,
         client_config_set: &ConfigSet,
-        bind_options: Option<Arc<BindOptions>>,
-        client_bind_options: &BindOptions,
     ) -> Result<Self, BoxError> {
         let origin = Uri::builder()
             .scheme(uri.scheme().ok_or("URI missing scheme")?.clone())
             .authority(uri.authority().ok_or("URI missing authority")?.clone())
             .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
-        let bind_options = bind_options.and_then(|requested| {
-            let mut merged = client_bind_options.clone();
-            merged.merge(&requested);
-            (merged != *client_bind_options).then(|| Arc::new(merged))
-        });
         Ok(Self {
             key: ConnectionKey::new(
                 origin,
                 protocol.unwrap_or(client_protocol),
                 config_set,
                 client_config_set,
-                bind_options,
             ),
         })
     }
@@ -112,12 +102,6 @@ impl ConnectRequest {
         self.key.overrides.get_arc::<T>()
     }
 
-    /// Request bindings merged over the client's, shared by transport setup, pool and
-    /// session keys. `None` when the result equals the client's bindings.
-    pub(crate) fn bind_options(&self) -> &Option<Arc<BindOptions>> {
-        &self.key.bind_options
-    }
-
     /// Returns the reuse identity of this origin and configuration.
     pub(crate) fn key(&self) -> ConnectionKey {
         self.key.clone()
@@ -136,7 +120,6 @@ impl ConnectRequest {
             protocol,
             config_set,
             client_config_set,
-            self.key.bind_options.clone(),
         )
     }
 }
@@ -149,14 +132,12 @@ impl ConnectionKey {
         protocol: Protocol,
         config_set: ConfigSet,
         client_config_set: &ConfigSet,
-        bind_options: Option<Arc<BindOptions>>,
     ) -> Self {
         let overrides = Overrides::for_pool(config_set, client_config_set, protocol);
-        let hash = HASHER.hash_one((&origin, protocol, &bind_options, overrides.hash()));
+        let hash = HASHER.hash_one((&origin, protocol, overrides.hash()));
         Self {
             origin,
             protocol,
-            bind_options,
             overrides,
             hash,
         }
@@ -168,7 +149,6 @@ impl PartialEq for ConnectionKey {
         self.hash == other.hash
             && self.protocol == other.protocol
             && self.origin == other.origin
-            && self.bind_options == other.bind_options
             && self.overrides == other.overrides
     }
 }
@@ -186,7 +166,6 @@ impl fmt::Debug for ConnectionKey {
         f.debug_struct("ConnectionKey")
             .field("origin", &self.origin)
             .field("protocol", &self.protocol)
-            .field("bind_options", &self.bind_options)
             .field("overrides", &self.overrides)
             .finish()
     }
@@ -217,8 +196,6 @@ mod tests {
                 Protocol::Auto,
                 config_set,
                 &ConfigSet::default(),
-                None,
-                &BindOptions::default(),
             )
             .unwrap()
         }
@@ -236,8 +213,6 @@ mod tests {
             Protocol::Auto,
             config_set,
             client_config_set,
-            None,
-            &BindOptions::default(),
         )
         .unwrap()
     }
@@ -312,8 +287,6 @@ mod tests {
                 client,
                 ConfigSet::default(),
                 &client_config_set,
-                None,
-                &BindOptions::default(),
             )
             .unwrap();
             assert_eq!(request.resolved_protocol(), resolved);
@@ -343,8 +316,6 @@ mod tests {
                 Protocol::Auto,
                 client_config_set.clone(),
                 &client_config_set,
-                None,
-                &BindOptions::default(),
             )
             .is_err()
         );
@@ -352,20 +323,20 @@ mod tests {
 
     #[test]
     fn socket_bindings_keep_pool_identities_isolated() {
-        let client_config_set = ConfigSet::default();
+        use crate::conn::dialer;
+        let mut client = ConfigSet::default();
+        dialer::set_local_addresses(
+            &mut client,
+            Some(Ipv4Addr::LOCALHOST),
+            Some(Ipv6Addr::LOCALHOST),
+        );
+        #[cfg(target_os = "linux")]
+        dialer::set_interface(&mut client, "lo".into());
         let uri = Uri::from_static("https://localhost/");
-        let mut bindings = BindOptions::default();
-        bindings.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
-        let partial_bindings = BindOptions {
-            ipv4_address: Some(Ipv4Addr::LOCALHOST),
-            ..Default::default()
-        };
-        let other_bindings = BindOptions {
-            ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
-            ..Default::default()
-        };
-        let mut merged = bindings.clone();
-        merged.merge(&other_bindings);
+        let partial = with(ConfigSet::default(), Ipv4Addr::LOCALHOST);
+        let changed = with(ConfigSet::default(), Ipv4Addr::UNSPECIFIED);
+        let mut merged = client.clone();
+        merged.insert(Ipv4Addr::UNSPECIFIED);
         for protocol in [
             None,
             Some(Protocol::Http1),
@@ -374,41 +345,41 @@ mod tests {
             #[cfg(feature = "http3")]
             Some(Protocol::Http3),
         ] {
-            let request = |bind_options: Option<&BindOptions>| {
-                ConnectRequest::new(
-                    &uri,
-                    protocol,
-                    Protocol::Auto,
-                    ConfigSet::default(),
-                    &client_config_set,
-                    bind_options.cloned().map(Arc::new),
-                    &bindings,
-                )
-                .unwrap()
+            let request = |config| {
+                ConnectRequest::new(&uri, protocol, Protocol::Auto, config, &client).unwrap()
             };
-            let inherited = request(None);
-
-            // Bindings that merge to the client's are the client's.
-            for same in [&bindings, &partial_bindings] {
-                let same = request(Some(same));
-                assert!(same.bind_options().is_none());
+            let inherited = request(ConfigSet::default());
+            for same in [client.clone(), partial.clone()] {
+                let same = request(same);
                 assert_eq!(same.key(), inherited.key());
                 assert_eq!(same.key().hash, inherited.key().hash);
             }
-
-            // Other bindings keep the merged value, so equal results share a key.
-            let changed = request(Some(&other_bindings));
+            let changed = request(changed.clone());
             assert_ne!(changed.key(), inherited.key());
-            assert_eq!(changed.bind_options().as_deref(), Some(&merged));
-            assert_eq!(request(Some(&merged)).key(), changed.key());
             assert_eq!(
-                changed.key_with_protocol(changed.resolved_protocol(), &client_config_set),
+                dialer::local_addresses(changed.config_set(), &client),
+                (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::LOCALHOST))
+            );
+            assert_eq!(request(merged.clone()).key(), changed.key());
+            assert_eq!(
+                changed.key_with_protocol(changed.resolved_protocol(), &client),
                 changed.key()
             );
-
             let mut collision = changed.key();
             collision.hash = inherited.key().hash;
             assert_ne!(collision, inherited.key());
+            assert_ne!(
+                request(with(ConfigSet::default(), Ipv6Addr::UNSPECIFIED)).key(),
+                inherited.key()
+            );
+            #[cfg(target_os = "linux")]
+            {
+                let mut interface = ConfigSet::default();
+                dialer::set_interface(&mut interface, String::from("lo").into());
+                assert_eq!(request(interface.clone()).key(), inherited.key());
+                dialer::set_interface(&mut interface, "eth0".into());
+                assert_ne!(request(interface).key(), inherited.key());
+            }
         }
     }
 
