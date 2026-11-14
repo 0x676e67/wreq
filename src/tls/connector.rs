@@ -27,8 +27,7 @@ use crate::{
     config::connect::{ConfigSet, Overrides},
     conn::request::ConnectRequest,
     ext::UriExt,
-    protocol::Protocol,
-    protocol::TransportKind,
+    protocol::{Protocol, TransportKind},
     tls::{AlpnProtocol, TlsOptions, session::SessionTarget},
 };
 

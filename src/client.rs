@@ -1542,19 +1542,18 @@ impl ClientBuilder {
                     http::Response<MaybeDecompressionBody<Incoming>>,
                     BoxError,
                 >,
-            > + Clone
-            + Send
+            > + Send
             + Sync
             + 'static,
         L::Service: Service<
                 http::Request<Body>,
                 Response = http::Response<MaybeDecompressionBody<Incoming>>,
                 Error = BoxError,
+                Future: Send + 'static,
             > + Clone
             + Send
             + Sync
             + 'static,
-        <L::Service as Service<http::Request<Body>>>::Future: Send + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
         self.config.layers.push(layer);
@@ -1591,10 +1590,12 @@ impl ClientBuilder {
     #[inline]
     pub fn connector_layer<L>(mut self, layer: L) -> ClientBuilder
     where
-        L: Layer<BoxedTransportConnector> + Clone + Send + Sync + 'static,
-        L::Service:
-            Service<Unnameable, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-        <L::Service as Service<Unnameable>>::Future: Send + 'static,
+        L: Layer<BoxedTransportConnector> + Send + Sync + 'static,
+        L::Service: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
         self.config.connect.layers.push(layer);

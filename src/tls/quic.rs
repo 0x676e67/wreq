@@ -384,7 +384,7 @@ mod tests {
         use btls::ssl::SslContextRef;
 
         use super::*;
-        use crate::{Protocol, tls::KeyShare};
+        use crate::{protocol::Protocol, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
         let request = |grease: Option<bool>| {

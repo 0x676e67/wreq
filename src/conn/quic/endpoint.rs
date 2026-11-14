@@ -554,6 +554,7 @@ mod tests {
     use crate::{
         conn::{dialer::tcp, layer::deadline::DeadlineLayer, svc::TransportRequest},
         dns::{Addrs, DynResolver, Name, Resolve, Resolving},
+        protocol::Protocol,
         rt::{DynRuntime, tokio::TokioRuntime},
         tls::{self, trust::CertStore},
     };
@@ -576,7 +577,7 @@ mod tests {
         ConnectRequest::new(
             &uri,
             None,
-            crate::Protocol::Auto,
+            Protocol::Auto,
             config_set,
             &ConfigSet::default(),
         )
@@ -663,7 +664,7 @@ mod tests {
         let mut config_set = ConfigSet::default();
         config_set.insert(value);
         let uri = Uri::from_static("https://localhost/");
-        ConnectRequest::test(uri, Some(crate::Protocol::Http3), config_set)
+        ConnectRequest::test(uri, Some(Protocol::Http3), config_set)
     }
 
     #[tokio::test]
@@ -827,7 +828,7 @@ mod tests {
         );
         let uri = Uri::from_static("https://localhost/");
         let request = |config_set: ConfigSet| {
-            ConnectRequest::new(&uri, None, crate::Protocol::Auto, config_set, &client).unwrap()
+            ConnectRequest::new(&uri, None, Protocol::Auto, config_set, &client).unwrap()
         };
         let (first, shared, _peer) =
             connect(&endpoints, request(ConfigSet::default()), &server).await;

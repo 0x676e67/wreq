@@ -51,7 +51,7 @@ const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
 ///
 /// A runtime that wraps another must also forward [`try_execute`](Self::try_execute),
 /// `connect_unix` and `udp_socket`, whose defaults ignore the wrapped runtime.
-pub trait Runtime: Timer + Send + Sync + Debug + 'static {
+pub trait Runtime: Timer + Debug + 'static {
     /// Schedules a task to run in the background.
     #[track_caller]
     fn execute(&self, fut: BoxFuture<'static, ()>);

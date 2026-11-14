@@ -134,7 +134,7 @@ impl Connector {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "http3")]
-    use {super::request::ConnectRequest, std::sync::Arc};
+    use {super::request::ConnectRequest, crate::protocol::Protocol, std::sync::Arc};
 
     use super::*;
 
@@ -194,7 +194,7 @@ mod tests {
             .unwrap();
             let request = ConnectRequest::test(
                 ::http::Uri::from_static("https://localhost/"),
-                Some(crate::Protocol::Http3),
+                Some(Protocol::Http3),
                 ConfigSet::default(),
             );
             let serve = async {
@@ -252,7 +252,7 @@ mod tests {
             .unwrap();
             let request = ConnectRequest::test(
                 ::http::Uri::from_static("https://localhost/"),
-                Some(crate::Protocol::Http3),
+                Some(Protocol::Http3),
                 config_set,
             );
             let error = connector
