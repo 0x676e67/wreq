@@ -41,7 +41,7 @@ use trust::{CertStore, Identity};
 
 use crate::{
     Error,
-    conn::config::{ConfigScope, ConfigSet, Overrides, derive_deftly_template_ConfigKey},
+    config::connect::{ConfigScope, ConfigSet, Overrides, derive_deftly_template_ConfigKey},
     sync::Mutex,
 };
 

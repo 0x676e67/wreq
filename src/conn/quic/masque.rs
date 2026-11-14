@@ -12,6 +12,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, Wake, Waker, ready},
+    time::Instant,
 };
 
 use ::quic::{
@@ -102,6 +103,7 @@ pub(super) async fn connect(
     endpoints: &Endpoints,
     request: ConnectRequest,
     proxy: Intercept,
+    deadline: Option<Instant>,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
     let config = endpoints.tunnel_config(&request)?;
@@ -112,7 +114,9 @@ pub(super) async fn connect(
         let template =
             Template::well_known(proxy.uri().authority().ok_or(PROXY_MISSING_AUTHORITY)?)?;
 
-        let (connection, endpoint) = endpoints.connect_proxy(&request, template.proxy()).await?;
+        let (connection, endpoint) = endpoints
+            .connect_proxy(&request, template.proxy(), deadline)
+            .await?;
         let remote = connection.remote_address();
         let (sender, driver) = http3::Builder::new(endpoints.dialer().runtime().clone())
             .handshake_with_datagrams::<_, Body>(OuterConnection::new(connection))
@@ -135,9 +139,7 @@ pub(super) async fn connect(
         }
 
         // The proxy resolves the target; the original request retains its pool identity.
-        let tunnel = connect_udp
-            .oneshot(udp_target(request.route_uri())?)
-            .await?;
+        let tunnel = connect_udp.oneshot(udp_target(request.uri())?).await?;
 
         // The inner endpoint's socket owns the tunnel and its outer connection resources.
         let socket = Socket::new(tunnel, driver, endpoint, remote)?;

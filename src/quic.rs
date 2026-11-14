@@ -13,7 +13,7 @@ use educe::Educe;
 
 use crate::{
     Error,
-    conn::config::{ConfigScope, derive_deftly_template_ConfigKey},
+    config::connect::{ConfigScope, derive_deftly_template_ConfigKey},
     tls::{EchGrease, ExtensionType, KeyShare, Tls13Cipher, compress::CertificateCompressor},
 };
 
@@ -536,7 +536,7 @@ impl QuicOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conn::config::{ConnectConfig, KeyPart};
+    use crate::config::connect::{ConnectConfig, KeyPart};
 
     #[test]
     fn transport_rejects_values_the_connection_cannot_use() {

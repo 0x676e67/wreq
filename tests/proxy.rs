@@ -1,28 +1,84 @@
 #![cfg(feature = "tokio-rt")]
 
 mod support;
-use std::{env, sync::LazyLock};
+use std::{env, error::Error as StdError, sync::LazyLock};
 
 use support::server;
 use tokio::sync::Mutex;
-use wreq::Client;
+use wreq::{
+    Client,
+    tls::{Tls13Cipher, TlsOptions},
+};
 
 // serialize tests that read from / write to environment variables
 static HTTP_PROXY_ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
+struct NoResolver;
+
+impl wreq::dns::Resolve for NoResolver {
+    fn resolve(&self, name: wreq::dns::Name) -> wreq::dns::Resolving {
+        panic!("unexpected DNS lookup: {name}");
+    }
+}
+
+fn invalid_tls_options() -> TlsOptions {
+    TlsOptions::builder()
+        .tls13_cipher_list(&[Tls13Cipher::AES_256_GCM_SHA384; 2])
+        .build()
+}
+
+#[tokio::test]
+async fn request_tls_config_error_follows_stream_route() {
+    let client = Client::builder_tokio()
+        .no_proxy()
+        .http1_only()
+        .dns_resolver(NoResolver)
+        .build()
+        .unwrap();
+    for (proxy, target, forward) in [
+        (None, "https://origin.invalid/", false),
+        (
+            Some("http://proxy.invalid:8080"),
+            "http://origin.invalid/",
+            true,
+        ),
+        (
+            Some("https://proxy.invalid:8443"),
+            "http://origin.invalid/",
+            true,
+        ),
+        (
+            Some("https://proxy.invalid:8443"),
+            "https://origin.invalid/",
+            false,
+        ),
+    ] {
+        let mut request = client.get(target).emulation(invalid_tls_options());
+        if let Some(proxy) = proxy {
+            request = request.proxy(wreq::Proxy::all(proxy).unwrap());
+        }
+        let error = request.send().await.unwrap_err();
+        assert!(
+            std::iter::successors(error.source(), |&source| source.source())
+                .any(|source| source.is::<btls::error::ErrorStack>()),
+            "{proxy:?} -> {target}: {error:?}"
+        );
+        assert_eq!(
+            error.is_proxy_connect(),
+            forward,
+            "{proxy:?} -> {target}: {error:?}"
+        );
+        assert_eq!(
+            error.is_connect(),
+            !forward,
+            "{proxy:?} -> {target}: {error:?}"
+        );
+    }
+}
+
 #[cfg(feature = "http3")]
 #[tokio::test]
 async fn quic_proxy_rejects_stream_requests_before_dns() {
-    struct NoResolver;
-
-    impl wreq::dns::Resolve for NoResolver {
-        fn resolve(&self, name: wreq::dns::Name) -> wreq::dns::Resolving {
-            Box::pin(async move {
-                Err(std::io::Error::other(format!("unexpected DNS lookup: {name}")).into())
-            })
-        }
-    }
-
     for proxy in ["quic://proxy.invalid:443", "QUIC://proxy.invalid:443"] {
         let client = Client::builder_tokio()
             .no_proxy()
@@ -32,15 +88,20 @@ async fn quic_proxy_rejects_stream_requests_before_dns() {
             .build()
             .unwrap();
         for target in ["http://origin.invalid/", "https://origin.invalid/"] {
-            let error = client.get(target).send().await.unwrap_err();
-            // A route that can never carry HTTP/1 is a configuration error, not a proxy outage.
-            assert!(error.is_request() && !error.is_proxy_connect(), "{error:?}");
-            assert!(!error.is_dns(), "{error:?}");
-            assert!(
-                support::error::inspect(error)
-                    .iter()
-                    .any(|source| source.contains("QUIC proxies require HTTP/3"))
-            );
+            for tls in [None, Some(invalid_tls_options())] {
+                let mut request = client.get(target);
+                if let Some(tls) = tls {
+                    request = request.emulation(tls);
+                }
+                let error = request.send().await.unwrap_err();
+                assert!(error.is_request() && !error.is_proxy_connect(), "{error:?}");
+                assert!(!error.is_connect(), "{error:?}");
+                assert!(
+                    support::error::inspect(error)
+                        .iter()
+                        .any(|source| source.contains("QUIC proxies require HTTP/3"))
+                );
+            }
         }
     }
 }
@@ -699,6 +760,7 @@ async fn connect_timeout_while_dialing_a_proxy_is_a_proxy_failure() {
     };
 
     // CONNECT, forwarding and SOCKS routes all dial the proxy first.
+    #[allow(unused)]
     let mut dialing = vec![
         ("http://proxy.test:8080".to_owned(), "https://target.test/"),
         ("https://proxy.test:8443".to_owned(), "http://target.test/"),
@@ -889,7 +951,11 @@ async fn socks_preserves_dns_auth_and_connection_reuse() {
             let port = listener.local_addr().unwrap().port();
             // One accepted socket must carry both HTTP requests after the handshake.
             let server = tokio::spawn(async move {
-                let (mut stream, _) = listener.accept().await.unwrap();
+                let (mut stream, peer) = listener.accept().await.unwrap();
+                #[cfg(target_os = "linux")]
+                assert_eq!(peer.ip(), std::net::Ipv4Addr::new(127, 0, 0, 2));
+                #[cfg(not(target_os = "linux"))]
+                let _ = peer;
                 if v4 {
                     let mut head = [0; 8];
                     stream.read_exact(&mut head).await.unwrap();
@@ -972,6 +1038,7 @@ async fn socks_preserves_dns_auth_and_connection_reuse() {
             });
             let lookups = Arc::new(Mutex::new(Vec::new()));
             let client = Client::builder_tokio()
+                .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
                 .no_proxy()
                 .proxy(
                     wreq::Proxy::all(format!("{scheme}://proxy.invalid:{port}"))
@@ -983,11 +1050,11 @@ async fn socks_preserves_dns_auth_and_connection_reuse() {
                 .build()
                 .unwrap();
             for _ in 0..2 {
-                let response = client
-                    .get(format!("http://{target}:8081/resource"))
-                    .send()
-                    .await
-                    .unwrap();
+                let request = client.get(format!("http://{target}:8081/resource"));
+                #[cfg(target_os = "linux")]
+                let request = request
+                    .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 2)));
+                let response = request.send().await.unwrap();
                 assert_eq!(response.status(), http::StatusCode::OK);
                 assert_eq!(response.bytes().await.unwrap(), "through socks");
             }

@@ -9,6 +9,7 @@ use btls::{
     x509::{X509Ref, X509StoreContextRef},
 };
 use bytes::Bytes;
+use http::Uri;
 use quic::{
     TokenStore, TransportConfig,
     crypto::btls::{NoSessionCache, QuicClientConfig, SessionCache, Zeroizing},
@@ -21,10 +22,8 @@ use super::{
 };
 use crate::{
     Error, Result,
-    conn::{
-        config::{ConfigSet, Overrides},
-        request::ConnectRequest,
-    },
+    config::connect::{ConfigSet, Overrides},
+    conn::request::ConnectRequest,
     protocol::TransportKind,
     quic::QuicOptions,
     sync::Mutex,
@@ -113,7 +112,7 @@ impl QuicTls {
     /// QUIC always negotiates TLS 1.3, so a client capped below it fails here rather than
     /// when it is built. Contexts are shared, so each connection installs its SSL callback on
     /// its own copy.
-    pub(crate) fn config(&self, request: &ConnectRequest) -> Result<QuicConfig> {
+    pub(crate) fn config(&self, request: &ConnectRequest, route: &Uri) -> Result<QuicConfig> {
         let inner = &*self.0;
         if inner
             .config
@@ -152,6 +151,7 @@ impl QuicTls {
             let tickets = inner.config.tickets.clone();
             let target = SessionTarget::new(
                 request,
+                route,
                 &inner.config_set,
                 TransportKind::Quic,
                 None,
@@ -382,10 +382,9 @@ mod tests {
         use std::net::Ipv4Addr;
 
         use btls::ssl::SslContextRef;
-        use http::Uri;
 
         use super::*;
-        use crate::{Protocol, tls::KeyShare};
+        use crate::{protocol::Protocol, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
         let request = |grease: Option<bool>| {
@@ -403,8 +402,11 @@ mod tests {
             ConnectRequest::test(uri, Some(Protocol::Http3), config_set)
         };
         let tls = Config::default().quic(&ConfigSet::default()).unwrap();
-        let [client, first, second, other] = [None, Some(false), Some(false), Some(true)]
-            .map(|grease| tls.config(&request(grease)).unwrap());
+        let [client, first, second, other] =
+            [None, Some(false), Some(false), Some(true)].map(|grease| {
+                let request = request(grease);
+                tls.config(&request, request.uri()).unwrap()
+            });
         let context = |config: &QuicConfig| -> *const SslContextRef { &**config.crypto.ctx() };
         // Equal context options hit the cache; others compile their own context.
         assert_eq!(context(&first), context(&second));

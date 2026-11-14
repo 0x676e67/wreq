@@ -215,7 +215,8 @@ impl Error {
         matches!(self.inner.kind, Kind::Request)
     }
 
-    /// Returns true if the error is related to connect
+    /// Returns true if establishing a connection for the request failed.
+    /// Use [`is_proxy_connect`](Self::is_proxy_connect) to check for proxy setup failures.
     pub fn is_connect(&self) -> bool {
         let mut source = self.source();
 
@@ -232,7 +233,7 @@ impl Error {
         false
     }
 
-    /// Returns true if the error is related to proxy connect
+    /// Returns true if connecting to a proxy or negotiating a proxy tunnel failed.
     pub fn is_proxy_connect(&self) -> bool {
         let mut source = self.source();
 

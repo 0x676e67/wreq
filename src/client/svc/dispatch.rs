@@ -34,7 +34,7 @@ use crate::{
         error::{Error, ErrorKind},
         pool::{self, TransportConnector},
     },
-    conn::config::ConfigSet,
+    config::connect::ConfigSet,
     ext::UriExt,
     rt::DynRuntime,
 };
@@ -557,8 +557,8 @@ mod tests {
     use super::super::tests::http1_dispatch;
     use super::{super::tests::stack, *};
     use crate::{
-        Protocol,
         conn::{Conn, request::ConnectRequest},
+        protocol::Protocol,
     };
 
     #[tokio::test]
