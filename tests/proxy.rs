@@ -760,6 +760,7 @@ async fn connect_timeout_while_dialing_a_proxy_is_a_proxy_failure() {
     };
 
     // CONNECT, forwarding and SOCKS routes all dial the proxy first.
+    #[allow(unused)]
     let mut dialing = vec![
         ("http://proxy.test:8080".to_owned(), "https://target.test/"),
         ("https://proxy.test:8443".to_owned(), "http://target.test/"),

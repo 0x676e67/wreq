@@ -370,9 +370,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        Protocol,
         group::Group,
         http1::Http1Options,
+        protocol::Protocol,
         tls::{AlpnProtocol, AlpsProtocol, TlsOptions, TlsOptionsBuilder},
     };
 

@@ -33,10 +33,10 @@ use super::{
 #[cfg(feature = "http3")]
 use crate::protocol::TransportKind;
 use crate::{
-    Protocol,
     config::{RequestConfig, connect::ConfigSet},
     conn::request::ConnectRequest,
     ext::UriExt,
+    protocol::Protocol,
 };
 
 /// Checks and configures requests, then wraps dispatch with unsent retries and error mapping.

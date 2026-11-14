@@ -235,7 +235,7 @@
 //! * `socks5://` is the scheme for socks5 proxy
 //! * `socks5h://` is the scheme for socks5h proxy
 //! * `quic://` is the scheme for an HTTP/3 MASQUE proxy (requires `http3`)
-//!  
+//!
 //! ## TLS
 //!
 //! By default, clients will utilize BoringSSL transport layer security to connect to HTTPS targets.
@@ -308,7 +308,6 @@ mod group;
 mod into_uri;
 mod protocol;
 mod proxy;
-pub mod rt;
 mod sync;
 mod util;
 
@@ -318,13 +317,13 @@ pub mod dns;
 pub mod header;
 pub mod redirect;
 pub mod retry;
+pub mod rt;
 pub mod tls;
 
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
 #[cfg(feature = "ws")]
 pub use self::client::ws;
-pub(crate) use self::protocol::Protocol;
 pub use self::{
     client::{
         Client, ClientBuilder,

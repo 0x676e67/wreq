@@ -69,12 +69,12 @@ use self::{
 };
 use super::proto::{Established, http1};
 use crate::{
-    Protocol,
     config::connect::{ConfigSet, ConnectConfig},
     conn::{
         Conn,
         request::{ConnectRequest, ConnectionKey},
     },
+    protocol::Protocol,
     rt::DynRuntime,
     sync::Mutex,
 };

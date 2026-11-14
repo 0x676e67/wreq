@@ -66,13 +66,14 @@ use crate::cookie;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
-    IntoUri, Method, Protocol, Proxy,
+    IntoUri, Method, Proxy,
     config::connect::ConfigSet,
     conn::{self, BoxedTransportConnector, Conn, Connector, Unnameable, dialer},
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
     header::OrigHeaderMap,
     http1::Http1Options,
+    protocol::Protocol,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,

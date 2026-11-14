@@ -13,7 +13,7 @@ use std::{
 
 use lru::DefaultHasher;
 
-use crate::{Protocol, protocol::TransportKind};
+use crate::protocol::{Protocol, TransportKind};
 
 /// Implements whole-value identity for one connection configuration type.
 macro_rules! impl_connect_config {

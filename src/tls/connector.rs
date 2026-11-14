@@ -23,10 +23,11 @@ use super::{
     ext::{SslContextBuilderExt, set_ech_grease_host},
 };
 use crate::{
-    Error, Protocol,
+    Error,
     config::connect::{ConfigSet, Overrides},
     conn::request::ConnectRequest,
     ext::UriExt,
+    protocol::Protocol,
     protocol::TransportKind,
     tls::{AlpnProtocol, TlsOptions, session::SessionTarget},
 };

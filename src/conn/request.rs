@@ -14,9 +14,9 @@ use std::{
 use http::{Uri, uri::PathAndQuery};
 
 use crate::{
-    Protocol,
     config::connect::{ConfigSet, ConnectConfig, HASHER, Overrides},
     error::BoxError,
+    protocol::Protocol,
 };
 
 /// Connection request shared by pool lookup and transport connection attempts.
