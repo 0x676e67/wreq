@@ -1,7 +1,7 @@
 //! Stream routing for direct, proxy and Unix connections.
 //!
 //! The outer service enforces the connection deadline across dialing and handshakes.
-//! TCP proxy dials also use that deadline so their timeouts retain proxy error attribution.
+//! TCP dials share that deadline so their timeout errors reach connector middleware.
 
 use std::{
     sync::Arc,
@@ -91,7 +91,7 @@ async fn connect(
         Route::Direct => {
             let tls = tls.for_request(&request)?;
             let io = dialer
-                .dial(tcp_request(&request, request.uri().clone(), None))
+                .dial(tcp_request(&request, request.uri().clone(), deadline))
                 .await?;
             (MaybeHttpsStream::Http(io), tls)
         }

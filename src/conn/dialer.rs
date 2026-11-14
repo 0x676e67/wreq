@@ -60,7 +60,7 @@ pub(super) enum SocketRequest {
         uri: Uri,
         /// Keeps TCP_NODELAY enabled through any TLS on this socket, including tunneled TLS.
         secure: bool,
-        /// Lets a proxy dial report its own timeout before the outer connector does.
+        /// Lets the dial report its own timeout before the outer connector does.
         deadline: Option<Instant>,
         config_set: ConfigSet,
     },

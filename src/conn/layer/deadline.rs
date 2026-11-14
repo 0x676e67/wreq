@@ -25,8 +25,8 @@ pub(crate) struct DeadlineLayer {
 
 /// Bounds each connector call by one deadline, started in `call` after readiness waits.
 /// It covers everything beneath: user layers, proxy setup and the transport handshakes.
-/// Proxy dials share its instant through the [`TransportRequest`] it passes on and fail there
-/// themselves; every other expiry is reported here.
+/// Dials that use the deadline in [`TransportRequest`] can report their own timeout before the
+/// outer timer ends the call.
 #[derive(Clone)]
 pub(crate) struct Deadline<S> {
     inner: S,

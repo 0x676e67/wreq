@@ -33,8 +33,8 @@ pub(crate) struct TransportConnector {
 }
 
 /// What [`TransportConnector`] connects: a request and the instant its connect timeout expires.
-/// The deadline layer builds it once per call, so a proxy dial beneath stops at that instant
-/// itself and its route reports the timeout as a proxy failure.
+/// The deadline layer sets the instant once per call. A dial can report its own timeout,
+/// letting a proxy route classify it as a proxy failure.
 pub(crate) struct TransportRequest {
     pub(super) request: ConnectRequest,
     pub(super) deadline: Option<Instant>,
