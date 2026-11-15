@@ -34,7 +34,7 @@ use crate::{
         error::{Error, ErrorKind},
         pool::{self, TransportConnector},
     },
-    config::connect::ConfigSet,
+    config::connect::Extensions,
     ext::UriExt,
     rt::DynRuntime,
 };
@@ -96,7 +96,7 @@ where
     pub(crate) fn new(
         pool_config: pool::Config,
         connector: C,
-        config_set: &ConfigSet,
+        config_set: &Extensions,
         set_host: bool,
         #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn CookieStore>>,
         runtime: DynRuntime,
@@ -583,14 +583,14 @@ mod tests {
                 assert!(
                     conn_req
                         .config_set()
-                        .get::<crate::http1::Http1Options>()
+                        .get_ref::<crate::http1::Http1Options>()
                         .is_some()
                 );
                 #[cfg(feature = "http2")]
                 assert!(
                     conn_req
                         .config_set()
-                        .get::<crate::http2::Http2Options>()
+                        .get_ref::<crate::http2::Http2Options>()
                         .is_some()
                 );
                 let (client, server) = tokio::io::duplex(16384);
@@ -623,7 +623,7 @@ mod tests {
                 Dispatch::new(
                     pool::Config::default(),
                     connector,
-                    &ConfigSet::default(),
+                    &Extensions::default(),
                     true,
                     #[cfg(feature = "cookies")]
                     None,
@@ -656,7 +656,7 @@ mod tests {
                     })
                     .body(crate::Body::default())
                     .unwrap();
-                let mut config_set = ConfigSet::default();
+                let mut config_set = Extensions::default();
                 config_set.insert(
                     crate::http1::Http1Options::builder()
                         .max_headers(if strict && protocol == Protocol::Http1 {
@@ -758,7 +758,7 @@ mod tests {
             let mut request = Request::builder().uri(uri).body(()).unwrap();
             let extensions = request.extensions_mut();
             extensions
-                .get_or_insert_default::<ConfigSet>()
+                .get_or_insert_default::<Extensions>()
                 .insert(crate::Group::new("seven"));
             if let Some(extended_connect) = websocket {
                 *RequestConfig::<RequestVersion>::get_mut(extensions) = Some(Version::HTTP_11);

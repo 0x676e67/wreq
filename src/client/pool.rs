@@ -69,7 +69,7 @@ use self::{
 };
 use super::proto::{Established, http1};
 use crate::{
-    config::connect::{ConfigSet, ConnectConfig},
+    config::connect::{Extension, Extensions},
     conn::{
         Conn,
         request::{ConnectRequest, ConnectionKey},
@@ -273,14 +273,13 @@ struct PoolTargeter<C> {
     http3: Arc<conn::http3::Builder<DynRuntime>>,
 }
 
-/// Applies the request's counted `O` override to a copy of the client's builder.
-/// Without one, the entry shares the client's builder.
+/// Shares the client's builder unless the pool key selects a request override.
 fn configure<B, O>(builder: &Arc<B>, req: &ConnectRequest, apply: fn(B, O) -> B) -> Arc<B>
 where
     B: Clone,
-    O: ConnectConfig,
+    O: Extension,
 {
-    match req.config_override::<O>() {
+    match req.pool_override::<O>() {
         Some(options) => Arc::new(apply(B::clone(builder), options.clone())),
         None => builder.clone(),
     }
@@ -300,7 +299,7 @@ where
         config: Config,
         connector: C,
         runtime: DynRuntime,
-        config_set: &ConfigSet,
+        config_set: &Extensions,
         set_host: bool,
     ) -> Self {
         let reuse_delay = match config.strategy {
@@ -313,19 +312,19 @@ where
         };
 
         let mut http1 = conn::http1::Builder::default();
-        if let Some(options) = config_set.get::<Http1Options>() {
+        if let Some(options) = config_set.get_ref::<Http1Options>() {
             http1 = http1.options(options.clone());
         }
         #[cfg(feature = "http2")]
         let mut http2 = conn::http2::Builder::new(runtime.clone()).timer(runtime.clone());
         #[cfg(feature = "http2")]
-        if let Some(options) = config_set.get::<Http2Options>() {
+        if let Some(options) = config_set.get_ref::<Http2Options>() {
             http2 = http2.options(options.clone());
         }
         #[cfg(feature = "http3")]
         let mut http3 = conn::http3::Builder::new(runtime.clone());
         #[cfg(feature = "http3")]
-        if let Some(options) = config_set.get::<Http3Options>() {
+        if let Some(options) = config_set.get_ref::<Http3Options>() {
             http3 = http3.options(options.clone());
         }
 
@@ -590,7 +589,7 @@ where
 
     /// Builds only the pool components required by the target's protocol mode.
     ///
-    /// One key fixes the counted HTTP options, so an entry's builders serve all its requests.
+    /// A pool entry's builders use the HTTP options selected by its key.
     fn service(&self, target: &PoolTarget) -> Self::Service {
         let req = &target.req;
         let pool = self.pool.clone();

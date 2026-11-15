@@ -67,7 +67,7 @@ use crate::cookie;
 use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Proxy,
-    config::connect::ConfigSet,
+    config::connect::Extensions,
     conn::{self, BoxedTransportConnector, Conn, Connector, Unnameable, dialer},
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
@@ -179,7 +179,7 @@ struct Config {
     protocol: Protocol,
     https_only: bool,
     layers: Vec<BoxedClientServiceLayer>,
-    config_set: ConfigSet,
+    config_set: Extensions,
 }
 
 // ===== impl Client =====
@@ -237,7 +237,7 @@ impl Client {
                 protocol: Protocol::Auto,
                 https_only: false,
                 layers: Vec::new(),
-                config_set: ConfigSet::default(),
+                config_set: Extensions::default(),
             },
             runtime: DynRuntime::new(runtime),
         }
@@ -1637,7 +1637,7 @@ mod sealed {
 
         /// Protocol, options and socket bindings that requests inherit.
         protocol: Protocol,
-        config_set: ConfigSet,
+        config_set: Extensions,
 
         /// Connection-pool reuse and retention policy.
         pool_config: pool::Config,
@@ -1654,7 +1654,7 @@ mod sealed {
         pub fn new(runtime: DynRuntime) -> Self {
             Self {
                 protocol: Protocol::Auto,
-                config_set: ConfigSet::default(),
+                config_set: Extensions::default(),
                 pool_config: pool::Config {
                     idle_timeout: Some(Duration::from_secs(90)),
                     max_idle_per_host: usize::MAX,
@@ -1718,7 +1718,7 @@ mod sealed {
         ///
         /// Pool and session identities count only request values that differ from these.
         #[inline]
-        pub fn config_set(mut self, config_set: ConfigSet) -> Self {
+        pub fn config_set(mut self, config_set: Extensions) -> Self {
             self.config_set = config_set;
             self
         }

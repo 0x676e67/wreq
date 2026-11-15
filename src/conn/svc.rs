@@ -20,7 +20,7 @@ use super::{
     request::ConnectRequest,
     stream::StreamConnector,
 };
-use crate::{config::connect::ConfigSet, proxy::Matcher, tls};
+use crate::{config::connect::Extensions, proxy::Matcher, tls};
 
 /// Connects every transport behind one service. Each request goes to the stream or QUIC path
 /// its protocol runs over; how a path is composed stays private. Clones share each path's
@@ -70,7 +70,7 @@ impl TransportConnector {
         tls: tls::Config,
         proxies: Vec<Matcher>,
         verbose: bool,
-        config_set: &ConfigSet,
+        config_set: &Extensions,
     ) -> crate::Result<Self> {
         let proxies = Arc::new(proxies);
         Ok(Self {

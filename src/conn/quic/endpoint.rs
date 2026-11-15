@@ -20,7 +20,7 @@ use tokio::sync::Notify;
 use tower::BoxError;
 
 use crate::{
-    config::connect::ConfigSet,
+    config::connect::Extensions,
     conn::{
         Conn, Connected, HttpInfo, Transport,
         connected::tls_info,
@@ -121,7 +121,7 @@ impl Endpoints {
     }
 
     /// Opens a UDP endpoint for the address family of `remote`.
-    fn open(&self, config_set: &ConfigSet, remote: SocketAddr) -> Result<Endpoint, ConnectError> {
+    fn open(&self, config_set: &Extensions, remote: SocketAddr) -> Result<Endpoint, ConnectError> {
         let dialer = &self.dialer;
         Endpoint::new(
             endpoint_config(),
@@ -138,7 +138,7 @@ impl Endpoints {
     async fn connect_addr(
         &self,
         slots: &Slots,
-        config_set: &ConfigSet,
+        config_set: &Extensions,
         config: &QuicConfig,
         address: SocketAddr,
         host: &str,
@@ -174,7 +174,7 @@ impl Endpoints {
         &self,
         slot: &Mutex<Option<Endpoint>>,
         stale: &Endpoint,
-        config_set: &ConfigSet,
+        config_set: &Extensions,
         config: &QuicConfig,
         address: SocketAddr,
         connect: impl Fn(&Endpoint) -> Result<Connecting, ::quic::ConnectError>,
@@ -200,7 +200,7 @@ impl Endpoints {
     fn endpoint(
         &self,
         slot: &Mutex<Option<Endpoint>>,
-        config_set: &ConfigSet,
+        config_set: &Extensions,
         remote: SocketAddr,
     ) -> Result<Endpoint, ConnectError> {
         let mut slot = slot.lock();
@@ -292,7 +292,7 @@ impl Endpoints {
     async fn dial(
         &self,
         uri: &Uri,
-        config_set: &ConfigSet,
+        config_set: &Extensions,
         config: &QuicConfig,
         shared: bool,
     ) -> Result<(Connection, Endpoint), BoxError> {
@@ -350,7 +350,7 @@ impl Endpoints {
         let client = self.tls.options();
         let requested = request
             .config_set()
-            .get::<QuicOptions>()
+            .get_ref::<QuicOptions>()
             .filter(|requested| !client.is_some_and(|client| requested.same_transport(client)));
         match (path, requested) {
             (Path::Direct, None) => Ok(self.direct_transport.clone()),
@@ -574,13 +574,13 @@ mod tests {
         }
     }
 
-    fn request(uri: Uri, config_set: ConfigSet) -> ConnectRequest {
+    fn request(uri: Uri, config_set: Extensions) -> ConnectRequest {
         ConnectRequest::new(
             &uri,
             None,
             Protocol::Auto,
             config_set,
-            &ConfigSet::default(),
+            &Extensions::default(),
         )
         .unwrap()
     }
@@ -608,7 +608,7 @@ mod tests {
     fn endpoints_with(
         resolver: Arc<dyn Resolve>,
         cert: &[u8],
-        config_set: ConfigSet,
+        config_set: Extensions,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Endpoints {
         let tls = tls::Config {
@@ -622,13 +622,13 @@ mod tests {
             config_set,
             happy_eyeballs_timeout,
         );
-        Endpoints::new(dialer, tls.quic(&ConfigSet::default()).unwrap()).unwrap()
+        Endpoints::new(dialer, tls.quic(&Extensions::default()).unwrap()).unwrap()
     }
 
     /// Returns endpoints trusting `cert` that resolve names through `resolver`. Its tests
     /// resolve one address, so no delay applies.
     fn endpoints(resolver: Arc<dyn Resolve>, cert: &[u8]) -> Endpoints {
-        endpoints_with(resolver, cert, ConfigSet::default(), None)
+        endpoints_with(resolver, cert, Extensions::default(), None)
     }
 
     fn current(slot: &Mutex<Option<Endpoint>>) -> Endpoint {
@@ -657,12 +657,12 @@ mod tests {
     fn literal(address: SocketAddr) -> ConnectRequest {
         request(
             format!("https://{address}/").parse().unwrap(),
-            ConfigSet::default(),
+            Extensions::default(),
         )
     }
 
-    fn configured<T: crate::config::connect::ConnectConfig>(value: T) -> ConnectRequest {
-        let mut config_set = ConfigSet::default();
+    fn configured<T: crate::config::connect::Extension>(value: T) -> ConnectRequest {
+        let mut config_set = Extensions::default();
         config_set.insert(value);
         let uri = Uri::from_static("https://localhost/");
         ConnectRequest::test(uri, Some(Protocol::Http3), config_set)
@@ -682,10 +682,13 @@ mod tests {
         let endpoints = endpoints_with(
             resolver.clone(),
             &cert,
-            ConfigSet::default(),
+            Extensions::default(),
             Some(Duration::from_millis(20)),
         );
-        let localhost = request(Uri::from_static("https://localhost/"), ConfigSet::default());
+        let localhost = request(
+            Uri::from_static("https://localhost/"),
+            Extensions::default(),
+        );
         let (connection, _, _peer) = connect(&endpoints, localhost, &server4).await;
         assert_eq!(connection.remote_address(), addr4);
         assert_eq!(resolver.calls.load(Ordering::SeqCst), 1);
@@ -733,10 +736,13 @@ mod tests {
             let endpoints = endpoints_with(
                 resolving(addresses.clone()),
                 &cert,
-                ConfigSet::default(),
+                Extensions::default(),
                 happy_eyeballs_timeout,
             );
-            let localhost = request(Uri::from_static("https://localhost/"), ConfigSet::default());
+            let localhost = request(
+                Uri::from_static("https://localhost/"),
+                Extensions::default(),
+            );
             let error = tokio::time::timeout(Duration::from_secs(5), endpoints.connect(&localhost))
                 .await
                 .unwrap()
@@ -771,7 +777,10 @@ mod tests {
             let remote = server.local_addr().unwrap();
             let resolver = resolving(vec![remote]);
             let endpoints = endpoints(resolver.clone(), &cert);
-            let localhost = request(Uri::from_static("https://localhost/"), ConfigSet::default());
+            let localhost = request(
+                Uri::from_static("https://localhost/"),
+                Extensions::default(),
+            );
             let (first, shared, first_peer) = connect(&endpoints, localhost, &server).await;
             let local = shared.local_addr().unwrap();
             assert_eq!(first.remote_address(), remote);
@@ -792,7 +801,7 @@ mod tests {
                 mapped.close(0u32.into(), b"done");
             }
 
-            let mut bindings = ConfigSet::default();
+            let mut bindings = Extensions::default();
             dialer::set_local_address(&mut bindings, Some(address));
             let localhost = request(Uri::from_static("https://localhost/"), bindings);
             let (bound, isolated, _bound_peer) = connect(&endpoints, localhost, &server).await;
@@ -815,7 +824,7 @@ mod tests {
     async fn bindings_merged_to_the_client_share_its_endpoints() {
         let (server_config, cert) = test_server_config();
         let server = Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
-        let mut client = ConfigSet::default();
+        let mut client = Extensions::default();
         dialer::set_local_addresses(
             &mut client,
             Some(Ipv4Addr::LOCALHOST),
@@ -828,19 +837,19 @@ mod tests {
             None,
         );
         let uri = Uri::from_static("https://localhost/");
-        let request = |config_set: ConfigSet| {
+        let request = |config_set: Extensions| {
             ConnectRequest::new(&uri, None, Protocol::Auto, config_set, &client).unwrap()
         };
         let (first, shared, _peer) =
-            connect(&endpoints, request(ConfigSet::default()), &server).await;
+            connect(&endpoints, request(Extensions::default()), &server).await;
         assert_eq!(shared.local_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
 
-        let mut partial = ConfigSet::default();
+        let mut partial = Extensions::default();
         partial.insert(Ipv4Addr::LOCALHOST);
         let (second, reused, _peer) = connect(&endpoints, request(partial), &server).await;
         assert!(same_socket(&reused, &shared));
         // Changing only IPv6 still isolates an IPv4 dial from the client's endpoint.
-        let mut other_family = ConfigSet::default();
+        let mut other_family = Extensions::default();
         other_family.insert(Ipv6Addr::UNSPECIFIED);
         let (third, isolated, _peer) = connect(&endpoints, request(other_family), &server).await;
         assert!(!same_socket(&isolated, &shared));
@@ -868,7 +877,7 @@ mod tests {
             .key_shares(vec![crate::tls::KeyShare::P256])
             .build();
         // Client bindings belong to the dialer, so the attempt runs on one bound to TEST-NET.
-        fn rebind(endpoints: &mut Endpoints, config_set: ConfigSet) {
+        fn rebind(endpoints: &mut Endpoints, config_set: Extensions) {
             let dialer = &mut endpoints.dialer;
             *dialer = Dialer::new(
                 dialer.runtime().clone(),
@@ -878,11 +887,11 @@ mod tests {
                 None,
             );
         }
-        let mut testnet = ConfigSet::default();
+        let mut testnet = Extensions::default();
         testnet.insert(Ipv4Addr::new(192, 0, 2, 1));
         rebind(&mut endpoints, testnet);
         let error = endpoints.connect(&configured(invalid)).await.err().unwrap();
-        rebind(&mut endpoints, ConfigSet::default());
+        rebind(&mut endpoints, Extensions::default());
         let mut chain = std::iter::successors(
             Some(&*error as &(dyn std::error::Error + 'static)),
             |error| error.source(),
@@ -976,7 +985,10 @@ mod tests {
         };
         let connect = || {
             let runtime = runtime();
-            let request = request(Uri::from_static("https://localhost/"), ConfigSet::default());
+            let request = request(
+                Uri::from_static("https://localhost/"),
+                Extensions::default(),
+            );
             let (connection, endpoint) = runtime
                 .block_on(endpoints.connect(&request))
                 .unwrap()

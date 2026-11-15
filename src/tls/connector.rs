@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     Error,
-    config::connect::{ConfigSet, Overrides},
+    config::connect::{Extensions, KeyPart},
     conn::request::ConnectRequest,
     ext::UriExt,
     protocol::{Protocol, TransportKind},
@@ -44,9 +44,9 @@ pub struct StreamTls {
 /// Client TLS policy and its compiled contexts.
 struct Inner {
     config: Config,
-    config_set: ConfigSet,
+    extensions: Extensions,
     options: Option<Arc<TlsOptions>>,
-    contexts: ContextCache<SslConnector>,
+    contexts: ContextCache<SslConnector, TlsOptions>,
 }
 
 /// Runs the TLS handshakes of one request over streams it is given: the target's and an
@@ -71,13 +71,13 @@ pub enum MaybeHttpsStream<T> {
 
 impl StreamTls {
     /// Compiles the client's TLS context while preserving the shared session scope.
-    pub(super) fn new(config: Config, config_set: ConfigSet) -> crate::Result<Self> {
-        let options = config_set.get_arc::<TlsOptions>();
+    pub(super) fn new(config: Config, extensions: Extensions) -> crate::Result<Self> {
+        let options = extensions.get_arc::<TlsOptions>();
         let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
-                config_set,
+                extensions,
                 options,
                 contexts,
             }),
@@ -88,14 +88,12 @@ impl StreamTls {
     /// Requests without different context options keep the client's context.
     pub(crate) fn for_request(self, req: &ConnectRequest) -> crate::Result<TlsConnector> {
         let inner = &*self.inner;
-        let overrides = Overrides::for_context(
-            req.config_set().clone(),
-            &inner.config_set,
-            TransportKind::Stream,
-        );
-        let context = inner.contexts.get(overrides, |overrides| {
-            compile(&inner.config, overrides.get::<TlsOptions>())
-        })?;
+        let key = req
+            .config_set()
+            .context_key::<TlsOptions>(&inner.extensions);
+        let context = inner
+            .contexts
+            .get(key, |options| compile(&inner.config, Some(options)))?;
         Ok(TlsConnector {
             tls: self,
             context,
@@ -116,7 +114,8 @@ impl StreamTls {
     ) -> Result<Ssl, BoxError> {
         let inner = &*self.inner;
         let options = req
-            .config_override::<TlsOptions>()
+            .config_set()
+            .different::<TlsOptions>(&inner.extensions, KeyPart::Whole)
             .or(inner.options.as_deref());
         let mut cfg = context.configure()?;
 
@@ -186,7 +185,7 @@ impl StreamTls {
             let target = SessionTarget::new(
                 req,
                 route,
-                &inner.config_set,
+                &inner.extensions,
                 TransportKind::Stream,
                 remote_ip,
                 tickets.session_id_context()?,

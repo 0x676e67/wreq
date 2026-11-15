@@ -43,7 +43,7 @@ impl Route {
         let uri = request.uri();
         let intercepted = request
             .config_set()
-            .get::<Matcher>()
+            .get_ref::<Matcher>()
             .and_then(|proxy| proxy.intercept(uri))
             .or_else(|| proxies.iter().find_map(|proxy| proxy.intercept(uri)));
         let proxy = match intercepted {

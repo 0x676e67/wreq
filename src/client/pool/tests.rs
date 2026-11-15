@@ -9,15 +9,7 @@ use http::Request;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(feature = "http2")]
 use {
-    super::entry::Checkout,
-    crate::config::connect::ConfigScope,
-    bytes::Bytes,
-    http::Response,
-    http_body_util::Empty,
-    std::{
-        hash::{Hash, Hasher},
-        sync::atomic::AtomicBool,
-    },
+    super::entry::Checkout, bytes::Bytes, http::Response, http_body_util::Empty,
     tower::util::Oneshot,
 };
 #[cfg(feature = "http3")]
@@ -162,7 +154,7 @@ fn connect_request(protocol: Protocol) -> ConnectRequest {
 
 /// Creates connection inputs with an explicit compatibility group.
 fn grouped_request(group: Group, protocol: Protocol) -> ConnectRequest {
-    let mut config_set = ConfigSet::default();
+    let mut config_set = Extensions::default();
     config_set.insert(group);
     ConnectRequest::test(
         http::Uri::from_static("http://localhost/"),
@@ -180,7 +172,7 @@ fn test_pool(connector: TestConnector) -> Pool<TestConnector> {
         },
         connector,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &ConfigSet::default(),
+        &Extensions::default(),
         true,
     )
 }
@@ -239,7 +231,7 @@ fn protocol_modes_build_specialized_entries() {
         Config::default(),
         connector,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &ConfigSet::default(),
+        &Extensions::default(),
         true,
     );
     assert_eq!(clones.load(Ordering::Relaxed), 0);
@@ -274,46 +266,38 @@ fn protocol_modes_build_specialized_entries() {
 #[tokio::test]
 #[cfg(feature = "http2")]
 async fn http2_checkouts_preserve_generation_and_cancellation() {
-    /// Records when one checkout's configuration is finally released.
-    /// Its QUIC scope keeps it out of the HTTP/2 and Auto pool identities.
-    #[derive(Clone)]
-    struct Released(Arc<AtomicBool>);
-
-    impl PartialEq for Released {
-        fn eq(&self, _other: &Self) -> bool {
-            true
-        }
-    }
-
-    impl Eq for Released {}
-
-    impl Hash for Released {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            state.write_u8(0);
-        }
-    }
-
-    impl ConnectConfig for Released {
-        const SCOPE: ConfigScope = ConfigScope::QUIC;
-    }
-
-    impl Drop for Released {
-        fn drop(&mut self) {
-            self.0.store(true, Ordering::Relaxed);
-        }
-    }
+    // Equivalent HTTP/1 options leave the key unchanged in both modes.
+    let http1 = Http1Options::builder().max_headers(96).build();
+    let mut client_config_set = Extensions::default();
+    client_config_set.insert(http1.clone());
 
     for protocol in [Protocol::Http2, Protocol::Auto] {
         let calls = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
-        let pool = test_pool(TestConnector::Http2(calls.clone(), gate.clone()));
+        let pool = Pool::new(
+            Config {
+                idle_timeout: None,
+                ..Config::default()
+            },
+            TestConnector::Http2(calls.clone(), gate.clone()),
+            DynRuntime::new(crate::rt::tokio::TokioRuntime),
+            &client_config_set,
+            true,
+        );
+        let req = connect_request(protocol);
         let checkout = || {
-            let released = Arc::new(AtomicBool::new(false));
-            let req = connect_request(protocol);
             let mut config_set = req.config_set().clone();
-            config_set.insert(Released(released.clone()));
+            config_set.insert(http1.clone());
+            let request_options = Arc::downgrade(&config_set.get_arc::<Http1Options>().unwrap());
             let target = PoolTarget {
-                req: ConnectRequest::test(req.uri().clone(), Some(protocol), config_set),
+                req: ConnectRequest::new(
+                    req.uri(),
+                    Some(protocol),
+                    Protocol::Auto,
+                    config_set,
+                    &client_config_set,
+                )
+                .unwrap(),
                 wait_for_reuse: false,
             };
             let (future, unused) = pool.inner.services.lock().with_service(
@@ -322,13 +306,13 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
                 |entry, target| {
                     assert_eq!(entry.protocol(), protocol);
                     let checkout = entry.checkout(target, true);
-                    assert!(!released.load(Ordering::Relaxed));
+                    assert_ne!(request_options.strong_count(), 0);
                     checkout
                 },
             );
             let reused = unused.is_some();
             drop(unused);
-            assert_eq!(released.load(Ordering::Relaxed), reused);
+            assert_eq!(request_options.strong_count() == 0, reused);
             future
         };
 
@@ -382,7 +366,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
             .inner
             .services
             .lock()
-            .get_mut(&connect_request(protocol).key())
+            .get_mut(&req.key())
             .unwrap()
             .retain(pool.inner.now(), None);
         assert!(
@@ -434,7 +418,7 @@ async fn idle_task_tracks_reusable_state() {
         },
         TestConnector::KeepsAlive,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &ConfigSet::default(),
+        &Extensions::default(),
         true,
     );
     let pooled = pool
@@ -460,7 +444,7 @@ async fn idle_task_tracks_reusable_state() {
         },
         TestConnector::KeepsAlive,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &ConfigSet::default(),
+        &Extensions::default(),
         true,
     );
     let pooled = pool
@@ -485,7 +469,7 @@ async fn idle_task_waits_for_a_runtime_after_off_runtime_drop() {
         },
         TestConnector::KeepsAlive,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &ConfigSet::default(),
+        &Extensions::default(),
         true,
     );
     let checkout = || pool.checkout(connect_request(Protocol::Http1), false);
@@ -717,7 +701,7 @@ async fn pool_max_size_evicts_only_idle_groups() {
         },
         TestConnector::KeepsAlive,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &ConfigSet::default(),
+        &Extensions::default(),
         true,
     );
     let first_req = grouped_request(Group::new("first"), Protocol::Http1);
@@ -767,7 +751,7 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
             },
             connector,
             DynRuntime::new(crate::rt::tokio::TokioRuntime),
-            &ConfigSet::default(),
+            &Extensions::default(),
             true,
         );
         let request = |name| grouped_request(Group::new(name), protocol);

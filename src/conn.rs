@@ -29,7 +29,7 @@ use tower::{
 };
 
 use crate::{
-    config::connect::ConfigSet, dns::DynResolver, error::map_timeout_to_connector_error,
+    config::connect::Extensions, dns::DynResolver, error::map_timeout_to_connector_error,
     proxy::Matcher as ProxyMatcher, rt::DynRuntime, tls,
 };
 
@@ -94,7 +94,7 @@ impl Connector {
         config: Config,
         runtime: DynRuntime,
         resolver: DynResolver,
-        config_set: &ConfigSet,
+        config_set: &Extensions,
     ) -> Result<Self, crate::Error> {
         let dialer = Dialer::new(
             runtime.clone(),
@@ -189,13 +189,13 @@ mod tests {
                 config,
                 runtime.clone(),
                 resolver.clone(),
-                &ConfigSet::default(),
+                &Extensions::default(),
             )
             .unwrap();
             let request = ConnectRequest::test(
                 ::http::Uri::from_static("https://localhost/"),
                 Some(Protocol::Http3),
-                ConfigSet::default(),
+                Extensions::default(),
             );
             let serve = async {
                 let _accepted = server.accept().await.unwrap().await;
@@ -233,10 +233,10 @@ mod tests {
                 .unwrap()
                 .into_matcher()
         };
-        let mut overridden = ConfigSet::default();
+        let mut overridden = Extensions::default();
         overridden.insert(proxy());
         for (proxies, config_set) in [
-            (vec![proxy()], ConfigSet::default()),
+            (vec![proxy()], Extensions::default()),
             (Vec::new(), overridden),
         ] {
             let config = Config {
@@ -247,7 +247,7 @@ mod tests {
                 config,
                 runtime.clone(),
                 DynResolver::new(Arc::new(NoDns)),
-                &ConfigSet::default(),
+                &Extensions::default(),
             )
             .unwrap();
             let request = ConnectRequest::test(

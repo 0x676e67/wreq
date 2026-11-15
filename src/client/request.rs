@@ -31,7 +31,7 @@ use super::{
 use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
-    config::{RequestConfig, RequestConfigValue, connect::ConfigSet},
+    config::{RequestConfig, RequestConfigValue, connect::Extensions as ConnectExtensions},
     conn::dialer,
     ext::UriExt,
     group::Group,
@@ -194,8 +194,9 @@ impl Request {
     }
 
     #[inline]
-    fn config_set_mut(&mut self) -> &mut ConfigSet {
-        self.extensions_mut().get_or_insert_default::<ConfigSet>()
+    fn config_set_mut(&mut self) -> &mut ConnectExtensions {
+        self.extensions_mut()
+            .get_or_insert_default::<ConnectExtensions>()
     }
 }
 

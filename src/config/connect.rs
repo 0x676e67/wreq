@@ -1,19 +1,22 @@
-//! Type-indexed connection configuration and reuse identity.
-//!
-//! Configuration values cache their identity hashes on insertion. Edits copy shared handles;
-//! [`Overrides`] selects the entries compared by pool, session and TLS context keys.
+//! Connection extensions and the value comparisons used by reuse keys.
 
 use std::{
-    any::{Any, TypeId, type_name},
+    any::type_name,
     fmt,
     hash::{BuildHasher, Hash, Hasher},
-    iter,
+    net::{Ipv4Addr, Ipv6Addr},
     sync::{Arc, LazyLock},
 };
 
 use lru::DefaultHasher;
 
-use crate::protocol::{Protocol, TransportKind};
+#[cfg(feature = "http2")]
+use crate::http2::Http2Options;
+use crate::{
+    conn::dialer::Interface, group::Group, http1::Http1Options, proxy::Matcher, tls::TlsOptions,
+};
+#[cfg(feature = "http3")]
+use crate::{http3::Http3Options, quic::QuicOptions};
 
 /// Implements whole-value identity for one connection configuration type.
 macro_rules! impl_connect_config {
@@ -158,7 +161,7 @@ pub enum KeyPart {
     Context,
 }
 
-/// Configuration stored in [`ConfigSet`] and compared by reuse keys.
+/// Configuration values compared by connection reuse keys.
 ///
 /// Hashes are cached on insertion, so values must not change while stored, and
 /// `hash_parts` must agree with `eq_part` for every [`KeyPart`].
@@ -178,50 +181,139 @@ pub trait ConnectConfig: Clone + Eq + Hash + Send + Sync + 'static {
     }
 }
 
-/// Connection configuration of a client, an emulation or a request.
-///
-/// Entries are sorted by type and shared: clones bump one reference count, and edits
-/// copy the slice of handles, never the values.
+/// Shared connection extensions. Builders edit their own slots before a request is frozen.
 #[derive(Clone, Default)]
-pub(crate) struct ConfigSet(Option<Arc<[Entry]>>);
+pub(crate) struct Extensions(Option<Arc<Values>>);
 
-/// Selects request configuration for a pool, session or TLS context key.
-///
-/// Entries outside the scope or equal to the client's are skipped. Entries past the first
-/// 64 are counted whenever in scope. Keys are comparable only within the same client.
-/// Selection uses cached hashes and retains all request values for other key selections.
-#[derive(Clone)]
-pub(crate) struct Overrides {
-    config_set: ConfigSet,
-    /// Bit `i` marks entry `i` as counted; entries past bit 63 count whenever in scope.
-    counted: u64,
-    scope: ConfigScope,
+/// A borrowed request overlay, with client defaults for missing types.
+pub(crate) struct WithBase<'a> {
+    extensions: &'a Extensions,
+    base: &'a Extensions,
+}
+
+/// Selects differing values for one reuse key. Bits identify fields, not storage positions.
+#[derive(Clone, Copy)]
+pub(crate) struct Selection {
+    fields: u16,
     part: KeyPart,
-    /// Fold of the counted hashes in type order.
     hash: u64,
 }
 
+/// A reuse key's selection and the shared values it compares.
 #[derive(Clone)]
-struct Entry {
-    id: TypeId,
-    value: Arc<dyn Value>,
-    identity: Identity,
+pub(crate) struct Projection {
+    values: Extensions,
+    selection: Selection,
 }
 
-#[derive(Clone, Copy)]
-struct Identity {
-    scope: ConfigScope,
-    /// Per [`KeyPart`] hashes mixed with the configuration's type identity.
+/// A cached protocol value can be retained by a key independently of the request.
+#[derive(Clone)]
+pub(crate) struct ContextKey<T> {
+    value: Arc<T>,
+    hash: u64,
+}
+
+/// Maps a supported extension type to its field in the connection configuration.
+pub trait Extension: ConnectConfig {
+    #[doc(hidden)]
+    type Stored: Stored<Self>;
+
+    #[doc(hidden)]
+    const INDEX: u32;
+
+    #[doc(hidden)]
+    fn slot(values: &Values) -> &Option<Self::Stored>;
+
+    #[doc(hidden)]
+    fn slot_mut(values: &mut Values) -> &mut Option<Self::Stored>;
+}
+
+#[doc(hidden)]
+pub trait Stored<T: ConnectConfig>: Clone {
+    fn store(value: T) -> Self;
+    fn value(&self) -> &T;
+    fn hash(&self, part: KeyPart) -> u64;
+    fn same(&self, other: &Self, part: KeyPart) -> bool;
+}
+
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct Cached<T> {
+    value: Arc<T>,
     hashes: [u64; 3],
-    eq: fn(&dyn Any, &dyn Any, KeyPart) -> bool,
 }
 
-trait Value: Any + Send + Sync {
-    fn type_name(&self) -> &'static str;
+macro_rules! extension_fields {
+    ($($(#[$attr:meta])* $index:literal => $field:ident: $ty:ty as $stored:ty),+ $(,)?) => {
+        #[doc(hidden)]
+        #[derive(Clone, Default)]
+        pub struct Values {
+            fields: u16,
+            $($(#[$attr])* $field: Option<$stored>,)+
+        }
+
+        impl Values {
+            fn extend(&mut self, other: &Self) {
+                self.fields |= other.fields;
+                $($(#[$attr])* if let Some(value) = &other.$field {
+                    self.$field = Some(value.clone());
+                })+
+            }
+
+            fn same(&self, other: &Self, selection: Selection) -> bool {
+                $($(#[$attr])* if selection.fields & (1 << $index) != 0
+                    && !self.$field.as_ref().zip(other.$field.as_ref())
+                        .is_some_and(|(left, right)| Stored::<$ty>::same(left, right, selection.part))
+                {
+                    return false;
+                })+
+                true
+            }
+
+            fn debug(&self, f: &mut fmt::Formatter<'_>, fields: u16) -> fmt::Result {
+                let mut set = f.debug_set();
+                $($(#[$attr])* if fields & (1 << $index) != 0 {
+                    set.entry(&type_name::<$ty>());
+                })+
+                set.finish()
+            }
+        }
+
+        $($(#[$attr])*
+        impl Extension for $ty {
+            type Stored = $stored;
+            const INDEX: u32 = $index;
+
+            fn slot(values: &Values) -> &Option<Self::Stored> {
+                &values.$field
+            }
+
+            fn slot_mut(values: &mut Values) -> &mut Option<Self::Stored> {
+                &mut values.$field
+            }
+        })+
+    };
+}
+
+extension_fields! {
+    0 => ipv4: Ipv4Addr as Ipv4Addr,
+    1 => ipv6: Ipv6Addr as Ipv6Addr,
+    2 => interface: Interface as Interface,
+    3 => group: Group as Group,
+    4 => matcher: Matcher as Cached<Matcher>,
+    5 => tls: TlsOptions as Cached<TlsOptions>,
+    6 => http1: Http1Options as Cached<Http1Options>,
+    #[cfg(feature = "http2")]
+    7 => http2: Http2Options as Cached<Http2Options>,
+    #[cfg(feature = "http3")]
+    8 => quic: QuicOptions as Cached<QuicOptions>,
+    #[cfg(feature = "http3")]
+    9 => http3: Http3Options as Cached<Http3Options>,
 }
 
 // ===== impl ConfigScope =====
 
+// Retained as part of the inherited ProtocolConfig contract. Reuse keys select their own fields.
 impl ConfigScope {
     pub const TLS: Self = Self(1);
     pub const QUIC: Self = Self(1 << 1);
@@ -231,506 +323,299 @@ impl ConfigScope {
     pub const SOCKET: Self = Self(1 << 5);
     pub const ROUTE: Self = Self(1 << 6);
     pub const GROUP: Self = Self(1 << 7);
-
-    const ALL: Self = Self(u16::MAX);
-    const HTTP: Self = Self::HTTP1.or(Self::HTTP2).or(Self::HTTP3);
-    #[cfg(feature = "http3")]
-    const TCP_ONLY: Self = Self::TLS.or(Self::HTTP1).or(Self::HTTP2);
-    const QUIC_ONLY: Self = Self::QUIC.or(Self::HTTP3);
-
-    /// Selects configuration relevant to pooled connections using `protocol`.
-    /// Excludes unused protocols so newly added scope bits stay in the key.
-    const fn pool(protocol: Protocol) -> Self {
-        Self::ALL.without(match protocol {
-            Protocol::Http1 => Self::HTTP2.or(Self::QUIC_ONLY),
-            #[cfg(feature = "http2")]
-            Protocol::Http2 => Self::HTTP1.or(Self::QUIC_ONLY),
-            Protocol::Auto => Self::QUIC_ONLY,
-            #[cfg(feature = "http3")]
-            Protocol::Http3 => Self::TCP_ONLY,
-        })
-    }
-
-    /// Selects session configuration for `transport`, excluding HTTP options.
-    const fn session(transport: TransportKind) -> Self {
-        Self::ALL.without(Self::HTTP.or(match transport {
-            TransportKind::Stream => Self::QUIC_ONLY,
-            #[cfg(feature = "http3")]
-            TransportKind::Quic => Self::TCP_ONLY,
-        }))
-    }
-
-    /// Selects TLS context configuration, excluding routes and groups.
-    const fn context(transport: TransportKind) -> Self {
-        match transport {
-            TransportKind::Stream => Self::TLS,
-            #[cfg(feature = "http3")]
-            TransportKind::Quic => Self::QUIC,
-        }
-    }
-
-    const fn or(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-
-    const fn without(self, other: Self) -> Self {
-        Self(self.0 & !other.0)
-    }
-
-    const fn intersects(self, other: Self) -> bool {
-        self.0 & other.0 != 0
-    }
 }
 
 // ===== impl ConnectConfig =====
 
-impl_connect_config!(netty::http1::Http1Options, HTTP1);
+impl_connect_config!(Http1Options, HTTP1);
 #[cfg(feature = "http2")]
-impl_connect_config!(netty::http2::Http2Options, HTTP2);
+impl_connect_config!(Http2Options, HTTP2);
 #[cfg(feature = "http3")]
-impl_connect_config!(netty::http3::Http3Options, HTTP3);
+impl_connect_config!(Http3Options, HTTP3);
 
-// ===== impl ConfigSet =====
+// ===== impl Stored =====
 
-impl ConfigSet {
-    /// Inserts configuration and caches its hashes for each [`KeyPart`].
-    pub(crate) fn insert<T: ConnectConfig>(&mut self, value: T) -> &mut Self {
-        let id = TypeId::of::<T>();
-        let identity = Identity {
-            scope: T::SCOPE,
-            hashes: value.hash_parts().map(|hash| HASHER.hash_one((id, hash))),
-            eq: |left, right, part| match (left.downcast_ref::<T>(), right.downcast_ref::<T>()) {
-                (Some(left), Some(right)) => left.eq_part(right, part),
-                _ => false,
-            },
-        };
-        self.insert_entry(Entry {
-            id,
-            value: Arc::new(value),
-            identity,
-        });
+impl<T: ConnectConfig> Stored<T> for T {
+    fn store(value: T) -> Self {
+        value
+    }
+
+    fn value(&self) -> &T {
         self
     }
 
-    /// Inserts `Some` configuration or removes the type for `None`.
-    pub(crate) fn set<T: ConnectConfig>(&mut self, value: Option<T>) -> &mut Self {
-        match value {
-            Some(value) => self.insert(value),
-            None => {
-                let entries = self.entries();
-                if let Ok(index) = search(entries, TypeId::of::<T>()) {
-                    self.0 = collect(
-                        entries[..index]
-                            .iter()
-                            .chain(&entries[index + 1..])
-                            .cloned(),
-                    );
-                }
-                self
-            }
+    fn hash(&self, _part: KeyPart) -> u64 {
+        HASHER.hash_one(self)
+    }
+
+    fn same(&self, other: &Self, part: KeyPart) -> bool {
+        self.eq_part(other, part)
+    }
+}
+
+impl<T: ConnectConfig> Stored<T> for Cached<T> {
+    fn store(value: T) -> Self {
+        let hashes = value.hash_parts();
+        Self {
+            value: Arc::new(value),
+            hashes,
         }
     }
 
-    /// Returns the configuration stored for this exact type.
-    pub(crate) fn get<T: ConnectConfig>(&self) -> Option<&T> {
-        self.entry(TypeId::of::<T>())
-            .and_then(|entry| (entry.value.as_ref() as &dyn Any).downcast_ref())
+    fn value(&self) -> &T {
+        &self.value
     }
 
-    /// Returns a shared handle to the value stored for this exact type.
-    pub(crate) fn get_arc<T: ConnectConfig>(&self) -> Option<Arc<T>> {
-        let value: Arc<dyn Any + Send + Sync> = self.entry(TypeId::of::<T>())?.value.clone();
-        value.downcast().ok()
+    fn hash(&self, part: KeyPart) -> u64 {
+        self.hashes[part as usize]
     }
 
-    /// Merges `other` into `self`; its entries replace those of the same type.
-    /// An empty destination takes the incoming storage without copying it.
+    fn same(&self, other: &Self, part: KeyPart) -> bool {
+        Arc::ptr_eq(&self.value, &other.value)
+            || (self.hash(part) == other.hash(part) && self.value.eq_part(&other.value, part))
+    }
+}
+
+// ===== impl Extensions =====
+
+impl Extensions {
+    pub(crate) fn insert<T: Extension>(&mut self, value: T) -> &mut Self {
+        let values = Arc::make_mut(self.0.get_or_insert_with(Arc::default));
+        *T::slot_mut(values) = Some(T::Stored::store(value));
+        values.fields |= 1 << T::INDEX;
+        self
+    }
+
+    /// An absent value clears only this type's local setting.
+    pub(crate) fn set<T: Extension>(&mut self, value: Option<T>) -> &mut Self {
+        if let Some(value) = value {
+            return self.insert(value);
+        }
+        let Some(values) = &mut self.0 else {
+            return self;
+        };
+        let field = 1 << T::INDEX;
+        if values.fields == field {
+            self.0 = None;
+        } else if values.fields & field != 0 {
+            let values = Arc::make_mut(values);
+            *T::slot_mut(values) = None;
+            values.fields &= !field;
+        }
+        self
+    }
+
+    /// Replaces only the types supplied by the incoming configuration.
     pub(crate) fn extend(&mut self, other: Self) {
-        let (Some(left), Some(right)) = (self.0.as_deref(), other.0.as_deref()) else {
-            if self.0.is_none() {
-                self.0 = other.0;
+        if let Some(other) = other.0 {
+            match &mut self.0 {
+                Some(values) => Arc::make_mut(values).extend(&other),
+                None => self.0 = Some(other),
             }
-            return;
-        };
-        let mut merged = Vec::with_capacity(left.len() + right.len());
-        let (mut left, mut right) = (left.iter().peekable(), right.iter().peekable());
-        while let (Some(l), Some(r)) = (left.peek().map(|e| e.id), right.peek().map(|e| e.id)) {
-            if l == r {
-                left.next();
-            }
-            let next = if l < r { left.next() } else { right.next() };
-            merged.extend(next.cloned());
         }
-        merged.extend(left.chain(right).cloned());
-        self.0 = Some(merged.into());
     }
 
-    fn entries(&self) -> &[Entry] {
-        self.0.as_deref().unwrap_or_default()
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_none()
     }
 
-    fn entry(&self, id: TypeId) -> Option<&Entry> {
-        let entries = self.entries();
-        search(entries, id).ok().map(|index| &entries[index])
+    pub(crate) fn get_ref<T: Extension>(&self) -> Option<&T> {
+        self.get::<T>().map(Stored::value)
     }
 
-    fn insert_entry(&mut self, entry: Entry) {
-        let entries = self.entries();
-        let (index, replaced) = match search(entries, entry.id) {
-            Ok(index) => (index, 1),
-            Err(index) => (index, 0),
-        };
-        self.0 = collect(
-            entries[..index]
-                .iter()
-                .cloned()
-                .chain(iter::once(entry))
-                .chain(entries[index + replaced..].iter().cloned()),
-        );
+    pub(crate) fn get_arc<T: Extension<Stored = Cached<T>>>(&self) -> Option<Arc<T>> {
+        self.get::<T>().map(|entry| entry.value.clone())
     }
 
-    fn ptr_eq(&self, other: &Self) -> bool {
-        match (&self.0, &other.0) {
-            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+    /// Borrows the overlay and its defaults without merging or copying either set.
+    pub(crate) fn with_base<'a>(&'a self, base: &'a Self) -> WithBase<'a> {
+        WithBase {
+            extensions: self,
+            base,
+        }
+    }
+
+    pub(crate) fn different<T: Extension>(&self, base: &Self, part: KeyPart) -> Option<&T> {
+        self.different_entry::<T>(base, part).map(Stored::value)
+    }
+
+    #[cfg(feature = "http3")]
+    pub(crate) fn different_arc<T: Extension<Stored = Cached<T>>>(
+        &self,
+        base: &Self,
+        part: KeyPart,
+    ) -> Option<Arc<T>> {
+        self.different_entry::<T>(base, part)
+            .map(|entry| entry.value.clone())
+    }
+
+    /// Retains only the selected protocol value for a context cache.
+    pub(crate) fn context_key<T: Extension<Stored = Cached<T>>>(
+        &self,
+        base: &Self,
+    ) -> Option<ContextKey<T>> {
+        let entry = self.different_entry::<T>(base, KeyPart::Context)?;
+        Some(ContextKey {
+            value: entry.value.clone(),
+            hash: entry.hash(KeyPart::Context),
+        })
+    }
+
+    fn get<T: Extension>(&self) -> Option<&T::Stored> {
+        T::slot(self.0.as_deref()?).as_ref()
+    }
+
+    fn different_entry<T: Extension>(&self, base: &Self, part: KeyPart) -> Option<&T::Stored> {
+        let entry = self.get::<T>()?;
+        (!base.get::<T>().is_some_and(|other| entry.same(other, part))).then_some(entry)
+    }
+}
+
+impl fmt::Debug for Extensions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            Some(values) => values.debug(f, values.fields),
+            None => f.debug_set().finish(),
+        }
+    }
+}
+
+impl<'a> WithBase<'a> {
+    pub(crate) fn get_ref<T: Extension>(&self) -> Option<&'a T> {
+        self.extensions
+            .get_ref::<T>()
+            .or_else(|| self.base.get_ref())
+    }
+}
+
+// ===== impl Selection =====
+
+impl Selection {
+    pub(crate) const fn new(part: KeyPart) -> Self {
+        Self {
+            fields: 0,
+            part,
+            hash: 0,
+        }
+    }
+
+    pub(crate) fn include<T: Extension>(&mut self, request: &Extensions, client: &Extensions) {
+        if let Some(entry) = request.different_entry::<T>(client, self.part) {
+            self.fields |= 1 << T::INDEX;
+            self.hash ^= entry.hash(self.part).rotate_left(T::INDEX);
+        }
+    }
+
+    pub(crate) const fn is_empty(self) -> bool {
+        self.fields == 0
+    }
+
+    pub(crate) const fn hash(self) -> u64 {
+        self.hash
+    }
+
+    pub(crate) fn get_ref<'a, T: Extension>(&self, extensions: &'a Extensions) -> Option<&'a T> {
+        if self.fields & (1 << T::INDEX) != 0 {
+            extensions.get_ref::<T>()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn key(self, extensions: &Extensions) -> Projection {
+        Projection {
+            values: if self.is_empty() {
+                Extensions::default()
+            } else {
+                extensions.clone()
+            },
+            selection: self,
+        }
+    }
+}
+
+// ===== impl Projection =====
+
+impl PartialEq for Projection {
+    fn eq(&self, other: &Self) -> bool {
+        let selection = self.selection;
+        if selection.hash != other.selection.hash
+            || selection.fields != other.selection.fields
+            || selection.part != other.selection.part
+        {
+            return false;
+        }
+        match (&self.values.0, &other.values.0) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right) || left.same(right, selection),
             (None, None) => true,
             _ => false,
         }
     }
 }
 
-impl fmt::Debug for ConfigSet {
+impl Eq for Projection {}
+
+impl Hash for Projection {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.selection.hash);
+    }
+}
+
+impl fmt::Debug for Projection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_set()
-            .entries(
-                self.entries()
-                    .iter()
-                    .map(|entry| entry.value.as_ref().type_name()),
-            )
-            .finish()
+        match &self.values.0 {
+            Some(values) => values.debug(f, self.selection.fields),
+            None => f.debug_set().finish(),
+        }
     }
 }
 
-// ===== impl Overrides =====
+// ===== impl ContextKey =====
 
-impl Overrides {
-    /// Selects request configuration that changes pooled connection identity.
-    pub(crate) fn for_pool(
-        config_set: ConfigSet,
-        client_config_set: &ConfigSet,
-        protocol: Protocol,
-    ) -> Self {
-        Self::select(
-            config_set,
-            client_config_set,
-            ConfigScope::pool(protocol),
-            KeyPart::Whole,
-        )
-    }
-
-    /// Selects request configuration that changes resumable TLS session identity.
-    pub(crate) fn for_session(
-        config_set: ConfigSet,
-        client_config_set: &ConfigSet,
-        transport: TransportKind,
-    ) -> Self {
-        Self::select(
-            config_set,
-            client_config_set,
-            ConfigScope::session(transport),
-            KeyPart::Session,
-        )
-    }
-
-    /// Selects request configuration that changes the compiled TLS context.
-    pub(crate) fn for_context(
-        config_set: ConfigSet,
-        client_config_set: &ConfigSet,
-        transport: TransportKind,
-    ) -> Self {
-        Self::select(
-            config_set,
-            client_config_set,
-            ConfigScope::context(transport),
-            KeyPart::Context,
-        )
-    }
-
-    /// Selects entries in `scope` that differ from `client_config_set` under `part`.
-    /// Uses cached hashes without allocating or hashing configuration values.
-    fn select(
-        config_set: ConfigSet,
-        client_config_set: &ConfigSet,
-        scope: ConfigScope,
-        part: KeyPart,
-    ) -> Self {
-        let mut counted = 0;
-        let mut hasher = HASHER.build_hasher();
-        // Up to 64 entries, shared client storage needs no overrides; later entries count by scope.
-        if !(config_set.ptr_eq(client_config_set) && config_set.entries().len() <= 64) {
-            let mut client_entries = client_config_set.entries().iter().peekable();
-            for (index, entry) in config_set.entries().iter().enumerate() {
-                let identity = &entry.identity;
-                if !identity.scope.intersects(scope) {
-                    continue;
-                }
-                while client_entries
-                    .next_if(|other| other.id < entry.id)
-                    .is_some()
-                {}
-                let inherited = client_entries
-                    .next_if(|other| other.id == entry.id)
-                    .is_some_and(|other| other.same(entry, part));
-                if index < 64 {
-                    if inherited {
-                        continue;
-                    }
-                    counted |= 1 << index;
-                }
-                hasher.write_u64(identity.hashes[part as usize]);
-            }
-        }
-
-        Self {
-            config_set,
-            counted,
-            scope,
-            part,
-            hash: hasher.finish(),
-        }
-    }
-
-    /// Returns the counted value of this type.
-    pub(crate) fn get<T: ConnectConfig>(&self) -> Option<&T> {
-        let entries = self.config_set.entries();
-        let index = search(entries, TypeId::of::<T>()).ok()?;
-        self.counts(index, &entries[index])
-            .then(|| (entries[index].value.as_ref() as &dyn Any).downcast_ref())
-            .flatten()
-    }
-
-    /// Returns a shared handle to the counted value of this type.
-    #[cfg(feature = "http3")]
-    pub(crate) fn get_arc<T: ConnectConfig>(&self) -> Option<Arc<T>> {
-        let entries = self.config_set.entries();
-        let index = search(entries, TypeId::of::<T>()).ok()?;
-        let entry = &entries[index];
-        let value: Arc<dyn Any + Send + Sync> =
-            self.counts(index, entry).then(|| entry.value.clone())?;
-        value.downcast().ok()
-    }
-
-    /// Every configuration value of the request, including uncounted entries.
-    pub(crate) fn config_set(&self) -> &ConfigSet {
-        &self.config_set
-    }
-
-    /// Returns whether no entry is counted.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.counted().next().is_none()
-    }
-
-    /// Returns the cached hash of the counted entries.
-    pub(crate) fn hash(&self) -> u64 {
-        self.hash
-    }
-
-    fn counts(&self, index: usize, entry: &Entry) -> bool {
-        match index {
-            0..64 => self.counted & (1 << index) != 0,
-            _ => entry.identity.scope.intersects(self.scope),
-        }
-    }
-
-    fn counted(&self) -> impl Iterator<Item = &Entry> {
-        let entries = self.config_set.entries().iter().enumerate();
-        entries.filter_map(|(index, entry)| self.counts(index, entry).then_some(entry))
+impl<T> ContextKey<T> {
+    pub(crate) fn get(&self) -> &T {
+        &self.value
     }
 }
 
-impl PartialEq for Overrides {
+impl<T: ConnectConfig> PartialEq for ContextKey<T> {
     fn eq(&self, other: &Self) -> bool {
         self.hash == other.hash
-            && self.scope == other.scope
-            && self.part == other.part
-            && ((self.config_set.ptr_eq(&other.config_set) && self.counted == other.counted)
-                || same_entries(self.counted(), other.counted(), self.part))
+            && (Arc::ptr_eq(&self.value, &other.value)
+                || self.value.eq_part(&other.value, KeyPart::Context))
     }
 }
 
-impl Eq for Overrides {}
+impl<T: ConnectConfig> Eq for ContextKey<T> {}
 
-impl Hash for Overrides {
+impl<T> Hash for ContextKey<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(self.hash);
     }
 }
 
-impl fmt::Debug for Overrides {
+impl<T> fmt::Debug for ContextKey<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_set()
-            .entries(self.counted().map(|entry| entry.value.as_ref().type_name()))
-            .finish()
+        f.write_str(type_name::<T>())
     }
-}
-
-// ===== impl Entry =====
-
-impl Entry {
-    /// Compares two entries of one type under `part`, by pointer, then hash, then value.
-    fn same(&self, other: &Self, part: KeyPart) -> bool {
-        let (left, right) = (&self.identity, &other.identity);
-        Arc::ptr_eq(&self.value, &other.value)
-            || (left.hashes[part as usize] == right.hashes[part as usize]
-                && (left.eq)(
-                    self.value.as_ref() as &dyn Any,
-                    other.value.as_ref() as &dyn Any,
-                    part,
-                ))
-    }
-}
-
-// ===== impl Value =====
-
-impl<T: ConnectConfig> Value for T {
-    fn type_name(&self) -> &'static str {
-        type_name::<T>()
-    }
-}
-
-/// Compares two type-ordered entry sequences under `part`.
-fn same_entries<'a>(
-    mut left: impl Iterator<Item = &'a Entry>,
-    mut right: impl Iterator<Item = &'a Entry>,
-    part: KeyPart,
-) -> bool {
-    loop {
-        match (left.next(), right.next()) {
-            (None, None) => return true,
-            (Some(l), Some(r)) if l.id == r.id && l.same(r, part) => {}
-            _ => return false,
-        }
-    }
-}
-
-fn search(entries: &[Entry], id: TypeId) -> Result<usize, usize> {
-    entries.binary_search_by(|entry| entry.id.cmp(&id))
-}
-
-/// Collects entries into one allocation; the iterators used here report exact lengths.
-fn collect(entries: impl Iterator<Item = Entry>) -> Option<Arc<[Entry]>> {
-    let entries: Arc<[Entry]> = entries.collect();
-    (!entries.is_empty()).then_some(entries)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "http2")]
-    use crate::http2::Http2Options;
-    use crate::{
-        group::Group,
-        http1::Http1Options,
-        tls::{AlpnProtocol, Tls13Cipher, TlsOptions},
-    };
-
-    fn group(name: &str) -> ConfigSet {
-        let mut config_set = ConfigSet::default();
-        config_set.insert(Group::new(name));
-        config_set
-    }
 
     #[test]
-    fn merging_and_clearing_options_preserve_the_original() {
-        let h1 = Http1Options::builder().max_headers(8).build();
-        let mut original = group("a");
-        original.insert(h1.clone()).insert(TlsOptions::default());
-
-        let replacement = Http1Options::builder().max_headers(16).build();
-        let mut incoming = ConfigSet::default();
-        incoming.insert(replacement.clone());
-        let mut edited = original.clone();
-        edited.set::<TlsOptions>(None).extend(incoming);
-
-        assert_eq!(original.get::<Http1Options>(), Some(&h1));
-        assert!(original.get::<TlsOptions>().is_some());
-        assert_eq!(edited.get::<Http1Options>(), Some(&replacement));
-        assert_eq!(edited.get::<Group>(), Some(&Group::new("a")));
-        assert!(edited.get::<TlsOptions>().is_none());
-    }
-
-    #[test]
-    fn overrides_count_differences_in_scope() {
-        let client_config_set = group("a");
-        #[cfg(feature = "http2")]
-        let mut client_config_set = client_config_set;
-        #[cfg(feature = "http2")]
-        client_config_set.insert(Http2Options::builder().header_table_size(1024).build());
-        let overrides = |config_set: &ConfigSet| {
-            Overrides::for_pool(config_set.clone(), &client_config_set, Protocol::Http1)
-        };
-
-        // The client's own storage and equal values are inherited.
-        let empty = overrides(&ConfigSet::default());
-        assert!(empty.is_empty());
-        assert!(overrides(&client_config_set).is_empty());
-        assert!(overrides(&group("a")) == empty);
-
-        // Other values count; out-of-scope options never do.
-        let config_set = group("b");
-        #[cfg(feature = "http2")]
-        let mut config_set = config_set;
-        #[cfg(feature = "http2")]
-        config_set.insert(Http2Options::builder().header_table_size(4096).build());
-        let counted = overrides(&config_set);
-        assert!(!counted.is_empty());
-        assert_eq!(counted.get::<Group>(), Some(&Group::new("b")));
-        #[cfg(feature = "http2")]
-        assert!(counted.get::<Http2Options>().is_none());
-        #[cfg(feature = "http2")]
-        assert!(counted.config_set().get::<Http2Options>().is_some());
-        assert!(counted == overrides(&group("b")));
-        assert!(counted != overrides(&group("c")));
-
-        // A forged hash collision still compares the values.
-        let mut collision = overrides(&group("c"));
-        collision.hash = counted.hash;
-        assert!(counted != collision);
-
-        // Pool, session and context identities select different parts of TLS options.
-        let mut client_config_set = ConfigSet::default();
-        client_config_set.insert(TlsOptions::default());
-        for (options, expected) in [
-            (
-                TlsOptions::builder()
-                    .alpn_protocols([AlpnProtocol::HTTP1])
-                    .build(),
-                [true, false, false],
-            ),
-            (
-                TlsOptions::builder().server_padding(0).build(),
-                [true, true, false],
-            ),
-            (
-                TlsOptions::builder()
-                    .tls13_cipher_list(&[Tls13Cipher::AES_256_GCM_SHA384])
-                    .build(),
-                [true, true, true],
-            ),
-        ] {
-            let mut config_set = ConfigSet::default();
-            config_set.insert(options);
-            let projections = [
-                Overrides::for_pool(config_set.clone(), &client_config_set, Protocol::Auto),
-                Overrides::for_session(
-                    config_set.clone(),
-                    &client_config_set,
-                    TransportKind::Stream,
-                ),
-                Overrides::for_context(config_set, &client_config_set, TransportKind::Stream),
-            ];
-            for (projection, counted) in projections.into_iter().zip(expected) {
-                assert_eq!(!projection.is_empty(), counted);
-            }
-        }
+    fn reuse_projection_compares_values_when_hashes_match() {
+        let mut left = Extensions::default();
+        left.insert(Group::new("left"));
+        let mut right = Extensions::default();
+        right.insert(Group::new("right"));
+        let client = Extensions::default();
+        let mut a = Selection::new(KeyPart::Whole);
+        a.include::<Group>(&left, &client);
+        let mut b = Selection::new(KeyPart::Whole);
+        b.include::<Group>(&right, &client);
+        b.hash = a.hash;
+        assert_ne!(a.key(&left), b.key(&right));
     }
 }

@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     Error, Result,
-    config::connect::{ConfigSet, Overrides},
+    config::connect::{Extensions, KeyPart},
     conn::request::ConnectRequest,
     protocol::TransportKind,
     quic::QuicOptions,
@@ -37,9 +37,9 @@ pub(crate) struct QuicTls(Arc<Inner>);
 /// Client policy, QUIC options and compiled TLS contexts.
 struct Inner {
     config: Config,
-    config_set: ConfigSet,
+    extensions: Extensions,
     options: Option<Arc<QuicOptions>>,
-    contexts: ContextCache<QuicClientConfig>,
+    contexts: ContextCache<QuicClientConfig, QuicOptions>,
 }
 
 /// The QUIC configuration of one connection, shared by its address race.
@@ -84,12 +84,12 @@ struct Attempt {
 // ===== impl QuicTls =====
 
 impl QuicTls {
-    pub(super) fn new(config: Config, config_set: ConfigSet) -> Result<Self> {
-        let options = config_set.get_arc::<QuicOptions>();
+    pub(super) fn new(config: Config, extensions: Extensions) -> Result<Self> {
+        let options = extensions.get_arc::<QuicOptions>();
         let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self(Arc::new(Inner {
             config,
-            config_set,
+            extensions,
             options,
             contexts,
         })))
@@ -122,17 +122,14 @@ impl QuicTls {
             return Err(Error::tls("HTTP/3 requires TLS 1.3"));
         }
 
-        let overrides = Overrides::for_context(
-            request.config_set().clone(),
-            &inner.config_set,
-            TransportKind::Quic,
-        );
-        let mut crypto = inner.contexts.get(overrides, |overrides| {
-            compile(&inner.config, overrides.get::<QuicOptions>())
-        })?;
+        let extensions = request.config_set();
+        let key = extensions.context_key::<QuicOptions>(&inner.extensions);
+        let mut crypto = inner
+            .contexts
+            .get(key, |options| compile(&inner.config, Some(options)))?;
 
-        let options = request
-            .config_override_arc::<QuicOptions>()
+        let options = extensions
+            .different_arc::<QuicOptions>(&inner.extensions, KeyPart::Whole)
             .or_else(|| inner.options.clone());
         let resumption = options
             .as_ref()
@@ -152,7 +149,7 @@ impl QuicTls {
             let target = SessionTarget::new(
                 request,
                 route,
-                &inner.config_set,
+                &inner.extensions,
                 TransportKind::Quic,
                 None,
                 tickets.session_id_context().map_err(Error::tls)?,
@@ -384,13 +381,16 @@ mod tests {
         use btls::ssl::SslContextRef;
 
         use super::*;
-        use crate::{protocol::Protocol, tls::KeyShare};
+        use crate::{group::Group, protocol::Protocol, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
-        let request = |grease: Option<bool>| {
-            let mut config_set = ConfigSet::default();
+        let request = |grease: Option<bool>, group| {
+            let mut extensions = Extensions::default();
+            if let Some(group) = group {
+                extensions.insert(Group::new(group));
+            }
             if let Some(grease) = grease {
-                config_set.insert(
+                extensions.insert(
                     QuicOptions::builder()
                         .curves_list("X25519")
                         .key_shares(vec![KeyShare::P256])
@@ -399,14 +399,19 @@ mod tests {
                 );
             }
             let uri = Uri::from_static("https://localhost/");
-            ConnectRequest::test(uri, Some(Protocol::Http3), config_set)
+            ConnectRequest::test(uri, Some(Protocol::Http3), extensions)
         };
-        let tls = Config::default().quic(&ConfigSet::default()).unwrap();
-        let [client, first, second, other] =
-            [None, Some(false), Some(false), Some(true)].map(|grease| {
-                let request = request(grease);
-                tls.config(&request, request.uri()).unwrap()
-            });
+        let tls = Config::default().quic(&Extensions::default()).unwrap();
+        let [client, first, second, other] = [
+            (None, None),
+            (Some(false), None),
+            (Some(false), Some("tenant")),
+            (Some(true), None),
+        ]
+        .map(|(grease, group)| {
+            let request = request(grease, group);
+            tls.config(&request, request.uri()).unwrap()
+        });
         let context = |config: &QuicConfig| -> *const SslContextRef { &**config.crypto.ctx() };
         // Equal context options hit the cache; others compile their own context.
         assert_eq!(context(&first), context(&second));

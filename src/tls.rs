@@ -41,7 +41,9 @@ use trust::{CertStore, Identity};
 
 use crate::{
     Error,
-    config::connect::{ConfigScope, ConfigSet, Overrides, derive_deftly_template_ConfigKey},
+    config::connect::{
+        ConfigScope, ConnectConfig, ContextKey, Extensions, derive_deftly_template_ConfigKey,
+    },
     sync::Mutex,
 };
 
@@ -414,14 +416,13 @@ pub(crate) struct Config {
     pub(crate) tls_info: bool,
 }
 
-/// The client's compiled TLS context and the most recently used request contexts, keyed by
-/// the request's context [`Overrides`].
+/// The client's compiled TLS context and the most recently used request contexts.
 ///
 /// Contexts are stored without per-connection callbacks or session caches; each connection
 /// sets its own on a copy.
-struct ContextCache<T> {
+struct ContextCache<T, O> {
     client: T,
-    requests: Mutex<LruCache<Overrides, T>>,
+    requests: Mutex<LruCache<ContextKey<O>, T>>,
 }
 
 /// Request contexts kept per client, least recently used evicted first.
@@ -736,14 +737,14 @@ impl Config {
     /// Compiles the client's TCP/Unix context from its TLS options.
     /// Missing options leave TLS customization to the backend's defaults; the client-wide
     /// trust, version, and ALPN policy still applies.
-    pub(crate) fn stream(self, config_set: &ConfigSet) -> crate::Result<StreamTls> {
-        StreamTls::new(self, config_set.clone())
+    pub(crate) fn stream(self, extensions: &Extensions) -> crate::Result<StreamTls> {
+        StreamTls::new(self, extensions.clone())
     }
 
     /// Compiles the client's QUIC context from its QUIC options.
     #[cfg(feature = "http3")]
-    pub(crate) fn quic(self, config_set: &ConfigSet) -> crate::Result<QuicTls> {
-        QuicTls::new(self, config_set.clone())
+    pub(crate) fn quic(self, extensions: &Extensions) -> crate::Result<QuicTls> {
+        QuicTls::new(self, extensions.clone())
     }
 }
 
@@ -766,7 +767,7 @@ impl Default for Config {
 
 // ===== impl ContextCache =====
 
-impl<T: Clone> ContextCache<T> {
+impl<T: Clone, O: ConnectConfig> ContextCache<T, O> {
     /// Starts with the client's context and no request contexts.
     fn new(client: T) -> Self {
         Self {
@@ -775,23 +776,23 @@ impl<T: Clone> ContextCache<T> {
         }
     }
 
-    /// Returns the client's context when `overrides` is empty, and otherwise the request's.
+    /// Looks up the compiled context for `key`, or returns the client's context for `None`.
     /// A missing request context is compiled outside the lock, so concurrent misses may
     /// compile it more than once.
     fn get(
         &self,
-        overrides: Overrides,
-        compile: impl FnOnce(&Overrides) -> crate::Result<T>,
+        key: Option<ContextKey<O>>,
+        compile: impl FnOnce(&O) -> crate::Result<T>,
     ) -> crate::Result<T> {
-        if overrides.is_empty() {
+        let Some(key) = key else {
             return Ok(self.client.clone());
-        }
-        if let Some(context) = self.requests.lock().get(&overrides) {
+        };
+        if let Some(context) = self.requests.lock().get(&key) {
             return Ok(context.clone());
         }
-        let context = compile(&overrides)?;
+        let context = compile(key.get())?;
         // An evicted context is freed after the lock is released.
-        let _evicted = self.requests.lock().push(overrides, context.clone());
+        let _evicted = self.requests.lock().push(key, context.clone());
         Ok(context)
     }
 }

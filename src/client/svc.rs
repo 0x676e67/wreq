@@ -33,7 +33,7 @@ use super::{
 #[cfg(feature = "http3")]
 use crate::protocol::TransportKind;
 use crate::{
-    config::{RequestConfig, connect::ConfigSet},
+    config::{RequestConfig, connect::Extensions},
     conn::request::ConnectRequest,
     ext::UriExt,
     protocol::Protocol,
@@ -50,7 +50,7 @@ pub struct Stack<S, B> {
     inner: MapErr<RetryUnsent<S>, fn(DispatchError<B>) -> BoxError>,
     /// Client values a request inherits; keys count only request values that differ.
     protocol: Protocol,
-    config_set: ConfigSet,
+    config_set: Extensions,
 }
 
 /// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
@@ -128,7 +128,7 @@ pub struct DispatchRequest<B> {
 /// ownership of any request returned before encoding.
 pub fn layer<S, B>(
     protocol: Protocol,
-    config_set: ConfigSet,
+    config_set: Extensions,
     retry_unsent: bool,
 ) -> impl Layer<S, Service = Stack<S, B>> + Clone {
     ServiceBuilder::new()
@@ -179,7 +179,7 @@ impl<S, B> Stack<S, B> {
         }
 
         let extensions = request.extensions_mut();
-        let config_set = extensions.remove::<ConfigSet>().unwrap_or_default();
+        let config_set = extensions.remove::<Extensions>().unwrap_or_default();
         let dedicated = extensions.remove::<DedicatedConnection>();
 
         // Normalize wire versions to protocol choices; HTTP/1.0 and HTTP/1.1 share a pool.
@@ -385,7 +385,7 @@ mod tests {
 
     /// Wraps `service` in the request stack of a client without options.
     pub(super) fn stack<S, B>(service: S, protocol: Protocol, retry_unsent: bool) -> Stack<S, B> {
-        layer(protocol, ConfigSet::default(), retry_unsent).layer(service)
+        layer(protocol, Extensions::default(), retry_unsent).layer(service)
     }
 
     /// Dispatches over fresh HTTP/1 connections whose server answers with `handler`.
@@ -411,7 +411,7 @@ mod tests {
         Dispatch::new(
             pool::Config::default(),
             connector,
-            &ConfigSet::default(),
+            &Extensions::default(),
             true,
             #[cfg(feature = "cookies")]
             cookie_store,
@@ -465,6 +465,46 @@ mod tests {
         let userinfo = prepare("http://user:pw@localhost/").await.unwrap();
         assert_eq!(userinfo.request.uri(), "http://localhost/");
         assert_eq!(userinfo.req.key(), plain.req.key());
+    }
+
+    #[tokio::test]
+    async fn partial_emulation_keeps_other_options_across_clone_and_conversion() {
+        use crate::{Client, Emulation, Group, http1::Http1Options, tls::TlsOptions};
+
+        let tls = TlsOptions::default();
+        let initial_http = Http1Options::builder().max_headers(8).build();
+        let updated_http = Http1Options::builder().max_headers(16).build();
+        let profile = Emulation::builder()
+            .config(initial_http.clone())
+            .config(tls.clone())
+            .build();
+        let client = Client::builder_tokio().no_proxy().build().unwrap();
+        let address = std::net::Ipv4Addr::LOCALHOST;
+        let group = Group::new("profile");
+        let request = client
+            .get("https://localhost/")
+            .local_addresses(address, None)
+            .group(group.clone())
+            .emulation(profile);
+        let original = request.try_clone().unwrap().build().unwrap();
+        let updated = request.emulation(updated_http.clone()).build().unwrap();
+        let stack = stack(
+            tower::service_fn(|request: DispatchRequest<crate::Body>| {
+                future::ready(Ok::<_, DispatchError<crate::Body>>(request.req))
+            }),
+            Protocol::Auto,
+            true,
+        );
+        for (request, http) in [(original, initial_http), (updated, updated_http)] {
+            let wire: Request<crate::Body> = request.into();
+            let request = crate::Request::from(wire);
+            let frozen = stack.clone().oneshot(request.into()).await.unwrap();
+            let config = frozen.config_set();
+            assert_eq!(config.get_ref::<Http1Options>(), Some(&http));
+            assert_eq!(config.get_ref::<TlsOptions>(), Some(&tls));
+            assert_eq!(config.get_ref::<std::net::Ipv4Addr>(), Some(&address));
+            assert_eq!(config.get_ref::<Group>(), Some(&group));
+        }
     }
 
     #[cfg(feature = "cookies")]
@@ -582,11 +622,11 @@ mod tests {
             *RequestConfig::<RequestVersion>::get_mut(request.extensions_mut()) = wire;
             request
                 .extensions_mut()
-                .get_or_insert_default::<ConfigSet>()
+                .get_or_insert_default::<Extensions>()
                 .insert(address);
             request
                 .extensions_mut()
-                .get_or_insert_default::<ConfigSet>()
+                .get_or_insert_default::<Extensions>()
                 .insert(crate::Group::new("seven"));
             if extended {
                 *request.method_mut() = http::Method::CONNECT;
@@ -601,14 +641,14 @@ mod tests {
             assert_eq!(request.req.resolved_protocol(), expected.unwrap_or(client));
             assert_eq!(request.negotiable, expected == Some(Protocol::Auto));
             assert_eq!(
-                request.req.config_set().get::<std::net::Ipv4Addr>(),
+                request.req.config_set().get_ref::<std::net::Ipv4Addr>(),
                 Some(&address)
             );
-            assert!(request.request.extensions().get::<ConfigSet>().is_none());
+            assert!(request.request.extensions().get::<Extensions>().is_none());
             assert_eq!(request.request.version(), wire.unwrap_or(Version::HTTP_11));
             assert!(RequestConfig::<RequestVersion>::get(request.request.extensions()).is_none());
             assert_eq!(
-                request.req.config_set().get::<crate::Group>(),
+                request.req.config_set().get_ref::<crate::Group>(),
                 Some(&crate::Group::new("seven"))
             );
             keys.push(request.req.key());
@@ -658,10 +698,10 @@ mod tests {
                 );
                 assert_eq!(request.req.uri(), "http://localhost/");
                 assert_eq!(
-                    request.req.config_set().get::<std::net::Ipv4Addr>(),
+                    request.req.config_set().get_ref::<std::net::Ipv4Addr>(),
                     Some(&std::net::Ipv4Addr::LOCALHOST)
                 );
-                assert!(request.request.extensions().get::<ConfigSet>().is_none());
+                assert!(request.request.extensions().get::<Extensions>().is_none());
 
                 let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 && unsent {
                     req = Some(request.req.clone());
@@ -680,7 +720,7 @@ mod tests {
                 future::ready(result)
             });
 
-            let mut config_set = ConfigSet::default();
+            let mut config_set = Extensions::default();
             config_set.insert(std::net::Ipv4Addr::LOCALHOST);
             let result = stack(service, Protocol::Auto, enabled).oneshot(
                 Request::builder()
