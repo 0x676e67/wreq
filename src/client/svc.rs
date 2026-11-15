@@ -11,7 +11,6 @@ use std::{
     future::Future,
     mem,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll, ready},
 };
 
@@ -34,10 +33,10 @@ use super::{
 #[cfg(feature = "http3")]
 use crate::protocol::TransportKind;
 use crate::{
-    Protocol,
-    config::RequestConfig,
-    conn::{config::ConfigSet, dialer::BindOptions, request::ConnectRequest},
+    config::{RequestConfig, connect::ConfigSet},
+    conn::request::ConnectRequest,
     ext::UriExt,
+    protocol::Protocol,
 };
 
 /// Checks and configures requests, then wraps dispatch with unsent retries and error mapping.
@@ -52,7 +51,6 @@ pub struct Stack<S, B> {
     /// Client values a request inherits; keys count only request values that differ.
     protocol: Protocol,
     config_set: ConfigSet,
-    bind_options: Arc<BindOptions>,
 }
 
 /// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
@@ -131,16 +129,13 @@ pub struct DispatchRequest<B> {
 pub fn layer<S, B>(
     protocol: Protocol,
     config_set: ConfigSet,
-    bind_options: BindOptions,
     retry_unsent: bool,
 ) -> impl Layer<S, Service = Stack<S, B>> + Clone {
-    let bind_options = Arc::new(bind_options);
     ServiceBuilder::new()
         .layer_fn(move |inner| Stack {
             inner,
             protocol,
             config_set: config_set.clone(),
-            bind_options: bind_options.clone(),
         })
         .map_err(DispatchError::into_error as fn(DispatchError<B>) -> BoxError)
         .layer_fn(move |inner| RetryUnsent {
@@ -185,7 +180,6 @@ impl<S, B> Stack<S, B> {
 
         let extensions = request.extensions_mut();
         let config_set = extensions.remove::<ConfigSet>().unwrap_or_default();
-        let bind_options = extensions.remove::<Arc<BindOptions>>();
         let dedicated = extensions.remove::<DedicatedConnection>();
 
         // Normalize wire versions to protocol choices; HTTP/1.0 and HTTP/1.1 share a pool.
@@ -210,16 +204,8 @@ impl<S, B> Stack<S, B> {
             None => None,
         };
 
-        let req = ConnectRequest::new(
-            uri,
-            protocol,
-            self.protocol,
-            config_set,
-            &self.config_set,
-            bind_options,
-            &self.bind_options,
-        )
-        .map_err(|source| {
+        let req = ConnectRequest::new(uri, protocol, self.protocol, config_set, &self.config_set)
+            .map_err(|source| {
             debug!("Client requires absolute-form URIs, received: {uri:?}");
             Error::new(ErrorKind::UserAbsoluteUriRequired, source)
         })?;
@@ -263,7 +249,6 @@ impl<S: Clone, B> Clone for Stack<S, B> {
             inner: self.inner.clone(),
             protocol: self.protocol,
             config_set: self.config_set.clone(),
-            bind_options: self.bind_options.clone(),
         }
     }
 }
@@ -380,7 +365,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use http::Response;
     use http_body::Body as _;
@@ -397,13 +385,7 @@ mod tests {
 
     /// Wraps `service` in the request stack of a client without options.
     pub(super) fn stack<S, B>(service: S, protocol: Protocol, retry_unsent: bool) -> Stack<S, B> {
-        layer(
-            protocol,
-            ConfigSet::default(),
-            BindOptions::default(),
-            retry_unsent,
-        )
-        .layer(service)
+        layer(protocol, ConfigSet::default(), retry_unsent).layer(service)
     }
 
     /// Dispatches over fresh HTTP/1 connections whose server answers with `handler`.
@@ -530,10 +512,7 @@ mod tests {
     #[cfg(feature = "http2")]
     async fn protocol_selection_preserves_wire_versions_and_pool_groups() {
         let mut keys = Vec::new();
-        let bind_options = Arc::new(BindOptions {
-            ipv4_address: Some(std::net::Ipv4Addr::LOCALHOST),
-            ..BindOptions::default()
-        });
+        let address = std::net::Ipv4Addr::LOCALHOST;
         for (wire, client, extended, expected) in [
             (
                 Some(Version::HTTP_10),
@@ -601,7 +580,10 @@ mod tests {
                 .body(())
                 .unwrap();
             *RequestConfig::<RequestVersion>::get_mut(request.extensions_mut()) = wire;
-            request.extensions_mut().insert(bind_options.clone());
+            request
+                .extensions_mut()
+                .get_or_insert_default::<ConfigSet>()
+                .insert(address);
             request
                 .extensions_mut()
                 .get_or_insert_default::<ConfigSet>()
@@ -619,16 +601,10 @@ mod tests {
             assert_eq!(request.req.resolved_protocol(), expected.unwrap_or(client));
             assert_eq!(request.negotiable, expected == Some(Protocol::Auto));
             assert_eq!(
-                request.req.bind_options().as_deref(),
-                Some(bind_options.as_ref())
+                request.req.config_set().get::<std::net::Ipv4Addr>(),
+                Some(&address)
             );
-            assert!(
-                request
-                    .request
-                    .extensions()
-                    .get::<Arc<BindOptions>>()
-                    .is_none()
-            );
+            assert!(request.request.extensions().get::<ConfigSet>().is_none());
             assert_eq!(request.request.version(), wire.unwrap_or(Version::HTTP_11));
             assert!(RequestConfig::<RequestVersion>::get(request.request.extensions()).is_none());
             assert_eq!(
@@ -681,6 +657,11 @@ mod tests {
                     Some("payload".len() as u64)
                 );
                 assert_eq!(request.req.uri(), "http://localhost/");
+                assert_eq!(
+                    request.req.config_set().get::<std::net::Ipv4Addr>(),
+                    Some(&std::net::Ipv4Addr::LOCALHOST)
+                );
+                assert!(request.request.extensions().get::<ConfigSet>().is_none());
 
                 let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 && unsent {
                     req = Some(request.req.clone());
@@ -699,8 +680,11 @@ mod tests {
                 future::ready(result)
             });
 
+            let mut config_set = ConfigSet::default();
+            config_set.insert(std::net::Ipv4Addr::LOCALHOST);
             let result = stack(service, Protocol::Auto, enabled).oneshot(
                 Request::builder()
+                    .extension(config_set)
                     .uri("http://localhost/upload?part=1")
                     .body(crate::Body::from("payload"))
                     .unwrap(),

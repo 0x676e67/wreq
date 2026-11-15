@@ -13,6 +13,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll, ready},
+    time::Instant,
 };
 
 use ::quic::{
@@ -20,16 +21,19 @@ use ::quic::{
     udp::{RecvMeta, Transmit},
 };
 use futures_util::future::BoxFuture;
-use netty::proxy::socks::udp::{self, Address, AddressRef, AssociateError, UdpAssociation};
+use netty::proxy::socks::{
+    DnsResolve,
+    udp::{self, Address, AddressRef, AssociateError, UdpAssociation},
+};
 use pin_project_lite::pin_project;
 use tokio::sync::{Notify, futures::OwnedNotified};
-use tower::{BoxError, ServiceExt};
+use tower::BoxError;
 
 use super::endpoint::{Endpoints, TUNNEL_MTU, handshake_error};
 use crate::{
     conn::{
         Conn,
-        dialer::{BindOptions, ConnectError, Dialer, SocketRequest, race, resolve},
+        dialer::{self, ConnectError, Dialer, SocketRequest, race, resolve},
         request::ConnectRequest,
     },
     error::ProxyConnect,
@@ -100,19 +104,21 @@ pub(super) async fn connect(
     endpoints: &Endpoints,
     request: ConnectRequest,
     proxy: Intercept,
+    dns: DnsResolve,
+    deadline: Option<Instant>,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
     let config = endpoints.tunnel_config(&request)?;
-    let uri = request.route_uri();
+    let uri = request.uri();
     let host = crate::util::strip_ipv6_brackets(uri.host().ok_or(URI_MISSING_HOST)?);
     let port = uri.port_u16().unwrap_or(443);
 
-    if proxy.uri().scheme_str() == Some("socks5h") {
+    if dns == DnsResolve::Remote {
         let target = match host.parse::<IpAddr>() {
             Ok(ip) => Address::Ip((ip, port).into()),
             Err(_) => Address::Domain(host.into(), port),
         };
-        return Ok(connect_target(endpoints, &request, &proxy, &config, target).await?);
+        return Ok(connect_target(endpoints, &request, &proxy, &config, target, deadline).await?);
     }
 
     let dialer = endpoints.dialer();
@@ -124,12 +130,13 @@ pub(super) async fn connect(
     // Target families are independent of the physical proxy's bindings.
     Ok(race(
         addresses,
-        &BindOptions::default(),
+        (None, None),
         dialer.happy_eyeballs_timeout(),
         |address| {
             let target = Address::Ip(address);
-            let attempt: BoxFuture<'_, _> =
-                Box::pin(connect_target(endpoints, &request, &proxy, &config, target));
+            let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
+                endpoints, &request, &proxy, &config, target, deadline,
+            ));
             Ok(attempt)
         },
         |duration| dialer.runtime().sleep(duration),
@@ -145,18 +152,16 @@ async fn connect_target(
     proxy: &Intercept,
     config: &QuicConfig,
     target: Address,
+    deadline: Option<Instant>,
 ) -> Result<Conn, ConnectError> {
     let dialer = endpoints.dialer();
     // The control connection takes the request's bindings, like the relay socket.
     let io = dialer
-        .clone()
-        .oneshot(SocketRequest {
+        .dial(SocketRequest::Tcp {
             uri: proxy.uri().clone(),
-            #[cfg(unix)]
-            unix: None,
-            bind_options: request.bind_options().clone(),
+            config_set: request.config_set().clone(),
             secure: false,
-            deadline: request.deadline(),
+            deadline,
         })
         .await
         .map_err(proxy_error(PROXY_CONNECT_ERROR))?;
@@ -272,16 +277,17 @@ fn relay_socket(
     request: &ConnectRequest,
     remote: SocketAddr,
 ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-    let bind_options = dialer.bind_options(request);
+    let config_set = request.config_set();
+    let (ipv4, ipv6) = dialer::local_addresses(config_set, dialer.config_set());
     if matches!(
-        (bind_options.ipv4_address, bind_options.ipv6_address, remote),
+        (ipv4, ipv6, remote),
         (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
     ) {
         return Err("relay address does not match local bindings".into());
     }
     Ok(dialer
         .runtime()
-        .udp_socket(dialer.bind_udp(bind_options, remote)?)?)
+        .udp_socket(dialer.bind_udp(config_set, remote)?)?)
 }
 
 /// Labels a failed proxy stage, keeping it a proxy connect error.

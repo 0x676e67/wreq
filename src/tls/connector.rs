@@ -13,25 +13,21 @@ use btls::{
     ex_data::Index,
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode, SslVersion},
 };
-use futures_util::future::BoxFuture;
 use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
-use tower::{BoxError, Service};
+use tower::BoxError;
 
 use super::{
     Config, ContextCache,
     ext::{SslContextBuilderExt, set_ech_grease_host},
 };
 use crate::{
-    Error, Protocol,
-    conn::{
-        config::{ConfigSet, Overrides},
-        request::ConnectRequest,
-    },
+    Error,
+    config::connect::{ConfigSet, Overrides},
+    conn::request::ConnectRequest,
     ext::UriExt,
-    protocol::TransportKind,
-    rt::BoxConnection,
+    protocol::{Protocol, TransportKind},
     tls::{AlpnProtocol, TlsOptions, session::SessionTarget},
 };
 
@@ -53,12 +49,11 @@ struct Inner {
     contexts: ContextCache<SslConnector>,
 }
 
-/// Applies TLS to a route unless it is plain HTTP.
-/// Holds the client's TLS state and the context selected for this request's options.
-/// As a service it dials through `T`; proxy ALPN policy stays local to this connector.
+/// Runs the TLS handshakes of one request over streams it is given: the target's and an
+/// `https` proxy hop's. Holds the client's TLS state and the context selected for the
+/// request's options; the ALPN switch stays local to each copy.
 #[derive(Clone)]
-pub struct HttpsConnector<T> {
-    inner: T,
+pub struct TlsConnector {
     tls: StreamTls,
     context: SslConnector,
     alpn_enabled: bool,
@@ -91,7 +86,7 @@ impl StreamTls {
 
     /// Selects the context for the request's TLS options before dialing.
     /// Requests without different context options keep the client's context.
-    pub(crate) fn for_request(self, req: &ConnectRequest) -> crate::Result<HttpsConnector<()>> {
+    pub(crate) fn for_request(self, req: &ConnectRequest) -> crate::Result<TlsConnector> {
         let inner = &*self.inner;
         let overrides = Overrides::for_context(
             req.config_set().clone(),
@@ -101,8 +96,7 @@ impl StreamTls {
         let context = inner.contexts.get(overrides, |overrides| {
             compile(&inner.config, overrides.get::<TlsOptions>())
         })?;
-        Ok(HttpsConnector {
-            inner: (),
+        Ok(TlsConnector {
             tls: self,
             context,
             alpn_enabled: true,
@@ -114,7 +108,8 @@ impl StreamTls {
     /// `remote_ip` is the dialed socket's peer, which keys session resumption.
     fn ssl_for_connection(
         &self,
-        req: ConnectRequest,
+        req: &ConnectRequest,
+        route: &Uri,
         remote_ip: Option<IpAddr>,
         context: &SslConnector,
         alpn_enabled: bool,
@@ -177,8 +172,7 @@ impl StreamTls {
             }
         }
 
-        let host = req
-            .route_uri()
+        let host = route
             .host()
             .ok_or(URI_MISSING_HOST)
             .map(Self::normalize_host)?;
@@ -190,7 +184,8 @@ impl StreamTls {
         if options.is_some_and(|options| options.pre_shared_key) {
             let tickets = &inner.config.tickets;
             let target = SessionTarget::new(
-                &req,
+                req,
+                route,
                 &inner.config_set,
                 TransportKind::Stream,
                 remote_ip,
@@ -239,20 +234,9 @@ impl StreamTls {
     }
 }
 
-// ===== impl HttpsConnector =====
+// ===== impl TlsConnector =====
 
-impl<S> HttpsConnector<S> {
-    /// Replaces the transport while preserving the selected request context and ALPN policy.
-    #[inline]
-    pub(crate) fn with_inner<T>(self, inner: T) -> HttpsConnector<T> {
-        HttpsConnector {
-            inner,
-            tls: self.tls,
-            context: self.context,
-            alpn_enabled: self.alpn_enabled,
-        }
-    }
-
+impl TlsConnector {
     /// Disables ALPN negotiation.
     #[inline]
     pub fn no_alpn(&mut self) -> &mut Self {
@@ -266,58 +250,30 @@ impl<S> HttpsConnector<S> {
         self.tls.inner.config.tls_info
     }
 
-    /// Runs the TLS handshake over an established transport, or returns it unchanged for
-    /// an `http` route. The transport may already carry a proxy's TLS; `remote_ip` is the
-    /// peer of the socket beneath it.
+    /// Runs the TLS handshake with `route` over an established transport, or returns it
+    /// unchanged for an `http` route. `route` is the origin or the proxy hop that carries it.
+    /// The transport may already carry a proxy's TLS; `remote_ip` is the peer of the socket
+    /// beneath it.
     pub(crate) async fn handshake<IO>(
         &self,
         io: IO,
-        req: ConnectRequest,
+        req: &ConnectRequest,
+        route: &Uri,
         remote_ip: Option<IpAddr>,
     ) -> Result<MaybeHttpsStream<IO>, BoxError>
     where
         IO: AsyncRead + AsyncWrite + Unpin,
     {
-        if req.route_uri().is_http() {
+        if route.is_http() {
             return Ok(MaybeHttpsStream::Http(io));
         }
 
-        let ssl = self
-            .tls
-            .ssl_for_connection(req, remote_ip, &self.context, self.alpn_enabled)?;
-        perform_handshake(ssl, io).await
-    }
-}
-
-impl<S> Service<ConnectRequest> for HttpsConnector<S>
-where
-    S: Service<Uri, Response = BoxConnection> + Send,
-    S::Error: Into<BoxError>,
-    S::Future: Unpin + Send + 'static,
-{
-    type Response = MaybeHttpsStream<BoxConnection>;
-    type Error = BoxError;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    #[inline]
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(Into::into)
-    }
-
-    fn call(&mut self, req: ConnectRequest) -> Self::Future {
-        let connect = self.inner.call(req.route_uri().clone());
-        let tls = HttpsConnector {
-            inner: (),
-            tls: self.tls.clone(),
-            context: self.context.clone(),
-            alpn_enabled: self.alpn_enabled,
-        };
-
-        Box::pin(async move {
-            let conn = connect.await.map_err(Into::into)?;
-            let remote_ip = conn.peer_addr().map(|addr| addr.ip());
-            tls.handshake(conn, req, remote_ip).await
-        })
+        let ssl =
+            self.tls
+                .ssl_for_connection(req, route, remote_ip, &self.context, self.alpn_enabled)?;
+        let mut stream = SslStream::new(ssl, io)?;
+        Pin::new(&mut stream).connect().await?;
+        Ok(MaybeHttpsStream::Https(stream))
     }
 }
 
@@ -458,13 +414,4 @@ fn target_index() -> Result<Index<Ssl, SessionTarget>, ErrorStack> {
     static IDX: LazyLock<Result<Index<Ssl, SessionTarget>, ErrorStack>> =
         LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
-}
-
-async fn perform_handshake<T>(ssl: Ssl, conn: T) -> Result<MaybeHttpsStream<T>, BoxError>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    let mut stream = SslStream::new(ssl, conn)?;
-    Pin::new(&mut stream).connect().await?;
-    Ok(MaybeHttpsStream::Https(stream))
 }

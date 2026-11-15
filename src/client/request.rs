@@ -3,7 +3,6 @@ use std::{
     fmt,
     future::Future,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::Arc,
     time::Duration,
 };
 
@@ -32,8 +31,8 @@ use super::{
 use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
-    config::{RequestConfig, RequestConfigValue},
-    conn::{config::ConfigSet, dialer::BindOptions},
+    config::{RequestConfig, RequestConfigValue, connect::ConfigSet},
+    conn::dialer,
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -197,14 +196,6 @@ impl Request {
     #[inline]
     fn config_set_mut(&mut self) -> &mut ConfigSet {
         self.extensions_mut().get_or_insert_default::<ConfigSet>()
-    }
-
-    #[inline]
-    fn bind_options_mut(&mut self) -> &mut BindOptions {
-        Arc::make_mut(
-            self.extensions_mut()
-                .get_or_insert_default::<Arc<BindOptions>>(),
-        )
     }
 }
 
@@ -701,31 +692,36 @@ impl RequestBuilder {
         self
     }
 
-    /// Set the local address for this request.
+    /// Sets this request's local IP address for one address family.
+    /// An unset family inherits the client's setting. Passing `None` keeps any earlier override.
     pub fn local_address<V>(mut self, local_address: V) -> RequestBuilder
     where
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.bind_options_mut().set_local_address(local_address);
+            dialer::set_local_address(req.config_set_mut(), local_address.into());
         }
         self
     }
 
-    /// Set the local addresses for this request.
+    /// Sets this request's local IPv4 and IPv6 addresses.
+    /// For either family, `None` keeps an earlier override or inherits the client's setting.
     pub fn local_addresses<V4, V6>(mut self, ipv4_address: V4, ipv6_address: V6) -> RequestBuilder
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.bind_options_mut()
-                .set_local_addresses(ipv4_address, ipv6_address);
+            dialer::set_local_addresses(
+                req.config_set_mut(),
+                ipv4_address.into(),
+                ipv6_address.into(),
+            );
         }
         self
     }
 
-    /// Bind connections only on the specified network interface.
+    /// Overrides the client's network interface for this request.
     ///
     /// This option is only available on the following operating systems:
     ///
@@ -750,10 +746,8 @@ impl RequestBuilder {
     /// use wreq::Client;
     ///
     /// # fn doc() -> Result<(), wreq::Error> {
-    /// let interface = "lo";
-    /// let client = Client::builder_tokio()
-    ///     .interface(interface)
-    ///     .build()?;
+    /// let client = Client::builder_tokio().build()?;
+    /// let request = client.get("http://localhost").interface("lo").build()?;
     /// # Ok(())
     /// # }
     /// # }
@@ -793,7 +787,7 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.bind_options_mut().set_interface(interface);
+            dialer::set_interface(req.config_set_mut(), interface.into());
         }
         self
     }

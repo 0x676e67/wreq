@@ -13,16 +13,19 @@ use std::{
 
 use lru::DefaultHasher;
 
-use crate::{Protocol, protocol::TransportKind};
+use crate::protocol::{Protocol, TransportKind};
 
-/// Implements whole-value identity for one protocol configuration type.
+/// Implements whole-value identity for one connection configuration type.
 macro_rules! impl_connect_config {
     ($type:ty, $scope:ident) => {
-        impl ConnectConfig for $type {
-            const SCOPE: ConfigScope = ConfigScope::$scope;
+        impl $crate::config::connect::ConnectConfig for $type {
+            const SCOPE: $crate::config::connect::ConfigScope =
+                $crate::config::connect::ConfigScope::$scope;
         }
     };
 }
+
+pub(crate) use impl_connect_config;
 
 derive_deftly::define_derive_deftly! {
     /// Derives full and scoped equality/hashing, requiring exactly one group per field.
@@ -81,12 +84,12 @@ derive_deftly::define_derive_deftly! {
         }
     }
 
-    impl $crate::conn::config::ConnectConfig for $ttype {
-        const SCOPE: $crate::conn::config::ConfigScope = ${tmeta(config_key(scope)) as expr};
+    impl $crate::config::connect::ConnectConfig for $ttype {
+        const SCOPE: $crate::config::connect::ConfigScope = ${tmeta(config_key(scope)) as expr};
 
         fn hash_parts(&self) -> [u64; 3] {
             use std::hash::{BuildHasher, Hash, Hasher};
-            use $crate::conn::config::HASHER;
+            use $crate::config::connect::HASHER;
 
             let mut hash = HASHER.build_hasher();
             let state = &mut hash;
@@ -108,8 +111,8 @@ derive_deftly::define_derive_deftly! {
             [hash.finish(), session, context]
         }
 
-        fn eq_part(&self, other: &Self, part: $crate::conn::config::KeyPart) -> bool {
-            use $crate::conn::config::KeyPart;
+        fn eq_part(&self, other: &Self, part: $crate::config::connect::KeyPart) -> bool {
+            use $crate::config::connect::KeyPart;
 
             true
                 ${for fields { ${when fmeta(config_key(context))} && $SAME_FIELD }}
@@ -225,6 +228,7 @@ impl ConfigScope {
     pub const HTTP1: Self = Self(1 << 2);
     pub const HTTP2: Self = Self(1 << 3);
     pub const HTTP3: Self = Self(1 << 4);
+    pub const SOCKET: Self = Self(1 << 5);
     pub const ROUTE: Self = Self(1 << 6);
     pub const GROUP: Self = Self(1 << 7);
 

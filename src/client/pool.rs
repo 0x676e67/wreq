@@ -69,12 +69,12 @@ use self::{
 };
 use super::proto::{Established, http1};
 use crate::{
-    Protocol,
+    config::connect::{ConfigSet, ConnectConfig},
     conn::{
         Conn,
-        config::{ConfigSet, ConnectConfig},
         request::{ConnectRequest, ConnectionKey},
     },
+    protocol::Protocol,
     rt::DynRuntime,
     sync::Mutex,
 };
@@ -278,7 +278,7 @@ struct PoolTargeter<C> {
 fn configure<B, O>(builder: &Arc<B>, req: &ConnectRequest, apply: fn(B, O) -> B) -> Arc<B>
 where
     B: Clone,
-    O: ConnectConfig + Clone,
+    O: ConnectConfig,
 {
     match req.config_override::<O>() {
         Some(options) => Arc::new(apply(B::clone(builder), options.clone())),

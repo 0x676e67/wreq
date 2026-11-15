@@ -56,6 +56,52 @@ async fn non_op_layer_with_timeout() {
     assert!(err.is_connect() && err.is_timeout());
 }
 
+#[tokio::test(start_paused = true)]
+async fn direct_dial_timeout_reaches_connector_layer() {
+    use std::{future, io};
+
+    use wreq::dns::{Name, Resolve, Resolving};
+
+    struct PendingResolver;
+
+    impl Resolve for PendingResolver {
+        fn resolve(&self, _: Name) -> Resolving {
+            Box::pin(future::pending())
+        }
+    }
+
+    let (observed, mut errors) = tokio::sync::mpsc::unbounded_channel();
+    let client = Client::builder_tokio()
+        .no_proxy()
+        .dns_resolver(PendingResolver)
+        .connect_timeout(Duration::from_secs(1))
+        .connector_layer(
+            tower::ServiceBuilder::new().map_err(move |error: tower::BoxError| {
+                let kind = error
+                    .source()
+                    .and_then(|cause| cause.downcast_ref::<io::Error>())
+                    .map(io::Error::kind);
+                observed.send(kind).unwrap();
+                error
+            }),
+        )
+        .build()
+        .unwrap();
+
+    let error = client
+        .get("http://origin.invalid/")
+        .send()
+        .await
+        .unwrap_err();
+    assert!(error.is_connect() && error.is_timeout(), "{error:?}");
+    assert_eq!(
+        errors
+            .try_recv()
+            .expect("connector layer did not receive the dial error"),
+        Some(io::ErrorKind::TimedOut)
+    );
+}
+
 #[tokio::test]
 async fn with_connect_timeout_layer_never_returning() {
     let _ = env_logger::try_init();

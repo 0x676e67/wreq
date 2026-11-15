@@ -26,6 +26,56 @@ use support::server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wreq::{Client, PoolStrategy, header::OrigHeaderMap, http1::Http1Options};
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn socket_bindings_inherit_and_partition_the_pool() {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let mut connections = tokio::task::JoinSet::new();
+        for index in 0..2 {
+            let (socket, peer) = listener.accept().await.unwrap();
+            connections.spawn(async move {
+                server::serve_connection(socket, Version::HTTP_11, move |_| async move {
+                    http::Response::new(wreq::Body::from(format!("{index} {}", peer.ip())))
+                })
+                .await
+                .unwrap();
+            });
+        }
+        while let Some(result) = connections.join_next().await {
+            result.unwrap();
+        }
+    });
+    let client = Client::builder_tokio()
+        .no_proxy()
+        .local_address(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    for (address, expected) in [
+        (None, "0 127.0.0.1"),
+        (Some(Ipv4Addr::LOCALHOST), "0 127.0.0.1"),
+        (Some(Ipv4Addr::new(127, 0, 0, 2)), "1 127.0.0.2"),
+        (None, "0 127.0.0.1"),
+    ] {
+        let response = client
+            .get(&url)
+            .local_address(address.map(IpAddr::V4))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.text().await.unwrap(), expected);
+    }
+    drop(client);
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
 #[tokio::test]
 async fn auto_headers() {
     let server = server::http(move |req| async move {

@@ -34,7 +34,7 @@ use super::{
     pooled::Pooled,
 };
 #[cfg(test)]
-use crate::Protocol;
+use crate::protocol::Protocol;
 use crate::{client::proto::http1, conn::request::ConnectRequest};
 
 /// Type-erased operations required from one mapped pool entry.

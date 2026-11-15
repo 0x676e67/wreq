@@ -69,27 +69,18 @@ impl Default for AcceptEncoding {
 
 impl AcceptEncoding {
     fn is_enabled(&self) -> bool {
-        #[cfg(feature = "gzip")]
-        if self.gzip {
-            return true;
-        }
-
-        #[cfg(feature = "deflate")]
-        if self.deflate {
-            return true;
-        }
-
-        #[cfg(feature = "brotli")]
-        if self.brotli {
-            return true;
-        }
-
-        #[cfg(feature = "zstd")]
-        if self.zstd {
-            return true;
-        }
-
-        false
+        [
+            #[cfg(feature = "gzip")]
+            self.gzip,
+            #[cfg(feature = "deflate")]
+            self.deflate,
+            #[cfg(feature = "brotli")]
+            self.brotli,
+            #[cfg(feature = "zstd")]
+            self.zstd,
+        ]
+        .into_iter()
+        .any(std::convert::identity)
     }
 }
 

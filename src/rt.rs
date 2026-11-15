@@ -29,6 +29,7 @@ pub use ::quic::{
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::future::BoxFuture;
 use pin_project_lite::pin_project;
+use tokio_btls::SslStream;
 
 pub(crate) use self::handle::DynRuntime;
 use crate::dns::Resolve;
@@ -50,7 +51,7 @@ const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
 ///
 /// A runtime that wraps another must also forward [`try_execute`](Self::try_execute),
 /// `connect_unix` and `udp_socket`, whose defaults ignore the wrapped runtime.
-pub trait Runtime: Timer + Send + Sync + Debug + 'static {
+pub trait Runtime: Timer + Debug + 'static {
     /// Schedules a task to run in the background.
     #[track_caller]
     fn execute(&self, fut: BoxFuture<'static, ()>);
@@ -85,9 +86,9 @@ pub trait Runtime: Timer + Send + Sync + Debug + 'static {
     /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error, which fails
     /// HTTP/3 connections without affecting HTTP/1 or HTTP/2.
     ///
-    /// A client reuses the socket for later HTTP/3 connections, so the task it then spawns with
-    /// [`execute`](Self::execute) to receive on the socket must keep running while the client
-    /// opens them.
+    /// Direct HTTP/3 connections with the client's bindings can reuse the socket.
+    /// Keep the receive task spawned with [`execute`](Self::execute) running while the socket
+    /// is in use.
     #[cfg(feature = "http3")]
     fn udp_socket(&self, _socket: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
         Err(io::Error::new(
@@ -172,6 +173,40 @@ pin_project! {
 }
 
 // ===== impl Connection =====
+
+impl Connection for BoxConnection {
+    #[inline]
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        self.as_ref().peer_addr()
+    }
+
+    #[inline]
+    fn local_addr(&self) -> Option<SocketAddr> {
+        self.as_ref().local_addr()
+    }
+
+    #[inline]
+    fn set_nodelay(&self, value: bool) -> io::Result<()> {
+        self.as_ref().set_nodelay(value)
+    }
+}
+
+impl<T: Connection> Connection for SslStream<T> {
+    #[inline]
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        self.get_ref().peer_addr()
+    }
+
+    #[inline]
+    fn local_addr(&self) -> Option<SocketAddr> {
+        self.get_ref().local_addr()
+    }
+
+    #[inline]
+    fn set_nodelay(&self, value: bool) -> io::Result<()> {
+        self.get_ref().set_nodelay(value)
+    }
+}
 
 impl Debug for dyn Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

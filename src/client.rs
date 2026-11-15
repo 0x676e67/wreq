@@ -66,15 +66,14 @@ use crate::cookie;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
-    IntoUri, Method, Protocol, Proxy,
-    conn::{
-        self, BoxedTransportConnector, Conn, Connector, Unnameable, config::ConfigSet,
-        dialer::BindOptions,
-    },
+    IntoUri, Method, Proxy,
+    config::connect::ConfigSet,
+    conn::{self, BoxedTransportConnector, Conn, Connector, Unnameable, dialer},
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
     header::OrigHeaderMap,
     http1::Http1Options,
+    protocol::Protocol,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
@@ -441,7 +440,6 @@ impl ClientBuilder {
             };
 
             // The request stack inherits the client's bindings.
-            let bind_options = self.config.connect.bind_options.clone();
             let connector = Connector::new(
                 self.config.connect,
                 self.runtime.clone(),
@@ -456,7 +454,6 @@ impl ClientBuilder {
                 )
                 .config_set(self.config.config_set)
                 .protocol(self.config.protocol)
-                .bind_options(bind_options)
                 .pool_idle_timeout(self.config.pool_idle_timeout)
                 .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
                 .pool_max_size(self.config.pool_max_size)
@@ -466,7 +463,6 @@ impl ClientBuilder {
 
         // Configured client service with layers
         let client = {
-            // Retries sit below redirects, so a rejected hop replays itself, not the first request.
             let service = ServiceBuilder::new()
                 .layer({
                     let policy = FollowRedirectPolicy::new(self.config.redirect_policy)
@@ -897,14 +893,14 @@ impl ClientBuilder {
         self
     }
 
-    /// Set a timeout for only the connect phase of a `Client`.
+    /// Sets a time limit for establishing a connection.
     ///
-    /// The timeout covers connection establishment for every protocol: connector layers,
-    /// proxies, DNS resolution, the TCP address race and TLS handshake, or the QUIC handshake.
-    /// The HTTP/3 handshake itself does not wait for the server. A timeout while resolving or
-    /// dialing a proxy is a proxy connect error.
+    /// The timer starts after connector readiness and covers connector layers, DNS resolution,
+    /// proxy setup, TCP dialing and TLS, and QUIC handshakes.
+    /// A timeout reported while resolving or dialing a proxy is a [proxy connect
+    /// error](Error::is_proxy_connect).
     ///
-    /// Default is `None`.
+    /// By default there is no connection timeout.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.connect.connect_timeout = Some(timeout);
@@ -1213,7 +1209,8 @@ impl ClientBuilder {
         self
     }
 
-    /// Bind to a local IP Address.
+    /// Sets the local IP address for one address family.
+    /// The other family keeps its setting. Passing `None` leaves both unchanged.
     ///
     /// # Example
     ///
@@ -1234,15 +1231,15 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.config.connect.bind_options.set_local_address(addr);
+        dialer::set_local_address(&mut self.config.config_set, addr.into());
         self
     }
 
-    /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
-    /// preferences) before connection.
+    /// Sets the local IPv4 and IPv6 addresses for new IP sockets.
+    /// Passing `None` for either family keeps its current setting.
     ///
-    ///  # Example
-    /// ///
+    /// # Example
+    ///
     /// ```
     /// # #[cfg(feature = "tokio-rt")] {
     /// use std::net::{Ipv4Addr, Ipv6Addr};
@@ -1262,10 +1259,7 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.config
-            .connect
-            .bind_options
-            .set_local_addresses(ipv4, ipv6);
+        dialer::set_local_addresses(&mut self.config.config_set, ipv4.into(), ipv6.into());
         self
     }
 
@@ -1287,9 +1281,9 @@ impl ClientBuilder {
     /// Note that connections will fail if the provided interface name is not a
     /// network interface that currently exists when a connection is established.
     ///
-    /// HTTP/3 connections share one UDP socket per address family, bound to the interface
-    /// when the first one opens. If the interface is removed and re-created, that socket
-    /// keeps the old one, so rebuild the client to use HTTP/3 over the new interface.
+    /// Direct HTTP/3 connections whose bindings match the client's share one UDP socket per
+    /// address family. If the interface is removed and re-created, rebuild the client to bind
+    /// those sockets to the new interface.
     ///
     /// # Example
     ///
@@ -1341,7 +1335,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.connect.bind_options.set_interface(interface);
+        dialer::set_interface(&mut self.config.config_set, interface.into());
         self
     }
 
@@ -1549,19 +1543,18 @@ impl ClientBuilder {
                     http::Response<MaybeDecompressionBody<Incoming>>,
                     BoxError,
                 >,
-            > + Clone
-            + Send
+            > + Send
             + Sync
             + 'static,
         L::Service: Service<
                 http::Request<Body>,
                 Response = http::Response<MaybeDecompressionBody<Incoming>>,
                 Error = BoxError,
+                Future: Send + 'static,
             > + Clone
             + Send
             + Sync
             + 'static,
-        <L::Service as Service<http::Request<Body>>>::Future: Send + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
         self.config.layers.push(layer);
@@ -1574,8 +1567,9 @@ impl ClientBuilder {
     ///
     /// Each subsequent invocation of this function will wrap previous layers.
     ///
-    /// If configured, `connect_timeout` wraps the layer stack. It starts when the
-    /// service is called, after readiness waits such as concurrency admission.
+    /// A TCP dial can return its timeout through the layer stack. The outer
+    /// [`connection timeout`](Self::connect_timeout) cancels a call that is still pending
+    /// when the deadline expires.
     ///
     /// Example usage:
     /// ```
@@ -1598,10 +1592,12 @@ impl ClientBuilder {
     #[inline]
     pub fn connector_layer<L>(mut self, layer: L) -> ClientBuilder
     where
-        L: Layer<BoxedTransportConnector> + Clone + Send + Sync + 'static,
-        L::Service:
-            Service<Unnameable, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
-        <L::Service as Service<Unnameable>>::Future: Send + 'static,
+        L: Layer<BoxedTransportConnector> + Send + Sync + 'static,
+        L::Service: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
         self.config.connect.layers.push(layer);
@@ -1642,7 +1638,6 @@ mod sealed {
         /// Protocol, options and socket bindings that requests inherit.
         protocol: Protocol,
         config_set: ConfigSet,
-        bind_options: BindOptions,
 
         /// Connection-pool reuse and retention policy.
         pool_config: pool::Config,
@@ -1660,7 +1655,6 @@ mod sealed {
             Self {
                 protocol: Protocol::Auto,
                 config_set: ConfigSet::default(),
-                bind_options: BindOptions::default(),
                 pool_config: pool::Config {
                     idle_timeout: Some(Duration::from_secs(90)),
                     max_idle_per_host: usize::MAX,
@@ -1720,22 +1714,12 @@ mod sealed {
             self
         }
 
-        /// Sets the client's protocol options.
+        /// Sets the connection options inherited by requests.
         ///
-        /// Protocol builders start from these options. Requests count only the
-        /// options that differ from them, both for pool reuse and for handshakes.
+        /// Pool and session identities count only request values that differ from these.
         #[inline]
         pub fn config_set(mut self, config_set: ConfigSet) -> Self {
             self.config_set = config_set;
-            self
-        }
-
-        /// Sets the socket bindings that requests inherit.
-        ///
-        /// Pool keys count only request bindings that differ from these.
-        #[inline]
-        pub fn bind_options(mut self, bind_options: BindOptions) -> Self {
-            self.bind_options = bind_options;
             self
         }
 
@@ -1773,12 +1757,7 @@ mod sealed {
                 self.runtime,
             );
             ServiceBuilder::new()
-                .layer(svc::layer(
-                    self.protocol,
-                    self.config_set,
-                    self.bind_options,
-                    true,
-                ))
+                .layer(svc::layer(self.protocol, self.config_set, true))
                 .service(dispatch)
         }
     }

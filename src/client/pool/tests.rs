@@ -10,7 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(feature = "http2")]
 use {
     super::entry::Checkout,
-    crate::conn::config::ConfigScope,
+    crate::config::connect::ConfigScope,
     bytes::Bytes,
     http::Response,
     http_body_util::Empty,
@@ -22,7 +22,7 @@ use {
 };
 #[cfg(feature = "http3")]
 use {
-    crate::conn::{Connected, Transport, TransportMismatch, test_server_config},
+    crate::conn::{Connected, Transport, test_server_config},
     ::quic::crypto::rustls::QuicClientConfig,
     std::net::{Ipv4Addr, SocketAddr},
 };
@@ -816,9 +816,17 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
 #[tokio::test]
 #[cfg(feature = "http3")]
 async fn mismatched_transport_fails_checkout() {
-    for (protocol, connector) in [
-        (Protocol::Http1, http3_connector()),
-        (Protocol::Http3, TestConnector::KeepsAlive),
+    for (protocol, connector, message) in [
+        (
+            Protocol::Http1,
+            http3_connector(),
+            "stream connection returned QUIC",
+        ),
+        (
+            Protocol::Http3,
+            TestConnector::KeepsAlive,
+            "QUIC connection returned a stream",
+        ),
     ] {
         let Err(error) = test_pool(connector)
             .checkout(connect_request(protocol), false)
@@ -829,7 +837,7 @@ async fn mismatched_transport_fails_checkout() {
         let source: &(dyn std::error::Error + 'static) = &*error;
         assert!(
             std::iter::successors(Some(source), |error| error.source())
-                .any(|error| error.is::<TransportMismatch>()),
+                .any(|error| error.to_string() == message),
             "{protocol:?}: {error}"
         );
     }

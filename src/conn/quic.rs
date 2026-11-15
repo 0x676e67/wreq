@@ -15,19 +15,22 @@ use endpoint::Endpoints;
 #[cfg(test)]
 pub(crate) use endpoint::test_server_config;
 use futures_util::future::{self, BoxFuture, Either, Ready};
+#[cfg(feature = "socks")]
+use netty::proxy::socks::Version;
 use tower::{BoxError, Service};
 
 use crate::{
-    conn::{Conn, dialer::Dialer, request::ConnectRequest},
+    conn::{Conn, dialer::Dialer, route::Route, svc::TransportRequest},
     error::{ProxyConnect, ProxyMismatch},
-    proxy::{Intercepted, Matcher, quic_port},
+    proxy::{Matcher, quic_port},
     tls::quic::QuicTls,
 };
 
-/// Connects HTTP/3 origins over QUIC directly, through a `quic://` MASQUE proxy, or through
-/// SOCKS5 UDP. Other proxy routes fail before DNS. Clones share the proxy rules and endpoints.
+/// Selects the request's route from its proxy rules and connects HTTP/3 origins over it:
+/// directly, through a `quic://` MASQUE proxy, or through SOCKS5 UDP. Other proxy routes fail
+/// before DNS. Clones share the proxy rules and endpoints.
 #[derive(Clone)]
-pub(crate) struct QuicConnector {
+pub(crate) struct QuicRouter {
     inner: Arc<Inner>,
 }
 
@@ -37,9 +40,9 @@ struct Inner {
     endpoints: Endpoints,
 }
 
-// ===== impl QuicConnector =====
+// ===== impl QuicRouter =====
 
-impl QuicConnector {
+impl QuicRouter {
     /// Creates the QUIC path over `dialer` with the client's QUIC TLS and proxy rules.
     /// Endpoints open on the first connection that needs them.
     pub(crate) fn new(
@@ -56,7 +59,7 @@ impl QuicConnector {
     }
 }
 
-impl Service<ConnectRequest> for QuicConnector {
+impl Service<TransportRequest> for QuicRouter {
     type Response = Conn;
     type Error = BoxError;
     type Future = Either<BoxFuture<'static, Result<Conn, BoxError>>, Ready<Result<Conn, BoxError>>>;
@@ -66,50 +69,35 @@ impl Service<ConnectRequest> for QuicConnector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: ConnectRequest) -> Self::Future {
-        let proxy = match request
-            .config_override::<Matcher>()
-            .and_then(|proxy| proxy.intercept(request.uri()))
-            .or_else(|| {
-                self.inner
-                    .proxies
-                    .iter()
-                    .find_map(|proxy| proxy.intercept(request.uri()))
-            }) {
-            None => {
-                let inner = self.inner.clone();
-                return Either::Left(Box::pin(
+    fn call(&mut self, TransportRequest { request, deadline }: TransportRequest) -> Self::Future {
+        let inner = self.inner.clone();
+        match Route::select(&request, &inner.proxies) {
+            Route::Direct => {
+                Either::Left(Box::pin(
                     async move { inner.endpoints.connect(&request).await },
-                ));
+                ))
             }
             #[cfg(feature = "socks")]
-            Some(Intercepted::Proxy(proxy))
-                if matches!(proxy.uri().scheme_str(), Some("socks5" | "socks5h")) =>
-            {
-                let inner = self.inner.clone();
-                return Either::Left(Box::pin(async move {
-                    socks::connect(&inner.endpoints, request, proxy).await
-                }));
+            Route::Socks {
+                proxy,
+                version: Version::V5,
+                dns,
+            } => Either::Left(Box::pin(async move {
+                socks::connect(&inner.endpoints, request, proxy, dns, deadline).await
+            })),
+            Route::Quic(proxy) => {
+                // Environment proxy entries reach this point without builder validation.
+                if let Err(message) = quic_port(proxy.uri()) {
+                    return Either::Right(future::err(ProxyConnect::Message(message).into()));
+                }
+                Either::Left(Box::pin(async move {
+                    masque::connect(&inner.endpoints, request, proxy, deadline).await
+                }))
             }
-            Some(Intercepted::Proxy(proxy)) if proxy.uri().scheme_str() == Some("quic") => proxy,
-            Some(_) => {
-                return Either::Right(future::err(
-                    ProxyMismatch(
-                        "HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature",
-                    )
+            _ => Either::Right(future::err(
+                ProxyMismatch("HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature")
                     .into(),
-                ));
-            }
-        };
-
-        // Environment proxy entries reach this point without builder validation.
-        if let Err(message) = quic_port(proxy.uri()) {
-            return Either::Right(future::err(ProxyConnect::Message(message).into()));
+            )),
         }
-
-        let inner = self.inner.clone();
-        Either::Left(Box::pin(async move {
-            masque::connect(&inner.endpoints, request, proxy).await
-        }))
     }
 }

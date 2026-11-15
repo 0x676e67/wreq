@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::conn::config::{ConfigScope, ConnectConfig};
+use crate::config::connect::{ConfigScope, ConnectConfig};
 
 /// An opaque partition added to the automatic connection identity.
 /// Requests in different groups never share pooled connections, even when

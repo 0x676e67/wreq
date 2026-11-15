@@ -7,9 +7,7 @@ use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
 /// Removes the square brackets around an IPv6 host literal as required by
 /// [RFC 3986, Section 3.2.2](https://www.rfc-editor.org/rfc/rfc3986.html#section-3.2.2).
 pub(crate) fn strip_ipv6_brackets(host: &str) -> &str {
-    host.strip_prefix('[')
-        .and_then(|host| host.strip_suffix(']'))
-        .unwrap_or(host)
+    host.strip_circumfix('[', ']').unwrap_or(host)
 }
 
 pub(crate) fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue

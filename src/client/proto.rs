@@ -24,7 +24,7 @@ use netty::conn::TrySendError;
 use super::error::{Error, ErrorKind};
 use crate::{
     Body,
-    conn::{AsyncConn, Connected},
+    conn::{Connected, Io},
 };
 
 /// Physical byte stream and its transport metadata.
@@ -33,7 +33,7 @@ use crate::{
 /// selected handshake consumes it exactly once and transfers the stream to
 /// the resulting protocol driver.
 pub(super) struct Established {
-    io: Box<dyn AsyncConn>,
+    io: Box<dyn Io>,
     connected: Connected,
     #[cfg(feature = "http2")]
     idle_at: Instant,
@@ -56,7 +56,7 @@ pub enum SendError {
 impl Established {
     /// Creates the protocol-neutral output of a physical connector.
     pub(super) fn new(
-        io: Box<dyn AsyncConn>,
+        io: Box<dyn Io>,
         connected: Connected,
         #[cfg(feature = "http2")] idle_at: Instant,
     ) -> Self {

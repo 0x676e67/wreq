@@ -2,14 +2,9 @@
 //! local bindings and TCP socket options; it opens TCP and Unix streams and binds the UDP sockets
 //! QUIC uses.
 //!
-//! DNS completes before racing addresses. With Happy Eyeballs enabled, families
-//! alternate and attempts are staggered, with at most six active attempts.
-//! If every active attempt fails, the next starts immediately; success drops pending attempts,
-//! and so does a failure that every address would repeat, such as a refused QUIC handshake.
-//! The connector's deadline covers DNS and the whole race. Disabling racing preserves resolver
-//! order.
-//!
-//! See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305#section-5).
+//! DNS completes before the [`race()`], and the connector's deadline covers both.
+
+mod race;
 
 pub(crate) mod tcp;
 
@@ -17,42 +12,34 @@ pub(crate) mod tcp;
 use std::path::Path;
 use std::{
     borrow::Cow,
-    collections::VecDeque,
     error::Error as StdError,
     fmt,
-    future::{Future, poll_fn},
+    future::Future,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    pin::{Pin, pin},
+    pin::pin,
     sync::Arc,
-    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
-use futures_util::{
-    TryFutureExt,
-    future::{BoxFuture, Either, ErrInto},
-};
+use futures_util::{TryFutureExt, future::Either};
 use http::Uri;
-use tower::Service;
 #[cfg(feature = "http3")]
 use {
-    super::request::ConnectRequest,
     socket2::{Domain, Protocol, Socket, Type},
     std::net::UdpSocket,
 };
 
+pub(super) use self::race::race;
 use crate::{
+    config::connect::{ConfigSet, impl_connect_config},
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
-    rt::{BoxConnection, Connecting, DynRuntime, Timer as _},
+    rt::{BoxConnection, DynRuntime, Timer as _},
 };
 
-const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
-
 /// Reaches addresses from this host: resolves names, races addresses and applies local
-/// bindings and TCP socket options. As a service it opens the TCP or Unix stream of a
-/// [`SocketRequest`]; it also binds the UDP sockets QUIC uses. Clones share one state.
+/// bindings and TCP socket options. It also opens Unix streams and binds UDP sockets for QUIC.
 #[derive(Clone)]
 pub(crate) struct Dialer {
     inner: Arc<Inner>,
@@ -63,50 +50,27 @@ struct Inner {
     runtime: DynRuntime,
     resolver: DynResolver,
     tcp: tcp::Config,
-    bind_options: BindOptions,
+    config_set: ConfigSet,
     happy_eyeballs_timeout: Option<Duration>,
 }
 
-/// A physical socket target and the request's binding policy.
-/// Secure connections temporarily disable Nagle during the handshake.
-#[derive(Clone)]
-pub struct SocketRequest {
-    pub(crate) uri: Uri,
+/// A physical socket destination. TCP settings apply to the dialed hop.
+pub(super) enum SocketRequest {
+    Tcp {
+        uri: Uri,
+        /// Keeps TCP_NODELAY enabled through any TLS on this socket, including tunneled TLS.
+        secure: bool,
+        /// Lets the dial report its own timeout before the outer connector does.
+        deadline: Option<Instant>,
+        config_set: ConfigSet,
+    },
     #[cfg(unix)]
-    pub(crate) unix: Option<Arc<Path>>,
-    pub(crate) bind_options: Option<Arc<BindOptions>>,
-    pub(crate) secure: bool,
-    /// The connect deadline. The dial fails there itself, so the connector that called it
-    /// wraps the timeout like its other errors.
-    pub(crate) deadline: Option<Instant>,
+    Unix(Arc<Path>),
 }
 
-/// Local addresses and interface selected for an outbound socket.
-/// Missing request fields inherit the client's bindings before connection setup.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct BindOptions {
-    /// Set only where interface binding is supported; see [`BindOptions::bind_interface`].
-    pub(crate) interface: Option<Cow<'static, str>>,
-    pub(crate) ipv4_address: Option<Ipv4Addr>,
-    pub(crate) ipv6_address: Option<Ipv6Addr>,
-}
-
-/// Owns the pending candidates and active attempts for one connection race.
-/// Dropping it cancels every unfinished attempt, including after a winner is selected.
-struct Race<F> {
-    addr_families: (SocketAddrs, SocketAddrs),
-    next_fallback: bool,
-    attempts: VecDeque<Attempt<F>>,
-    next_order: usize,
-    first_error: Option<(usize, ConnectError)>,
-}
-
-/// One active connection attempt and its launch order.
-struct Attempt<F> {
-    addr: SocketAddr,
-    order: usize,
-    future: F,
-}
+/// The interface name participates in reuse identity by value, regardless of ownership.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct Interface(Cow<'static, str>);
 
 /// Connection failure with an optional attempted address and underlying cause.
 pub struct ConnectError {
@@ -115,13 +79,6 @@ pub struct ConnectError {
     pub(crate) cause: Option<BoxError>,
     /// Every other address of the host would fail the same way, so the race ends here.
     pub(super) terminal: bool,
-}
-
-enum Event<C> {
-    Connected(C),
-    Terminal(ConnectError),
-    AllAttemptsFailed,
-    DelayElapsed,
 }
 
 /// Resolves one host through `lookup`, preserving custom DNS ports unless the URI supplies a
@@ -184,60 +141,6 @@ where
     }
 }
 
-/// Tries candidates using transport-specific setup and the selected clock, staggered by
-/// `happy_eyeballs_timeout` or one at a time without it. Bindings of one family drop the
-/// other family's candidates. Setup errors and failed futures advance through addresses; a
-/// terminal error ends the race at once and cancels the other attempts.
-pub(super) async fn race<C, F, S>(
-    addrs: SocketAddrs,
-    bind_options: &BindOptions,
-    happy_eyeballs_timeout: Option<Duration>,
-    mut start: impl FnMut(SocketAddr) -> Result<F, ConnectError>,
-    sleep: impl Fn(Duration) -> S,
-) -> Result<C, ConnectError>
-where
-    F: Future<Output = Result<C, ConnectError>> + Unpin,
-    S: Future<Output = ()>,
-{
-    let addrs = match (bind_options.ipv4_address, bind_options.ipv6_address) {
-        (Some(_), None) => addrs.filter(SocketAddr::is_ipv4),
-        (None, Some(_)) => addrs.filter(SocketAddr::is_ipv6),
-        _ => addrs,
-    };
-    // Avoid allocating an active set when no overlapping attempts are needed.
-    if happy_eyeballs_timeout.is_none() || addrs.len() <= 1 {
-        let mut first_error = None;
-        for addr in addrs {
-            let result = match start(addr) {
-                Ok(future) => future.await,
-                Err(error) => Err(error),
-            };
-            match result {
-                Ok(connection) => return Ok(connection),
-                Err(error) => {
-                    let error = error.with_addr(addr);
-                    trace!("connect error for {}: {:?}", addr, error);
-                    if error.terminal {
-                        return Err(error);
-                    }
-                    first_error.get_or_insert(error);
-                }
-            }
-        }
-        return Err(first_error.unwrap_or_else(ConnectError::network_unreachable));
-    }
-
-    let mut race = Race {
-        addr_families: addrs.split_by_preference(None, None),
-        next_fallback: false,
-        attempts: VecDeque::with_capacity(MAX_PARALLEL_CONNECT_ATTEMPTS),
-        next_order: 0,
-        first_error: None,
-    };
-    race.connect(happy_eyeballs_timeout, &mut start, sleep)
-        .await
-}
-
 // ===== impl Dialer =====
 
 impl Dialer {
@@ -247,7 +150,7 @@ impl Dialer {
         runtime: DynRuntime,
         resolver: DynResolver,
         tcp: tcp::Config,
-        bind_options: BindOptions,
+        config_set: ConfigSet,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         Self {
@@ -255,7 +158,7 @@ impl Dialer {
                 runtime,
                 resolver,
                 tcp,
-                bind_options,
+                config_set,
                 happy_eyeballs_timeout,
             }),
         }
@@ -268,8 +171,8 @@ impl Dialer {
     }
 
     /// Returns the resolver for names that SOCKS routes and QUIC dials resolve locally.
-    #[cfg(any(feature = "socks", feature = "http3"))]
     #[inline]
+    #[cfg(any(feature = "socks", feature = "http3"))]
     pub(crate) fn resolver(&self) -> &DynResolver {
         &self.inner.resolver
     }
@@ -289,29 +192,23 @@ impl Dialer {
         self.inner.happy_eyeballs_timeout
     }
 
-    /// Returns the request's bindings, or the client's when the request inherits them.
-    pub(crate) fn bind_options<'a>(&'a self, request: &'a ConnectRequest) -> &'a BindOptions {
-        request
-            .bind_options()
-            .as_deref()
-            .unwrap_or(&self.inner.bind_options)
+    /// Client configuration inherited by each dial.
+    #[inline]
+    pub(crate) fn config_set(&self) -> &ConfigSet {
+        &self.inner.config_set
     }
 
     /// Binds a UDP socket for the address family of `remote` before the runtime registers it.
     pub(crate) fn bind_udp(
         &self,
-        bind_options: &BindOptions,
+        config_set: &ConfigSet,
         remote: SocketAddr,
     ) -> Result<UdpSocket, ConnectError> {
+        let (ipv4, ipv6) = local_addresses(config_set, &self.inner.config_set);
+        let interface = interface(config_set, &self.inner.config_set);
         let address = match remote {
-            SocketAddr::V4(_) => SocketAddr::from((
-                bind_options.ipv4_address.unwrap_or(Ipv4Addr::UNSPECIFIED),
-                0,
-            )),
-            SocketAddr::V6(_) => SocketAddr::from((
-                bind_options.ipv6_address.unwrap_or(Ipv6Addr::UNSPECIFIED),
-                0,
-            )),
+            SocketAddr::V4(_) => SocketAddr::from((ipv4.unwrap_or(Ipv4Addr::UNSPECIFIED), 0)),
+            SocketAddr::V6(_) => SocketAddr::from((ipv6.unwrap_or(Ipv6Addr::UNSPECIFIED), 0)),
         };
         let socket = Socket::new(
             Domain::for_address(address),
@@ -327,8 +224,7 @@ impl Dialer {
                 .set_only_v6(true)
                 .map_err(ConnectError::m("quic set_only_v6 error"))?;
         }
-        bind_options
-            .bind_interface(&socket, address)
+        bind_interface(&socket, address, interface)
             .map_err(ConnectError::m("quic bind interface error"))?;
         socket
             .bind(&address.into())
@@ -337,95 +233,137 @@ impl Dialer {
     }
 }
 
-impl Service<SocketRequest> for Dialer {
-    type Response = BoxConnection;
-    type Error = BoxError;
-    // A Unix socket keeps the runtime's own boxed future.
-    type Future =
-        Either<BoxFuture<'static, Result<BoxConnection, BoxError>>, ErrInto<Connecting, BoxError>>;
-
-    #[inline]
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
+impl Dialer {
+    /// Returns a future that owns its dial state and can outlive the dialer borrow.
+    /// TCP dials arm the supplied absolute deadline before polling DNS.
+    pub(super) fn dial(
+        &self,
+        request: SocketRequest,
+    ) -> impl Future<Output = Result<BoxConnection, BoxError>> + use<> {
+        match request {
+            SocketRequest::Tcp {
+                uri,
+                config_set,
+                secure,
+                deadline,
+            } => {
+                let dial = self.dial_tcp(uri, config_set, secure, deadline);
+                cfg_select! {
+                    unix => Either::Left(dial),
+                    _ => dial,
+                }
+            }
+            #[cfg(unix)]
+            SocketRequest::Unix(path) => {
+                Either::Right(self.inner.runtime.connect_unix(path).err_into())
+            }
+        }
     }
 
-    fn call(&mut self, req: SocketRequest) -> Self::Future {
-        #[cfg(unix)]
-        if let Some(path) = req.unix {
-            return Either::Right(self.inner.runtime.connect_unix(path).err_into());
-        }
-
+    /// Resolves the host and races its addresses until the request's deadline.
+    fn dial_tcp(
+        &self,
+        uri: Uri,
+        config_set: ConfigSet,
+        secure: bool,
+        deadline: Option<Instant>,
+    ) -> impl Future<Output = Result<BoxConnection, BoxError>> + use<> {
         // Disable Nagle during TLS handshakes.
         // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        let nodelay = req.secure || self.nodelay();
-        let deadline = req.deadline;
+        let nodelay = secure || self.nodelay();
         let inner = self.inner.clone();
         let dial = async move {
-            let (host, port) = tcp::get_host_port(&req.uri)?;
-            let addrs = resolve(host, port, req.uri.port().is_some(), |name| {
+            let (host, port) = tcp::get_host_port(&uri)?;
+            let addrs = resolve(host, port, uri.port().is_some(), |name| {
                 inner.resolver.resolve(name)
             })
             .await?;
-            // Request bindings of `None` keep the client's.
-            let bind_options = req.bind_options.as_deref().unwrap_or(&inner.bind_options);
+            let addresses = local_addresses(&config_set, &inner.config_set);
+            let interface = interface(&config_set, &inner.config_set);
             let stream = race(
                 addrs,
-                bind_options,
+                addresses,
                 inner.happy_eyeballs_timeout,
                 |addr| {
-                    tcp::connect_socket(&addr, &inner.tcp, bind_options, nodelay, &inner.runtime)
-                        .map(|future| future.map_err(ConnectError::m("tcp connect error")))
+                    tcp::connect_socket(
+                        &addr,
+                        &inner.tcp,
+                        addresses,
+                        interface,
+                        nodelay,
+                        &inner.runtime,
+                    )
+                    .map(|future| future.map_err(ConnectError::m("tcp connect error")))
                 },
                 |duration| inner.runtime.sleep(duration),
             )
             .await?;
             Ok(stream)
         };
-        Either::Left(Box::pin(within_deadline(
-            deadline,
-            &self.inner.runtime,
-            dial,
-        )))
+        within_deadline(deadline, &self.inner.runtime, dial)
     }
 }
 
-// ===== impl BindOptions =====
+impl_connect_config!(Ipv4Addr, SOCKET);
+impl_connect_config!(Ipv6Addr, SOCKET);
+impl_connect_config!(Interface, SOCKET);
 
-impl BindOptions {
-    pub(crate) fn set_local_address<V>(&mut self, address: V)
-    where
-        V: Into<Option<IpAddr>>,
-    {
-        match address.into() {
-            Some(IpAddr::V4(address)) => self.ipv4_address = Some(address),
-            Some(IpAddr::V6(address)) => self.ipv6_address = Some(address),
-            None => {}
-        }
-    }
+/// Returns whether the effective bindings match the client's shared QUIC endpoints.
+/// All fields must match, including the address family this dial does not use.
+#[cfg(feature = "http3")]
+pub(super) fn uses_client_bindings(request: &ConfigSet, client: &ConfigSet) -> bool {
+    local_addresses(request, client) == local_addresses(client, client)
+        && interface(request, client) == interface(client, client)
+}
 
-    pub(crate) fn set_local_addresses<V4, V6>(&mut self, ipv4: V4, ipv6: V6)
-    where
-        V4: Into<Option<Ipv4Addr>>,
-        V6: Into<Option<Ipv6Addr>>,
-    {
-        if let Some(address) = ipv4.into() {
-            self.ipv4_address = Some(address);
+/// Sets one local address family without clearing the other.
+/// Passing `None` leaves both families unchanged.
+pub(crate) fn set_local_address(config: &mut ConfigSet, address: Option<IpAddr>) {
+    match address {
+        Some(IpAddr::V4(address)) => {
+            config.insert(address);
         }
-        if let Some(address) = ipv6.into() {
-            self.ipv6_address = Some(address);
+        Some(IpAddr::V6(address)) => {
+            config.insert(address);
         }
-    }
-
-    /// Applies specified request fields, preserving inherited values for `None`.
-    pub(crate) fn merge(&mut self, overrides: &Self) {
-        self.set_local_addresses(overrides.ipv4_address, overrides.ipv6_address);
-        if let Some(interface) = &overrides.interface {
-            self.interface = Some(interface.clone());
-        }
+        None => {}
     }
 }
 
-// Platforms where socket2 binds a socket to an interface by name or index.
+/// Sets the supplied local address families; each `None` leaves its earlier value intact.
+pub(crate) fn set_local_addresses(
+    config: &mut ConfigSet,
+    ipv4: Option<Ipv4Addr>,
+    ipv6: Option<Ipv6Addr>,
+) {
+    if let Some(address) = ipv4 {
+        config.insert(address);
+    }
+    if let Some(address) = ipv6 {
+        config.insert(address);
+    }
+}
+
+/// Resolves each local address independently, preferring request values over the client's.
+/// Explicit unspecified addresses still select their address family during dialing.
+pub(crate) fn local_addresses(
+    request: &ConfigSet,
+    client: &ConfigSet,
+) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
+    (
+        request.get::<Ipv4Addr>().or_else(|| client.get()).copied(),
+        request.get::<Ipv6Addr>().or_else(|| client.get()).copied(),
+    )
+}
+
+/// Borrows the request's interface name, falling back to the client's when absent.
+pub(crate) fn interface<'a>(request: &'a ConfigSet, client: &'a ConfigSet) -> Option<&'a str> {
+    request
+        .get::<Interface>()
+        .or_else(|| client.get())
+        .map(|interface| interface.0.as_ref())
+}
+
 cfg_select! {
     any(
         target_os = "android",
@@ -439,190 +377,49 @@ cfg_select! {
         target_os = "visionos",
         target_os = "watchos",
     ) => {
-        impl BindOptions {
-            /// Selects the interface used when opening the outbound socket.
-            pub(crate) fn set_interface<I>(&mut self, interface: I) -> &mut Self
-            where
-                I: Into<Cow<'static, str>>,
-            {
-                self.interface = Some(interface.into());
-                self
-            }
+        /// Selects the interface name stored in this connection configuration.
+        pub(crate) fn set_interface(config: &mut ConfigSet, interface: Cow<'static, str>) {
+            config.insert(Interface(interface));
+        }
 
-            /// Binds a TCP or UDP socket for a peer at `address` to the selected interface, if any.
-            fn bind_interface(
-                &self,
-                socket: &socket2::Socket,
-                address: SocketAddr,
-            ) -> io::Result<()> {
-                let Some(interface) = self.interface.as_deref() else {
-                    return Ok(());
-                };
-                cfg_select! {
-                    any(target_os = "android", target_os = "fuchsia", target_os = "linux") => {
-                        let _ = address;
-                        socket.bind_device(Some(interface.as_bytes()))
-                    }
-                    _ => {
-                        let interface = std::ffi::CString::new(interface)
-                            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-                        // SAFETY: the owned CString is NUL-terminated and outlives the call.
-                        #[allow(unsafe_code)]
-                        let index = unsafe { libc::if_nametoindex(interface.as_ptr()) };
-                        let index = std::num::NonZeroU32::new(index)
-                            .ok_or_else(io::Error::last_os_error)?;
-                        match address {
-                            SocketAddr::V4(_) => socket.bind_device_by_index_v4(Some(index)),
-                            SocketAddr::V6(_) => socket.bind_device_by_index_v6(Some(index)),
-                        }
+        /// Applies the selected interface before binding or connecting the socket.
+        pub(super) fn bind_interface(
+            socket: &socket2::Socket,
+            address: SocketAddr,
+            interface: Option<&str>,
+        ) -> io::Result<()> {
+            let Some(interface) = interface else {
+                return Ok(());
+            };
+            cfg_select! {
+                any(target_os = "android", target_os = "fuchsia", target_os = "linux") => {
+                    let _ = address;
+                    socket.bind_device(Some(interface.as_bytes()))
+                }
+                _ => {
+                    let interface = std::ffi::CString::new(interface)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+                    // SAFETY: the owned CString is NUL-terminated and outlives the call.
+                    #[allow(unsafe_code)]
+                    let index = unsafe { libc::if_nametoindex(interface.as_ptr()) };
+                    let index =
+                        std::num::NonZeroU32::new(index).ok_or_else(io::Error::last_os_error)?;
+                    match address {
+                        SocketAddr::V4(_) => socket.bind_device_by_index_v4(Some(index)),
+                        SocketAddr::V6(_) => socket.bind_device_by_index_v6(Some(index)),
                     }
                 }
             }
         }
     }
     _ => {
-        impl BindOptions {
-            /// This platform cannot bind an interface, so none is ever selected.
-            #[inline]
-            fn bind_interface(
-                &self,
-                _socket: &socket2::Socket,
-                _address: SocketAddr,
-            ) -> io::Result<()> {
-                Ok(())
-            }
-        }
-    }
-}
-
-// ===== impl Race =====
-
-impl<C, F> Race<F>
-where
-    F: Future<Output = Result<C, ConnectError>> + Unpin,
-{
-    fn has_remaining(&self) -> bool {
-        let (preferred, fallback) = &self.addr_families;
-        !preferred.is_empty() || !fallback.is_empty()
-    }
-
-    fn next_addr(&mut self) -> Option<SocketAddr> {
-        let (preferred, fallback) = &mut self.addr_families;
-        let use_fallback = match (
-            self.next_fallback,
-            !preferred.is_empty(),
-            !fallback.is_empty(),
-        ) {
-            (_, false, false) => return None,
-            (true, _, true) | (_, false, true) => true,
-            _ => false,
-        };
-        self.next_fallback = !use_fallback;
-        if use_fallback {
-            fallback.next()
-        } else {
-            preferred.next()
-        }
-    }
-
-    fn record_error(&mut self, order: usize, error: ConnectError) {
-        match &self.first_error {
-            Some((first_order, _)) if *first_order <= order => {}
-            _ => self.first_error = Some((order, error)),
-        }
-    }
-
-    fn launch_next(
-        &mut self,
-        start: &mut impl FnMut(SocketAddr) -> Result<F, ConnectError>,
-    ) -> bool {
-        while let Some(addr) = self.next_addr() {
-            let order = self.next_order;
-            self.next_order = self.next_order.saturating_add(1);
-            match start(addr) {
-                Ok(future) => {
-                    self.attempts.push_back(Attempt {
-                        addr,
-                        order,
-                        future,
-                    });
-                    return true;
-                }
-                Err(error) => self.record_error(order, error.with_addr(addr)),
-            }
-        }
-        false
-    }
-
-    fn poll_attempts(&mut self, cx: &mut Context<'_>) -> Poll<Event<C>> {
-        let mut index = 0;
-        let mut failed = false;
-        while let Some(attempt) = self.attempts.get_mut(index) {
-            let addr = attempt.addr;
-            let order = attempt.order;
-            match Pin::new(&mut attempt.future).poll(cx) {
-                Poll::Pending => index += 1,
-                Poll::Ready(result) => {
-                    let _ = self.attempts.remove(index);
-                    match result {
-                        Ok(connection) => return Poll::Ready(Event::Connected(connection)),
-                        Err(error) => {
-                            let error = error.with_addr(addr);
-                            trace!("connect error for {}: {:?}", addr, error);
-                            if error.terminal {
-                                return Poll::Ready(Event::Terminal(error));
-                            }
-                            self.record_error(order, error);
-                            failed = true;
-                        }
-                    }
-                }
-            }
-        }
-        if failed && self.attempts.is_empty() {
-            Poll::Ready(Event::AllAttemptsFailed)
-        } else {
-            Poll::Pending
-        }
-    }
-
-    async fn connect<S: Future<Output = ()>>(
-        &mut self,
-        delay: Option<Duration>,
-        start: &mut impl FnMut(SocketAddr) -> Result<F, ConnectError>,
-        sleep: impl Fn(Duration) -> S,
-    ) -> Result<C, ConnectError> {
-        loop {
-            if self.attempts.is_empty() && !self.launch_next(start) {
-                return Err(self
-                    .first_error
-                    .take()
-                    .map(|(_, error)| error)
-                    .unwrap_or_else(ConnectError::network_unreachable));
-            }
-            let event = match (delay, self.has_remaining()) {
-                (Some(delay), true) => {
-                    let mut sleep = pin!(sleep(delay));
-                    poll_fn(|cx| match self.poll_attempts(cx) {
-                        Poll::Ready(event) => Poll::Ready(event),
-                        Poll::Pending => sleep.as_mut().poll(cx).map(|()| Event::DelayElapsed),
-                    })
-                    .await
-                }
-                _ => poll_fn(|cx| self.poll_attempts(cx)).await,
-            };
-            match event {
-                Event::Connected(connection) => return Ok(connection),
-                Event::Terminal(error) => return Err(error),
-                Event::AllAttemptsFailed => {}
-                Event::DelayElapsed => {
-                    if self.attempts.len() >= MAX_PARALLEL_CONNECT_ATTEMPTS {
-                        // Dropping the oldest pending future gives later addresses a slot.
-                        self.attempts.pop_front();
-                    }
-                }
-            }
-            self.launch_next(start);
+        /// Unsupported platforms have no public interface selector.
+        pub(super) fn bind_interface(
+            _socket: &socket2::Socket,
+            _address: SocketAddr,
+            _interface: Option<&str>,
+        ) -> io::Result<()> {
+            Ok(())
         }
     }
 }
@@ -687,71 +484,19 @@ impl StdError for ConnectError {
 }
 
 #[cfg(test)]
-mod bind_tests {
-    use super::*;
-
-    #[test]
-    fn bindings_merge_only_specified_fields() {
-        let mut bindings = BindOptions::default();
-        bindings.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
-        bindings.interface = Some("eth0".into());
-        let inherited = bindings.clone();
-
-        bindings.merge(&BindOptions::default());
-        assert_eq!(bindings, inherited);
-
-        bindings.merge(&BindOptions {
-            ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
-            ..Default::default()
-        });
-        assert_eq!(bindings.ipv4_address, Some(Ipv4Addr::UNSPECIFIED));
-        assert_eq!(bindings.ipv6_address, Some(Ipv6Addr::LOCALHOST));
-        assert_eq!(bindings.interface, inherited.interface);
-
-        bindings.merge(&BindOptions {
-            interface: Some("eth1".into()),
-            ..Default::default()
-        });
-        assert_eq!(bindings.interface.as_deref(), Some("eth1"));
-        assert_eq!(bindings.ipv4_address, Some(Ipv4Addr::UNSPECIFIED));
-        assert_eq!(bindings.ipv6_address, Some(Ipv6Addr::LOCALHOST));
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use std::{
-        future::{pending, ready},
-        net::{Ipv4Addr, Ipv6Addr},
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
+        future::ready,
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        sync::atomic::{AtomicUsize, Ordering},
     };
 
-    use futures_util::{FutureExt, poll};
     use tower::{Service, service_fn};
 
     use super::*;
 
     const V4: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 443);
     const V6: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 443);
-    const DELAY: Duration = Duration::from_millis(10);
-
-    struct Active(Arc<AtomicUsize>);
-
-    impl Active {
-        fn new(active: &Arc<AtomicUsize>) -> Self {
-            active.fetch_add(1, Ordering::SeqCst);
-            Self(active.clone())
-        }
-    }
-
-    impl Drop for Active {
-        fn drop(&mut self) {
-            self.0.fetch_sub(1, Ordering::SeqCst);
-        }
-    }
 
     #[tokio::test]
     async fn resolves_literals_and_preserves_dns_port_contract() {
@@ -800,176 +545,32 @@ mod tests {
             io::ErrorKind::NotFound
         );
     }
-
-    #[tokio::test(start_paused = true)]
-    async fn races_addresses_with_ordered_pacing_and_bounded_concurrency() {
-        let v4: Vec<_> = (1..=6).map(|port| SocketAddr::new(V4.ip(), port)).collect();
-        let v6: Vec<_> = (1..=2).map(|port| SocketAddr::new(V6.ip(), port)).collect();
-        let interleaved = [v4[0], v6[0], v4[1], v6[1], v4[2], v4[3], v4[4], v4[5]];
-        let failed = v6[0];
-        let winner = v4[5];
-        for happy_eyeballs_timeout in [None, Some(DELAY)] {
-            let parallel = happy_eyeballs_timeout.is_some();
-            let active = Arc::new(AtomicUsize::new(0));
-            let mut launched = Vec::new();
-            let mut max_active = 0;
-            let started = tokio::time::Instant::now();
-            let result = race(
-                SocketAddrs::new([v4.as_slice(), v6.as_slice()].concat()),
-                &BindOptions::default(),
-                happy_eyeballs_timeout,
-                |addr| {
-                    launched.push(addr);
-                    let attempt = Active::new(&active);
-                    max_active = max_active.max(active.load(Ordering::SeqCst));
-                    Ok(async move {
-                        let _attempt = attempt;
-                        if addr == winner {
-                            Ok(addr)
-                        } else if parallel && addr != failed {
-                            pending().await
-                        } else {
-                            tokio::time::sleep(if parallel { DELAY / 10 } else { DELAY / 2 }).await;
-                            Err(ConnectError::new(
-                                "attempt failed",
-                                io::Error::from(io::ErrorKind::ConnectionRefused),
-                            ))
-                        }
-                    }
-                    .boxed())
-                },
-                tokio::time::sleep,
-            )
-            .await
-            .unwrap();
-            assert_eq!(result, winner);
-            assert_eq!(
-                started.elapsed(),
-                if parallel { DELAY * 7 } else { DELAY * 5 / 2 }
-            );
-            assert_eq!(launched, if parallel { &interleaved[..] } else { &v4 });
-            assert_eq!(max_active, if parallel { 6 } else { 1 });
-            assert_eq!(active.load(Ordering::SeqCst), 0);
-        }
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn reports_the_error_of_the_first_launched_attempt() {
-        let started = tokio::time::Instant::now();
-        let error = race(
-            SocketAddrs::new(vec![V4, V6]),
-            &BindOptions::default(),
-            Some(DELAY),
-            |addr| {
-                Ok(async move {
-                    if addr == V4 {
-                        tokio::time::sleep(DELAY * 3).await;
-                    }
-                    Err::<(), _>(ConnectError::new(
-                        "attempt failed",
-                        io::Error::from(io::ErrorKind::ConnectionRefused),
-                    ))
-                }
-                .boxed())
-            },
-            tokio::time::sleep,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(
-            error.addr,
-            Some(V4),
-            "launch order wins over failure completion order"
+    #[test]
+    fn bindings_inherit_only_unspecified_fields() {
+        let mut client = ConfigSet::default();
+        set_local_addresses(
+            &mut client,
+            Some(Ipv4Addr::LOCALHOST),
+            Some(Ipv6Addr::LOCALHOST),
         );
-        assert_eq!(started.elapsed(), DELAY * 3);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn selects_candidates_and_skips_setup_failures() {
-        for happy_eyeballs_timeout in [None, Some(DELAY)] {
-            for (ipv4, ipv6, expected) in [
-                (None, None, V6),
-                (Some(Ipv4Addr::LOCALHOST), None, V4),
-                (None, Some(Ipv6Addr::LOCALHOST), V6),
-            ] {
-                let mut bindings = BindOptions::default();
-                bindings.set_local_addresses(ipv4, ipv6);
-                let mut launched = Vec::new();
-                let started = tokio::time::Instant::now();
-                let result = race(
-                    SocketAddrs::new(vec![V4, V6]),
-                    &bindings,
-                    happy_eyeballs_timeout,
-                    |addr| {
-                        launched.push(addr);
-                        if addr == expected {
-                            Ok(ready(Ok(addr)))
-                        } else {
-                            Err(ConnectError::new(
-                                "setup failed",
-                                io::Error::from(io::ErrorKind::AddrNotAvailable),
-                            ))
-                        }
-                    },
-                    tokio::time::sleep,
-                )
-                .await
-                .unwrap();
-                assert_eq!(result, expected);
-                assert_eq!(started.elapsed(), Duration::ZERO);
-                assert_eq!(
-                    launched,
-                    if ipv4.is_some() || ipv6.is_some() {
-                        vec![expected]
-                    } else {
-                        vec![V4, V6]
-                    }
-                );
-            }
-        }
-
-        let error = race(
-            SocketAddrs::new(Vec::new()),
-            &BindOptions::default(),
-            Some(DELAY),
-            |addr| Ok(ready(Ok(addr))),
-            tokio::time::sleep,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.addr, None);
+        client.insert(Interface(Cow::Borrowed("lo")));
+        let mut request = ConfigSet::default();
         assert_eq!(
-            error.cause.unwrap().downcast::<io::Error>().unwrap().kind(),
-            io::ErrorKind::NotConnected
+            local_addresses(&request, &client),
+            (Some(Ipv4Addr::LOCALHOST), Some(Ipv6Addr::LOCALHOST))
         );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn dropping_the_race_cancels_pending_attempts() {
-        let active = Arc::new(AtomicUsize::new(0));
-        let mut launched = 0;
-        let bindings = BindOptions::default();
-        let mut race = Box::pin(race(
-            SocketAddrs::new((1..=4).map(|port| SocketAddr::new(V4.ip(), port)).collect()),
-            &bindings,
-            Some(DELAY),
-            |_| {
-                launched += 1;
-                let guard = Active::new(&active);
-                Ok(async move {
-                    let _guard = guard;
-                    pending::<Result<(), ConnectError>>().await
-                }
-                .boxed())
-            },
-            tokio::time::sleep,
-        ));
-        assert!(poll!(race.as_mut()).is_pending());
-        tokio::time::advance(DELAY).await;
-        assert!(poll!(race.as_mut()).is_pending());
-        assert_eq!(active.load(Ordering::SeqCst), 2);
-        drop(race);
-        assert_eq!(launched, 2);
-        assert_eq!(active.load(Ordering::SeqCst), 0);
+        set_local_address(&mut request, Some(Ipv4Addr::UNSPECIFIED.into()));
+        set_local_address(&mut request, None);
+        set_local_addresses(&mut request, None, Some(Ipv6Addr::UNSPECIFIED));
+        set_local_addresses(&mut request, None, None);
+        assert_eq!(
+            local_addresses(&request, &client),
+            (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::UNSPECIFIED))
+        );
+        assert_eq!(interface(&request, &client), Some("lo"));
+        request.insert(Interface(Cow::Owned("lo".to_owned())));
+        assert_eq!(request.get::<Interface>(), client.get::<Interface>());
+        request.insert(Interface(Cow::Borrowed("eth0")));
+        assert_eq!(interface(&request, &client), Some("eth0"));
     }
 }

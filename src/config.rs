@@ -25,6 +25,10 @@
 //! Implement [`RequestConfigValue`] for any marker type you wish to use as a config key,
 //! specifying the associated value type. Then use [`RequestConfig<T>`] in [`Extensions`]
 //! to set or retrieve config values for each key type in a uniform way.
+//!
+//! Connection-scoped configuration and its reuse identity live in [`connect`].
+
+pub(crate) mod connect;
 
 use http::Extensions;
 
