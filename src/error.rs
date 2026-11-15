@@ -245,13 +245,14 @@ impl Error {
         false
     }
 
-    /// Returns true if the error was caused by a proxy that requires
-    /// authentication.
+    /// Returns `true` for proxy authentication errors during connection setup.
     ///
-    /// This covers HTTP CONNECT proxies responding with `407 Proxy
-    /// Authentication Required`, and SOCKS5 proxies either rejecting the
-    /// supplied credentials or requiring them when none were given.
-    pub fn is_proxy_auth_required(&self) -> bool {
+    /// This includes a 407 response to HTTP CONNECT, missing or rejected SOCKS5 credentials,
+    /// and SOCKS5 negotiation with no acceptable authentication method.
+    /// A forwarding proxy's 407 is available through [`Response::status`](crate::Response::status).
+    pub fn is_proxy_auth(&self) -> bool {
+        #[cfg(feature = "socks")]
+        use crate::conn::proxy::socks::SocksError;
         use crate::conn::proxy::tunnel::TunnelError;
 
         let mut source = self.source();
@@ -262,11 +263,11 @@ impl Error {
             }
 
             #[cfg(feature = "socks")]
-            if let Some(
+            if let Some(SocksError::Socks(
                 tokio_socks::Error::PasswordAuthFailure(_)
                 | tokio_socks::Error::AuthorizationRequired
                 | tokio_socks::Error::NoAcceptableAuthMethods,
-            ) = err.downcast_ref::<tokio_socks::Error>()
+            )) = err.downcast_ref::<SocksError>()
             {
                 return true;
             }
@@ -579,38 +580,38 @@ mod tests {
     }
 
     #[test]
-    fn is_proxy_auth_required() {
+    fn is_proxy_auth() {
         use crate::conn::proxy::tunnel::TunnelError;
 
         let err = Error::request(ProxyConnect(Box::new(TunnelError::ProxyAuthRequired)));
-        assert!(err.is_proxy_auth_required());
+        assert!(err.is_proxy_auth());
 
         let err = Error::request(ProxyConnect(Box::new(TunnelError::TunnelUnsuccessful)));
-        assert!(!err.is_proxy_auth_required());
+        assert!(!err.is_proxy_auth());
     }
 
     #[cfg(feature = "socks")]
     #[test]
-    fn is_proxy_auth_required_socks() {
+    fn is_proxy_auth_socks() {
         use crate::conn::proxy::socks::SocksError;
 
         let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
             tokio_socks::Error::PasswordAuthFailure(1),
         ))));
-        assert!(err.is_proxy_auth_required());
+        assert!(err.is_proxy_auth());
 
         let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
             tokio_socks::Error::AuthorizationRequired,
         ))));
-        assert!(err.is_proxy_auth_required());
+        assert!(err.is_proxy_auth());
 
         let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
             tokio_socks::Error::NoAcceptableAuthMethods,
         ))));
-        assert!(err.is_proxy_auth_required());
+        assert!(err.is_proxy_auth());
 
         let err = Error::request(ProxyConnect(Box::new(SocksError::MissingHost)));
-        assert!(!err.is_proxy_auth_required());
+        assert!(!err.is_proxy_auth());
     }
 
     #[cfg(feature = "socks")]

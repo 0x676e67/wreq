@@ -316,11 +316,55 @@ async fn tunnel_detects_auth_required() {
         .await
         .unwrap_err();
 
-    let err = support::error::inspect(err).pop().unwrap();
+    assert!(err.is_proxy_connect(), "{err:?}");
+    assert!(err.is_proxy_auth(), "{err:?}");
+}
+
+#[cfg(feature = "socks")]
+#[tokio::test]
+async fn socks5_preserves_rejected_credentials_error() {
+    use std::{error::Error, time::Duration};
+
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = format!("socks5h://user:pass@{}", listener.local_addr().unwrap());
+    let handshake = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut greeting = [0; 4];
+        stream.read_exact(&mut greeting).await.unwrap();
+        assert_eq!(greeting, [5, 2, 0, 2]);
+        stream.write_all(&[5, 2]).await.unwrap();
+
+        let mut credentials = [0; 11];
+        stream.read_exact(&mut credentials).await.unwrap();
+        assert_eq!(credentials, *b"\x01\x04user\x04pass");
+        stream.write_all(&[1, 1]).await.unwrap();
+    });
+
+    let err = Client::builder()
+        .proxy(wreq::Proxy::all(proxy).unwrap())
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap()
+        .get("http://hyper.rs.local/prox")
+        .send()
+        .await
+        .unwrap_err();
+
+    assert!(err.is_proxy_connect(), "{err:?}");
+    assert!(err.is_proxy_auth(), "{err:?}");
     assert!(
-        err.contains("auth"),
-        "proxy auth err expected, got: {err:?}"
+        std::iter::successors(err.source(), |&source| source.source()).any(|source| matches!(
+            source.downcast_ref::<tokio_socks::Error>(),
+            Some(tokio_socks::Error::PasswordAuthFailure(1))
+        )),
+        "{err:?}"
     );
+    handshake.await.unwrap();
 }
 
 #[tokio::test]
@@ -354,6 +398,7 @@ async fn tunnel_includes_proxy_auth() {
         .await
         .unwrap_err();
 
+    assert!(!err.is_proxy_auth(), "{err:?}");
     let err = support::error::inspect(err).pop().unwrap();
     assert!(
         err.contains("unsuccessful"),
@@ -403,9 +448,27 @@ async fn tunnel_includes_user_agent() {
 
 #[tokio::test]
 async fn proxy_tunnel_connect_error() {
+    struct Resolver;
+
+    impl wreq::dns::Resolve for Resolver {
+        fn resolve(&self, name: wreq::dns::Name) -> wreq::dns::Resolving {
+            Box::pin(async move {
+                match name.as_str() {
+                    "invalid.proxy" => Err("proxy DNS lookup failed".into()),
+                    "example.com" => Ok(Box::new(std::iter::once(std::net::SocketAddr::from((
+                        [127, 0, 0, 1],
+                        0,
+                    )))) as wreq::dns::Addrs),
+                    _ => panic!("unexpected DNS lookup: {name}"),
+                }
+            })
+        }
+    }
+
     let client = Client::builder()
         .tls_cert_verification(false)
         .no_proxy()
+        .dns_resolver(Resolver)
         .build()
         .unwrap();
 
@@ -433,6 +496,7 @@ async fn proxy_tunnel_connect_error() {
                 err.is_proxy_connect(),
                 "proxy connect error expected, got: {err:?}"
             );
+            assert!(!err.is_proxy_auth(), "{err:?}");
         }
     }
 }
