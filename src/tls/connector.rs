@@ -44,7 +44,7 @@ pub struct StreamTls {
 /// Client TLS policy and its compiled contexts.
 struct Inner {
     config: Config,
-    extensions: Extensions,
+    connect_options: Extensions,
     options: Option<Arc<TlsOptions>>,
     contexts: ContextCache<SslConnector, TlsOptions>,
 }
@@ -71,13 +71,13 @@ pub enum MaybeHttpsStream<T> {
 
 impl StreamTls {
     /// Compiles the client's TLS context while preserving the shared session scope.
-    pub(super) fn new(config: Config, extensions: Extensions) -> crate::Result<Self> {
-        let options = extensions.get_arc::<TlsOptions>();
+    pub(super) fn new(config: Config, connect_options: Extensions) -> crate::Result<Self> {
+        let options = connect_options.get_arc::<TlsOptions>();
         let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
-                extensions,
+                connect_options,
                 options,
                 contexts,
             }),
@@ -89,8 +89,8 @@ impl StreamTls {
     pub(crate) fn for_request(self, req: &ConnectRequest) -> crate::Result<TlsConnector> {
         let inner = &*self.inner;
         let key = req
-            .config_set()
-            .context_key::<TlsOptions>(&inner.extensions);
+            .connect_options()
+            .context_key::<TlsOptions>(&inner.connect_options);
         let context = inner
             .contexts
             .get(key, |options| compile(&inner.config, Some(options)))?;
@@ -114,8 +114,8 @@ impl StreamTls {
     ) -> Result<Ssl, BoxError> {
         let inner = &*self.inner;
         let options = req
-            .config_set()
-            .different::<TlsOptions>(&inner.extensions, KeyPart::Whole)
+            .connect_options()
+            .different::<TlsOptions>(&inner.connect_options, KeyPart::Whole)
             .or(inner.options.as_deref());
         let mut cfg = context.configure()?;
 
@@ -185,7 +185,7 @@ impl StreamTls {
             let target = SessionTarget::new(
                 req,
                 route,
-                &inner.extensions,
+                &inner.connect_options,
                 TransportKind::Stream,
                 remote_ip,
                 tickets.session_id_context()?,

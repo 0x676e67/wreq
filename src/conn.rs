@@ -94,13 +94,13 @@ impl Connector {
         config: Config,
         runtime: DynRuntime,
         resolver: DynResolver,
-        config_set: &Extensions,
+        connect_options: &Extensions,
     ) -> Result<Self, crate::Error> {
         let dialer = Dialer::new(
             runtime.clone(),
             resolver,
             config.tcp,
-            config_set.clone(),
+            connect_options.clone(),
             config.happy_eyeballs_timeout,
         );
         let connector = TransportConnector::new(
@@ -108,7 +108,7 @@ impl Connector {
             config.tls,
             config.proxies,
             config.verbose,
-            config_set,
+            connect_options,
         )?;
 
         let service = if config.layers.is_empty() {
@@ -235,7 +235,7 @@ mod tests {
         };
         let mut overridden = Extensions::default();
         overridden.insert(proxy());
-        for (proxies, config_set) in [
+        for (proxies, connect_options) in [
             (vec![proxy()], Extensions::default()),
             (Vec::new(), overridden),
         ] {
@@ -253,7 +253,7 @@ mod tests {
             let request = ConnectRequest::test(
                 ::http::Uri::from_static("https://localhost/"),
                 Some(Protocol::Http3),
-                config_set,
+                connect_options,
             );
             let error = connector
                 .oneshot(request)

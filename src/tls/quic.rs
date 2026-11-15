@@ -37,7 +37,7 @@ pub(crate) struct QuicTls(Arc<Inner>);
 /// Client policy, QUIC options and compiled TLS contexts.
 struct Inner {
     config: Config,
-    extensions: Extensions,
+    connect_options: Extensions,
     options: Option<Arc<QuicOptions>>,
     contexts: ContextCache<QuicClientConfig, QuicOptions>,
 }
@@ -84,12 +84,12 @@ struct Attempt {
 // ===== impl QuicTls =====
 
 impl QuicTls {
-    pub(super) fn new(config: Config, extensions: Extensions) -> Result<Self> {
-        let options = extensions.get_arc::<QuicOptions>();
+    pub(super) fn new(config: Config, connect_options: Extensions) -> Result<Self> {
+        let options = connect_options.get_arc::<QuicOptions>();
         let contexts = ContextCache::new(compile(&config, options.as_deref())?);
         Ok(Self(Arc::new(Inner {
             config,
-            extensions,
+            connect_options,
             options,
             contexts,
         })))
@@ -122,14 +122,14 @@ impl QuicTls {
             return Err(Error::tls("HTTP/3 requires TLS 1.3"));
         }
 
-        let extensions = request.config_set();
-        let key = extensions.context_key::<QuicOptions>(&inner.extensions);
+        let connect_options = request.connect_options();
+        let key = connect_options.context_key::<QuicOptions>(&inner.connect_options);
         let mut crypto = inner
             .contexts
             .get(key, |options| compile(&inner.config, Some(options)))?;
 
-        let options = extensions
-            .different_arc::<QuicOptions>(&inner.extensions, KeyPart::Whole)
+        let options = connect_options
+            .different_arc::<QuicOptions>(&inner.connect_options, KeyPart::Whole)
             .or_else(|| inner.options.clone());
         let resumption = options
             .as_ref()
@@ -149,7 +149,7 @@ impl QuicTls {
             let target = SessionTarget::new(
                 request,
                 route,
-                &inner.extensions,
+                &inner.connect_options,
                 TransportKind::Quic,
                 None,
                 tickets.session_id_context().map_err(Error::tls)?,
@@ -385,12 +385,12 @@ mod tests {
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
         let request = |grease: Option<bool>, group| {
-            let mut extensions = Extensions::default();
+            let mut connect_options = Extensions::default();
             if let Some(group) = group {
-                extensions.insert(Group::new(group));
+                connect_options.insert(Group::new(group));
             }
             if let Some(grease) = grease {
-                extensions.insert(
+                connect_options.insert(
                     QuicOptions::builder()
                         .curves_list("X25519")
                         .key_shares(vec![KeyShare::P256])
@@ -399,7 +399,7 @@ mod tests {
                 );
             }
             let uri = Uri::from_static("https://localhost/");
-            ConnectRequest::test(uri, Some(Protocol::Http3), extensions)
+            ConnectRequest::test(uri, Some(Protocol::Http3), connect_options)
         };
         let tls = Config::default().quic(&Extensions::default()).unwrap();
         let [client, first, second, other] = [

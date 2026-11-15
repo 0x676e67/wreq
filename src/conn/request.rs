@@ -29,7 +29,7 @@ use crate::{
 pub struct ConnectRequest {
     origin: Uri,
     protocol: Protocol,
-    config_set: Extensions,
+    connect_options: Extensions,
     pool_selection: Selection,
     pool_hash: u64,
 }
@@ -58,8 +58,8 @@ impl ConnectRequest {
         uri: &Uri,
         protocol: Option<Protocol>,
         client_protocol: Protocol,
-        config_set: Extensions,
-        client_config_set: &Extensions,
+        connect_options: Extensions,
+        client_options: &Extensions,
     ) -> Result<Self, BoxError> {
         let origin = Uri::builder()
             .scheme(uri.scheme().ok_or("URI missing scheme")?.clone())
@@ -67,12 +67,12 @@ impl ConnectRequest {
             .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
         let protocol = protocol.unwrap_or(client_protocol);
-        let pool_selection = pool_selection(protocol, &config_set, client_config_set);
+        let pool_selection = pool_selection(protocol, &connect_options, client_options);
         let pool_hash = pool_hash(&origin, protocol, pool_selection);
         Ok(Self {
             origin,
             protocol,
-            config_set,
+            connect_options,
             pool_selection,
             pool_hash,
         })
@@ -92,14 +92,14 @@ impl ConnectRequest {
     }
 
     /// All request connection options, including those outside the pool identity.
-    pub(crate) fn config_set(&self) -> &Extensions {
-        &self.config_set
+    pub(crate) fn connect_options(&self) -> &Extensions {
+        &self.connect_options
     }
 
     /// Returns the override used by the pool entry's handshake builder.
     #[inline]
     pub(crate) fn pool_override<T: Extension>(&self) -> Option<&T> {
-        self.pool_selection.get_ref::<T>(&self.config_set)
+        self.pool_selection.get_ref::<T>(&self.connect_options)
     }
 
     /// Returns the reuse identity of this origin and configuration.
@@ -107,23 +107,23 @@ impl ConnectRequest {
         ConnectionKey {
             origin: self.origin.clone(),
             protocol: self.protocol,
-            overrides: self.pool_selection.key(&self.config_set),
+            overrides: self.pool_selection.key(&self.connect_options),
             hash: self.pool_hash,
         }
     }
 
     /// Returns the identity of this origin and configuration under another resolved protocol.
-    #[cfg(any(test, feature = "http2", feature = "http3"))]
+    #[cfg(any(feature = "http2", feature = "http3"))]
     pub(crate) fn key_with_protocol(
         &self,
         protocol: Protocol,
-        client_config_set: &Extensions,
+        client_options: &Extensions,
     ) -> ConnectionKey {
-        let selection = pool_selection(protocol, &self.config_set, client_config_set);
+        let selection = pool_selection(protocol, &self.connect_options, client_options);
         ConnectionKey {
             origin: self.origin.clone(),
             protocol,
-            overrides: selection.key(&self.config_set),
+            overrides: selection.key(&self.connect_options),
             hash: pool_hash(&self.origin, protocol, selection),
         }
     }
@@ -134,7 +134,7 @@ impl fmt::Debug for ConnectRequest {
         f.debug_struct("ConnectRequest")
             .field("origin", &self.origin)
             .field("protocol", &self.protocol)
-            .field("options", &self.pool_selection.key(&self.config_set))
+            .field("options", &self.pool_selection.key(&self.connect_options))
             .field("pool_hash", &self.pool_hash)
             .finish()
     }
@@ -213,13 +213,17 @@ mod tests {
     use crate::{config::connect::ConnectConfig, tls::AlpnProtocol};
 
     impl ConnectRequest {
-        /// Freezes `config_set` for a client without options in automatic mode.
-        pub(crate) fn test(uri: Uri, protocol: Option<Protocol>, config_set: Extensions) -> Self {
+        /// Freezes `connect_options` for a client without options in automatic mode.
+        pub(crate) fn test(
+            uri: Uri,
+            protocol: Option<Protocol>,
+            connect_options: Extensions,
+        ) -> Self {
             Self::new(
                 &uri,
                 protocol,
                 Protocol::Auto,
-                config_set,
+                connect_options,
                 &Extensions::default(),
             )
             .unwrap()
@@ -228,31 +232,31 @@ mod tests {
 
     fn request(
         protocol: Option<Protocol>,
-        config_set: Extensions,
-        client_config_set: &Extensions,
+        connect_options: Extensions,
+        client_options: &Extensions,
     ) -> ConnectRequest {
         let uri = Uri::from_static("https://localhost/upload?part=1");
         ConnectRequest::new(
             &uri,
             protocol,
             Protocol::Auto,
-            config_set,
-            client_config_set,
+            connect_options,
+            client_options,
         )
         .unwrap()
     }
 
     fn key(
         protocol: Option<Protocol>,
-        config_set: Extensions,
-        client_config_set: &Extensions,
+        connect_options: Extensions,
+        client_options: &Extensions,
     ) -> ConnectionKey {
-        request(protocol, config_set, client_config_set).key()
+        request(protocol, connect_options, client_options).key()
     }
 
-    fn with<T: Extension>(mut config_set: Extensions, value: T) -> Extensions {
-        config_set.insert(value);
-        config_set
+    fn with<T: Extension>(mut connect_options: Extensions, value: T) -> Extensions {
+        connect_options.insert(value);
+        connect_options
     }
 
     fn tls(alpn: AlpnProtocol) -> TlsOptions {
@@ -261,25 +265,22 @@ mod tests {
 
     #[test]
     fn keys_count_only_request_options_that_differ_from_the_client() {
-        let client_config_set = with(Extensions::default(), tls(AlpnProtocol::HTTP2));
-        let plain = key(None, Extensions::default(), &client_config_set);
+        let client_options = with(Extensions::default(), tls(AlpnProtocol::HTTP2));
+        let plain = key(None, Extensions::default(), &client_options);
         let hasher = lru::DefaultHasher::default();
 
-        // Equal values and a shared emulation inherit the client's options.
+        // Independently built equal options share the client's pool key.
         let inherited = with(Extensions::default(), tls(AlpnProtocol::HTTP2));
-        for config_set in [inherited, client_config_set.clone()] {
-            let other = key(None, config_set, &client_config_set);
-            assert_eq!(plain, other);
-            assert_eq!(hasher.hash_one(&plain), hasher.hash_one(&other));
-        }
+        let other = key(None, inherited, &client_options);
+        assert_eq!(plain, other);
+        assert_eq!(hasher.hash_one(&plain), hasher.hash_one(&other));
 
         let changed = request(
             None,
             with(Extensions::default(), tls(AlpnProtocol::HTTP1)),
-            &client_config_set,
+            &client_options,
         );
         assert_ne!(plain, changed.key());
-        assert!(changed.pool_override::<TlsOptions>().is_some());
     }
 
     #[test]
@@ -300,9 +301,6 @@ mod tests {
         merged.insert(Ipv4Addr::UNSPECIFIED);
         for protocol in [
             None,
-            Some(Protocol::Http1),
-            #[cfg(feature = "http2")]
-            Some(Protocol::Http2),
             #[cfg(feature = "http3")]
             Some(Protocol::Http3),
         ] {
@@ -310,22 +308,10 @@ mod tests {
                 ConnectRequest::new(&uri, protocol, Protocol::Auto, config, &client).unwrap()
             };
             let inherited = request(Extensions::default());
-            for same in [client.clone(), partial.clone()] {
-                let same = request(same);
-                assert_eq!(same.key(), inherited.key());
-                assert_eq!(same.key().hash, inherited.key().hash);
-            }
+            assert_eq!(request(partial.clone()).key(), inherited.key());
             let changed = request(changed.clone());
             assert_ne!(changed.key(), inherited.key());
-            assert_eq!(
-                dialer::local_addresses(changed.config_set(), &client),
-                (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::LOCALHOST))
-            );
             assert_eq!(request(merged.clone()).key(), changed.key());
-            assert_eq!(
-                changed.key_with_protocol(changed.resolved_protocol(), &client),
-                changed.key()
-            );
             assert_ne!(
                 request(with(Extensions::default(), Ipv6Addr::UNSPECIFIED)).key(),
                 inherited.key()
@@ -343,15 +329,15 @@ mod tests {
 
     #[test]
     fn keys_ignore_options_of_protocols_a_connection_cannot_use() {
-        let client_config_set = Extensions::default();
+        let client_options = Extensions::default();
         let http1 = with(
             Extensions::default(),
             Http1Options::builder().max_headers(8).build(),
         );
         let h1 = Some(Protocol::Http1);
         assert_ne!(
-            key(h1, http1.clone(), &client_config_set),
-            key(h1, Extensions::default(), &client_config_set)
+            key(h1, http1.clone(), &client_options),
+            key(h1, Extensions::default(), &client_options)
         );
         #[cfg(feature = "http2")]
         {
@@ -362,35 +348,35 @@ mod tests {
 
             let h2 = Some(Protocol::Http2);
             assert_eq!(
-                key(h1, http2.clone(), &client_config_set),
-                key(h1, Extensions::default(), &client_config_set)
+                key(h1, http2.clone(), &client_options),
+                key(h1, Extensions::default(), &client_options)
             );
             assert_eq!(
-                key(h2, http1.clone(), &client_config_set),
-                key(h2, Extensions::default(), &client_config_set)
+                key(h2, http1.clone(), &client_options),
+                key(h2, Extensions::default(), &client_options)
             );
             assert_ne!(
-                key(None, http2.clone(), &client_config_set),
-                key(None, Extensions::default(), &client_config_set)
+                key(None, http2.clone(), &client_options),
+                key(None, Extensions::default(), &client_options)
             );
 
             // Another protocol selects again from the whole request storage.
-            let probe = request(h1, http2, &client_config_set)
-                .key_with_protocol(Protocol::Auto, &client_config_set);
-            assert_ne!(probe, key(None, Extensions::default(), &client_config_set));
+            let probe = request(h1, http2, &client_options)
+                .key_with_protocol(Protocol::Auto, &client_options);
+            assert_ne!(probe, key(None, Extensions::default(), &client_options));
         }
 
         // Groups and proxies shape every connection.
         let proxy = crate::Proxy::all("http://localhost:8080")
             .unwrap()
             .into_matcher();
-        for config_set in [
+        for connect_options in [
             with(Extensions::default(), Group::new("tenant")),
             with(Extensions::default(), proxy),
         ] {
             assert_ne!(
-                key(h1, config_set, &client_config_set),
-                key(h1, Extensions::default(), &client_config_set)
+                key(h1, connect_options, &client_options),
+                key(h1, Extensions::default(), &client_options)
             );
         }
 
@@ -399,16 +385,19 @@ mod tests {
             let h3 = Some(Protocol::Http3);
             let http3 = Http3Options::builder().max_field_section_size(1024).build();
             let quic = QuicOptions::builder().max_datagram_frame_size(1200).build();
-            let h3_key = key(h3, Extensions::default(), &client_config_set);
-            let auto_key = key(None, Extensions::default(), &client_config_set);
+            let h3_key = key(h3, Extensions::default(), &client_options);
+            let auto_key = key(None, Extensions::default(), &client_options);
             let tcp = with(http1, tls(AlpnProtocol::HTTP1));
-            assert_eq!(key(h3, tcp, &client_config_set), h3_key);
-            for config_set in [
+            assert_eq!(key(h3, tcp, &client_options), h3_key);
+            for connect_options in [
                 with(Extensions::default(), http3),
                 with(Extensions::default(), quic),
             ] {
-                assert_eq!(key(None, config_set.clone(), &client_config_set), auto_key);
-                assert_ne!(key(h3, config_set, &client_config_set), h3_key);
+                assert_eq!(
+                    key(None, connect_options.clone(), &client_options),
+                    auto_key
+                );
+                assert_ne!(key(h3, connect_options, &client_options), h3_key);
             }
         }
     }

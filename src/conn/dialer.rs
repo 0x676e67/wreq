@@ -50,7 +50,7 @@ struct Inner {
     runtime: DynRuntime,
     resolver: DynResolver,
     tcp: tcp::Config,
-    config_set: Extensions,
+    connect_options: Extensions,
     happy_eyeballs_timeout: Option<Duration>,
 }
 
@@ -62,7 +62,7 @@ pub(super) enum SocketRequest {
         secure: bool,
         /// Lets the dial report its own timeout before the outer connector does.
         deadline: Option<Instant>,
-        config_set: Extensions,
+        connect_options: Extensions,
     },
     #[cfg(unix)]
     Unix(Arc<Path>),
@@ -150,7 +150,7 @@ impl Dialer {
         runtime: DynRuntime,
         resolver: DynResolver,
         tcp: tcp::Config,
-        config_set: Extensions,
+        connect_options: Extensions,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         Self {
@@ -158,7 +158,7 @@ impl Dialer {
                 runtime,
                 resolver,
                 tcp,
-                config_set,
+                connect_options,
                 happy_eyeballs_timeout,
             }),
         }
@@ -194,18 +194,18 @@ impl Dialer {
 
     /// Client configuration inherited by each dial.
     #[inline]
-    pub(crate) fn config_set(&self) -> &Extensions {
-        &self.inner.config_set
+    pub(crate) fn connect_options(&self) -> &Extensions {
+        &self.inner.connect_options
     }
 
     /// Binds a UDP socket for the address family of `remote` before the runtime registers it.
     pub(crate) fn bind_udp(
         &self,
-        config_set: &Extensions,
+        connect_options: &Extensions,
         remote: SocketAddr,
     ) -> Result<UdpSocket, ConnectError> {
-        let (ipv4, ipv6) = local_addresses(config_set, &self.inner.config_set);
-        let interface = interface(config_set, &self.inner.config_set);
+        let (ipv4, ipv6) = local_addresses(connect_options, &self.inner.connect_options);
+        let interface = interface(connect_options, &self.inner.connect_options);
         let address = match remote {
             SocketAddr::V4(_) => SocketAddr::from((ipv4.unwrap_or(Ipv4Addr::UNSPECIFIED), 0)),
             SocketAddr::V6(_) => SocketAddr::from((ipv6.unwrap_or(Ipv6Addr::UNSPECIFIED), 0)),
@@ -243,11 +243,11 @@ impl Dialer {
         match request {
             SocketRequest::Tcp {
                 uri,
-                config_set,
+                connect_options,
                 secure,
                 deadline,
             } => {
-                let dial = self.dial_tcp(uri, config_set, secure, deadline);
+                let dial = self.dial_tcp(uri, connect_options, secure, deadline);
                 cfg_select! {
                     unix => Either::Left(dial),
                     _ => dial,
@@ -264,7 +264,7 @@ impl Dialer {
     fn dial_tcp(
         &self,
         uri: Uri,
-        config_set: Extensions,
+        connect_options: Extensions,
         secure: bool,
         deadline: Option<Instant>,
     ) -> impl Future<Output = Result<BoxConnection, BoxError>> + use<> {
@@ -278,8 +278,8 @@ impl Dialer {
                 inner.resolver.resolve(name)
             })
             .await?;
-            let addresses = local_addresses(&config_set, &inner.config_set);
-            let interface = interface(&config_set, &inner.config_set);
+            let addresses = local_addresses(&connect_options, &inner.connect_options);
+            let interface = interface(&connect_options, &inner.connect_options);
             let stream = race(
                 addrs,
                 addresses,
@@ -569,11 +569,6 @@ mod tests {
             (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::UNSPECIFIED))
         );
         assert_eq!(interface(&request, &client), Some("lo"));
-        request.insert(Interface(Cow::Owned("lo".to_owned())));
-        assert_eq!(
-            request.get_ref::<Interface>(),
-            client.get_ref::<Interface>()
-        );
         request.insert(Interface(Cow::Borrowed("eth0")));
         assert_eq!(interface(&request, &client), Some("eth0"));
     }

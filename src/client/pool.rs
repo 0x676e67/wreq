@@ -293,13 +293,13 @@ where
 {
     /// Builds the shared map and protocol-specific entry factory.
     ///
-    /// Handshake builders start from the client's `config_set`. Idle maintenance
+    /// Handshake builders start from the client's `connect_options`. Idle maintenance
     /// remains dormant until an entry retains reusable state.
     pub(super) fn new(
         config: Config,
         connector: C,
         runtime: DynRuntime,
-        config_set: &Extensions,
+        connect_options: &Extensions,
         set_host: bool,
     ) -> Self {
         let reuse_delay = match config.strategy {
@@ -312,19 +312,19 @@ where
         };
 
         let mut http1 = conn::http1::Builder::default();
-        if let Some(options) = config_set.get_ref::<Http1Options>() {
+        if let Some(options) = connect_options.get_ref::<Http1Options>() {
             http1 = http1.options(options.clone());
         }
         #[cfg(feature = "http2")]
         let mut http2 = conn::http2::Builder::new(runtime.clone()).timer(runtime.clone());
         #[cfg(feature = "http2")]
-        if let Some(options) = config_set.get_ref::<Http2Options>() {
+        if let Some(options) = connect_options.get_ref::<Http2Options>() {
             http2 = http2.options(options.clone());
         }
         #[cfg(feature = "http3")]
         let mut http3 = conn::http3::Builder::new(runtime.clone());
         #[cfg(feature = "http3")]
-        if let Some(options) = config_set.get_ref::<Http3Options>() {
+        if let Some(options) = connect_options.get_ref::<Http3Options>() {
             http3 = http3.options(options.clone());
         }
 

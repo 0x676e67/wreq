@@ -153,7 +153,7 @@ fn tcp_request(request: &ConnectRequest, uri: Uri, deadline: Option<Instant>) ->
     SocketRequest::Tcp {
         secure: request.uri().is_https() || uri.is_https(),
         uri,
-        config_set: request.config_set().clone(),
+        connect_options: request.connect_options().clone(),
         deadline,
     }
 }

@@ -159,7 +159,7 @@ async fn connect_target(
     let io = dialer
         .dial(SocketRequest::Tcp {
             uri: proxy.uri().clone(),
-            config_set: request.config_set().clone(),
+            connect_options: request.connect_options().clone(),
             secure: false,
             deadline,
         })
@@ -277,8 +277,8 @@ fn relay_socket(
     request: &ConnectRequest,
     remote: SocketAddr,
 ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-    let config_set = request.config_set();
-    let (ipv4, ipv6) = dialer::local_addresses(config_set, dialer.config_set());
+    let connect_options = request.connect_options();
+    let (ipv4, ipv6) = dialer::local_addresses(connect_options, dialer.connect_options());
     if matches!(
         (ipv4, ipv6, remote),
         (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
@@ -287,7 +287,7 @@ fn relay_socket(
     }
     Ok(dialer
         .runtime()
-        .udp_socket(dialer.bind_udp(config_set, remote)?)?)
+        .udp_socket(dialer.bind_udp(connect_options, remote)?)?)
 }
 
 /// Labels a failed proxy stage, keeping it a proxy connect error.

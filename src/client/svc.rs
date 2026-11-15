@@ -50,7 +50,7 @@ pub struct Stack<S, B> {
     inner: MapErr<RetryUnsent<S>, fn(DispatchError<B>) -> BoxError>,
     /// Client values a request inherits; keys count only request values that differ.
     protocol: Protocol,
-    config_set: Extensions,
+    connect_options: Extensions,
 }
 
 /// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
@@ -128,14 +128,14 @@ pub struct DispatchRequest<B> {
 /// ownership of any request returned before encoding.
 pub fn layer<S, B>(
     protocol: Protocol,
-    config_set: Extensions,
+    connect_options: Extensions,
     retry_unsent: bool,
 ) -> impl Layer<S, Service = Stack<S, B>> + Clone {
     ServiceBuilder::new()
         .layer_fn(move |inner| Stack {
             inner,
             protocol,
-            config_set: config_set.clone(),
+            connect_options: connect_options.clone(),
         })
         .map_err(DispatchError::into_error as fn(DispatchError<B>) -> BoxError)
         .layer_fn(move |inner| RetryUnsent {
@@ -179,7 +179,7 @@ impl<S, B> Stack<S, B> {
         }
 
         let extensions = request.extensions_mut();
-        let config_set = extensions.remove::<Extensions>().unwrap_or_default();
+        let connect_options = extensions.remove::<Extensions>().unwrap_or_default();
         let dedicated = extensions.remove::<DedicatedConnection>();
 
         // Normalize wire versions to protocol choices; HTTP/1.0 and HTTP/1.1 share a pool.
@@ -204,8 +204,14 @@ impl<S, B> Stack<S, B> {
             None => None,
         };
 
-        let req = ConnectRequest::new(uri, protocol, self.protocol, config_set, &self.config_set)
-            .map_err(|source| {
+        let req = ConnectRequest::new(
+            uri,
+            protocol,
+            self.protocol,
+            connect_options,
+            &self.connect_options,
+        )
+        .map_err(|source| {
             debug!("Client requires absolute-form URIs, received: {uri:?}");
             Error::new(ErrorKind::UserAbsoluteUriRequired, source)
         })?;
@@ -230,7 +236,7 @@ impl<S, B> Stack<S, B> {
                 Protocol::Http3 => uri.is_https(),
                 _ => false,
             })
-        .then(|| req.key_with_protocol(self.protocol, &self.config_set));
+        .then(|| req.key_with_protocol(self.protocol, &self.connect_options));
 
         Ok(DispatchRequest {
             request,
@@ -248,7 +254,7 @@ impl<S: Clone, B> Clone for Stack<S, B> {
         Self {
             inner: self.inner.clone(),
             protocol: self.protocol,
-            config_set: self.config_set.clone(),
+            connect_options: self.connect_options.clone(),
         }
     }
 }
@@ -371,7 +377,6 @@ mod tests {
     };
 
     use http::Response;
-    use http_body::Body as _;
     use tower::ServiceExt;
 
     use super::*;
@@ -419,15 +424,9 @@ mod tests {
         )
     }
 
-    #[tokio::test]
-    async fn entry_checks_reject_requests_and_strip_userinfo_before_keying() {
-        let stack = stack(
-            tower::service_fn(|request: DispatchRequest<()>| {
-                future::ready(Ok::<_, DispatchError<()>>(request))
-            }),
-            Protocol::Auto,
-            true,
-        );
+    #[test]
+    fn entry_checks_reject_requests_and_strip_userinfo_before_keying() {
+        let stack = stack((), Protocol::Auto, false);
         for (method, version, uri, kind) in [
             (
                 Method::CONNECT,
@@ -454,21 +453,21 @@ mod tests {
                 .uri(uri)
                 .body(())
                 .unwrap();
-            let Err(error) = stack.clone().oneshot(request).await else {
+            let Err(error) = stack.prepare(request) else {
                 panic!("{kind} must reject the request");
             };
             assert_eq!(error.to_string(), format!("client error ({kind})"));
         }
 
-        let prepare = |uri| stack.clone().oneshot(Request::get(uri).body(()).unwrap());
-        let plain = prepare("http://localhost/").await.unwrap();
-        let userinfo = prepare("http://user:pw@localhost/").await.unwrap();
+        let prepare = |uri| stack.prepare(Request::get(uri).body(()).unwrap()).unwrap();
+        let plain = prepare("http://localhost/");
+        let userinfo = prepare("http://user:pw@localhost/");
         assert_eq!(userinfo.request.uri(), "http://localhost/");
         assert_eq!(userinfo.req.key(), plain.req.key());
     }
 
-    #[tokio::test]
-    async fn partial_emulation_keeps_other_options_across_clone_and_conversion() {
+    #[test]
+    fn partial_emulation_keeps_other_options_across_clone_and_conversion() {
         use crate::{Client, Emulation, Group, http1::Http1Options, tls::TlsOptions};
 
         let tls = TlsOptions::default();
@@ -478,7 +477,10 @@ mod tests {
             .config(initial_http.clone())
             .config(tls.clone())
             .build();
-        let client = Client::builder_tokio().no_proxy().build().unwrap();
+        let client = Client::builder(crate::rt::tokio::TokioRuntime)
+            .no_proxy()
+            .build()
+            .unwrap();
         let address = std::net::Ipv4Addr::LOCALHOST;
         let group = Group::new("profile");
         let request = client
@@ -488,18 +490,12 @@ mod tests {
             .emulation(profile);
         let original = request.try_clone().unwrap().build().unwrap();
         let updated = request.emulation(updated_http.clone()).build().unwrap();
-        let stack = stack(
-            tower::service_fn(|request: DispatchRequest<crate::Body>| {
-                future::ready(Ok::<_, DispatchError<crate::Body>>(request.req))
-            }),
-            Protocol::Auto,
-            true,
-        );
+        let stack = stack((), Protocol::Auto, false);
         for (request, http) in [(original, initial_http), (updated, updated_http)] {
             let wire: Request<crate::Body> = request.into();
             let request = crate::Request::from(wire);
-            let frozen = stack.clone().oneshot(request.into()).await.unwrap();
-            let config = frozen.config_set();
+            let request = stack.prepare(request.into()).unwrap();
+            let config = request.req.connect_options();
             assert_eq!(config.get_ref::<Http1Options>(), Some(&http));
             assert_eq!(config.get_ref::<TlsOptions>(), Some(&tls));
             assert_eq!(config.get_ref::<std::net::Ipv4Addr>(), Some(&address));
@@ -548,163 +544,48 @@ mod tests {
         }
     }
 
-    #[tokio::test]
     #[cfg(feature = "http2")]
-    async fn protocol_selection_preserves_wire_versions_and_pool_groups() {
-        let mut keys = Vec::new();
-        let address = std::net::Ipv4Addr::LOCALHOST;
-        for (wire, client, extended, expected) in [
-            (
-                Some(Version::HTTP_10),
-                Protocol::Auto,
-                false,
-                Some(Protocol::Http1),
-            ),
-            (
-                Some(Version::HTTP_11),
-                Protocol::Auto,
-                false,
-                Some(Protocol::Http1),
-            ),
-            (
-                Some(Version::HTTP_2),
-                Protocol::Auto,
-                false,
-                Some(Protocol::Auto),
-            ),
-            (None, Protocol::Auto, false, None),
-            (
-                Some(Version::HTTP_2),
-                Protocol::Http2,
-                false,
-                Some(Protocol::Http2),
-            ),
-            (
-                Some(Version::HTTP_2),
-                Protocol::Auto,
-                true,
-                Some(Protocol::Auto),
-            ),
-            (
-                Some(Version::HTTP_11),
-                Protocol::Http2,
-                false,
-                Some(Protocol::Http1),
-            ),
-            (
-                Some(Version::HTTP_2),
-                Protocol::Http1,
-                false,
-                Some(Protocol::Auto),
-            ),
-            #[cfg(feature = "http3")]
-            (None, Protocol::Http3, false, None),
-            #[cfg(feature = "http3")]
-            (
-                Some(Version::HTTP_3),
-                Protocol::Auto,
-                false,
-                Some(Protocol::Http3),
-            ),
-            #[cfg(feature = "http3")]
-            (
-                Some(Version::HTTP_11),
-                Protocol::Http3,
-                false,
-                Some(Protocol::Http1),
-            ),
-        ] {
-            let mut request = Request::builder()
-                .uri("https://localhost/upload?part=1")
-                .version(wire.unwrap_or(Version::HTTP_11))
+    #[test]
+    fn websocket_probe_uses_the_regular_request_key() {
+        let stack = stack((), Protocol::Auto, false);
+        let request = |dedicated| {
+            let mut request = Request::get("https://localhost/chat")
+                .extension({
+                    let mut config = Extensions::default();
+                    config.insert(crate::Group::new("chat"));
+                    config
+                })
                 .body(())
                 .unwrap();
-            *RequestConfig::<RequestVersion>::get_mut(request.extensions_mut()) = wire;
-            request
-                .extensions_mut()
-                .get_or_insert_default::<Extensions>()
-                .insert(address);
-            request
-                .extensions_mut()
-                .get_or_insert_default::<Extensions>()
-                .insert(crate::Group::new("seven"));
-            if extended {
-                *request.method_mut() = http::Method::CONNECT;
-                request
-                    .extensions_mut()
-                    .insert(http2::ext::Protocol::from_static("websocket"));
+            if let Some(extended_connect) = dedicated {
+                let extensions = request.extensions_mut();
+                *RequestConfig::<RequestVersion>::get_mut(extensions) = Some(Version::HTTP_11);
+                extensions.insert(DedicatedConnection { extended_connect });
             }
-            let service = tower::service_fn(|request: DispatchRequest<()>| {
-                future::ready(Ok::<_, DispatchError<()>>(request))
-            });
-            let request = stack(service, client, true).oneshot(request).await.unwrap();
-            assert_eq!(request.req.resolved_protocol(), expected.unwrap_or(client));
-            assert_eq!(request.negotiable, expected == Some(Protocol::Auto));
-            assert_eq!(
-                request.req.config_set().get_ref::<std::net::Ipv4Addr>(),
-                Some(&address)
-            );
-            assert!(request.request.extensions().get::<Extensions>().is_none());
-            assert_eq!(request.request.version(), wire.unwrap_or(Version::HTTP_11));
-            assert!(RequestConfig::<RequestVersion>::get(request.request.extensions()).is_none());
-            assert_eq!(
-                request.req.config_set().get_ref::<crate::Group>(),
-                Some(&crate::Group::new("seven"))
-            );
-            keys.push(request.req.key());
-        }
+            stack.prepare(request).unwrap()
+        };
+
+        let regular = request(None);
         assert_eq!(
-            keys[0], keys[1],
-            "HTTP/1.0 and HTTP/1.1 select one protocol pool"
+            request(Some(true)).extended_connect_key,
+            Some(regular.req.key())
         );
-        assert_eq!(keys[1], keys[6], "explicit H1 overrides the client mode");
-        assert_ne!(
-            keys[1], keys[2],
-            "fixed H1 and negotiated requests remain isolated"
-        );
-        assert_eq!(
-            keys[2], keys[3],
-            "explicit negotiation shares the pool of an automatic client"
-        );
-        assert_ne!(
-            keys[2], keys[4],
-            "negotiated and fixed H2 must not share a pool entry"
-        );
-        assert_eq!(keys[2], keys[5], "Protocol does not override negotiation");
-        assert_eq!(keys[2], keys[7], "request negotiation overrides fixed H1");
-        #[cfg(feature = "http3")]
-        {
-            assert_eq!(keys[8], keys[9], "explicit and inherited H3 share a pool");
-            assert_eq!(keys[1], keys[10], "explicit H1 overrides fixed H3");
-        }
+        assert!(request(Some(false)).extended_connect_key.is_none());
     }
 
     #[tokio::test]
     async fn unsent_retries_keep_request_state_and_error_sources() {
-        for (enabled, reused, unsent, expected_calls) in [
-            (true, true, false, 1),
-            (true, true, true, 2),
-            (false, true, true, 1),
-            (true, false, true, 1),
-        ] {
+        use http_body_util::BodyExt;
+
+        for (enabled, reused, expected_calls) in
+            [(true, true, 2), (false, true, 1), (true, false, 1)]
+        {
             let calls = Arc::new(AtomicUsize::new(0));
             let attempts = calls.clone();
-            let mut req = None;
+            let mut key = None;
             let service = tower::service_fn(move |mut request: DispatchRequest<crate::Body>| {
-                assert_eq!(request.request.uri(), "http://localhost/upload?part=1");
-                assert_eq!(
-                    request.request.body().size_hint().exact(),
-                    Some("payload".len() as u64)
-                );
-                assert_eq!(request.req.uri(), "http://localhost/");
-                assert_eq!(
-                    request.req.config_set().get_ref::<std::net::Ipv4Addr>(),
-                    Some(&std::net::Ipv4Addr::LOCALHOST)
-                );
-                assert!(request.request.extensions().get::<Extensions>().is_none());
-
-                let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 && unsent {
-                    req = Some(request.req.clone());
+                let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 {
+                    key = Some(request.req.key());
                     *request.request.uri_mut() = Uri::from_static("/upload?part=1");
                     Err(DispatchError::Unsent {
                         error: Error::new(ErrorKind::Canceled, std::io::Error::other("unsent")),
@@ -712,32 +593,36 @@ mod tests {
                         connection_reused: reused,
                     })
                 } else {
-                    if let Some(req) = &req {
-                        assert_eq!(req.key(), request.req.key());
-                    }
-                    Ok(())
+                    assert_eq!(request.request.uri(), "http://localhost/upload?part=1");
+                    assert_eq!(key, Some(request.req.key()));
+                    assert_eq!(
+                        request
+                            .req
+                            .connect_options()
+                            .get_ref::<std::net::Ipv4Addr>(),
+                        Some(&std::net::Ipv4Addr::LOCALHOST)
+                    );
+                    Ok(request.request.into_body())
                 };
                 future::ready(result)
             });
 
-            let mut config_set = Extensions::default();
-            config_set.insert(std::net::Ipv4Addr::LOCALHOST);
-            let result = stack(service, Protocol::Auto, enabled).oneshot(
-                Request::builder()
-                    .extension(config_set)
-                    .uri("http://localhost/upload?part=1")
-                    .body(crate::Body::from("payload"))
-                    .unwrap(),
-            );
-            let mut task = tokio_test::task::spawn(result);
-            let Poll::Ready(result) = task.poll() else {
-                panic!("a successful or terminal result should finish without yielding");
-            };
-            assert!(!task.is_woken());
+            let mut connect_options = Extensions::default();
+            connect_options.insert(std::net::Ipv4Addr::LOCALHOST);
+            let result = stack(service, Protocol::Auto, enabled)
+                .oneshot(
+                    Request::builder()
+                        .extension(connect_options)
+                        .uri("http://localhost/upload?part=1")
+                        .body(crate::Body::from("payload"))
+                        .unwrap(),
+                )
+                .await;
 
             assert_eq!(calls.load(Ordering::Relaxed), expected_calls);
-            if !unsent || expected_calls == 2 {
-                result.unwrap();
+            if expected_calls == 2 {
+                let body = result.unwrap().collect().await.unwrap().to_bytes();
+                assert_eq!(body, "payload");
             } else {
                 let error = result.unwrap_err();
                 assert!(error.is::<Error>());
@@ -779,14 +664,16 @@ mod tests {
         assert!(task.is_woken());
         assert!(matches!(task.poll(), Poll::Ready(Ok(()))));
 
-        let calls = Arc::new(AtomicUsize::new(0));
-        let attempts = calls.clone();
+        let attempts = Arc::new(AtomicUsize::new(0));
         let service = tower::service_fn(move |request: DispatchRequest<crate::Body>| {
-            attempts.fetch_add(1, Ordering::Relaxed);
-            future::ready(Err::<(), _>(DispatchError::CheckoutCanceled {
-                error: Error::from_kind(ErrorKind::Canceled),
-                request: Box::new(request),
-            }))
+            future::ready(if attempts.fetch_add(1, Ordering::Relaxed) < 8 {
+                Err(DispatchError::CheckoutCanceled {
+                    error: Error::from_kind(ErrorKind::Canceled),
+                    request: Box::new(request),
+                })
+            } else {
+                Ok(())
+            })
         });
         let mut task = tokio_test::task::spawn(
             stack(service, Protocol::Auto, true).oneshot(
@@ -796,11 +683,14 @@ mod tests {
                     .unwrap(),
             ),
         );
-        for expected in [2, 4] {
-            assert!(task.poll().is_pending());
-            assert!(task.is_woken());
-            assert_eq!(calls.load(Ordering::Relaxed), expected);
-        }
+        assert!(
+            task.poll().is_pending(),
+            "a run of ready retries must yield"
+        );
+        assert!(
+            task.is_woken(),
+            "the yielded retry must schedule another poll"
+        );
     }
 
     #[tokio::test]

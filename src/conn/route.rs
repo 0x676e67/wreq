@@ -42,7 +42,7 @@ impl Route {
     pub(crate) fn select(request: &ConnectRequest, proxies: &[Matcher]) -> Self {
         let uri = request.uri();
         let intercepted = request
-            .config_set()
+            .connect_options()
             .get_ref::<Matcher>()
             .and_then(|proxy| proxy.intercept(uri))
             .or_else(|| proxies.iter().find_map(|proxy| proxy.intercept(uri)));

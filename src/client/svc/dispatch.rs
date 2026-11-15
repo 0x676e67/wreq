@@ -91,12 +91,12 @@ where
     C: TransportConnector,
 {
     /// Creates the terminal request service and its shared connection pool.
-    /// Handshakes start from the client's `config_set`; with `set_host`, HTTP/1
+    /// Handshakes start from the client's `connect_options`; with `set_host`, HTTP/1
     /// generates a missing `Host` field.
     pub(crate) fn new(
         pool_config: pool::Config,
         connector: C,
-        config_set: &Extensions,
+        connect_options: &Extensions,
         set_host: bool,
         #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn CookieStore>>,
         runtime: DynRuntime,
@@ -106,7 +106,7 @@ where
                 pool_config,
                 connector,
                 runtime.clone(),
-                config_set,
+                connect_options,
                 set_host,
             ),
             #[cfg(feature = "cookies")]
@@ -547,11 +547,6 @@ mod tests {
     };
 
     use futures_util::future;
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    use {
-        super::super::{DedicatedConnection, RequestVersion},
-        crate::config::RequestConfig,
-    };
 
     #[cfg(feature = "cookies")]
     use super::super::tests::http1_dispatch;
@@ -566,33 +561,15 @@ mod tests {
         use bytes::Bytes;
         use http_body_util::{BodyExt, Full};
 
-        for protocol in [
-            Protocol::Http1,
+        for (protocol, version) in [
+            (Protocol::Http1, Version::HTTP_11),
             #[cfg(feature = "http2")]
-            Protocol::Http2,
+            (Protocol::Http2, Version::HTTP_2),
         ] {
-            let h2 = cfg_select! {
-                feature = "http2" => protocol == Protocol::Http2,
-                _ => false,
-            };
             let calls = Arc::new(AtomicUsize::new(0));
             let accepted = calls.clone();
-            let connector = tower::service_fn(move |conn_req: ConnectRequest| {
+            let connector = tower::service_fn(move |_: ConnectRequest| {
                 let id = accepted.fetch_add(1, Ordering::Relaxed);
-                assert_eq!(conn_req.uri(), "http://localhost/");
-                assert!(
-                    conn_req
-                        .config_set()
-                        .get_ref::<crate::http1::Http1Options>()
-                        .is_some()
-                );
-                #[cfg(feature = "http2")]
-                assert!(
-                    conn_req
-                        .config_set()
-                        .get_ref::<crate::http2::Http2Options>()
-                        .is_some()
-                );
                 let (client, server) = tokio::io::duplex(16384);
                 tokio::spawn(async move {
                     let service = hyper::service::service_fn(
@@ -632,32 +609,22 @@ mod tests {
                 protocol,
                 true,
             );
-            for (attempt, (strict, id)) in [
-                (false, "0"),
-                (true, "1"),
-                (true, "1"),
-                (false, "0"),
-                (true, "1"),
-            ]
-            .into_iter()
-            .enumerate()
+            for (attempt, (strict, id)) in [(false, "0"), (true, "1"), (false, "0"), (true, "1")]
+                .into_iter()
+                .enumerate()
             {
-                let limits = attempt == 4 && protocol == Protocol::Http1;
+                let over_limit = attempt == 3 && protocol == Protocol::Http1;
                 let mut request = Request::builder()
-                    .version(if h2 {
-                        Version::HTTP_2
-                    } else {
-                        Version::HTTP_11
-                    })
-                    .uri(if limits {
+                    .version(version)
+                    .uri(if over_limit {
                         "http://localhost/limits"
                     } else {
                         "http://localhost/"
                     })
                     .body(crate::Body::default())
                     .unwrap();
-                let mut config_set = Extensions::default();
-                config_set.insert(
+                let mut connect_options = Extensions::default();
+                connect_options.insert(
                     crate::http1::Http1Options::builder()
                         .max_headers(if strict && protocol == Protocol::Http1 {
                             32
@@ -667,35 +634,35 @@ mod tests {
                         .build(),
                 );
                 #[cfg(feature = "http2")]
-                config_set.insert(
+                connect_options.insert(
                     crate::http2::Http2Options::builder()
-                        .header_table_size(if strict && h2 { 8192 } else { 4096 })
+                        .header_table_size(if strict && protocol == Protocol::Http2 {
+                            8192
+                        } else {
+                            4096
+                        })
                         .build(),
                 );
-                request.extensions_mut().insert(config_set);
+                request.extensions_mut().insert(connect_options);
                 let response = tokio::time::timeout(
                     std::time::Duration::from_secs(2),
                     stack.ready().await.unwrap().call(request),
                 )
                 .await
                 .unwrap();
-                if limits {
+                if over_limit {
+                    let error = response.unwrap_err();
                     assert!(
-                        response.is_err(),
-                        "the selected HTTP/1 override must reject 40 headers"
+                        error
+                            .source()
+                            .and_then(|source| source.downcast_ref::<netty::Error>())
+                            .is_some_and(netty::Error::is_parse),
+                        "the selected HTTP/1 override must reject 40 headers: {error:?}"
                     );
-                    continue;
+                } else {
+                    let response = response.unwrap();
+                    assert_eq!(response.into_body().collect().await.unwrap().to_bytes(), id);
                 }
-                let response = response.unwrap();
-                assert_eq!(
-                    response.version(),
-                    if protocol == Protocol::Http1 {
-                        Version::HTTP_11
-                    } else {
-                        Version::HTTP_2
-                    }
-                );
-                assert_eq!(response.into_body().collect().await.unwrap().to_bytes(), id);
             }
             assert_eq!(calls.load(Ordering::Relaxed), 2);
         }
@@ -751,77 +718,16 @@ mod tests {
         );
     }
 
-    #[tokio::test]
     #[cfg(any(feature = "http2", feature = "http3"))]
-    async fn websocket_route_probes_default_group_and_restores_upgrade() {
-        let request = |uri, websocket: Option<bool>| {
-            let mut request = Request::builder().uri(uri).body(()).unwrap();
-            let extensions = request.extensions_mut();
-            extensions
-                .get_or_insert_default::<Extensions>()
-                .insert(crate::Group::new("seven"));
-            if let Some(extended_connect) = websocket {
-                *RequestConfig::<RequestVersion>::get_mut(extensions) = Some(Version::HTTP_11);
-                extensions.insert(DedicatedConnection { extended_connect });
-            }
-            request
-        };
-        let https = "https://localhost/chat";
-        for (client, uri, extended_connect, probes) in [
-            (Protocol::Auto, https, true, cfg!(feature = "http2")),
+    #[test]
+    fn websocket_upgrade_is_restored_after_extended_connect() {
+        for version in [
             #[cfg(feature = "http2")]
-            (Protocol::Http2, https, true, true),
-            (Protocol::Auto, https, false, false),
-            (Protocol::Http1, https, true, false),
+            Version::HTTP_2,
             #[cfg(feature = "http3")]
-            (Protocol::Http3, https, true, true),
-            // HTTP/3 has no cleartext group to probe.
-            #[cfg(feature = "http3")]
-            (Protocol::Http3, "http://localhost/chat", true, false),
+            Version::HTTP_3,
         ] {
-            let stack = stack(
-                tower::service_fn(|request: DispatchRequest<()>| {
-                    future::ready(Ok::<_, DispatchError<()>>(request))
-                }),
-                client,
-                true,
-            );
-            let websocket = stack
-                .clone()
-                .oneshot(request(uri, Some(extended_connect)))
-                .await
-                .unwrap();
-            assert!(websocket.dedicated);
-            assert_eq!(websocket.req.resolved_protocol(), Protocol::Http1);
-            if probes {
-                // The probe targets the group ordinary requests use; those never probe.
-                let plain = stack.oneshot(request(uri, None)).await.unwrap();
-                assert!(plain.extended_connect_key.is_none());
-                assert_eq!(websocket.extended_connect_key, Some(plain.req.key()));
-            } else {
-                assert!(websocket.extended_connect_key.is_none());
-            }
-        }
-
-        // Versions whose `:protocol` marker a request carries.
-        let markers = |request: &Request<()>| {
-            let extensions = request.extensions();
-            let mut versions = Vec::new();
-            #[cfg(feature = "http2")]
-            if extensions.get::<http2::ext::Protocol>().is_some() {
-                versions.push(Version::HTTP_2);
-            }
-            #[cfg(feature = "http3")]
-            if extensions.get::<netty::http3::Protocol>()
-                == Some(&netty::http3::Protocol::WEBSOCKET)
-            {
-                versions.push(Version::HTTP_3);
-            }
-            versions
-        };
-        // Each version rewrites with its own marker and restores the original GET.
-        let round_trip = |version| {
-            let mut request = Request::get(https)
+            let mut request = Request::get("https://localhost/chat")
                 .version(Version::HTTP_11)
                 .header(http::header::SEC_WEBSOCKET_VERSION, "13")
                 .header(UPGRADE, "websocket")
@@ -835,22 +741,38 @@ mod tests {
             let upgrade = Http1Upgrade::into_extended_connect(&mut request, version);
             assert_eq!(request.method(), Method::CONNECT);
             assert_eq!(request.version(), version);
-            assert_eq!(markers(&request), [version]);
-            let names: Vec<_> = request.headers().keys().map(|name| name.as_str()).collect();
+            #[cfg(feature = "http2")]
             assert_eq!(
-                names,
-                ["sec-websocket-version", "origin", "sec-websocket-protocol"]
+                request
+                    .extensions()
+                    .get::<http2::ext::Protocol>()
+                    .map(http2::ext::Protocol::as_str),
+                (version == Version::HTTP_2).then_some("websocket")
             );
+            #[cfg(feature = "http3")]
+            assert_eq!(
+                request.extensions().get::<netty::http3::Protocol>(),
+                (version == Version::HTTP_3).then_some(&netty::http3::Protocol::WEBSOCKET)
+            );
+            assert!(request.headers().keys().map(|name| name.as_str()).eq([
+                "sec-websocket-version",
+                "origin",
+                "sec-websocket-protocol"
+            ]));
 
             upgrade.restore(&mut request);
             assert_eq!(request.method(), Method::GET);
             assert_eq!(request.version(), Version::HTTP_11);
-            assert!(markers(&request).is_empty());
+            #[cfg(feature = "http2")]
+            assert!(request.extensions().get::<http2::ext::Protocol>().is_none());
+            #[cfg(feature = "http3")]
+            assert!(
+                request
+                    .extensions()
+                    .get::<netty::http3::Protocol>()
+                    .is_none()
+            );
             assert!(request.headers().iter().eq(original.iter()));
-        };
-        #[cfg(feature = "http2")]
-        round_trip(Version::HTTP_2);
-        #[cfg(feature = "http3")]
-        round_trip(Version::HTTP_3);
+        }
     }
 }

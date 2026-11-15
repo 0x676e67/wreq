@@ -737,14 +737,14 @@ impl Config {
     /// Compiles the client's TCP/Unix context from its TLS options.
     /// Missing options leave TLS customization to the backend's defaults; the client-wide
     /// trust, version, and ALPN policy still applies.
-    pub(crate) fn stream(self, extensions: &Extensions) -> crate::Result<StreamTls> {
-        StreamTls::new(self, extensions.clone())
+    pub(crate) fn stream(self, connect_options: &Extensions) -> crate::Result<StreamTls> {
+        StreamTls::new(self, connect_options.clone())
     }
 
     /// Compiles the client's QUIC context from its QUIC options.
     #[cfg(feature = "http3")]
-    pub(crate) fn quic(self, extensions: &Extensions) -> crate::Result<QuicTls> {
-        QuicTls::new(self, extensions.clone())
+    pub(crate) fn quic(self, connect_options: &Extensions) -> crate::Result<QuicTls> {
+        QuicTls::new(self, connect_options.clone())
     }
 }
 

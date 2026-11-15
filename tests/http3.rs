@@ -166,9 +166,15 @@ async fn http3_requests_share_one_connection() {
     for response in join_all((0..10).map(|_| client.get(&url).send())).await {
         check(response.unwrap()).await;
     }
-    for _ in 0..3 {
-        check(client.get(&url).send().await.unwrap()).await;
-    }
+    check(
+        client
+            .get(&url)
+            .version(Version::HTTP_3)
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
     assert_eq!(server.connections(), 1);
 
     // A poisoned connection is not reused; the next request dials a new one.

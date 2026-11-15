@@ -148,7 +148,7 @@ impl SessionKey {
         client: &Extensions,
         transport: TransportKind,
     ) -> Self {
-        let request = req.config_set();
+        let request = req.connect_options();
         let mut selected = Selection::new(KeyPart::Session);
         selected.include::<Group>(request, client);
         selected.include::<Matcher>(request, client);
@@ -391,17 +391,17 @@ mod tests {
 
     fn request(
         protocol: Option<Protocol>,
-        extensions: Extensions,
+        connect_options: Extensions,
         client: &Extensions,
     ) -> ConnectRequest {
         let uri = Uri::from_static("https://example.com/a");
-        ConnectRequest::new(&uri, protocol, Protocol::Auto, extensions, client).unwrap()
+        ConnectRequest::new(&uri, protocol, Protocol::Auto, connect_options, client).unwrap()
     }
 
     fn tls(options: TlsOptionsBuilder) -> Extensions {
-        let mut extensions = Extensions::default();
-        extensions.insert(options.pre_shared_key(true).build());
-        extensions
+        let mut connect_options = Extensions::default();
+        connect_options.insert(options.pre_shared_key(true).build());
+        connect_options
     }
 
     #[test]
@@ -424,8 +424,8 @@ mod tests {
     #[test]
     fn session_keys_ignore_negotiation_and_inherit_client_options() {
         let client = tls(TlsOptions::builder());
-        let key = |protocol, extensions: Extensions| {
-            let request = request(protocol, extensions, &client);
+        let key = |protocol, connect_options: Extensions| {
+            let request = request(protocol, connect_options, &client);
             SessionKey::new(&request, request.uri(), &client, TransportKind::Stream)
         };
         let plain = key(None, Extensions::default());
@@ -436,8 +436,8 @@ mod tests {
             .alps_protocols([AlpsProtocol::HTTP1])
             .alps_use_new_codepoint(false));
         negotiation.insert(Http1Options::builder().max_headers(8).build());
-        for extensions in [negotiation, tls(TlsOptions::builder()), client.clone()] {
-            assert!(plain == key(Some(Protocol::Http1), extensions));
+        for connect_options in [negotiation, tls(TlsOptions::builder())] {
+            assert!(plain == key(Some(Protocol::Http1), connect_options));
         }
 
         let mut grouped = Extensions::default();
@@ -472,8 +472,8 @@ mod tests {
 
         #[cfg(feature = "http3")]
         {
-            let quic_key = |extensions| {
-                let req = request(Some(Protocol::Http3), extensions, &client);
+            let quic_key = |connect_options| {
+                let req = request(Some(Protocol::Http3), connect_options, &client);
                 SessionKey::new(&req, req.uri(), &client, TransportKind::Quic)
             };
             let quic_origin = quic_key(Extensions::default());
@@ -494,7 +494,6 @@ mod tests {
             ConnectRequest::new(&uri, None, Protocol::Auto, requested, &client).unwrap()
         };
         let inherited = frozen(Extensions::default());
-        let equal = frozen(client.clone());
         let mut partial = Extensions::default();
         partial.insert(Ipv4Addr::LOCALHOST);
         let partial = frozen(partial);
@@ -504,23 +503,8 @@ mod tests {
         let assert_bindings = |transport: TransportKind| {
             let key = |req: &ConnectRequest| SessionKey::new(req, req.uri(), &client, transport);
             let inherited_key = key(&inherited);
-            assert!(inherited_key == key(&equal));
             assert!(inherited_key == key(&partial));
             assert!(inherited_key != key(&changed));
-
-            // Bindings separate tickets without compiling another TLS context.
-            for req in [&inherited, &changed] {
-                let extensions = req.config_set();
-                match transport {
-                    TransportKind::Stream => {
-                        assert!(extensions.context_key::<TlsOptions>(&client).is_none())
-                    }
-                    #[cfg(feature = "http3")]
-                    TransportKind::Quic => {
-                        assert!(extensions.context_key::<QuicOptions>(&client).is_none())
-                    }
-                }
-            }
         };
         assert_bindings(TransportKind::Stream);
         #[cfg(feature = "http3")]

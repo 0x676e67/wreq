@@ -70,14 +70,14 @@ impl TransportConnector {
         tls: tls::Config,
         proxies: Vec<Matcher>,
         verbose: bool,
-        config_set: &Extensions,
+        connect_options: &Extensions,
     ) -> crate::Result<Self> {
         let proxies = Arc::new(proxies);
         Ok(Self {
             #[cfg(feature = "http3")]
             quic: QuicRouter::new(
                 dialer.clone(),
-                tls.clone().quic(config_set)?,
+                tls.clone().quic(connect_options)?,
                 proxies.clone(),
             )?,
             stream: ServiceBuilder::new()
@@ -85,7 +85,7 @@ impl TransportConnector {
                 .service(StreamConnector::new(
                     dialer,
                     proxies,
-                    tls.stream(config_set)?,
+                    tls.stream(connect_options)?,
                 )),
         })
     }

@@ -154,12 +154,12 @@ fn connect_request(protocol: Protocol) -> ConnectRequest {
 
 /// Creates connection inputs with an explicit compatibility group.
 fn grouped_request(group: Group, protocol: Protocol) -> ConnectRequest {
-    let mut config_set = Extensions::default();
-    config_set.insert(group);
+    let mut connect_options = Extensions::default();
+    connect_options.insert(group);
     ConnectRequest::test(
         http::Uri::from_static("http://localhost/"),
         Some(protocol),
-        config_set,
+        connect_options,
     )
 }
 
@@ -268,8 +268,8 @@ fn protocol_modes_build_specialized_entries() {
 async fn http2_checkouts_preserve_generation_and_cancellation() {
     // Equivalent HTTP/1 options leave the key unchanged in both modes.
     let http1 = Http1Options::builder().max_headers(96).build();
-    let mut client_config_set = Extensions::default();
-    client_config_set.insert(http1.clone());
+    let mut client_options = Extensions::default();
+    client_options.insert(http1.clone());
 
     for protocol in [Protocol::Http2, Protocol::Auto] {
         let calls = Arc::new(AtomicUsize::new(0));
@@ -281,21 +281,22 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
             },
             TestConnector::Http2(calls.clone(), gate.clone()),
             DynRuntime::new(crate::rt::tokio::TokioRuntime),
-            &client_config_set,
+            &client_options,
             true,
         );
         let req = connect_request(protocol);
         let checkout = || {
-            let mut config_set = req.config_set().clone();
-            config_set.insert(http1.clone());
-            let request_options = Arc::downgrade(&config_set.get_arc::<Http1Options>().unwrap());
+            let mut connect_options = req.connect_options().clone();
+            connect_options.insert(http1.clone());
+            let request_options =
+                Arc::downgrade(&connect_options.get_arc::<Http1Options>().unwrap());
             let target = PoolTarget {
                 req: ConnectRequest::new(
                     req.uri(),
                     Some(protocol),
                     Protocol::Auto,
-                    config_set,
-                    &client_config_set,
+                    connect_options,
+                    &client_options,
                 )
                 .unwrap(),
                 wait_for_reuse: false,

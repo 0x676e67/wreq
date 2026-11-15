@@ -121,12 +121,16 @@ impl Endpoints {
     }
 
     /// Opens a UDP endpoint for the address family of `remote`.
-    fn open(&self, config_set: &Extensions, remote: SocketAddr) -> Result<Endpoint, ConnectError> {
+    fn open(
+        &self,
+        connect_options: &Extensions,
+        remote: SocketAddr,
+    ) -> Result<Endpoint, ConnectError> {
         let dialer = &self.dialer;
         Endpoint::new(
             endpoint_config(),
             None,
-            dialer.bind_udp(config_set, remote)?,
+            dialer.bind_udp(connect_options, remote)?,
             dialer.runtime().quic(),
         )
         .map_err(ConnectError::m("quic endpoint error"))
@@ -138,7 +142,7 @@ impl Endpoints {
     async fn connect_addr(
         &self,
         slots: &Slots,
-        config_set: &Extensions,
+        connect_options: &Extensions,
         config: &QuicConfig,
         address: SocketAddr,
         host: &str,
@@ -148,7 +152,7 @@ impl Endpoints {
         } else {
             &slots.ipv6
         };
-        let mut endpoint = self.endpoint(slot, config_set, address)?;
+        let mut endpoint = self.endpoint(slot, connect_options, address)?;
         // The attempt takes its own ticket before entering the endpoint's lock. A retry after
         // a stopped driver offers it again, since that driver never sent it.
         let client = config.client();
@@ -156,7 +160,7 @@ impl Endpoints {
         let mut connecting = connect(&endpoint);
         if driver_stopped(&connecting, config) {
             (endpoint, connecting) =
-                self.reconnect(slot, &endpoint, config_set, config, address, connect)?;
+                self.reconnect(slot, &endpoint, connect_options, config, address, connect)?;
         }
         let connection = connecting
             .map_err(|error| ConnectError::new("quic connect error", session_error(error, config)))?
@@ -174,7 +178,7 @@ impl Endpoints {
         &self,
         slot: &Mutex<Option<Endpoint>>,
         stale: &Endpoint,
-        config_set: &Extensions,
+        connect_options: &Extensions,
         config: &QuicConfig,
         address: SocketAddr,
         connect: impl Fn(&Endpoint) -> Result<Connecting, ::quic::ConnectError>,
@@ -188,7 +192,7 @@ impl Endpoints {
                 return Ok((current.clone(), connecting));
             }
         }
-        let fresh = self.open(config_set, address)?;
+        let fresh = self.open(connect_options, address)?;
         let connecting = connect(&fresh);
         if !driver_stopped(&connecting, config) {
             *slot = Some(fresh.clone());
@@ -200,14 +204,14 @@ impl Endpoints {
     fn endpoint(
         &self,
         slot: &Mutex<Option<Endpoint>>,
-        config_set: &Extensions,
+        connect_options: &Extensions,
         remote: SocketAddr,
     ) -> Result<Endpoint, ConnectError> {
         let mut slot = slot.lock();
         if let Some(endpoint) = slot.as_ref() {
             return Ok(endpoint.clone());
         }
-        let endpoint = self.open(config_set, remote)?;
+        let endpoint = self.open(connect_options, remote)?;
         *slot = Some(endpoint.clone());
         Ok(endpoint)
     }
@@ -218,9 +222,12 @@ impl Endpoints {
         let (connection, endpoint) = self
             .dial(
                 request.uri(),
-                request.config_set(),
+                request.connect_options(),
                 &config,
-                dialer::uses_client_bindings(request.config_set(), self.dialer.config_set()),
+                dialer::uses_client_bindings(
+                    request.connect_options(),
+                    self.dialer.connect_options(),
+                ),
             )
             .await?;
         self.connection(connection, endpoint)
@@ -237,7 +244,7 @@ impl Endpoints {
     ) -> Result<(Connection, Endpoint), BoxError> {
         let mut config = self.tls.config(request, uri)?;
         config.transport_config(self.transport(request, Path::Proxy)?);
-        let dial = self.dial(uri, request.config_set(), &config, false);
+        let dial = self.dial(uri, request.connect_options(), &config, false);
         within_deadline(deadline, self.dialer.runtime(), dial).await
     }
 
@@ -292,7 +299,7 @@ impl Endpoints {
     async fn dial(
         &self,
         uri: &Uri,
-        config_set: &Extensions,
+        connect_options: &Extensions,
         config: &QuicConfig,
         shared: bool,
     ) -> Result<(Connection, Endpoint), BoxError> {
@@ -316,11 +323,11 @@ impl Endpoints {
         let slots = if shared { &self.slots } else { &local };
         Ok(race(
             addresses,
-            dialer::local_addresses(config_set, dialer.config_set()),
+            dialer::local_addresses(connect_options, dialer.connect_options()),
             dialer.happy_eyeballs_timeout(),
             |address| {
                 let attempt: BoxFuture<'_, _> =
-                    Box::pin(self.connect_addr(slots, config_set, config, address, host));
+                    Box::pin(self.connect_addr(slots, connect_options, config, address, host));
                 Ok(attempt)
             },
             |duration| dialer.runtime().sleep(duration),
@@ -349,7 +356,7 @@ impl Endpoints {
     ) -> crate::Result<Arc<TransportConfig>> {
         let client = self.tls.options();
         let requested = request
-            .config_set()
+            .connect_options()
             .get_ref::<QuicOptions>()
             .filter(|requested| !client.is_some_and(|client| requested.same_transport(client)));
         match (path, requested) {
@@ -574,12 +581,12 @@ mod tests {
         }
     }
 
-    fn request(uri: Uri, config_set: Extensions) -> ConnectRequest {
+    fn request(uri: Uri, connect_options: Extensions) -> ConnectRequest {
         ConnectRequest::new(
             &uri,
             None,
             Protocol::Auto,
-            config_set,
+            connect_options,
             &Extensions::default(),
         )
         .unwrap()
@@ -608,7 +615,7 @@ mod tests {
     fn endpoints_with(
         resolver: Arc<dyn Resolve>,
         cert: &[u8],
-        config_set: Extensions,
+        connect_options: Extensions,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Endpoints {
         let tls = tls::Config {
@@ -619,7 +626,7 @@ mod tests {
             DynRuntime::new(TokioRuntime),
             DynResolver::new(resolver),
             tcp::Config::default(),
-            config_set,
+            connect_options,
             happy_eyeballs_timeout,
         );
         Endpoints::new(dialer, tls.quic(&Extensions::default()).unwrap()).unwrap()
@@ -662,10 +669,10 @@ mod tests {
     }
 
     fn configured<T: crate::config::connect::Extension>(value: T) -> ConnectRequest {
-        let mut config_set = Extensions::default();
-        config_set.insert(value);
+        let mut connect_options = Extensions::default();
+        connect_options.insert(value);
         let uri = Uri::from_static("https://localhost/");
-        ConnectRequest::test(uri, Some(Protocol::Http3), config_set)
+        ConnectRequest::test(uri, Some(Protocol::Http3), connect_options)
     }
 
     #[tokio::test]
@@ -837,8 +844,8 @@ mod tests {
             None,
         );
         let uri = Uri::from_static("https://localhost/");
-        let request = |config_set: Extensions| {
-            ConnectRequest::new(&uri, None, Protocol::Auto, config_set, &client).unwrap()
+        let request = |connect_options: Extensions| {
+            ConnectRequest::new(&uri, None, Protocol::Auto, connect_options, &client).unwrap()
         };
         let (first, shared, _peer) =
             connect(&endpoints, request(Extensions::default()), &server).await;
@@ -877,13 +884,13 @@ mod tests {
             .key_shares(vec![crate::tls::KeyShare::P256])
             .build();
         // Client bindings belong to the dialer, so the attempt runs on one bound to TEST-NET.
-        fn rebind(endpoints: &mut Endpoints, config_set: Extensions) {
+        fn rebind(endpoints: &mut Endpoints, connect_options: Extensions) {
             let dialer = &mut endpoints.dialer;
             *dialer = Dialer::new(
                 dialer.runtime().clone(),
                 dialer.resolver().clone(),
                 tcp::Config::default(),
-                config_set,
+                connect_options,
                 None,
             );
         }
