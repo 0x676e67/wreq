@@ -561,11 +561,7 @@ mod tests {
         use bytes::Bytes;
         use http_body_util::{BodyExt, Full};
 
-        for (protocol, version) in [
-            (Protocol::Http1, Version::HTTP_11),
-            #[cfg(feature = "http2")]
-            (Protocol::Http2, Version::HTTP_2),
-        ] {
+        let check = async |protocol, version| {
             let calls = Arc::new(AtomicUsize::new(0));
             let accepted = calls.clone();
             let connector = tower::service_fn(move |_: ConnectRequest| {
@@ -665,7 +661,11 @@ mod tests {
                 }
             }
             assert_eq!(calls.load(Ordering::Relaxed), 2);
-        }
+        };
+
+        check(Protocol::Http1, Version::HTTP_11).await;
+        #[cfg(feature = "http2")]
+        check(Protocol::Http2, Version::HTTP_2).await;
     }
 
     #[cfg(feature = "cookies")]
@@ -721,12 +721,7 @@ mod tests {
     #[cfg(any(feature = "http2", feature = "http3"))]
     #[test]
     fn websocket_upgrade_is_restored_after_extended_connect() {
-        for version in [
-            #[cfg(feature = "http2")]
-            Version::HTTP_2,
-            #[cfg(feature = "http3")]
-            Version::HTTP_3,
-        ] {
+        let check = |version| {
             let mut request = Request::get("https://localhost/chat")
                 .version(Version::HTTP_11)
                 .header(http::header::SEC_WEBSOCKET_VERSION, "13")
@@ -773,6 +768,11 @@ mod tests {
                     .is_none()
             );
             assert!(request.headers().iter().eq(original.iter()));
-        }
+        };
+
+        #[cfg(feature = "http2")]
+        check(Version::HTTP_2);
+        #[cfg(feature = "http3")]
+        check(Version::HTTP_3);
     }
 }

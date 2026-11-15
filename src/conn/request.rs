@@ -299,11 +299,7 @@ mod tests {
         let changed = with(Extensions::default(), Ipv4Addr::UNSPECIFIED);
         let mut merged = client.clone();
         merged.insert(Ipv4Addr::UNSPECIFIED);
-        for protocol in [
-            None,
-            #[cfg(feature = "http3")]
-            Some(Protocol::Http3),
-        ] {
+        let check = |protocol| {
             let request = |config| {
                 ConnectRequest::new(&uri, protocol, Protocol::Auto, config, &client).unwrap()
             };
@@ -324,7 +320,11 @@ mod tests {
                 dialer::set_interface(&mut interface, "eth0".into());
                 assert_ne!(request(interface).key(), inherited.key());
             }
-        }
+        };
+
+        check(None);
+        #[cfg(feature = "http3")]
+        check(Some(Protocol::Http3));
     }
 
     #[test]
