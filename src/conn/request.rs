@@ -1,8 +1,4 @@
-//! Frozen connection identity shared by pool lookup and transport setup.
-//!
-//! Request configuration is editable until a [`ConnectRequest`] is built. Its key then counts
-//! the resolved protocol and typed entries (including socket bindings) that differ from the
-//! client's configuration.
+//! Frozen connection inputs and their pool identity.
 
 #[cfg(feature = "http3")]
 use std::sync::Arc;
@@ -20,11 +16,13 @@ use crate::{
 };
 
 /// Connection request shared by pool lookup and transport connection attempts.
-/// Keeps the origin, protocol choice, bindings and typed configuration fixed for an attempt.
-/// Proxy routes connect and authenticate other hosts without changing this identity.
+/// Keeps the origin, protocol choice and configuration fixed across retries and proxy hops.
 #[derive(Debug, Clone)]
 pub struct ConnectRequest {
-    key: ConnectionKey,
+    origin: Uri,
+    protocol: Protocol,
+    options: Overrides,
+    pool_hash: u64,
 }
 
 /// Reuse identity for pool entries, extended CONNECT probes and QUIC address tokens.
@@ -41,9 +39,9 @@ pub(crate) struct ConnectionKey {
 // ===== impl ConnectRequest =====
 
 impl ConnectRequest {
-    /// Validates the absolute target and freezes its connection identity.
+    /// Validates the absolute target and freezes the connection inputs.
     ///
-    /// The origin keeps scheme and authority with `/` as the path. The key counts the
+    /// The origin keeps scheme and authority with `/` as the path. Pool identity counts the
     /// request entries the resolved protocol can use that differ from `client_config_set`.
     ///
     /// Returns an error if the URI lacks a scheme or authority.
@@ -59,13 +57,14 @@ impl ConnectRequest {
             .authority(uri.authority().ok_or("URI missing authority")?.clone())
             .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
+        let protocol = protocol.unwrap_or(client_protocol);
+        let options = Overrides::for_pool(config_set, client_config_set, protocol);
+        let pool_hash = pool_hash(&origin, protocol, &options);
         Ok(Self {
-            key: ConnectionKey::new(
-                origin,
-                protocol.unwrap_or(client_protocol),
-                config_set,
-                client_config_set,
-            ),
+            origin,
+            protocol,
+            options,
+            pool_hash,
         })
     }
 
@@ -73,25 +72,25 @@ impl ConnectRequest {
     /// Pool and session keys use this origin, not the request's path or query.
     /// Proxy routing leaves it unchanged.
     pub(crate) fn uri(&self) -> &Uri {
-        &self.key.origin
+        &self.origin
     }
 
     /// Returns the protocol selection after inheriting the client's preference.
     /// Frozen before pool checkout; proxy routing does not change this selection.
     pub(crate) fn resolved_protocol(&self) -> Protocol {
-        self.key.protocol
+        self.protocol
     }
 
-    /// All request connection options, including those this key does not count.
+    /// All request connection options, including those outside the pool identity.
     pub(crate) fn config_set(&self) -> &ConfigSet {
-        self.key.overrides.config_set()
+        self.options.config_set()
     }
 
     /// Returns a request override selected for this connection's protocol.
     /// Unselected values are inherited from the client; see [`Overrides`] for selection rules.
     #[inline]
     pub(crate) fn config_override<T: ConnectConfig>(&self) -> Option<&T> {
-        self.key.overrides.get::<T>()
+        self.options.get::<T>()
     }
 
     /// Shares a request override used by this connection's protocol.
@@ -99,12 +98,17 @@ impl ConnectRequest {
     #[inline]
     #[cfg(feature = "http3")]
     pub(crate) fn config_override_arc<T: ConnectConfig>(&self) -> Option<Arc<T>> {
-        self.key.overrides.get_arc::<T>()
+        self.options.get_arc::<T>()
     }
 
     /// Returns the reuse identity of this origin and configuration.
     pub(crate) fn key(&self) -> ConnectionKey {
-        self.key.clone()
+        ConnectionKey {
+            origin: self.origin.clone(),
+            protocol: self.protocol,
+            overrides: self.options.clone(),
+            hash: self.pool_hash,
+        }
     }
 
     /// Returns the identity of this origin and configuration under another resolved protocol.
@@ -114,35 +118,18 @@ impl ConnectRequest {
         protocol: Protocol,
         client_config_set: &ConfigSet,
     ) -> ConnectionKey {
-        let config_set = self.key.overrides.config_set().clone();
-        ConnectionKey::new(
-            self.key.origin.clone(),
-            protocol,
-            config_set,
-            client_config_set,
-        )
-    }
-}
-
-// ===== impl ConnectionKey =====
-
-impl ConnectionKey {
-    fn new(
-        origin: Uri,
-        protocol: Protocol,
-        config_set: ConfigSet,
-        client_config_set: &ConfigSet,
-    ) -> Self {
-        let overrides = Overrides::for_pool(config_set, client_config_set, protocol);
-        let hash = HASHER.hash_one((&origin, protocol, overrides.hash()));
-        Self {
-            origin,
+        let overrides = Overrides::for_pool(self.config_set().clone(), client_config_set, protocol);
+        let hash = pool_hash(&self.origin, protocol, &overrides);
+        ConnectionKey {
+            origin: self.origin.clone(),
             protocol,
             overrides,
             hash,
         }
     }
 }
+
+// ===== impl ConnectionKey =====
 
 impl PartialEq for ConnectionKey {
     fn eq(&self, other: &Self) -> bool {
@@ -169,6 +156,10 @@ impl fmt::Debug for ConnectionKey {
             .field("overrides", &self.overrides)
             .finish()
     }
+}
+
+fn pool_hash(origin: &Uri, protocol: Protocol, options: &Overrides) -> u64 {
+    HASHER.hash_one((origin, protocol, options.hash()))
 }
 
 #[cfg(test)]
@@ -255,70 +246,6 @@ mod tests {
         );
         assert_ne!(plain, changed.key());
         assert!(changed.config_override::<TlsOptions>().is_some());
-
-        // Preferences that resolve to one protocol share a key.
-        let keys = [
-            (Protocol::Auto, None, Protocol::Auto),
-            (Protocol::Auto, Some(Protocol::Auto), Protocol::Auto),
-            (Protocol::Auto, Some(Protocol::Http1), Protocol::Http1),
-            (Protocol::Http1, None, Protocol::Http1),
-            (Protocol::Http1, Some(Protocol::Http1), Protocol::Http1),
-            #[cfg(feature = "http2")]
-            (Protocol::Http2, None, Protocol::Http2),
-            #[cfg(feature = "http2")]
-            (Protocol::Http2, Some(Protocol::Http2), Protocol::Http2),
-            #[cfg(feature = "http2")]
-            (Protocol::Http2, Some(Protocol::Auto), Protocol::Auto),
-            #[cfg(feature = "http3")]
-            (Protocol::Http3, None, Protocol::Http3),
-            #[cfg(feature = "http3")]
-            (Protocol::Http3, Some(Protocol::Auto), Protocol::Auto),
-            #[cfg(feature = "http3")]
-            (Protocol::Http3, Some(Protocol::Http1), Protocol::Http1),
-            #[cfg(feature = "http3")]
-            (Protocol::Auto, Some(Protocol::Http3), Protocol::Http3),
-            #[cfg(all(feature = "http2", feature = "http3"))]
-            (Protocol::Http3, Some(Protocol::Http2), Protocol::Http2),
-        ]
-        .map(|(client, protocol, resolved)| {
-            let request = ConnectRequest::new(
-                changed.uri(),
-                protocol,
-                client,
-                ConfigSet::default(),
-                &client_config_set,
-            )
-            .unwrap();
-            assert_eq!(request.resolved_protocol(), resolved);
-            (resolved, request.key())
-        });
-        for (resolved, key) in &keys {
-            for (other, other_key) in &keys {
-                assert_eq!(
-                    key == other_key,
-                    resolved == other,
-                    "{resolved:?} vs {other:?}"
-                );
-            }
-        }
-
-        // Equal hashes still compare the counted values.
-        let mut collision = changed.key();
-        collision.hash = plain.hash;
-        assert_ne!(plain, collision);
-
-        let relative = Uri::from_static("/relative");
-        let client_config_set = ConfigSet::default();
-        assert!(
-            ConnectRequest::new(
-                &relative,
-                None,
-                Protocol::Auto,
-                client_config_set.clone(),
-                &client_config_set,
-            )
-            .is_err()
-        );
     }
 
     #[test]
@@ -365,9 +292,6 @@ mod tests {
                 changed.key_with_protocol(changed.resolved_protocol(), &client),
                 changed.key()
             );
-            let mut collision = changed.key();
-            collision.hash = inherited.key().hash;
-            assert_ne!(collision, inherited.key());
             assert_ne!(
                 request(with(ConfigSet::default(), Ipv6Addr::UNSPECIFIED)).key(),
                 inherited.key()

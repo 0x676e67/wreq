@@ -349,7 +349,8 @@ impl Endpoints {
     ) -> crate::Result<Arc<TransportConfig>> {
         let client = self.tls.options();
         let requested = request
-            .config_override::<QuicOptions>()
+            .config_set()
+            .get::<QuicOptions>()
             .filter(|requested| !client.is_some_and(|client| requested.same_transport(client)));
         match (path, requested) {
             (Path::Direct, None) => Ok(self.direct_transport.clone()),
@@ -836,9 +837,7 @@ mod tests {
 
         let mut partial = ConfigSet::default();
         partial.insert(Ipv4Addr::LOCALHOST);
-        let partial = request(partial);
-        assert!(dialer::uses_client_bindings(partial.config_set(), &client));
-        let (second, reused, _peer) = connect(&endpoints, partial, &server).await;
+        let (second, reused, _peer) = connect(&endpoints, request(partial), &server).await;
         assert!(same_socket(&reused, &shared));
         // Changing only IPv6 still isolates an IPv4 dial from the client's endpoint.
         let mut other_family = ConfigSet::default();

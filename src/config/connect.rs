@@ -317,7 +317,15 @@ impl ConfigSet {
         match value {
             Some(value) => self.insert(value),
             None => {
-                self.remove::<T>();
+                let entries = self.entries();
+                if let Ok(index) = search(entries, TypeId::of::<T>()) {
+                    self.0 = collect(
+                        entries[..index]
+                            .iter()
+                            .chain(&entries[index + 1..])
+                            .cloned(),
+                    );
+                }
                 self
             }
         }
@@ -332,21 +340,6 @@ impl ConfigSet {
     /// Returns a shared handle to the value stored for this exact type.
     pub(crate) fn get_arc<T: ConnectConfig>(&self) -> Option<Arc<T>> {
         let value: Arc<dyn Any + Send + Sync> = self.entry(TypeId::of::<T>())?.value.clone();
-        value.downcast().ok()
-    }
-
-    /// Removes a value and returns a shared handle without cloning the value.
-    /// Missing types leave shared storage unchanged.
-    pub(crate) fn remove<T: ConnectConfig>(&mut self) -> Option<Arc<T>> {
-        let entries = self.0.as_deref()?;
-        let index = search(entries, TypeId::of::<T>()).ok()?;
-        let value: Arc<dyn Any + Send + Sync> = entries[index].value.clone();
-        self.0 = collect(
-            entries[..index]
-                .iter()
-                .chain(&entries[index + 1..])
-                .cloned(),
-        );
         value.downcast().ok()
     }
 
@@ -404,19 +397,6 @@ impl ConfigSet {
         }
     }
 }
-
-impl PartialEq for ConfigSet {
-    fn eq(&self, other: &Self) -> bool {
-        self.ptr_eq(other)
-            || same_entries(
-                self.entries().iter(),
-                other.entries().iter(),
-                KeyPart::Whole,
-            )
-    }
-}
-
-impl Eq for ConfigSet {}
 
 impl fmt::Debug for ConfigSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -660,48 +640,22 @@ mod tests {
     }
 
     #[test]
-    fn edits_share_values_and_keep_frozen_copies() {
-        let mut config_set = group("a");
-        config_set.insert(Http1Options::builder().max_headers(8).build());
-        let frozen = config_set.clone();
-        let value = frozen.get_arc::<Http1Options>().unwrap();
+    fn merging_and_clearing_options_preserve_the_original() {
+        let h1 = Http1Options::builder().max_headers(8).build();
+        let mut original = group("a");
+        original.insert(h1.clone()).insert(TlsOptions::default());
 
-        config_set
-            .insert(TlsOptions::default())
-            .set(Some(Group::new("b")))
-            .set::<Http1Options>(None);
-        assert_eq!(frozen.get::<Group>(), Some(&Group::new("a")));
-        assert!(frozen.get::<Http1Options>().is_some());
-        assert_eq!(config_set.get::<Group>(), Some(&Group::new("b")));
-        assert!(config_set.get::<Http1Options>().is_none());
-        assert_eq!(config_set.get::<TlsOptions>(), Some(&TlsOptions::default()));
+        let replacement = Http1Options::builder().max_headers(16).build();
+        let mut incoming = ConfigSet::default();
+        incoming.insert(replacement.clone());
+        let mut edited = original.clone();
+        edited.set::<TlsOptions>(None).extend(incoming);
 
-        // Insertion order does not change identity.
-        let mut reordered = ConfigSet::default();
-        reordered
-            .insert(TlsOptions::default())
-            .insert(Group::new("b"));
-        assert_eq!(config_set, reordered);
-
-        // An empty destination takes the storage; otherwise incoming types win.
-        let mut merged = ConfigSet::default();
-        merged.extend(frozen.clone());
-        assert!(merged.ptr_eq(&frozen));
-        merged.extend(config_set.clone());
-        assert_eq!(merged.get::<Group>(), Some(&Group::new("b")));
-        assert!(merged.get::<Http1Options>().is_some());
-        assert!(merged.get::<TlsOptions>().is_some());
-
-        assert!(Arc::ptr_eq(
-            &merged.get_arc::<Http1Options>().unwrap(),
-            &value
-        ));
-        assert!(Arc::ptr_eq(
-            &merged.remove::<Http1Options>().unwrap(),
-            &value
-        ));
-        assert!(merged.remove::<Http1Options>().is_none());
-        assert!(frozen.get::<Http1Options>().is_some());
+        assert_eq!(original.get::<Http1Options>(), Some(&h1));
+        assert!(original.get::<TlsOptions>().is_some());
+        assert_eq!(edited.get::<Http1Options>(), Some(&replacement));
+        assert_eq!(edited.get::<Group>(), Some(&Group::new("a")));
+        assert!(edited.get::<TlsOptions>().is_none());
     }
 
     #[test]
