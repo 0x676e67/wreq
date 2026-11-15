@@ -215,8 +215,8 @@ impl Error {
         matches!(self.inner.kind, Kind::Request)
     }
 
-    /// Returns true if establishing a connection for the request failed.
-    /// Use [`is_proxy_connect`](Self::is_proxy_connect) to check for proxy setup failures.
+    /// Returns `true` for errors classified as connection failures.
+    /// [`is_proxy_connect`](Self::is_proxy_connect) checks the separate proxy error category.
     pub fn is_connect(&self) -> bool {
         let mut source = self.source();
 
@@ -233,7 +233,9 @@ impl Error {
         false
     }
 
-    /// Returns true if connecting to a proxy or negotiating a proxy tunnel failed.
+    /// Returns `true` for errors classified as proxy connection or tunnel failures.
+    /// If the outer connection deadline expires during a proxy handshake, the error is
+    /// a [connection error](Self::is_connect) and a [timeout](Self::is_timeout).
     pub fn is_proxy_connect(&self) -> bool {
         let mut source = self.source();
 
