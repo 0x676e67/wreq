@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::config::connect::{ConfigScope, ConnectConfig};
+use crate::config::connect::{ConfigScope, ConnectConfigValue};
 
 /// An opaque partition added to the automatic connection identity.
 /// Requests in different groups never share pooled connections, even when
@@ -55,7 +55,7 @@ impl From<u64> for Group {
     }
 }
 
-impl ConnectConfig for Group {
+impl ConnectConfigValue for Group {
     const SCOPE: ConfigScope = ConfigScope::GROUP;
 }
 

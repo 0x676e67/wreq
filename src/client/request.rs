@@ -31,7 +31,10 @@ use super::{
 use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
-    config::{RequestConfig, RequestConfigValue, connect::Extensions as ConnectExtensions},
+    config::{
+        connect::Extensions as ConnectExtensions,
+        request::{RequestConfig, RequestConfigValue, impl_request_config_value},
+    },
     conn::dialer,
     ext::UriExt,
     group::Group,

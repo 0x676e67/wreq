@@ -69,7 +69,7 @@ use self::{
 };
 use super::proto::{Established, http1};
 use crate::{
-    config::connect::{Extension, Extensions},
+    config::connect::{Cached, ConnectConfigValue, Extension, Extensions, KeyPart, changed},
     conn::{
         Conn,
         request::{ConnectRequest, ConnectionKey},
@@ -266,6 +266,7 @@ struct PoolTargeter<C> {
     set_host: bool,
 
     /// Handshake builders with the client's protocol options applied.
+    connect_options: Extensions,
     http1: Arc<conn::http1::Builder>,
     #[cfg(feature = "http2")]
     http2: Arc<conn::http2::Builder<DynRuntime>>,
@@ -273,14 +274,19 @@ struct PoolTargeter<C> {
     http3: Arc<conn::http3::Builder<DynRuntime>>,
 }
 
-/// Shares the client's builder unless the pool key selects a request override.
-fn configure<B, O>(builder: &Arc<B>, req: &ConnectRequest, apply: fn(B, O) -> B) -> Arc<B>
+/// Shares the client's builder unless the request overrides its protocol options.
+fn configure<B, O>(
+    builder: &Arc<B>,
+    req: &ConnectRequest,
+    connect_options: &Extensions,
+    apply: fn(B, O) -> B,
+) -> Arc<B>
 where
     B: Clone,
-    O: Extension,
+    O: Extension<Stored = Cached<O>> + ConnectConfigValue,
 {
-    match req.pool_override::<O>() {
-        Some(options) => Arc::new(apply(B::clone(builder), options.clone())),
+    match changed::<O>(req.connect_options(), connect_options, KeyPart::Whole) {
+        Some(options) => Arc::new(apply(B::clone(builder), options.get().clone())),
         None => builder.clone(),
     }
 }
@@ -336,6 +342,7 @@ where
                 pool: pool.clone(),
                 runtime: runtime.clone(),
                 set_host,
+                connect_options: connect_options.clone(),
                 http1: Arc::new(http1),
                 #[cfg(feature = "http2")]
                 http2: Arc::new(http2),
@@ -559,7 +566,12 @@ impl<C> PoolTargeter<C> {
                     .build(service)
             })
             .layer(http1::ConnectLayer::new(
-                configure(&self.http1, req, conn::http1::Builder::options),
+                configure(
+                    &self.http1,
+                    req,
+                    &self.connect_options,
+                    conn::http1::Builder::options,
+                ),
                 self.runtime.clone(),
                 self.set_host,
             ))
@@ -570,7 +582,12 @@ impl<C> PoolTargeter<C> {
     #[cfg(feature = "http2")]
     fn http2_layer(&self, req: &ConnectRequest) -> http2::ConnectLayer {
         http2::ConnectLayer::new(
-            configure(&self.http2, req, conn::http2::Builder::options),
+            configure(
+                &self.http2,
+                req,
+                &self.connect_options,
+                conn::http2::Builder::options,
+            ),
             self.runtime.clone(),
         )
     }
@@ -589,7 +606,7 @@ where
 
     /// Builds only the pool components required by the target's protocol mode.
     ///
-    /// A pool entry's builders use the HTTP options selected by its key.
+    /// A pool entry's builders use the effective HTTP options of that protocol.
     fn service(&self, target: &PoolTarget) -> Self::Service {
         let req = &target.req;
         let pool = self.pool.clone();
@@ -622,7 +639,12 @@ where
             Protocol::Http3 => Box::new(MuxEntry {
                 service: Singleton::new(http3::Connect::new(
                     connect.connector,
-                    configure(&self.http3, req, conn::http3::Builder::options),
+                    configure(
+                        &self.http3,
+                        req,
+                        &self.connect_options,
+                        conn::http3::Builder::options,
+                    ),
                     connect.runtime,
                 )),
                 state,

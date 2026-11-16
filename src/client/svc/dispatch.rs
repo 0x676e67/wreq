@@ -20,7 +20,7 @@ use tower::{BoxError, Service, ServiceExt};
 #[cfg(feature = "cookies")]
 use {
     crate::{
-        config::RequestConfig,
+        config::request::RequestConfig,
         cookie::{CookieStore, Cookies},
     },
     http::header::COOKIE,

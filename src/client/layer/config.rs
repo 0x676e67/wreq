@@ -7,7 +7,12 @@ use futures_util::future::{self, Either, Ready};
 use http::{HeaderMap, Request, Response};
 use tower::{Layer, Service};
 
-use crate::{Error, config::RequestConfig, ext::UriExt, header::OrigHeaderMap};
+use crate::{
+    Error,
+    config::request::{RequestConfig, impl_request_config_value},
+    ext::UriExt,
+    header::OrigHeaderMap,
+};
 
 /// A marker type for the default headers configuration value.
 #[derive(Clone, Copy)]

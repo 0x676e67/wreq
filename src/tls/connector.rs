@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     Error,
-    config::connect::{Extensions, KeyPart},
+    config::connect::{Cached, Extensions, KeyPart, changed},
     conn::request::ConnectRequest,
     ext::UriExt,
     protocol::{Protocol, TransportKind},
@@ -88,12 +88,14 @@ impl StreamTls {
     /// Requests without different context options keep the client's context.
     pub(crate) fn for_request(self, req: &ConnectRequest) -> crate::Result<TlsConnector> {
         let inner = &*self.inner;
-        let key = req
-            .connect_options()
-            .context_key::<TlsOptions>(&inner.connect_options);
+        let options = changed::<TlsOptions>(
+            req.connect_options(),
+            &inner.connect_options,
+            KeyPart::Context,
+        );
         let context = inner
             .contexts
-            .get(key, |options| compile(&inner.config, Some(options)))?;
+            .get(options, |options| compile(&inner.config, Some(options)))?;
         Ok(TlsConnector {
             tls: self,
             context,
@@ -113,10 +115,13 @@ impl StreamTls {
         alpn_enabled: bool,
     ) -> Result<Ssl, BoxError> {
         let inner = &*self.inner;
-        let options = req
-            .connect_options()
-            .different::<TlsOptions>(&inner.connect_options, KeyPart::Whole)
-            .or(inner.options.as_deref());
+        let options = changed::<TlsOptions>(
+            req.connect_options(),
+            &inner.connect_options,
+            KeyPart::Whole,
+        )
+        .map(Cached::get)
+        .or(inner.options.as_deref());
         let mut cfg = context.configure()?;
 
         cfg.set_use_server_name_indication(inner.config.sni);

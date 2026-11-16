@@ -9,7 +9,7 @@ pub(super) mod store;
 use std::{
     borrow::Borrow,
     hash::{BuildHasher, Hash, Hasher},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::IpAddr,
     num::NonZeroUsize,
     sync::Arc,
 };
@@ -25,15 +25,13 @@ pub(crate) use store::Tickets;
 use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 
 #[cfg(feature = "http3")]
-use crate::quic::QuicOptions;
+use crate::quic::{QuicOptions, QuicSessionIdentity};
 use crate::{
-    config::connect::{Extensions, HASHER, KeyPart, Projection, Selection},
-    conn::{dialer::Interface, request::ConnectRequest},
-    group::Group,
+    config::connect::{Cached, Extensions, HASHER, KeyPart, ScopedConfig, changed},
+    conn::request::{CommonOverrides, ConnectRequest},
     protocol::TransportKind,
-    proxy::Matcher,
     sync::Mutex,
-    tls::{TlsOptions, TlsVersion},
+    tls::{ScopedIdentity, TlsOptions, TlsSessionIdentity, TlsVersion},
 };
 
 const SESSION_ID_CONTEXT_LENGTH: usize = 32;
@@ -70,11 +68,18 @@ pub(crate) struct SessionTarget {
 /// The transport, proxy, socket bindings and group partition the session cache.
 #[derive(Clone)]
 struct SessionKey {
-    transport: TransportKind,
     origin: Uri,
     route: Uri,
-    options: Projection,
+    overrides: CommonOverrides,
+    options: SessionOptions,
     hash: u64,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum SessionOptions {
+    Stream(Option<ScopedIdentity<Arc<TlsSessionIdentity>>>),
+    #[cfg(feature = "http3")]
+    Quic(Option<ScopedIdentity<Arc<QuicSessionIdentity>>>),
 }
 
 /// A TLS session that can be stored and retrieved from a session store.
@@ -149,26 +154,23 @@ impl SessionKey {
         transport: TransportKind,
     ) -> Self {
         let request = req.connect_options();
-        let mut selected = Selection::new(KeyPart::Session);
-        selected.include::<Group>(request, client);
-        selected.include::<Matcher>(request, client);
-        selected.include::<Ipv4Addr>(request, client);
-        selected.include::<Ipv6Addr>(request, client);
-        selected.include::<Interface>(request, client);
-        match transport {
-            TransportKind::Stream => selected.include::<TlsOptions>(request, client),
+        let overrides = CommonOverrides::new(request, client);
+        let options = match transport {
+            TransportKind::Stream => SessionOptions::Stream(
+                changed::<TlsOptions>(request, client, KeyPart::Session).map(session_identity),
+            ),
             #[cfg(feature = "http3")]
-            TransportKind::Quic => selected.include::<QuicOptions>(request, client),
-        }
-
-        let options = selected.key(request);
+            TransportKind::Quic => SessionOptions::Quic(
+                changed::<QuicOptions>(request, client, KeyPart::Session).map(session_identity),
+            ),
+        };
         let origin = req.uri().clone();
         let route = route.clone();
-        let hash = HASHER.hash_one((transport, &origin, &route, &options));
+        let hash = HASHER.hash_one((&origin, &route, &overrides, &options));
         Self {
-            transport,
             origin,
             route,
+            overrides,
             options,
             hash,
         }
@@ -178,9 +180,9 @@ impl SessionKey {
 impl PartialEq for SessionKey {
     fn eq(&self, other: &Self) -> bool {
         self.hash == other.hash
-            && self.transport == other.transport
             && self.origin == other.origin
             && self.route == other.route
+            && self.overrides == other.overrides
             && self.options == other.options
     }
 }
@@ -190,6 +192,13 @@ impl Eq for SessionKey {}
 impl Hash for SessionKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(self.hash);
+    }
+}
+
+fn session_identity<O: ScopedConfig>(options: &Cached<O>) -> ScopedIdentity<Arc<O::Session>> {
+    ScopedIdentity {
+        hash: options.hash(KeyPart::Session),
+        value: Arc::new(options.get().session_identity()),
     }
 }
 
@@ -382,8 +391,11 @@ impl TlsSessionStore for LruTlsSessionStore {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
     use super::*;
     use crate::{
+        group::Group,
         http1::Http1Options,
         protocol::Protocol,
         tls::{AlpnProtocol, AlpsProtocol, TlsOptionsBuilder},

@@ -33,7 +33,7 @@ use super::{
 #[cfg(feature = "http3")]
 use crate::protocol::TransportKind;
 use crate::{
-    config::{RequestConfig, connect::Extensions},
+    config::{connect::Extensions, request::RequestConfig},
     conn::request::ConnectRequest,
     ext::UriExt,
     protocol::Protocol,

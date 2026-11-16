@@ -15,6 +15,7 @@ use std::{
     error::Error as StdError,
     fmt,
     future::Future,
+    hash::{Hash, Hasher},
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::pin,
@@ -32,7 +33,7 @@ use {
 
 pub(super) use self::race::race;
 use crate::{
-    config::connect::{Extensions, impl_connect_config},
+    config::connect::{Extensions, impl_connect_config_value},
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
     rt::{BoxConnection, DynRuntime, Timer as _},
@@ -69,8 +70,11 @@ pub(super) enum SocketRequest {
 }
 
 /// The interface name participates in reuse identity by value, regardless of ownership.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct Interface(Cow<'static, str>);
+#[derive(Clone, Debug)]
+pub(crate) enum Interface {
+    Static(&'static str),
+    Shared(Arc<str>),
+}
 
 /// Connection failure with an optional attempted address and underlying cause.
 pub struct ConnectError {
@@ -304,9 +308,43 @@ impl Dialer {
     }
 }
 
-impl_connect_config!(Ipv4Addr, SOCKET);
-impl_connect_config!(Ipv6Addr, SOCKET);
-impl_connect_config!(Interface, SOCKET);
+impl_connect_config_value!(Ipv4Addr, SOCKET);
+impl_connect_config_value!(Ipv6Addr, SOCKET);
+impl_connect_config_value!(Interface, SOCKET);
+
+// ===== impl Interface =====
+
+impl Interface {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Static(name) => name,
+            Self::Shared(name) => name,
+        }
+    }
+}
+
+impl From<Cow<'static, str>> for Interface {
+    fn from(name: Cow<'static, str>) -> Self {
+        match name {
+            Cow::Borrowed(name) => Self::Static(name),
+            Cow::Owned(name) => Self::Shared(Arc::from(name)),
+        }
+    }
+}
+
+impl PartialEq for Interface {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for Interface {}
+
+impl Hash for Interface {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
 
 /// Returns whether the effective bindings match the client's shared QUIC endpoints.
 /// All fields must match, including the address family this dial does not use.
@@ -362,7 +400,7 @@ pub(crate) fn interface<'a>(request: &'a Extensions, client: &'a Extensions) -> 
     request
         .with_base(client)
         .get_ref::<Interface>()
-        .map(|interface| interface.0.as_ref())
+        .map(Interface::as_str)
 }
 
 cfg_select! {
@@ -380,7 +418,7 @@ cfg_select! {
     ) => {
         /// Selects the interface name stored in this connection configuration.
         pub(crate) fn set_interface(config: &mut Extensions, interface: Cow<'static, str>) {
-            config.insert(Interface(interface));
+            config.insert(Interface::from(interface));
         }
 
         /// Applies the selected interface before binding or connecting the socket.
@@ -554,7 +592,7 @@ mod tests {
             Some(Ipv4Addr::LOCALHOST),
             Some(Ipv6Addr::LOCALHOST),
         );
-        client.insert(Interface(Cow::Borrowed("lo")));
+        client.insert(Interface::Static("lo"));
         let mut request = Extensions::default();
         assert_eq!(
             local_addresses(&request, &client),
@@ -569,7 +607,7 @@ mod tests {
             (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::UNSPECIFIED))
         );
         assert_eq!(interface(&request, &client), Some("lo"));
-        request.insert(Interface(Cow::Borrowed("eth0")));
+        request.insert(Interface::Static("eth0"));
         assert_eq!(interface(&request, &client), Some("eth0"));
     }
 }

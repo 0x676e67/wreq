@@ -27,7 +27,7 @@ use std::{
 pub use btls::ssl::{EchGreaseAead, ExtensionType, KeyShare, Tls13Cipher};
 use btls::ssl::{SslContextBuilder, SslVerifyMode};
 use bytes::{BufMut, Bytes, BytesMut};
-use compress::CertificateCompressor;
+use compress::{CertificateCompressionAlgorithm, CertificateCompressor};
 use connector::StreamTls;
 use derive_deftly::Deftly;
 use educe::Educe;
@@ -42,7 +42,7 @@ use trust::{CertStore, Identity};
 use crate::{
     Error,
     config::connect::{
-        ConfigScope, ConnectConfig, ContextKey, Extensions, derive_deftly_template_ConfigKey,
+        Cached, ConfigScope, Extensions, KeyPart, ScopedConfig, derive_deftly_template_ConfigKey,
     },
     sync::Mutex,
 };
@@ -200,7 +200,11 @@ pub struct TlsOptionsBuilder {
 #[derive(Debug, Clone, Educe, Deftly)]
 #[educe(Default)]
 #[derive_deftly(ConfigKey)]
-#[deftly(config_key(scope = "ConfigScope::TLS"))]
+#[deftly(config_key(
+    scope = "ConfigScope::TLS",
+    context_key = "TlsContextIdentity",
+    session_key = "TlsSessionIdentity"
+))]
 pub struct TlsOptions {
     /// Protocols offered through ALPN, in preference order ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
     ///
@@ -389,7 +393,11 @@ pub struct TlsOptions {
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context, map = "|compressor| compressor.algorithm()"))]
+    #[deftly(config_key(
+        context,
+        map = "|compressor| compressor.algorithm()",
+        map_type = "CertificateCompressionAlgorithm"
+    ))]
     pub certificate_compressors: Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
 
     /// TLS extension order used for permutation.
@@ -420,9 +428,15 @@ pub(crate) struct Config {
 ///
 /// Contexts are stored without per-connection callbacks or session caches; each connection
 /// sets its own on a copy.
-struct ContextCache<T, O> {
+struct ContextCache<T, O: ScopedConfig> {
     client: T,
-    requests: Mutex<LruCache<ContextKey<O>, T>>,
+    requests: Mutex<LruCache<ScopedIdentity<O::Context>, T>>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct ScopedIdentity<T> {
+    hash: u64,
+    value: T,
 }
 
 /// Request contexts kept per client, least recently used evicted first.
@@ -767,7 +781,7 @@ impl Default for Config {
 
 // ===== impl ContextCache =====
 
-impl<T: Clone, O: ConnectConfig> ContextCache<T, O> {
+impl<T: Clone, O: ScopedConfig> ContextCache<T, O> {
     /// Starts with the client's context and no request contexts.
     fn new(client: T) -> Self {
         Self {
@@ -776,24 +790,36 @@ impl<T: Clone, O: ConnectConfig> ContextCache<T, O> {
         }
     }
 
-    /// Looks up the compiled context for `key`, or returns the client's context for `None`.
+    /// Looks up the compiled context for `options`, or returns the client's context for `None`.
     /// A missing request context is compiled outside the lock, so concurrent misses may
     /// compile it more than once.
     fn get(
         &self,
-        key: Option<ContextKey<O>>,
+        options: Option<&Cached<O>>,
         compile: impl FnOnce(&O) -> crate::Result<T>,
     ) -> crate::Result<T> {
-        let Some(key) = key else {
+        let Some(options) = options else {
             return Ok(self.client.clone());
+        };
+        let key = ScopedIdentity {
+            hash: options.hash(KeyPart::Context),
+            value: options.get().context_identity(),
         };
         if let Some(context) = self.requests.lock().get(&key) {
             return Ok(context.clone());
         }
-        let context = compile(key.get())?;
+        let context = compile(options.get())?;
         // An evicted context is freed after the lock is released.
         let _evicted = self.requests.lock().push(key, context.clone());
         Ok(context)
+    }
+}
+
+// ===== impl ScopedIdentity =====
+
+impl<T> Hash for ScopedIdentity<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash);
     }
 }
 

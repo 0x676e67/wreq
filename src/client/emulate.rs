@@ -3,7 +3,7 @@ use http::HeaderMap;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
-    config::connect::{Extension, Extensions},
+    config::connect::{ConnectConfigValue, Extension, Extensions},
     header::OrigHeaderMap,
     http1::Http1Options,
     tls::TlsOptions,
@@ -27,7 +27,7 @@ pub trait IntoEmulation {
 /// Protocol options an [`Emulation`] carries: [`TlsOptions`], [`Http1Options`],
 /// and options for enabled HTTP/2 and HTTP/3 protocols.
 /// This trait is sealed.
-pub trait ProtocolConfig: Extension {}
+pub trait ProtocolConfig: Extension + ConnectConfigValue {}
 
 /// Collects headers, header order and protocol options for an [`Emulation`].
 /// Building transfers those settings without cloning them.

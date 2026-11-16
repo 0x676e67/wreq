@@ -4,6 +4,7 @@ use std::{
     fmt,
     hash::{BuildHasher, Hash, Hasher},
     net::{Ipv4Addr, Ipv6Addr},
+    sync::Arc,
 };
 
 use http::{Uri, uri::PathAndQuery};
@@ -15,7 +16,7 @@ use {crate::quic::QuicOptions, netty::http3::Http3Options};
 
 use super::dialer::Interface;
 use crate::{
-    config::connect::{Extension, Extensions, HASHER, KeyPart, Projection, Selection},
+    config::connect::{Extension, Extensions, HASHER, KeyPart, Whole, changed},
     error::BoxError,
     group::Group,
     protocol::Protocol,
@@ -27,22 +28,49 @@ use crate::{
 /// Keeps the origin, protocol choice and configuration fixed across retries and proxy hops.
 #[derive(Clone)]
 pub struct ConnectRequest {
-    origin: Uri,
-    protocol: Protocol,
+    key: ConnectionKey,
     connect_options: Extensions,
-    pool_selection: Selection,
-    pool_hash: u64,
 }
 
 /// Reuse identity for pool entries, extended CONNECT probes and QUIC address tokens.
-/// Clones share configuration values.
 #[derive(Clone)]
 pub(crate) struct ConnectionKey {
     origin: Uri,
-    /// Selection after inheriting the client's; configuration, not the negotiated version.
     protocol: Protocol,
-    overrides: Projection,
+    overrides: Option<Arc<PoolOverrides>>,
     hash: u64,
+}
+
+#[derive(Eq, PartialEq, Hash)]
+struct PoolOverrides {
+    common: CommonOverrides,
+    protocol: ProtocolOverrides,
+}
+
+/// Route and socket settings shared by the pool and session identities.
+#[derive(Clone, Default, Eq, PartialEq, Hash)]
+pub(crate) struct CommonOverrides {
+    group: Option<Group>,
+    matcher: Option<Whole<Matcher>>,
+    ipv4: Option<Ipv4Addr>,
+    ipv6: Option<Ipv6Addr>,
+    interface: Option<Interface>,
+}
+
+#[derive(Eq, PartialEq, Hash)]
+enum ProtocolOverrides {
+    None,
+    Stream {
+        tls: Option<Whole<TlsOptions>>,
+        http1: Option<Whole<Http1Options>>,
+        #[cfg(feature = "http2")]
+        http2: Option<Whole<Http2Options>>,
+    },
+    #[cfg(feature = "http3")]
+    Quic {
+        quic: Option<Whole<QuicOptions>>,
+        http3: Option<Whole<Http3Options>>,
+    },
 }
 
 // ===== impl ConnectRequest =====
@@ -50,8 +78,7 @@ pub(crate) struct ConnectionKey {
 impl ConnectRequest {
     /// Validates the absolute target and freezes the connection inputs.
     ///
-    /// The origin keeps scheme and authority with `/` as the path. The pool key uses the
-    /// resolved protocol and its request overrides that differ from the client's settings.
+    /// The origin keeps scheme and authority with `/` as the path.
     ///
     /// Returns an error if the URI lacks a scheme or authority.
     pub(crate) fn new(
@@ -67,28 +94,24 @@ impl ConnectRequest {
             .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
         let protocol = protocol.unwrap_or(client_protocol);
-        let pool_selection = pool_selection(protocol, &connect_options, client_options);
-        let pool_hash = pool_hash(&origin, protocol, pool_selection);
+        let key = ConnectionKey::new(origin, protocol, &connect_options, client_options);
+
         Ok(Self {
-            origin,
-            protocol,
+            key,
             connect_options,
-            pool_selection,
-            pool_hash,
         })
     }
 
     /// Returns the original scheme and authority with `/` as the path.
-    /// Pool and session keys use this origin, not the request's path or query.
     /// Proxy routing leaves it unchanged.
     pub(crate) fn uri(&self) -> &Uri {
-        &self.origin
+        &self.key.origin
     }
 
     /// Returns the protocol selection after inheriting the client's preference.
-    /// Frozen before pool checkout; proxy routing does not change this selection.
+    /// Frozen before pool checkout.
     pub(crate) fn resolved_protocol(&self) -> Protocol {
-        self.protocol
+        self.key.protocol
     }
 
     /// All request connection options, including those outside the pool identity.
@@ -96,20 +119,9 @@ impl ConnectRequest {
         &self.connect_options
     }
 
-    /// Returns the override used by the pool entry's handshake builder.
-    #[inline]
-    pub(crate) fn pool_override<T: Extension>(&self) -> Option<&T> {
-        self.pool_selection.get_ref::<T>(&self.connect_options)
-    }
-
     /// Returns the reuse identity of this origin and configuration.
     pub(crate) fn key(&self) -> ConnectionKey {
-        ConnectionKey {
-            origin: self.origin.clone(),
-            protocol: self.protocol,
-            overrides: self.pool_selection.key(&self.connect_options),
-            hash: self.pool_hash,
-        }
+        self.key.clone()
     }
 
     /// Returns the identity of this origin and configuration under another resolved protocol.
@@ -119,28 +131,47 @@ impl ConnectRequest {
         protocol: Protocol,
         client_options: &Extensions,
     ) -> ConnectionKey {
-        let selection = pool_selection(protocol, &self.connect_options, client_options);
-        ConnectionKey {
-            origin: self.origin.clone(),
+        ConnectionKey::new(
+            self.uri().clone(),
             protocol,
-            overrides: selection.key(&self.connect_options),
-            hash: pool_hash(&self.origin, protocol, selection),
-        }
+            &self.connect_options,
+            client_options,
+        )
     }
 }
 
 impl fmt::Debug for ConnectRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ConnectRequest")
-            .field("origin", &self.origin)
-            .field("protocol", &self.protocol)
-            .field("options", &self.pool_selection.key(&self.connect_options))
-            .field("pool_hash", &self.pool_hash)
+            .field("key", &self.key)
+            .field("options", &self.connect_options)
             .finish()
     }
 }
 
 // ===== impl ConnectionKey =====
+
+impl ConnectionKey {
+    fn new(origin: Uri, protocol: Protocol, request: &Extensions, client: &Extensions) -> Self {
+        let overrides = (!request.is_empty())
+            .then(|| PoolOverrides {
+                common: CommonOverrides::new(request, client),
+                protocol: ProtocolOverrides::new(protocol, request, client),
+            })
+            .filter(|overrides| {
+                !overrides.common.is_empty()
+                    || !matches!(overrides.protocol, ProtocolOverrides::None)
+            });
+        let hash = HASHER.hash_one((&origin, protocol, &overrides));
+
+        Self {
+            origin,
+            protocol,
+            overrides: overrides.map(Arc::new),
+            hash,
+        }
+    }
+}
 
 impl PartialEq for ConnectionKey {
     fn eq(&self, other: &Self) -> bool {
@@ -164,45 +195,87 @@ impl fmt::Debug for ConnectionKey {
         f.debug_struct("ConnectionKey")
             .field("origin", &self.origin)
             .field("protocol", &self.protocol)
-            .field("overrides", &self.overrides)
+            .field("hash", &self.hash)
             .finish()
     }
 }
 
-fn pool_selection(protocol: Protocol, request: &Extensions, client: &Extensions) -> Selection {
-    let mut selection = Selection::new(KeyPart::Whole);
-    if request.is_empty() {
-        return selection;
-    }
+// ===== impl CommonOverrides =====
 
-    selection.include::<Group>(request, client);
-    selection.include::<Matcher>(request, client);
-    selection.include::<Ipv4Addr>(request, client);
-    selection.include::<Ipv6Addr>(request, client);
-    selection.include::<Interface>(request, client);
-
-    match protocol {
-        Protocol::Auto => {
-            selection.include::<Http1Options>(request, client);
-            #[cfg(feature = "http2")]
-            selection.include::<Http2Options>(request, client);
+impl CommonOverrides {
+    pub(crate) fn new(request: &Extensions, client: &Extensions) -> Self {
+        fn changed_value<T: Extension + Clone + Eq>(
+            request: &Extensions,
+            client: &Extensions,
+        ) -> Option<T> {
+            let value = request.get_ref::<T>()?;
+            (client.get_ref::<T>() != Some(value)).then(|| value.clone())
         }
-        Protocol::Http1 => selection.include::<Http1Options>(request, client),
-        #[cfg(feature = "http2")]
-        Protocol::Http2 => selection.include::<Http2Options>(request, client),
-        #[cfg(feature = "http3")]
-        Protocol::Http3 => {
-            selection.include::<Http3Options>(request, client);
-            selection.include::<QuicOptions>(request, client);
-            return selection;
+
+        if request.is_empty() {
+            return Self::default();
+        }
+
+        Self {
+            group: changed_value(request, client),
+            matcher: changed::<Matcher>(request, client, KeyPart::Whole).map(Whole::new),
+            ipv4: changed_value(request, client),
+            ipv6: changed_value(request, client),
+            interface: changed_value(request, client),
         }
     }
-    selection.include::<TlsOptions>(request, client);
-    selection
+
+    fn is_empty(&self) -> bool {
+        self.group.is_none()
+            && self.matcher.is_none()
+            && self.ipv4.is_none()
+            && self.ipv6.is_none()
+            && self.interface.is_none()
+    }
 }
 
-fn pool_hash(origin: &Uri, protocol: Protocol, selection: Selection) -> u64 {
-    HASHER.hash_one((origin, protocol, selection.hash()))
+// ===== impl ProtocolOverrides =====
+
+impl ProtocolOverrides {
+    fn new(protocol: Protocol, request: &Extensions, client: &Extensions) -> Self {
+        #[cfg(feature = "http3")]
+        if protocol == Protocol::Http3 {
+            let quic = changed::<QuicOptions>(request, client, KeyPart::Whole).map(Whole::new);
+            let http3 = changed::<Http3Options>(request, client, KeyPart::Whole).map(Whole::new);
+            return if quic.is_some() || http3.is_some() {
+                Self::Quic { quic, http3 }
+            } else {
+                Self::None
+            };
+        }
+
+        let tls = changed::<TlsOptions>(request, client, KeyPart::Whole).map(Whole::new);
+        let http1 = if matches!(protocol, Protocol::Auto | Protocol::Http1) {
+            changed::<Http1Options>(request, client, KeyPart::Whole).map(Whole::new)
+        } else {
+            None
+        };
+        #[cfg(feature = "http2")]
+        let http2 = if matches!(protocol, Protocol::Auto | Protocol::Http2) {
+            changed::<Http2Options>(request, client, KeyPart::Whole).map(Whole::new)
+        } else {
+            None
+        };
+
+        let has_override = tls.is_some() || http1.is_some();
+        #[cfg(feature = "http2")]
+        let has_override = has_override || http2.is_some();
+        if has_override {
+            Self::Stream {
+                tls,
+                http1,
+                #[cfg(feature = "http2")]
+                http2,
+            }
+        } else {
+            Self::None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -210,7 +283,7 @@ mod tests {
     use std::borrow::Cow;
 
     use super::*;
-    use crate::{config::connect::ConnectConfig, tls::AlpnProtocol};
+    use crate::{config::connect::ScopedConfig, tls::AlpnProtocol};
 
     impl ConnectRequest {
         /// Freezes `connect_options` for a client without options in automatic mode.
@@ -280,7 +353,10 @@ mod tests {
             with(Extensions::default(), tls(AlpnProtocol::HTTP1)),
             &client_options,
         );
-        assert_ne!(plain, changed.key());
+        let mut changed = changed.key();
+        assert_ne!(plain, changed);
+        changed.hash = plain.hash;
+        assert_ne!(plain, changed);
     }
 
     #[test]
@@ -388,7 +464,12 @@ mod tests {
             let h3_key = key(h3, Extensions::default(), &client_options);
             let auto_key = key(None, Extensions::default(), &client_options);
             let tcp = with(http1, tls(AlpnProtocol::HTTP1));
-            assert_eq!(key(h3, tcp, &client_options), h3_key);
+            assert_eq!(key(h3, tcp.clone(), &client_options), h3_key);
+
+            let unused_tls = Arc::downgrade(&tcp.get_arc::<TlsOptions>().unwrap());
+            let grouped = key(h3, with(tcp, Group::new("tenant")), &client_options);
+            std::assert_matches!(unused_tls.upgrade(), None);
+            assert_ne!(grouped, h3_key);
             for connect_options in [
                 with(Extensions::default(), http3),
                 with(Extensions::default(), quic),
@@ -426,7 +507,7 @@ mod tests {
         static SECOND: Compressor = Compressor(CertificateCompressionAlgorithm::ZLIB);
         static BROTLI: Compressor = Compressor(CertificateCompressionAlgorithm::BROTLI);
 
-        fn check_parts<T: ConnectConfig>(
+        fn check_parts<T: ScopedConfig>(
             options: impl Fn(Option<Vec<&'static dyn CertificateCompressor>>) -> T,
         ) {
             let first = options(Some(vec![&FIRST, &BROTLI]));
@@ -446,6 +527,10 @@ mod tests {
             }
             assert_eq!(first.hash_parts(), second.hash_parts());
             assert_eq!(absent.hash_parts(), empty.hash_parts());
+
+            assert!(first.context_identity() == second.context_identity());
+            assert!(first.session_identity() != reordered.session_identity());
+            assert!(absent.context_identity() == empty.context_identity());
         }
 
         let options = |compressors: Option<Vec<&'static dyn CertificateCompressor>>| TlsOptions {

@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     Error, Result,
-    config::connect::{Extensions, KeyPart},
+    config::connect::{Cached, Extensions, KeyPart, changed},
     conn::request::ConnectRequest,
     protocol::TransportKind,
     quic::QuicOptions,
@@ -123,14 +123,16 @@ impl QuicTls {
         }
 
         let connect_options = request.connect_options();
-        let key = connect_options.context_key::<QuicOptions>(&inner.connect_options);
-        let mut crypto = inner
-            .contexts
-            .get(key, |options| compile(&inner.config, Some(options)))?;
+        let context_options =
+            changed::<QuicOptions>(connect_options, &inner.connect_options, KeyPart::Context);
+        let mut crypto = inner.contexts.get(context_options, |options| {
+            compile(&inner.config, Some(options))
+        })?;
 
-        let options = connect_options
-            .different_arc::<QuicOptions>(&inner.connect_options, KeyPart::Whole)
-            .or_else(|| inner.options.clone());
+        let options =
+            changed::<QuicOptions>(connect_options, &inner.connect_options, KeyPart::Whole)
+                .map(Cached::arc)
+                .or_else(|| inner.options.clone());
         let resumption = options
             .as_ref()
             .is_some_and(|options| options.pre_shared_key);

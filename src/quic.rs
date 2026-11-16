@@ -14,7 +14,10 @@ use educe::Educe;
 use crate::{
     Error,
     config::connect::{ConfigScope, derive_deftly_template_ConfigKey},
-    tls::{EchGrease, ExtensionType, KeyShare, Tls13Cipher, compress::CertificateCompressor},
+    tls::{
+        EchGrease, ExtensionType, KeyShare, Tls13Cipher,
+        compress::{CertificateCompressionAlgorithm, CertificateCompressor},
+    },
 };
 
 /// Builder for [`QuicOptions`].
@@ -34,7 +37,12 @@ pub struct QuicOptionsBuilder {
 #[derive(Debug, Clone, Educe, Deftly)]
 #[educe(Default)]
 #[derive_deftly(ConfigKey)]
-#[deftly(config_key(scope = "ConfigScope::QUIC", transport))]
+#[deftly(config_key(
+    scope = "ConfigScope::QUIC",
+    transport,
+    context_key = "QuicContextIdentity",
+    session_key = "QuicSessionIdentity"
+))]
 pub struct QuicOptions {
     /// Closes the connection after this much inactivity, advertised as `max_idle_timeout`
     /// ([RFC 9000 Section 10.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-10.1)).
@@ -159,7 +167,11 @@ pub struct QuicOptions {
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context, map = "|compressor| compressor.algorithm()"))]
+    #[deftly(config_key(
+        context,
+        map = "|compressor| compressor.algorithm()",
+        map_type = "CertificateCompressionAlgorithm"
+    ))]
     pub certificate_compressors: Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
 
     /// Signature algorithms for delegated credentials ([RFC 9345](https://datatracker.ietf.org/doc/html/rfc9345)).
@@ -536,7 +548,7 @@ impl QuicOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::connect::{ConnectConfig, KeyPart};
+    use crate::config::connect::{ConnectConfigValue, KeyPart, ScopedConfig};
 
     #[test]
     fn transport_rejects_values_the_connection_cannot_use() {
@@ -612,6 +624,10 @@ mod tests {
                     .build(),
                 [false, false, false],
             ),
+            (
+                QuicOptions::builder().key_shares(Vec::new()).build(),
+                [false, false, true],
+            ),
             // Negotiation and transport bind neither contexts nor sessions.
             (
                 QuicOptions::builder().enable_alps_protocol(true).build(),
@@ -626,6 +642,14 @@ mod tests {
             assert_eq!(options.eq_part(&base, KeyPart::Whole), whole);
             assert_eq!(options.eq_part(&base, KeyPart::Session), session);
             assert_eq!(options.eq_part(&base, KeyPart::Context), context);
+            assert_eq!(
+                options.session_identity() == base.session_identity(),
+                session
+            );
+            assert_eq!(
+                options.context_identity() == base.context_identity(),
+                context
+            );
             let hashes = options.hash_parts();
             let base_hashes = base.hash_parts();
             for (index, equal) in [whole, session, context].into_iter().enumerate() {

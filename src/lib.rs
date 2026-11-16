@@ -299,9 +299,8 @@
 mod trace;
 #[macro_use]
 mod ext;
-#[macro_use]
-mod config;
 mod client;
+mod config;
 mod conn;
 mod error;
 mod group;
