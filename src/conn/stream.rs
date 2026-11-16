@@ -11,7 +11,7 @@ use tower::{BoxError, Service};
 use crate::{
     conn::{
         Conn,
-        dialer::{Dialer, SocketRequest},
+        dialer::{Dialer, SocketBindings, SocketRequest},
         request::ConnectAttempt,
         route::Route,
     },
@@ -77,7 +77,7 @@ async fn connect(
         unix => !dialer.nodelay() && !matches!(route, Route::Unix(_)),
         _ => !dialer.nodelay(),
     };
-    let bindings = dialer.bindings(request.bindings());
+    let bindings = SocketBindings::from_config(request.config());
     let mut tls = match tls.for_request(&request) {
         Ok(tls) => tls,
         Err(error) if matches!(route, Route::Http(_)) && !is_https => {
@@ -130,7 +130,16 @@ async fn connect(
             version,
             dns,
         } => {
-            let io = socks::connect(&dialer, &request, deadline, &proxy, version, dns).await?;
+            let io = socks::connect(
+                &dialer,
+                request.uri(),
+                bindings,
+                deadline,
+                &proxy,
+                version,
+                dns,
+            )
+            .await?;
             MaybeHttpsStream::Http(io)
         }
         #[cfg(unix)]

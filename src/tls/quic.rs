@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     Error, Result,
-    config::connect::{Cached, ConnectConfig, KeyScope},
+    config::connect::{Cached, ConnectConfig, KeyScope, changed},
     conn::request::ConnectRequest,
     protocol::TransportKind,
     quic::QuicOptions,
@@ -122,13 +122,12 @@ impl QuicTls {
         }
 
         let request_config = request.config();
-        let context_options = request_config.changed::<QuicOptions>(KeyScope::Context);
+        let context_options = changed::<QuicOptions>(request_config, KeyScope::Context);
         let mut crypto = inner.contexts.get(context_options, |options| {
             compile(&inner.tls, Some(options))
         })?;
 
-        let options = request_config
-            .changed::<QuicOptions>(KeyScope::Full)
+        let options = changed::<QuicOptions>(request_config, KeyScope::Full)
             .map(Cached::arc)
             .or_else(|| inner.options.clone());
         let resumption = options

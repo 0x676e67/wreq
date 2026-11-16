@@ -72,7 +72,9 @@ use self::{
 };
 use super::proto::{Established, http1};
 use crate::{
-    config::connect::{Cached, ConnectConfig, ConnectConfigValue, ConnectExtension, KeyScope},
+    config::connect::{
+        Cached, ConnectConfig, ConnectConfigValue, ConnectExtension, KeyScope, changed,
+    },
     conn::{
         Conn,
         request::{ConnectRequest, ConnectionKey},
@@ -280,7 +282,7 @@ where
     B: Clone,
     O: ConnectExtension<Stored = Cached<O>> + ConnectConfigValue,
 {
-    match req.config().changed::<O>(KeyScope::Full) {
+    match changed::<O>(req.config(), KeyScope::Full) {
         Some(options) => Arc::new(apply(B::clone(builder), options.get().clone())),
         None => builder.clone(),
     }

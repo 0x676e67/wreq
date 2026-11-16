@@ -1,9 +1,4 @@
-//! Connection options shared by client defaults and request overrides.
-//!
-//! [`ConnectConfig`] stores connection-scoped settings in a type-keyed extension table rather
-//! than a closed struct. Request configurations bind the client's defaults as a fallback layer
-//! through [`ConnectConfig::with_base`], so downstream services can read effective values or
-//! compute request overrides from a single handle.
+//! Connection options and the read-only view used to inherit client defaults.
 
 mod identity;
 mod macros;
@@ -15,25 +10,28 @@ use std::{
 };
 
 pub(crate) use self::{
-    identity::{Cached, ConnectConfigValue, Full, HASHER, KeyScope, ScopedConfig},
+    identity::{
+        Cached, ConnectConfigValue, Full, HASHER, KeyScope, ScopedConfig, changed, changed_value,
+    },
     macros::{derive_deftly_template_ConfigKey, impl_connect_extension},
 };
+use crate::http1::Http1Options;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 #[cfg(feature = "http3")]
 use crate::http3::Http3Options;
-use crate::{conn::dialer::SocketBindings, http1::Http1Options};
 
-/// Connection settings stored on a client or an individual request.
-///
-/// Request configurations bind the client's defaults via [`ConnectConfig::with_base`], allowing
-/// effective lookups and override diffs without passing `(request_config, client_config)` pairs.
+/// One set of connection options, shared until edited.
 #[derive(Clone, Default)]
 pub(crate) struct ConnectConfig {
-    /// Settings explicitly configured on this builder or request.
-    local: Option<Arc<Vec<Entry>>>,
-    /// Client-wide defaults bound behind a request configuration.
-    base: Option<Arc<Vec<Entry>>>,
+    entries: Option<Arc<Vec<Entry>>>,
+}
+
+/// Reads connection options with the request's values taking precedence over client defaults.
+#[derive(Clone, Copy)]
+pub(crate) struct ConnectConfigRef<'a> {
+    local: &'a ConnectConfig,
+    base: Option<&'a ConnectConfig>,
 }
 
 /// Maps a connection option type to how [`ConnectConfig`] stores and borrows it.
@@ -73,19 +71,19 @@ impl_connect_extension! {
 // ===== impl ConnectConfig =====
 
 impl ConnectConfig {
-    /// Stores a setting in the local layer, replacing any previous value of the same type.
+    /// Stores a setting, replacing any previous value of the same type.
     pub(crate) fn insert<T: ConnectExtension>(&mut self, value: T) -> &mut Self {
-        let entries = Arc::make_mut(self.local.get_or_insert_with(Arc::default));
+        let entries = Arc::make_mut(self.entries.get_or_insert_with(Arc::default));
         upsert(entries, Entry::new::<T>(value));
         self
     }
 
-    /// Sets or clears a setting in the local layer; `None` removes only this type's local value.
+    /// Sets the value of a type, or removes it when given `None`.
     pub(crate) fn set<T: ConnectExtension>(&mut self, value: Option<T>) -> &mut Self {
         if let Some(value) = value {
             return self.insert(value);
         }
-        let Some(entries) = &mut self.local else {
+        let Some(entries) = &mut self.entries else {
             return self;
         };
         let Some(index) = entries
@@ -95,101 +93,92 @@ impl ConnectConfig {
             return self;
         };
         if entries.len() == 1 {
-            self.local = None;
+            self.entries = None;
         } else {
             Arc::make_mut(entries).swap_remove(index);
         }
         self
     }
 
-    /// Overlays all populated local settings from `other`, leaving unmentioned types intact.
+    /// Overlays the settings from `other`, leaving unmentioned types intact.
     pub(crate) fn extend(&mut self, other: Self) {
-        let Some(other) = other.local else {
+        let Some(other) = other.entries else {
             return;
         };
-        match &mut self.local {
+        match &mut self.entries {
             Some(entries) => {
                 let entries = Arc::make_mut(entries);
                 for entry in other.iter() {
                     upsert(entries, entry.clone());
                 }
             }
-            None => self.local = Some(other),
+            None => self.entries = Some(other),
         }
     }
 
-    /// Binds the client defaults behind this request overlay without merging or copying either set.
-    pub(crate) fn with_base(mut self, base_config: &Self) -> Self {
-        self.base = base_config
-            .local
-            .clone()
-            .or_else(|| base_config.base.clone());
-        self
-    }
-
-    /// Returns whether no local settings have been inserted.
+    /// Returns whether this set has no options.
     pub(crate) fn is_empty(&self) -> bool {
-        self.local.is_none()
+        self.entries.is_none()
     }
 
-    /// Returns the effective setting, preferring the local value over the bound base.
+    /// Borrows the setting stored for `T`.
     pub(crate) fn get_ref<T: ConnectExtension>(&self) -> Option<&T> {
         self.get::<T>().map(T::borrow)
     }
 
-    /// Returns a shared handle to the effective cached option.
+    /// Returns a shared handle to the cached option.
     pub(crate) fn get_arc<T: ConnectExtension<Stored = Cached<T>>>(&self) -> Option<Arc<T>> {
         self.get::<T>().map(Cached::arc)
     }
 
-    /// Returns the local cached option only when it differs from the bound base for `scope`.
-    pub(crate) fn changed<T>(&self, scope: KeyScope) -> Option<&Cached<T>>
-    where
-        T: ConnectExtension<Stored = Cached<T>> + ConnectConfigValue,
-    {
-        let value = self.local_get::<T>()?;
-        (!self
-            .base_get::<T>()
-            .is_some_and(|other| value.same(other, scope)))
-        .then_some(value)
-    }
-
-    /// Clones the local setting only when it differs from the bound base.
-    pub(crate) fn changed_value<T: ConnectExtension + Clone + Eq>(&self) -> Option<T> {
-        let value = self.local_get::<T>().map(T::borrow)?;
-        (self.base_get::<T>().map(T::borrow) != Some(value)).then(|| value.clone())
-    }
-
-    /// Extracts the effective socket bindings from this configuration.
-    pub(crate) fn bindings(&self) -> SocketBindings {
-        SocketBindings::from_config(self)
-    }
-
-    /// Looks up the stored representation in the local layer, falling back to the bound base.
+    /// Looks up the stored representation of an option.
     fn get<T: ConnectExtension>(&self) -> Option<&T::Stored> {
-        self.local_get::<T>().or_else(|| self.base_get::<T>())
-    }
-
-    /// Looks up the stored representation in the local layer only.
-    fn local_get<T: ConnectExtension>(&self) -> Option<&T::Stored> {
-        find::<T>(self.local.as_deref()?)
-    }
-
-    /// Looks up the stored representation in the bound base layer only.
-    fn base_get<T: ConnectExtension>(&self) -> Option<&T::Stored> {
-        find::<T>(self.base.as_deref()?)
+        find::<T>(self.entries.as_deref()?)
     }
 }
 
 impl fmt::Debug for ConnectConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut set = f.debug_set();
-        if let Some(entries) = &self.local {
+        if let Some(entries) = &self.entries {
             for entry in entries.iter() {
                 set.entry(&entry.type_name);
             }
         }
         set.finish()
+    }
+}
+
+// ===== impl ConnectConfigRef =====
+
+impl<'a> ConnectConfigRef<'a> {
+    /// Reads the request's options with the client's options as defaults.
+    pub(crate) fn new(request_config: &'a ConnectConfig, client_config: &'a ConnectConfig) -> Self {
+        Self {
+            local: request_config,
+            base: Some(client_config),
+        }
+    }
+
+    /// Returns the options set on the request itself.
+    pub(crate) fn local(&self) -> &'a ConnectConfig {
+        self.local
+    }
+
+    /// Borrows the effective value of `T`, checking the request first.
+    pub(crate) fn get_ref<T: ConnectExtension>(&self) -> Option<&'a T> {
+        self.local
+            .get_ref::<T>()
+            .or_else(|| self.base.and_then(ConnectConfig::get_ref::<T>))
+    }
+}
+
+impl<'a> From<&'a ConnectConfig> for ConnectConfigRef<'a> {
+    fn from(config: &'a ConnectConfig) -> Self {
+        Self {
+            local: config,
+            base: None,
+        }
     }
 }
 

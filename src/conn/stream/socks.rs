@@ -7,10 +7,7 @@ use netty::proxy::socks::{DnsResolve, SocksConnector, SocksError, Version};
 use tower::{ServiceExt, service_fn};
 
 use crate::{
-    conn::{
-        dialer::{Dialer, SocketRequest},
-        request::ConnectRequest,
-    },
+    conn::dialer::{Dialer, SocketBindings, SocketRequest},
     dns::Name,
     ext::UriExt,
     proxy::matcher::Intercept,
@@ -23,14 +20,14 @@ use crate::{
 /// resolves the origin locally or passes its hostname to the proxy.
 pub(super) async fn connect(
     dialer: &Dialer,
-    request: &ConnectRequest,
+    target: &Uri,
+    bindings: SocketBindings,
     deadline: Option<Instant>,
     proxy: &Intercept,
     version: Version,
     dns: DnsResolve,
 ) -> Result<BoxConnection, SocksError> {
-    let bindings = dialer.bindings(request.bindings());
-    let is_https = request.uri().is_https();
+    let is_https = target.is_https();
     let resolver = dialer.resolver().clone().map_request(Name::new);
     let dialer = dialer.clone();
     let connect_proxy = service_fn(move |uri: Uri| {
@@ -46,5 +43,5 @@ pub(super) async fn connect(
     connector.set_auth(proxy.raw_auth());
     connector.set_version(version);
     connector.set_dns_mode(dns);
-    connector.oneshot(request.uri().clone()).await
+    connector.oneshot(target.clone()).await
 }

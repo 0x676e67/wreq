@@ -7,6 +7,8 @@ use std::{
 
 use lru::DefaultHasher;
 
+use super::{ConnectConfig, ConnectConfigRef, ConnectExtension};
+
 /// Shares one process-wide seed across configuration, pool and session identity hashes.
 pub(crate) static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
 
@@ -139,4 +141,25 @@ impl<T> Hash for Full<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(self.hash);
     }
+}
+
+/// Borrows a request option if it differs from the client default within `scope`.
+pub(crate) fn changed<T>(config: ConnectConfigRef<'_>, scope: KeyScope) -> Option<&Cached<T>>
+where
+    T: ConnectExtension<Stored = Cached<T>> + ConnectConfigValue,
+{
+    let value = config.local().get::<T>()?;
+    (!config
+        .base
+        .and_then(ConnectConfig::get::<T>)
+        .is_some_and(|other| value.same(other, scope)))
+    .then_some(value)
+}
+
+/// Clones a request value if it differs from the client default.
+pub(crate) fn changed_value<T: ConnectExtension + Clone + Eq>(
+    config: ConnectConfigRef<'_>,
+) -> Option<T> {
+    let value = config.local().get_ref::<T>()?;
+    (config.base.and_then(ConnectConfig::get_ref::<T>) != Some(value)).then(|| value.clone())
 }

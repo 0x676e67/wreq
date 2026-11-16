@@ -1,7 +1,7 @@
 //! Frozen connection inputs and the keys derived from them.
 //!
-//! [`ConnectRequest`] is constructed once before pool checkout, binding the request's local
-//! [`ConnectConfig`] to the client's base configuration and precomputing its [`ConnectionKey`].
+//! [`ConnectRequest`] is constructed once before pool checkout, freezing the request options,
+//! client defaults and precomputed [`ConnectionKey`].
 //! It travels immutably through the connection pool and into
 //! [`Deadline`](super::layer::deadline::Deadline), which wraps each attempt in [`ConnectAttempt`]
 //! alongside its optional connect deadline.
@@ -21,9 +21,11 @@ use netty::http2::Http2Options;
 #[cfg(feature = "http3")]
 use {crate::quic::QuicOptions, netty::http3::Http3Options};
 
-use super::dialer::{Interface, SocketBindings};
+use super::dialer::Interface;
 use crate::{
-    config::connect::{ConnectConfig, Full, HASHER, KeyScope},
+    config::connect::{
+        ConnectConfig, ConnectConfigRef, Full, HASHER, KeyScope, changed, changed_value,
+    },
     error::BoxError,
     group::Group,
     protocol::Protocol,
@@ -39,8 +41,8 @@ use crate::{
 pub(crate) struct ConnectRequest {
     /// Target origin, selected protocol, and precomputed pool reuse identity.
     key: ConnectionKey,
-    /// Request connection options bound to the client's defaults.
-    config: ConnectConfig,
+    request_config: ConnectConfig,
+    client_config: ConnectConfig,
 }
 
 /// One connection attempt entering [`TransportConnector`](super::svc::TransportConnector), pairing
@@ -72,12 +74,12 @@ struct ConnectionIdentity {
 /// Request overrides that partition connection pool entries.
 #[derive(Eq, PartialEq, Hash)]
 struct PoolOverrides {
-    common: Option<Arc<CommonOverrides>>,
+    common: Option<CommonOverrides>,
     protocol: ProtocolOverrides,
 }
 
 /// Route and socket settings shared by the pool and session identities.
-#[derive(Clone, Default, Eq, PartialEq, Hash)]
+#[derive(Eq, PartialEq, Hash)]
 pub(crate) struct CommonOverrides {
     group: Option<Group>,
     matcher: Option<Full<Matcher>>,
@@ -109,7 +111,7 @@ enum ProtocolOverrides {
 // ===== impl ConnectRequest =====
 
 impl ConnectRequest {
-    /// Validates the absolute target, binds `client_config`, and precomputes the pool identity.
+    /// Validates the absolute target, freezes the options, and precomputes the pool key.
     ///
     /// The origin keeps scheme and authority with `/` as the path.
     ///
@@ -117,7 +119,7 @@ impl ConnectRequest {
     pub(crate) fn new(
         uri: &Uri,
         protocol: Protocol,
-        config: ConnectConfig,
+        request_config: ConnectConfig,
         client_config: &ConnectConfig,
     ) -> Result<Self, BoxError> {
         let origin = Uri::builder()
@@ -125,9 +127,16 @@ impl ConnectRequest {
             .authority(uri.authority().ok_or("URI missing authority")?.clone())
             .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
-        let config = config.with_base(client_config);
-        let key = ConnectionKey::new(origin, protocol, &config);
-        Ok(Self { key, config })
+        let key = ConnectionKey::new(
+            origin,
+            protocol,
+            ConnectConfigRef::new(&request_config, client_config),
+        );
+        Ok(Self {
+            key,
+            request_config,
+            client_config: client_config.clone(),
+        })
     }
 
     /// Returns the original scheme and authority with `/` as the path.
@@ -144,26 +153,10 @@ impl ConnectRequest {
         self.key.protocol
     }
 
-    /// Returns all request connection options, bound to the client's defaults.
+    /// Borrows the request options with the client's defaults.
     #[inline]
-    pub(crate) fn config(&self) -> &ConnectConfig {
-        &self.config
-    }
-
-    /// Returns the effective socket bindings configured on this request and its client defaults.
-    #[inline]
-    pub(crate) fn bindings(&self) -> SocketBindings {
-        self.config.bindings()
-    }
-
-    /// Returns the precomputed route and socket overrides shared with TLS session keys.
-    #[inline]
-    pub(crate) fn common_overrides(&self) -> Option<Arc<CommonOverrides>> {
-        self.key
-            .identity
-            .overrides
-            .as_ref()
-            .and_then(|overrides| overrides.common.clone())
+    pub(crate) fn config(&self) -> ConnectConfigRef<'_> {
+        ConnectConfigRef::new(&self.request_config, &self.client_config)
     }
 
     /// Returns the precomputed pool key for this request's selected protocol.
@@ -198,8 +191,8 @@ impl ConnectAttempt {
 // ===== impl ConnectionKey =====
 
 impl ConnectionKey {
-    /// Computes a pool or probe reuse key under `protocol` for a bound `config`.
-    pub(crate) fn new(origin: Uri, protocol: Protocol, config: &ConnectConfig) -> Self {
+    /// Computes a pool or probe key for `protocol` and the frozen options.
+    pub(crate) fn new(origin: Uri, protocol: Protocol, config: ConnectConfigRef<'_>) -> Self {
         let identity = ConnectionIdentity::for_protocol(&origin, protocol, config);
         Self {
             origin,
@@ -213,11 +206,10 @@ impl ConnectionKey {
 
 impl ConnectionIdentity {
     /// Projects the overrides relevant to `protocol` and hashes `(origin, protocol, overrides)`.
-    fn for_protocol(origin: &Uri, protocol: Protocol, config: &ConnectConfig) -> Self {
-        let overrides = (!config.is_empty())
+    fn for_protocol(origin: &Uri, protocol: Protocol, config: ConnectConfigRef<'_>) -> Self {
+        let overrides = (!config.local().is_empty())
             .then(|| {
                 let common = CommonOverrides::new(config);
-                let common = (!common.is_empty()).then(|| Arc::new(common));
                 let protocol = ProtocolOverrides::new(protocol, config);
                 (common.is_some() || !matches!(protocol, ProtocolOverrides::None))
                     .then_some(PoolOverrides { common, protocol })
@@ -265,21 +257,20 @@ impl fmt::Debug for ConnectionKey {
 // ===== impl CommonOverrides =====
 
 impl CommonOverrides {
-    /// Captures route and socket bindings in `request_config` that differ from its bound base.
-    fn new(request_config: &ConnectConfig) -> Self {
-        if request_config.is_empty() {
-            return Self::default();
+    /// Captures route and socket settings that differ from the client's defaults.
+    pub(crate) fn new(config: ConnectConfigRef<'_>) -> Option<Self> {
+        if config.local().is_empty() {
+            return None;
         }
 
-        Self {
-            group: request_config.changed_value(),
-            matcher: request_config
-                .changed::<Matcher>(KeyScope::Full)
-                .map(Full::new),
-            ipv4: request_config.changed_value(),
-            ipv6: request_config.changed_value(),
-            interface: request_config.changed_value(),
-        }
+        let overrides = Self {
+            group: changed_value(config),
+            matcher: changed::<Matcher>(config, KeyScope::Full).map(Full::new),
+            ipv4: changed_value(config),
+            ipv6: changed_value(config),
+            interface: changed_value(config),
+        };
+        (!overrides.is_empty()).then_some(overrides)
     }
 
     /// Returns whether no route or socket bindings differ from the client's defaults.
@@ -296,15 +287,11 @@ impl CommonOverrides {
 
 impl ProtocolOverrides {
     /// Captures only the transport and HTTP options that `protocol` can use.
-    fn new(protocol: Protocol, request_config: &ConnectConfig) -> Self {
+    fn new(protocol: Protocol, config: ConnectConfigRef<'_>) -> Self {
         #[cfg(feature = "http3")]
         if protocol == Protocol::Http3 {
-            let quic = request_config
-                .changed::<QuicOptions>(KeyScope::Full)
-                .map(Full::new);
-            let http3 = request_config
-                .changed::<Http3Options>(KeyScope::Full)
-                .map(Full::new);
+            let quic = changed::<QuicOptions>(config, KeyScope::Full).map(Full::new);
+            let http3 = changed::<Http3Options>(config, KeyScope::Full).map(Full::new);
             return if quic.is_some() || http3.is_some() {
                 Self::Quic { quic, http3 }
             } else {
@@ -312,21 +299,15 @@ impl ProtocolOverrides {
             };
         }
 
-        let tls = request_config
-            .changed::<TlsOptions>(KeyScope::Full)
-            .map(Full::new);
+        let tls = changed::<TlsOptions>(config, KeyScope::Full).map(Full::new);
         let http1 = if matches!(protocol, Protocol::Auto | Protocol::Http1) {
-            request_config
-                .changed::<Http1Options>(KeyScope::Full)
-                .map(Full::new)
+            changed::<Http1Options>(config, KeyScope::Full).map(Full::new)
         } else {
             None
         };
         #[cfg(feature = "http2")]
         let http2 = if matches!(protocol, Protocol::Auto | Protocol::Http2) {
-            request_config
-                .changed::<Http2Options>(KeyScope::Full)
-                .map(Full::new)
+            changed::<Http2Options>(config, KeyScope::Full).map(Full::new)
         } else {
             None
         };

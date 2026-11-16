@@ -20,7 +20,6 @@ use tokio::sync::Notify;
 use tower::BoxError;
 
 use crate::{
-    config::connect::{Cached, KeyScope},
     conn::{
         Conn, Connected, HttpInfo, Transport,
         connected::tls_info,
@@ -221,7 +220,7 @@ impl Endpoints {
     /// Connects to the request's route directly and retains the connection's endpoint.
     pub(super) async fn connect(&self, request: &ConnectRequest) -> Result<Conn, BoxError> {
         let config = self.config(request, Path::Direct)?;
-        let bindings = self.dialer.bindings(request.bindings());
+        let bindings = SocketBindings::from_config(request.config());
         let shared = self.dialer.uses_client_bindings(&bindings);
         let (connection, endpoint) = self.dial(request.uri(), &bindings, &config, shared).await?;
         self.connection(connection, endpoint)
@@ -237,7 +236,7 @@ impl Endpoints {
     ) -> Result<(Connection, Endpoint), BoxError> {
         let mut config = self.tls.config(request, uri)?;
         config.transport_config(self.transport(request, Path::Proxy)?);
-        let bindings = self.dialer.bindings(request.bindings());
+        let bindings = SocketBindings::from_config(request.config());
         let dial = self.dial(uri, &bindings, &config, false);
         within_deadline(deadline, self.dialer.runtime(), dial).await
     }
@@ -351,8 +350,8 @@ impl Endpoints {
         let client = self.tls.options();
         let requested = request
             .config()
-            .changed::<QuicOptions>(KeyScope::Full)
-            .map(Cached::get)
+            .local()
+            .get_ref::<QuicOptions>()
             .filter(|requested| !client.is_some_and(|client| requested.same_transport(client)));
         match (path, requested) {
             (Path::Direct, None) => Ok(self.direct_transport.clone()),
@@ -622,10 +621,10 @@ mod tests {
             DynRuntime::new(TokioRuntime),
             DynResolver::new(resolver),
             tcp::Config::default(),
-            config.bindings(),
+            SocketBindings::from_config((&config).into()),
             happy_eyeballs_timeout,
         );
-        Endpoints::new(dialer, tls.quic(&ConnectConfig::default()).unwrap()).unwrap()
+        Endpoints::new(dialer, tls.quic(&config).unwrap()).unwrap()
     }
 
     /// Returns endpoints trusting `cert` that resolve names through `resolver`. Its tests
@@ -662,13 +661,6 @@ mod tests {
             format!("https://{address}/").parse().unwrap(),
             ConnectConfig::default(),
         )
-    }
-
-    fn configured<T: crate::config::connect::ConnectExtension>(value: T) -> ConnectRequest {
-        let mut config = ConnectConfig::default();
-        config.insert(value);
-        let uri = Uri::from_static("https://localhost/");
-        ConnectRequest::test(uri, Some(Protocol::Http3), config)
     }
 
     #[tokio::test]
@@ -879,7 +871,6 @@ mod tests {
             .curves_list("X25519")
             .key_shares(vec![crate::tls::KeyShare::P256])
             .build();
-        // Client bindings belong to the dialer, so the attempt runs on one bound to TEST-NET.
         fn rebind(endpoints: &mut Endpoints, bindings: SocketBindings) {
             let dialer = &mut endpoints.dialer;
             *dialer = Dialer::new(
@@ -892,8 +883,19 @@ mod tests {
         }
         let mut testnet = ConnectConfig::default();
         testnet.insert(Ipv4Addr::new(192, 0, 2, 1));
-        rebind(&mut endpoints, testnet.bindings());
-        let invalid = configured(invalid);
+        rebind(
+            &mut endpoints,
+            SocketBindings::from_config((&testnet).into()),
+        );
+        let mut request_config = ConnectConfig::default();
+        request_config.insert(invalid);
+        let invalid = ConnectRequest::new(
+            &Uri::from_static("https://localhost/"),
+            Protocol::Http3,
+            request_config,
+            &testnet,
+        )
+        .unwrap();
         let error = endpoints.connect(&invalid).await.err().unwrap();
         rebind(&mut endpoints, SocketBindings::default());
         let mut chain = std::iter::successors(
@@ -1125,14 +1127,35 @@ mod tests {
     async fn applies_request_transport_options() {
         let (config, cert) = test_server_config();
         let server = ::quic::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
-        let endpoints = endpoints(resolving(vec![server.local_addr().unwrap()]), &cert);
+        let mut client_config = ConnectConfig::default();
+        client_config.insert(QuicOptions::default());
+        let endpoints = endpoints_with(
+            resolving(vec![server.local_addr().unwrap()]),
+            &cert,
+            client_config.clone(),
+            None,
+        );
+        let uri = Uri::from_static("https://localhost/");
+        let request = |options| {
+            let mut config = ConnectConfig::default();
+            config.insert(options);
+            ConnectRequest::new(&uri, Protocol::Http3, config, &client_config).unwrap()
+        };
+
+        let tls_only = request(QuicOptions::builder().curves_list("X25519").build());
+        assert!(
+            Arc::ptr_eq(
+                &endpoints.transport(&tls_only, Path::Direct).unwrap(),
+                &endpoints.direct_transport
+            ),
+            "TLS options alone must reuse the client's transport"
+        );
 
         // The negotiated idle timeout is the lower of both peers' values.
-        let options = crate::quic::QuicOptions::builder()
+        let options = QuicOptions::builder()
             .max_idle_timeout(Duration::from_millis(200))
             .build();
-        let (_client, _endpoint, accepted) =
-            connect(&endpoints, configured(options), &server).await;
+        let (_client, _endpoint, accepted) = connect(&endpoints, request(options), &server).await;
         let error = tokio::time::timeout(Duration::from_secs(5), accepted.closed())
             .await
             .unwrap();

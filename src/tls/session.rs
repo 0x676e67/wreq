@@ -27,7 +27,7 @@ use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 #[cfg(feature = "http3")]
 use crate::quic::{QuicOptions, QuicSessionIdentity};
 use crate::{
-    config::connect::{Cached, HASHER, KeyScope, ScopedConfig},
+    config::connect::{Cached, HASHER, KeyScope, ScopedConfig, changed},
     conn::request::{CommonOverrides, ConnectRequest},
     protocol::TransportKind,
     sync::Mutex,
@@ -152,18 +152,14 @@ impl SessionKey {
     /// `route`: the origin itself, or the proxy hop that carries it.
     fn new(req: &ConnectRequest, route: &Uri, transport: TransportKind) -> Self {
         let request_config = req.config();
-        let overrides = req.common_overrides();
+        let overrides = CommonOverrides::new(request_config).map(Arc::new);
         let options = match transport {
             TransportKind::Stream => SessionOptions::Stream(
-                request_config
-                    .changed::<TlsOptions>(KeyScope::Session)
-                    .map(session_identity),
+                changed::<TlsOptions>(request_config, KeyScope::Session).map(session_identity),
             ),
             #[cfg(feature = "http3")]
             TransportKind::Quic => SessionOptions::Quic(
-                request_config
-                    .changed::<QuicOptions>(KeyScope::Session)
-                    .map(session_identity),
+                changed::<QuicOptions>(request_config, KeyScope::Session).map(session_identity),
             ),
         };
         let origin = req.uri().clone();

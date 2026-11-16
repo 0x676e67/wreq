@@ -34,7 +34,7 @@ use {
 pub(super) use self::race::race;
 use super::request::ConnectRequest;
 use crate::{
-    config::connect::{ConnectConfig, impl_connect_extension},
+    config::connect::{ConnectConfig, ConnectConfigRef, impl_connect_extension},
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
     ext::UriExt,
@@ -53,6 +53,7 @@ struct Inner {
     runtime: DynRuntime,
     resolver: DynResolver,
     tcp: tcp::Config,
+    #[cfg(feature = "http3")]
     bindings: SocketBindings,
     happy_eyeballs_timeout: Option<Duration>,
 }
@@ -161,13 +162,13 @@ where
 // ===== impl Dialer =====
 
 impl Dialer {
-    /// Creates a dialer with the client's socket options and bindings, racing addresses
-    /// `happy_eyeballs_timeout` apart.
+    /// Creates a dialer with the client's socket options and Happy Eyeballs delay.
+    /// QUIC uses the client's bindings to decide whether a request can share a UDP socket.
     pub(crate) fn new(
         runtime: DynRuntime,
         resolver: DynResolver,
         tcp: tcp::Config,
-        bindings: SocketBindings,
+        #[cfg(feature = "http3")] bindings: SocketBindings,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         Self {
@@ -175,6 +176,7 @@ impl Dialer {
                 runtime,
                 resolver,
                 tcp,
+                #[cfg(feature = "http3")]
                 bindings,
                 happy_eyeballs_timeout,
             }),
@@ -192,18 +194,6 @@ impl Dialer {
     #[cfg(any(feature = "socks", feature = "http3"))]
     pub(crate) fn resolver(&self) -> &DynResolver {
         &self.inner.resolver
-    }
-
-    /// Resolves each socket binding independently, preferring `bindings` over the dialer's.
-    /// Explicit unspecified addresses still select their address family during dialing.
-    pub(crate) fn bindings(&self, bindings: SocketBindings) -> SocketBindings {
-        SocketBindings {
-            ipv4: bindings.ipv4.or(self.inner.bindings.ipv4),
-            ipv6: bindings.ipv6.or(self.inner.bindings.ipv6),
-            interface: bindings
-                .interface
-                .or_else(|| self.inner.bindings.interface.clone()),
-        }
     }
 }
 
@@ -357,8 +347,8 @@ impl SocketRequest {
 // ===== impl SocketBindings =====
 
 impl SocketBindings {
-    /// Extracts the effective local IPv4, IPv6, and interface settings from `config`.
-    pub(crate) fn from_config(config: &ConnectConfig) -> Self {
+    /// Resolves each binding independently. Explicit unspecified addresses still select a family.
+    pub(crate) fn from_config(config: ConnectConfigRef<'_>) -> Self {
         Self {
             ipv4: config.get_ref::<Ipv4Addr>().copied(),
             ipv6: config.get_ref::<Ipv6Addr>().copied(),
@@ -640,21 +630,28 @@ mod tests {
             Some(Ipv6Addr::LOCALHOST),
         );
         client_config.insert(Interface::Static("lo"));
-        let mut request_config = ConnectConfig::default().with_base(&client_config);
+        let mut request_config = ConnectConfig::default();
         assert_eq!(
-            request_config.bindings().addresses(),
+            SocketBindings::from_config(ConnectConfigRef::new(&request_config, &client_config))
+                .addresses(),
             (Some(Ipv4Addr::LOCALHOST), Some(Ipv6Addr::LOCALHOST))
         );
         set_local_address(&mut request_config, Some(Ipv4Addr::UNSPECIFIED.into()));
         set_local_address(&mut request_config, None);
         set_local_addresses(&mut request_config, None, Some(Ipv6Addr::UNSPECIFIED));
         set_local_addresses(&mut request_config, None, None);
+        let bindings =
+            SocketBindings::from_config(ConnectConfigRef::new(&request_config, &client_config));
         assert_eq!(
-            request_config.bindings().addresses(),
+            bindings.addresses(),
             (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::UNSPECIFIED))
         );
-        assert_eq!(request_config.bindings().interface(), Some("lo"));
+        assert_eq!(bindings.interface(), Some("lo"));
         request_config.insert(Interface::Static("eth0"));
-        assert_eq!(request_config.bindings().interface(), Some("eth0"));
+        assert_eq!(
+            SocketBindings::from_config(ConnectConfigRef::new(&request_config, &client_config))
+                .interface(),
+            Some("eth0")
+        );
     }
 }

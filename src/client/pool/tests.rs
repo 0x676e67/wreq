@@ -294,7 +294,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         let req = connect_request(protocol);
         let key = req.key().clone();
         let checkout = || {
-            let mut request_config = req.config().clone();
+            let mut request_config = req.config().local().clone();
             request_config.insert(http1.clone());
             let request_options =
                 Arc::downgrade(&request_config.get_arc::<Http1Options>().unwrap());

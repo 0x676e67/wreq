@@ -112,13 +112,17 @@ pub(super) async fn connect(
     let uri = request.uri();
     let host = crate::util::strip_ipv6_brackets(uri.host().ok_or(URI_MISSING_HOST)?);
     let port = uri.port_u16().unwrap_or(443);
+    let bindings = SocketBindings::from_config(request.config());
 
     if dns == DnsResolve::Remote {
         let target = match host.parse::<IpAddr>() {
             Ok(ip) => Address::Ip((ip, port).into()),
             Err(_) => Address::Domain(host.into(), port),
         };
-        return Ok(connect_target(endpoints, &request, deadline, &proxy, &config, target).await?);
+        return Ok(connect_target(
+            endpoints, &request, &bindings, deadline, &proxy, &config, target,
+        )
+        .await?);
     }
 
     let dialer = endpoints.dialer();
@@ -135,7 +139,7 @@ pub(super) async fn connect(
         |address| {
             let target = Address::Ip(address);
             let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
-                endpoints, &request, deadline, &proxy, &config, target,
+                endpoints, &request, &bindings, deadline, &proxy, &config, target,
             ));
             Ok(attempt)
         },
@@ -149,13 +153,13 @@ pub(super) async fn connect(
 async fn connect_target(
     endpoints: &Endpoints,
     request: &ConnectRequest,
+    bindings: &SocketBindings,
     deadline: Option<Instant>,
     proxy: &Intercept,
     config: &QuicConfig,
     target: Address,
 ) -> Result<Conn, ConnectError> {
     let dialer = endpoints.dialer();
-    let bindings = dialer.bindings(request.bindings());
     // The control connection takes the request's bindings, like the relay socket.
     let io = dialer
         .dial(SocketRequest::Tcp {
@@ -207,7 +211,7 @@ async fn connect_target(
             Address::Ip(relay) if relay.ip().is_unspecified() => {
                 return Err(PEER_ADDR_REQUIRED.into());
             }
-            Address::Ip(relay) => (relay_socket(dialer, &bindings, relay)?, relay),
+            Address::Ip(relay) => (relay_socket(dialer, bindings, relay)?, relay),
             Address::Domain(host, port) => {
                 // BND.PORT is authoritative even when the resolver returns another port.
                 let mut resolving = pin!(resolve(&host, port, true, |name| {
@@ -244,7 +248,7 @@ async fn connect_target(
                     .filter(preferred)
                     .chain(addresses.iter().filter(|addr| !preferred(addr)))
                 {
-                    match relay_socket(dialer, &bindings, relay) {
+                    match relay_socket(dialer, bindings, relay) {
                         Ok(socket) => {
                             selected = Some((socket, relay));
                             break;

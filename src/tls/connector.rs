@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     Error,
-    config::connect::{Cached, ConnectConfig, KeyScope},
+    config::connect::{Cached, ConnectConfig, KeyScope, changed},
     conn::request::ConnectRequest,
     ext::UriExt,
     protocol::{Protocol, TransportKind},
@@ -86,7 +86,7 @@ impl StreamTls {
     /// Requests without different context options keep the client's context.
     pub(crate) fn for_request(self, req: &ConnectRequest) -> crate::Result<TlsConnector> {
         let inner = &*self.inner;
-        let options = req.config().changed::<TlsOptions>(KeyScope::Context);
+        let options = changed::<TlsOptions>(req.config(), KeyScope::Context);
         let context = inner
             .contexts
             .get(options, |options| compile(&inner.tls, Some(options)))?;
@@ -109,10 +109,7 @@ impl StreamTls {
         alpn_enabled: bool,
     ) -> Result<Ssl, BoxError> {
         let inner = &*self.inner;
-        let request_options = req
-            .config()
-            .changed::<TlsOptions>(KeyScope::Full)
-            .map(Cached::get);
+        let request_options = changed::<TlsOptions>(req.config(), KeyScope::Full).map(Cached::get);
         let options = request_options.or(inner.options.as_deref());
         let mut cfg = context.configure()?;
 

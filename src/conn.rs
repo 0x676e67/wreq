@@ -101,7 +101,8 @@ impl Connector {
             runtime.clone(),
             resolver,
             connector_config.tcp,
-            config.bindings(),
+            #[cfg(feature = "http3")]
+            dialer::SocketBindings::from_config(config.into()),
             connector_config.happy_eyeballs_timeout,
         );
         let connector = TransportConnector::new(
