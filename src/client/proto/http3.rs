@@ -66,7 +66,7 @@ where
             let Conn {
                 transport,
                 connected,
-            } = connector.call(target.into_transport()).await?;
+            } = connector.call(target.into_request()).await?;
             let (quic, endpoint) = transport.into_quic()?;
             let quic = Compat::new(http3_quic::Connection::new(quic));
             let (mut tx, connection) = Arc::unwrap_or_clone(builder)

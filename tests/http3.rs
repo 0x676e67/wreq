@@ -293,7 +293,7 @@ async fn http3_options_reach_the_server_from_every_source() {
     let certificate = h3::Certificate::new("localhost");
     let (server, mut observed) = observer(&certificate);
     let url = url(&server);
-    let emulation = Emulation::builder().http3_options(options.clone()).build();
+    let emulation = Emulation::builder().config(options.clone()).build();
 
     for source in ["client", "emulation", "request"] {
         let builder = client(&server, &certificate);

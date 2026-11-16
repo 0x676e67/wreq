@@ -98,9 +98,10 @@ async fn main() -> wreq::Result<()> {
         orig_headers
     };
 
+    // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
     let emulation = Emulation::builder()
-        .tls_options(tls)
-        .http2_options(http2)
+        .config(tls)
+        .config(http2)
         .headers(headers)
         .orig_headers(orig_headers)
         .build();

@@ -103,9 +103,7 @@ cfg_select! {
 }
 
 type ClientService = Timeout<
-    ConfigService<
-        MaybeDecompression<FollowRedirect<Retry<RetryPolicy, sealed::Client<Connector>>>>,
-    >,
+    ConfigService<MaybeDecompression<FollowRedirect<Retry<RetryPolicy, svc::Client<Connector>>>>>,
 >;
 
 type BoxedClientService = BoxCloneSyncService<
@@ -162,11 +160,6 @@ struct Config {
         feature = "deflate",
     ))]
     accept_encoding: AcceptEncoding,
-    connect: conn::Config,
-    pool_idle_timeout: Option<Duration>,
-    pool_max_idle_per_host: usize,
-    pool_max_size: Option<NonZeroUsize>,
-    pool_strategy: PoolStrategy,
     auto_sys_proxy: bool,
     retry_policy: retry::Policy,
     redirect_policy: redirect::Policy,
@@ -179,6 +172,8 @@ struct Config {
     protocol: Protocol,
     https_only: bool,
     layers: Vec<BoxedClientServiceLayer>,
+    pool: pool::Config,
+    connect: conn::Config,
     defaults: ConnectConfig,
 }
 
@@ -221,10 +216,10 @@ impl Client {
                 ))]
                 accept_encoding: AcceptEncoding::default(),
                 connect: conn::Config::default(),
-                pool_idle_timeout: Some(Duration::from_secs(90)),
-                pool_max_idle_per_host: usize::MAX,
-                pool_max_size: None,
-                pool_strategy: PoolStrategy::default(),
+                pool: pool::Config {
+                    idle_timeout: Some(Duration::from_secs(90)),
+                    ..pool::Config::default()
+                },
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
                 redirect_policy: redirect::Policy::none(),
@@ -439,7 +434,6 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            // The request stack inherits the client's bindings.
             let connector = Connector::new(
                 self.config.connect,
                 self.runtime.clone(),
@@ -447,18 +441,17 @@ impl ClientBuilder {
                 &self.config.defaults,
             )?;
 
-            sealed::Builder::new(self.runtime.clone())
-                .cookie_store(
-                    #[cfg(feature = "cookies")]
-                    self.config.cookie_store,
-                )
-                .config(self.config.defaults)
-                .protocol(self.config.protocol)
-                .pool_idle_timeout(self.config.pool_idle_timeout)
-                .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
-                .pool_max_size(self.config.pool_max_size)
-                .pool_strategy(self.config.pool_strategy)
-                .build(connector)
+            let dispatch = svc::Dispatch::new(
+                self.config.pool,
+                connector,
+                &self.config.defaults,
+                #[cfg(feature = "cookies")]
+                self.config.cookie_store,
+                self.runtime.clone(),
+            );
+            ServiceBuilder::new()
+                .layer(svc::layer(self.config.protocol, self.config.defaults, true))
+                .service(dispatch)
         };
 
         // Configured client service with layers
@@ -930,7 +923,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.pool_idle_timeout = val.into();
+        self.config.pool.idle_timeout = val.into();
         self
     }
 
@@ -940,7 +933,7 @@ impl ClientBuilder {
     /// connection reuse.
     #[inline]
     pub fn pool_max_idle_per_host(mut self, max: usize) -> ClientBuilder {
-        self.config.pool_max_idle_per_host = max;
+        self.config.pool.max_idle_per_host = max;
         self
     }
 
@@ -952,14 +945,14 @@ impl ClientBuilder {
     /// `0` means unlimited.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
-        self.config.pool_max_size = NonZeroUsize::new(max);
+        self.config.pool.max_size = NonZeroUsize::new(max);
         self
     }
 
     /// Selects whether a reuse miss immediately connects or briefly waits for reuse.
     #[inline]
     pub fn pool_strategy(mut self, strategy: PoolStrategy) -> ClientBuilder {
-        self.config.pool_strategy = strategy;
+        self.config.pool.strategy = strategy;
         self
     }
 
@@ -1614,151 +1607,5 @@ impl ClientBuilder {
         let emulate::Emulation(headers, orig_headers, config) = emulation.into_emulation();
         self.config.defaults.extend(config);
         self.default_headers(headers).orig_headers(orig_headers)
-    }
-}
-
-/// Low-level Tower client and builder used by the public client.
-mod sealed {
-    use super::{pool::TransportConnector, *};
-
-    /// Tower service beneath [`crate::Client`] that validates and sends HTTP requests.
-    /// Applies request configuration, cancellation retries, pool checkout and protocol dispatch.
-    /// Clones share the pool without cloning request bodies.
-    pub type Client<C> = svc::Stack<svc::Dispatch<C>, Body>;
-
-    /// Assembles the protocol, runtime, and pool services used by [`Client`].
-    ///
-    /// The builder owns client connection configuration until [`Builder::build`]
-    /// consumes it. The resulting client clones share the pool created around
-    /// the supplied connector.
-    pub struct Builder {
-        /// Runtime used by protocol drivers and pool maintenance.
-        runtime: DynRuntime,
-
-        /// Protocol, options and socket bindings that requests inherit.
-        protocol: Protocol,
-        config: ConnectConfig,
-
-        /// Connection-pool reuse and retention policy.
-        pool_config: pool::Config,
-
-        /// Cookie store consulted immediately around protocol dispatch.
-        #[cfg(feature = "cookies")]
-        cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    }
-
-    // ===== impl Builder =====
-
-    impl Builder {
-        /// Creates a builder using `runtime` for protocol drivers and pool tasks.
-        pub fn new(runtime: DynRuntime) -> Self {
-            Self {
-                protocol: Protocol::Auto,
-                config: ConnectConfig::default(),
-                pool_config: pool::Config {
-                    idle_timeout: Some(Duration::from_secs(90)),
-                    max_idle_per_host: usize::MAX,
-                    max_size: None,
-                    ..pool::Config::default()
-                },
-                #[cfg(feature = "cookies")]
-                cookie_store: None,
-                runtime,
-            }
-        }
-
-        /// Sets how long a connection considered idle remains eligible for reuse.
-        ///
-        /// `None` disables time-based eviction. The default is 90 seconds.
-        #[inline]
-        pub fn pool_idle_timeout<D>(mut self, val: D) -> Self
-        where
-            D: Into<Option<Duration>>,
-        {
-            self.pool_config.idle_timeout = val.into();
-            self
-        }
-
-        /// Sets the maximum idle HTTP/1 senders retained per compatibility group.
-        ///
-        /// This does not limit active physical connections. `0` disables pooling;
-        /// the default is `usize::MAX`.
-        #[inline]
-        pub fn pool_max_idle_per_host(mut self, max_idle: usize) -> Self {
-            self.pool_config.max_idle_per_host = max_idle;
-            self
-        }
-
-        /// Sets the maximum number of compatibility groups retaining reusable senders.
-        ///
-        /// An entry is counted only while it owns a reusable sender. Routing-only
-        /// and connecting entries are not counted. This does not limit physical
-        /// connections. The default is `None`.
-        #[inline]
-        pub fn pool_max_size(mut self, max_size: impl Into<Option<NonZeroUsize>>) -> Self {
-            self.pool_config.max_size = max_size.into();
-            self
-        }
-
-        /// Selects whether a reuse miss immediately connects or waits for reuse.
-        #[inline]
-        pub fn pool_strategy(mut self, strategy: PoolStrategy) -> Self {
-            self.pool_config.strategy = strategy;
-            self
-        }
-
-        /// Shares the client's protocol selection with the request stack and pool.
-        #[inline]
-        pub fn protocol(mut self, protocol: Protocol) -> Self {
-            self.protocol = protocol;
-            self
-        }
-
-        /// Sets the connection options inherited by requests.
-        ///
-        /// Pool and session identities count only request values that differ from these.
-        #[inline]
-        pub fn config(mut self, config: ConnectConfig) -> Self {
-            self.config = config;
-            self
-        }
-
-        /// Sets the cookie store consulted immediately around protocol dispatch.
-        #[inline]
-        pub fn cookie_store(
-            #[cfg_attr(
-                not(feature = "cookies"),
-                expect(unused_mut, reason = "Only the cookies feature mutates this builder")
-            )]
-            mut self,
-            #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-        ) -> Self {
-            #[cfg(feature = "cookies")]
-            {
-                self.cookie_store = cookie_store;
-            }
-            self
-        }
-
-        /// Consumes the builder and wraps the connector in the complete client stack.
-        ///
-        /// Every client retries unsent requests and lets HTTP/1 generate a missing `Host`.
-        pub fn build<C>(self, connector: C) -> Client<C>
-        where
-            C: TransportConnector,
-        {
-            let dispatch = svc::Dispatch::new(
-                self.pool_config,
-                connector,
-                &self.config,
-                true,
-                #[cfg(feature = "cookies")]
-                self.cookie_store,
-                self.runtime,
-            );
-            ServiceBuilder::new()
-                .layer(svc::layer(self.protocol, self.config, true))
-                .service(dispatch)
-        }
     }
 }

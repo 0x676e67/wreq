@@ -47,12 +47,12 @@ impl_request_config_value!(DefaultHeaders, bool);
 impl ConfigServiceLayer {
     /// Creates a new [`ConfigServiceLayer`].
     pub fn new(https_only: bool, headers: HeaderMap, orig_headers: OrigHeaderMap) -> Self {
-        let org_headers = (!orig_headers.is_empty()).then_some(orig_headers);
+        let orig_headers = (!orig_headers.is_empty()).then_some(orig_headers);
         ConfigServiceLayer {
             config: Arc::new(Config {
                 https_only,
                 headers,
-                orig_headers: RequestConfig::new(org_headers),
+                orig_headers: RequestConfig::new(orig_headers),
                 default_headers: RequestConfig::new(Some(true)),
             }),
         }
@@ -88,7 +88,7 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        let uri = req.uri().clone();
+        let uri = req.uri();
 
         // check if the request URI scheme is valid.
         if !(uri.is_http() || uri.is_https()) || (self.config.https_only && !uri.is_https()) {

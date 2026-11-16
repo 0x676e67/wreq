@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     Error,
-    config::connect::{Cached, ConnectConfig, KeyPart, changed},
+    config::connect::{Cached, ConnectConfig, KeyScope},
     conn::request::ConnectRequest,
     ext::UriExt,
     protocol::{Protocol, TransportKind},
@@ -44,7 +44,6 @@ pub struct StreamTls {
 /// Client TLS policy and its compiled contexts.
 struct Inner {
     tls: Config,
-    config: ConnectConfig,
     options: Option<Arc<TlsOptions>>,
     contexts: ContextCache<SslConnector, TlsOptions>,
 }
@@ -71,13 +70,12 @@ pub enum MaybeHttpsStream<T> {
 
 impl StreamTls {
     /// Compiles the client's TLS context while preserving the shared session scope.
-    pub(super) fn new(tls: Config, config: ConnectConfig) -> crate::Result<Self> {
+    pub(super) fn new(tls: Config, config: &ConnectConfig) -> crate::Result<Self> {
         let options = config.get_arc::<TlsOptions>();
         let contexts = ContextCache::new(compile(&tls, options.as_deref())?);
         Ok(Self {
             inner: Arc::new(Inner {
                 tls,
-                config,
                 options,
                 contexts,
             }),
@@ -88,7 +86,7 @@ impl StreamTls {
     /// Requests without different context options keep the client's context.
     pub(crate) fn for_request(self, req: &ConnectRequest) -> crate::Result<TlsConnector> {
         let inner = &*self.inner;
-        let options = changed::<TlsOptions>(req.config(), &inner.config, KeyPart::Context);
+        let options = req.config().changed::<TlsOptions>(KeyScope::Context);
         let context = inner
             .contexts
             .get(options, |options| compile(&inner.tls, Some(options)))?;
@@ -111,9 +109,11 @@ impl StreamTls {
         alpn_enabled: bool,
     ) -> Result<Ssl, BoxError> {
         let inner = &*self.inner;
-        let options = changed::<TlsOptions>(req.config(), &inner.config, KeyPart::Whole)
-            .map(Cached::get)
-            .or(inner.options.as_deref());
+        let request_options = req
+            .config()
+            .changed::<TlsOptions>(KeyScope::Full)
+            .map(Cached::get);
+        let options = request_options.or(inner.options.as_deref());
         let mut cfg = context.configure()?;
 
         cfg.set_use_server_name_indication(inner.tls.sni);
@@ -134,7 +134,7 @@ impl StreamTls {
                 Protocol::Http2 => &[AlpnProtocol::HTTP2],
                 // Auto prefers the first nonempty request or client list, preserving its
                 // order. HTTP/3 dials QUIC, which sets its own ALPN, so it never gets here.
-                _ => options
+                _ => request_options
                     .into_iter()
                     .chain(inner.options.as_deref())
                     .filter_map(|options| options.alpn_protocols.as_deref())
@@ -182,7 +182,6 @@ impl StreamTls {
             let target = SessionTarget::new(
                 req,
                 route,
-                &inner.config,
                 TransportKind::Stream,
                 remote_ip,
                 tickets.session_id_context()?,

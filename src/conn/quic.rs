@@ -20,46 +20,32 @@ use netty::proxy::socks::Version;
 use tower::{BoxError, Service};
 
 use crate::{
-    conn::{Conn, dialer::Dialer, route::Route, svc::TransportRequest},
+    conn::{Conn, dialer::Dialer, request::ConnectAttempt, route::Route},
     error::{ProxyConnect, ProxyMismatch},
-    proxy::{Matcher, quic_port},
+    proxy::quic_port,
     tls::quic::QuicTls,
 };
 
-/// Selects the request's route from its proxy rules and connects HTTP/3 origins over it:
-/// directly, through a `quic://` MASQUE proxy, or through SOCKS5 UDP. Other proxy routes fail
-/// before DNS. Clones share the proxy rules and endpoints.
+/// Connects HTTP/3 origins over a selected route: directly, through a `quic://` MASQUE proxy, or
+/// through SOCKS5 UDP. Unsupported proxy routes fail before DNS. Clones share the endpoints.
 #[derive(Clone)]
-pub(crate) struct QuicRouter {
-    inner: Arc<Inner>,
+pub(crate) struct QuicConnector {
+    endpoints: Arc<Endpoints>,
 }
 
-/// The client's proxy rules and the endpoints every route connects through.
-struct Inner {
-    proxies: Arc<Vec<Matcher>>,
-    endpoints: Endpoints,
-}
+// ===== impl QuicConnector =====
 
-// ===== impl QuicRouter =====
-
-impl QuicRouter {
-    /// Creates the QUIC path over `dialer` with the client's QUIC TLS and proxy rules.
+impl QuicConnector {
+    /// Creates the QUIC path over `dialer` with the client's QUIC TLS.
     /// Endpoints open on the first connection that needs them.
-    pub(crate) fn new(
-        dialer: Dialer,
-        tls: QuicTls,
-        proxies: Arc<Vec<Matcher>>,
-    ) -> crate::Result<Self> {
+    pub(crate) fn new(dialer: Dialer, tls: QuicTls) -> crate::Result<Self> {
         Ok(Self {
-            inner: Arc::new(Inner {
-                proxies,
-                endpoints: Endpoints::new(dialer, tls)?,
-            }),
+            endpoints: Arc::new(Endpoints::new(dialer, tls)?),
         })
     }
 }
 
-impl Service<TransportRequest> for QuicRouter {
+impl Service<(ConnectAttempt, Route)> for QuicConnector {
     type Response = Conn;
     type Error = BoxError;
     type Future = Either<BoxFuture<'static, Result<Conn, BoxError>>, Ready<Result<Conn, BoxError>>>;
@@ -69,44 +55,31 @@ impl Service<TransportRequest> for QuicRouter {
         Poll::Ready(Ok(()))
     }
 
-    fn call(
-        &mut self,
-        TransportRequest {
-            request,
-            deadline,
-            identity: connection_identity,
-        }: TransportRequest,
-    ) -> Self::Future {
-        let inner = self.inner.clone();
-        let connection_key = connection_identity.key(&request);
-        match Route::select(&request, &inner.proxies) {
+    fn call(&mut self, (attempt, route): (ConnectAttempt, Route)) -> Self::Future {
+        let endpoints = self.endpoints.clone();
+        match route {
             Route::Direct => Either::Left(Box::pin(async move {
-                inner.endpoints.connect(&request, connection_key).await
+                endpoints.connect(attempt.request()).await
             })),
             #[cfg(feature = "socks")]
             Route::Socks {
                 proxy,
                 version: Version::V5,
                 dns,
-            } => Either::Left(Box::pin(async move {
-                socks::connect(
-                    &inner.endpoints,
-                    request,
-                    connection_key,
-                    proxy,
-                    dns,
-                    deadline,
-                )
-                .await
-            })),
+            } => {
+                let (request, deadline) = attempt.into_parts();
+                Either::Left(Box::pin(async move {
+                    socks::connect(&endpoints, request, deadline, proxy, dns).await
+                }))
+            }
             Route::Quic(proxy) => {
                 // Environment proxy entries reach this point without builder validation.
                 if let Err(message) = quic_port(proxy.uri()) {
                     return Either::Right(future::err(ProxyConnect::Message(message).into()));
                 }
+                let (request, deadline) = attempt.into_parts();
                 Either::Left(Box::pin(async move {
-                    masque::connect(&inner.endpoints, request, connection_key, proxy, deadline)
-                        .await
+                    masque::connect(&endpoints, request, deadline, proxy).await
                 }))
             }
             _ => Either::Right(future::err(

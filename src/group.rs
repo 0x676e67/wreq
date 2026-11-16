@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+use crate::config::connect::impl_connect_extension;
+
 /// An opaque partition added to the automatic connection identity.
 /// Requests in different groups never share pooled connections, even when
 /// their transport settings are otherwise compatible.
@@ -24,6 +26,8 @@ impl Group {
         group.into()
     }
 }
+
+impl_connect_extension!(Group);
 
 impl From<&str> for Group {
     #[inline]

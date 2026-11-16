@@ -44,7 +44,7 @@ enum TestConnector {
     Http3(SocketAddr, ::quic::ClientConfig),
 }
 
-impl Service<TransportRequest> for TestConnector {
+impl Service<ConnectRequest> for TestConnector {
     type Response = Conn;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -53,7 +53,7 @@ impl Service<TransportRequest> for TestConnector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, _req: TransportRequest) -> Self::Future {
+    fn call(&mut self, _req: ConnectRequest) -> Self::Future {
         match self {
             Self::Fails => Box::pin(std::future::ready(Err(io::Error::from(
                 io::ErrorKind::ConnectionRefused,
@@ -178,18 +178,8 @@ fn test_pool(connector: TestConnector) -> Pool<TestConnector> {
 }
 
 impl<C: TransportConnector> Pool<C> {
-    fn test_identity(&self, req: &ConnectRequest) -> ConnectionIdentity {
-        ConnectionIdentity::new(req, &self.inner.targeter.config)
-    }
-
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    fn test_key(&self, req: &ConnectRequest) -> ConnectionKey {
-        self.test_identity(req).key(req)
-    }
-
     async fn test_checkout(&self, req: ConnectRequest) -> Result<Pooled, BoxError> {
-        let identity = self.test_identity(&req);
-        self.checkout(req, identity, false).await
+        self.checkout(req, false).await
     }
 }
 
@@ -239,7 +229,7 @@ fn protocol_modes_build_specialized_entries() {
 
     let clones = Arc::new(AtomicUsize::new(0));
     let counter = CloneCounter(clones.clone());
-    let connector = tower::service_fn(move |_: TransportRequest| {
+    let connector = tower::service_fn(move |_: ConnectRequest| {
         let _counter = &counter;
         std::future::pending::<Result<Conn, BoxError>>()
     });
@@ -265,7 +255,6 @@ fn protocol_modes_build_specialized_entries() {
     {
         let req = connect_request(protocol);
         let target = PoolTarget {
-            identity: pool.test_identity(&req),
             req,
             wait_for_reuse: false,
         };
@@ -303,15 +292,15 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
             true,
         );
         let req = connect_request(protocol);
-        let key = pool.test_key(&req);
+        let key = req.key().clone();
         let checkout = || {
             let mut request_config = req.config().clone();
             request_config.insert(http1.clone());
             let request_options =
                 Arc::downgrade(&request_config.get_arc::<Http1Options>().unwrap());
-            let req = ConnectRequest::new(req.uri(), protocol, request_config).unwrap();
+            let req =
+                ConnectRequest::new(req.uri(), protocol, request_config, &client_config).unwrap();
             let target = PoolTarget {
-                identity: pool.test_identity(&req),
                 req,
                 wait_for_reuse: false,
             };
@@ -507,19 +496,17 @@ async fn idle_task_waits_for_a_runtime_after_off_runtime_drop() {
 }
 
 #[tokio::test]
-#[cfg(feature = "http2")]
+#[cfg(all(feature = "ws", feature = "http2"))]
 async fn extended_connect_checkout_only_clones_established_senders() {
     for protocol in [Protocol::Http2, Protocol::Auto] {
         let calls = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let pool = test_pool(TestConnector::Http2(calls.clone(), gate.clone()));
         let req = connect_request(protocol);
-        let identity = pool.test_identity(&req);
-        let key = identity.key(&req);
+        let key = req.key().clone();
         let checkout = || {
             let target = PoolTarget {
                 req: req.clone(),
-                identity: identity.clone(),
                 wait_for_reuse: false,
             };
             let (future, _) = pool.inner.services.lock().with_service(
@@ -724,19 +711,17 @@ async fn pool_max_size_evicts_only_idle_groups() {
     );
     let first_req = grouped_request(Group::new("first"), Protocol::Http1);
     let second_req = grouped_request(Group::new("second"), Protocol::Http1);
-    let first_identity = pool.test_identity(&first_req);
-    let second_identity = pool.test_identity(&second_req);
-    let first_key = first_identity.key(&first_req);
-    let second_key = second_identity.key(&second_req);
+    let first_key = first_req.key().clone();
+    let second_key = second_req.key().clone();
 
     let mut first = pool
-        .checkout(first_req, first_identity, false)
+        .checkout(first_req, false)
         .await
         .expect("first checkout");
     send(&mut first).await;
 
     let mut second = pool
-        .checkout(second_req, second_identity, false)
+        .checkout(second_req, false)
         .await
         .expect("second checkout");
     send(&mut second).await;
@@ -776,7 +761,7 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
         );
         let request = |name| grouped_request(Group::new(name), protocol);
         let [live, dead, next] = ["live", "dead", "next"].map(request);
-        let [live_key, dead_key, next_key] = [&live, &dead, &next].map(|req| pool.test_key(req));
+        let [live_key, dead_key, next_key] = [&live, &dead, &next].map(|req| req.key().clone());
         let checkout = |req| pool.test_checkout(req);
         let retained = |key| {
             pool.inner

@@ -1,62 +1,36 @@
 //! The connector's terminal service: the stream and QUIC paths behind [`TransportConnector`],
-//! which sends each request down the path its protocol runs over, and the [`Transport`] a path
-//! returns.
+//! which selects each request's route and dispatches it down the path its protocol runs over, and
+//! the [`Transport`] a path returns.
 
 use std::{
     sync::Arc,
     task::{Context, Poll, ready},
-    time::Instant,
 };
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Service, ServiceBuilder};
 #[cfg(feature = "http3")]
-use {super::quic::QuicRouter, crate::protocol::TransportKind, futures_util::future::Either};
+use {super::quic::QuicConnector, crate::protocol::TransportKind, futures_util::future::Either};
 
-#[cfg(feature = "http3")]
-use super::request::ConnectionIdentity;
 use super::{
     Conn,
     dialer::Dialer,
     layer::verbose::{self, Verbose},
-    request::ConnectRequest,
+    request::ConnectAttempt,
+    route::Route,
     stream::StreamConnector,
 };
 use crate::{config::connect::ConnectConfig, proxy::Matcher, tls};
 
-/// Connects every transport behind one service. Each request goes to the stream or QUIC path
-/// its protocol runs over; how a path is composed stays private. Clones share each path's
-/// state.
+/// Connects every transport behind one service. Each request resolves its route from the client's
+/// proxy rules and goes to the stream or QUIC path its protocol runs over; how a path is
+/// composed stays private. Clones share each path's state and proxy rules.
 #[derive(Clone)]
 pub(crate) struct TransportConnector {
+    proxies: Arc<Vec<Matcher>>,
     stream: Verbose<StreamConnector>,
     #[cfg(feature = "http3")]
-    quic: QuicRouter,
-}
-
-/// What [`TransportConnector`] connects: a request and the instant its connect timeout expires.
-/// The deadline layer sets the instant once per call. A dial can report its own timeout,
-/// letting a proxy route classify it as a proxy failure.
-pub struct TransportRequest {
-    pub(super) request: ConnectRequest,
-    pub(super) deadline: Option<Instant>,
-    #[cfg(feature = "http3")]
-    pub(super) identity: ConnectionIdentity,
-}
-
-impl TransportRequest {
-    /// Prepares a dial. The connector's deadline begins when its service is called.
-    pub(crate) fn new(
-        request: ConnectRequest,
-        #[cfg(feature = "http3")] identity: ConnectionIdentity,
-    ) -> Self {
-        Self {
-            request,
-            deadline: None,
-            #[cfg(feature = "http3")]
-            identity,
-        }
-    }
+    quic: QuicConnector,
 }
 
 /// Transport carried by a [`Conn`]: a byte stream for HTTP/1 and HTTP/2, or QUIC for HTTP/3.
@@ -91,27 +65,27 @@ impl TransportConnector {
         verbose: bool,
         config: &ConnectConfig,
     ) -> crate::Result<Self> {
-        let proxies = Arc::new(proxies);
         Ok(Self {
+            proxies: Arc::new(proxies),
             #[cfg(feature = "http3")]
-            quic: QuicRouter::new(dialer.clone(), tls.clone().quic(config)?, proxies.clone())?,
+            quic: QuicConnector::new(dialer.clone(), tls.clone().quic(config)?)?,
             stream: ServiceBuilder::new()
                 .option_layer(verbose::layer(verbose))
-                .service(StreamConnector::new(dialer, proxies, tls.stream(config)?)),
+                .service(StreamConnector::new(dialer, tls.stream(config)?)),
         })
     }
 }
 
-impl Service<TransportRequest> for TransportConnector {
+impl Service<ConnectAttempt> for TransportConnector {
     type Response = Conn;
     type Error = BoxError;
     #[cfg(feature = "http3")]
     type Future = Either<
-        <Verbose<StreamConnector> as Service<TransportRequest>>::Future,
-        <QuicRouter as Service<TransportRequest>>::Future,
+        <Verbose<StreamConnector> as Service<(ConnectAttempt, Route)>>::Future,
+        <QuicConnector as Service<(ConnectAttempt, Route)>>::Future,
     >;
     #[cfg(not(feature = "http3"))]
-    type Future = <Verbose<StreamConnector> as Service<TransportRequest>>::Future;
+    type Future = <Verbose<StreamConnector> as Service<(ConnectAttempt, Route)>>::Future;
 
     #[inline]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -121,13 +95,14 @@ impl Service<TransportRequest> for TransportConnector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: TransportRequest) -> Self::Future {
+    fn call(&mut self, attempt: ConnectAttempt) -> Self::Future {
+        let route = Route::select(attempt.request(), &self.proxies);
         cfg_select! {
-            feature = "http3" => match req.request.protocol().transport() {
-                TransportKind::Stream => Either::Left(self.stream.call(req)),
-                TransportKind::Quic => Either::Right(self.quic.call(req)),
+            feature = "http3" => match attempt.request().protocol().transport() {
+                TransportKind::Stream => Either::Left(self.stream.call((attempt, route))),
+                TransportKind::Quic => Either::Right(self.quic.call((attempt, route))),
             },
-            _ => self.stream.call(req),
+            _ => self.stream.call((attempt, route)),
         }
     }
 }

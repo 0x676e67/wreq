@@ -21,8 +21,9 @@ use dialer::{Dialer, tcp};
 use layer::deadline::{Deadline, DeadlineLayer};
 #[cfg(all(test, feature = "http3"))]
 pub(crate) use quic::test_server_config;
+use request::ConnectAttempt;
 use svc::TransportConnector;
-pub(crate) use svc::{Io, Transport, TransportRequest};
+pub(crate) use svc::{Io, Transport};
 use tower::{
     BoxError, Layer, ServiceBuilder, ServiceExt,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either},
@@ -44,7 +45,7 @@ pub type BoxedConnectorLayer =
 /// Without user layers the transport connector is called directly; user layers see it
 /// behind [`Unnameable`]. Clones share the transports' state.
 pub(crate) type Connector =
-    Deadline<Either<TransportConnector, BoxCloneSyncService<TransportRequest, Conn, BoxError>>>;
+    Deadline<Either<TransportConnector, BoxCloneSyncService<ConnectAttempt, Conn, BoxError>>>;
 
 /// Client-wide connector settings, fixed at build.
 pub(crate) struct Config {
@@ -59,7 +60,7 @@ pub(crate) struct Config {
 
 /// Opaque request passed through user-supplied connector layers.
 /// Keeps transport selection, connection configuration and the connect deadline internal.
-pub struct Unnameable(pub(super) TransportRequest);
+pub struct Unnameable(pub(super) ConnectAttempt);
 
 /// Established connection and metadata returned through connector middleware.
 /// Protocol handshakes take the transport through `into_stream` or `into_quic`,
@@ -100,7 +101,7 @@ impl Connector {
             runtime.clone(),
             resolver,
             connector_config.tcp,
-            config.clone(),
+            config.bindings(),
             connector_config.happy_eyeballs_timeout,
         );
         let connector = TransportConnector::new(
@@ -137,11 +138,7 @@ impl Connector {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "http3")]
-    use {
-        super::request::{ConnectRequest, ConnectionIdentity},
-        crate::protocol::Protocol,
-        std::sync::Arc,
-    };
+    use {super::request::ConnectRequest, crate::protocol::Protocol, std::sync::Arc};
 
     use super::*;
 
@@ -204,13 +201,12 @@ mod tests {
                 Some(Protocol::Http3),
                 ConnectConfig::default(),
             );
-            let identity = ConnectionIdentity::new(&request, &ConnectConfig::default());
             let serve = async {
                 let _accepted = server.accept().await.unwrap().await;
                 std::future::pending::<()>().await
             };
             let result = tokio::select! {
-                result = connector.oneshot(TransportRequest::new(request, identity)) => result,
+                result = connector.oneshot(request) => result,
                 () = serve => unreachable!(),
             };
             match delay {
@@ -263,9 +259,8 @@ mod tests {
                 Some(Protocol::Http3),
                 request_config,
             );
-            let identity = ConnectionIdentity::new(&request, &ConnectConfig::default());
             let error = connector
-                .oneshot(TransportRequest::new(request, identity))
+                .oneshot(request)
                 .await
                 .err()
                 .expect("QUIC must reject a proxy route");

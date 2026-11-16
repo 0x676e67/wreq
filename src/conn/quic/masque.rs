@@ -39,10 +39,7 @@ use tower::{BoxError, ServiceExt, service_fn};
 use super::endpoint::{Endpoints, TUNNEL_MTU};
 use crate::{
     Body,
-    conn::{
-        Conn,
-        request::{ConnectRequest, ConnectionKey},
-    },
+    conn::{Conn, request::ConnectRequest},
     error::ProxyConnect,
     ext::UriExt,
     proxy::matcher::Intercept,
@@ -105,12 +102,11 @@ struct Receiver(BoxStream<'static, Result<Bytes, ::quic::ConnectionError>>);
 pub(super) async fn connect(
     endpoints: &Endpoints,
     request: ConnectRequest,
-    connection_key: ConnectionKey,
-    proxy: Intercept,
     deadline: Option<Instant>,
+    proxy: Intercept,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
-    let config = endpoints.tunnel_config(&request, connection_key)?;
+    let config = endpoints.tunnel_config(&request)?;
 
     // This scope classifies proxy setup failures separately from target TLS errors.
     let connect_proxy = async {

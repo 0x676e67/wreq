@@ -470,6 +470,7 @@ impl Matcher {
 }
 
 impl crate::config::connect::ConnectConfigValue for Matcher {}
+crate::config::connect::impl_connect_extension!(cached: Matcher);
 
 // ===== impl Extra =====
 

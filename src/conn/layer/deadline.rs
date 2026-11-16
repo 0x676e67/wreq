@@ -11,7 +11,7 @@ use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 
 use crate::{
-    conn::TransportRequest,
+    conn::request::{ConnectAttempt, ConnectRequest},
     error::TimedOut,
     rt::{BoxSleep, DynRuntime, Timer as _, deadline_after},
 };
@@ -25,7 +25,7 @@ pub(crate) struct DeadlineLayer {
 
 /// Bounds each connector call by one deadline, started in `call` after readiness waits.
 /// It covers everything beneath: user layers, proxy setup and the transport handshakes.
-/// Dials that use the deadline in [`TransportRequest`] can report their own timeout before the
+/// Dials that use the deadline in [`ConnectAttempt`] can report their own timeout before the
 /// outer timer ends the call.
 #[derive(Clone)]
 pub(crate) struct Deadline<S> {
@@ -71,9 +71,9 @@ impl<S> Layer<S> for DeadlineLayer {
 
 // ===== impl Deadline =====
 
-impl<S> Service<TransportRequest> for Deadline<S>
+impl<S> Service<ConnectRequest> for Deadline<S>
 where
-    S: Service<TransportRequest>,
+    S: Service<ConnectAttempt>,
     S::Error: Into<BoxError>,
 {
     type Response = S::Response;
@@ -85,13 +85,12 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, mut request: TransportRequest) -> Self::Future {
+    fn call(&mut self, request: ConnectRequest) -> Self::Future {
         let deadline = self
             .timeout
             .map(|timeout| deadline_after(self.runtime.now(), timeout));
-        request.deadline = deadline;
         ResponseFuture {
-            future: self.inner.call(request),
+            future: self.inner.call(ConnectAttempt::new(request, deadline)),
             sleep: deadline.map(|deadline| self.runtime.sleep_until(deadline)),
         }
     }

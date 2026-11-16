@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     Error, Result,
-    config::connect::{Cached, ConnectConfig, KeyPart, changed},
+    config::connect::{Cached, ConnectConfig, KeyScope},
     conn::request::ConnectRequest,
     protocol::TransportKind,
     quic::QuicOptions,
@@ -37,7 +37,6 @@ pub(crate) struct QuicTls(Arc<Inner>);
 /// Client policy, QUIC options and compiled TLS contexts.
 struct Inner {
     tls: Config,
-    config: ConnectConfig,
     options: Option<Arc<QuicOptions>>,
     contexts: ContextCache<QuicClientConfig, QuicOptions>,
 }
@@ -84,12 +83,12 @@ struct Attempt {
 // ===== impl QuicTls =====
 
 impl QuicTls {
-    pub(super) fn new(tls: Config, config: ConnectConfig) -> Result<Self> {
+    /// Compiles the client's QUIC TLS context and retains its initial QUIC options.
+    pub(super) fn new(tls: Config, config: &ConnectConfig) -> Result<Self> {
         let options = config.get_arc::<QuicOptions>();
         let contexts = ContextCache::new(compile(&tls, options.as_deref())?);
         Ok(Self(Arc::new(Inner {
             tls,
-            config,
             options,
             contexts,
         })))
@@ -123,13 +122,13 @@ impl QuicTls {
         }
 
         let request_config = request.config();
-        let context_options =
-            changed::<QuicOptions>(request_config, &inner.config, KeyPart::Context);
+        let context_options = request_config.changed::<QuicOptions>(KeyScope::Context);
         let mut crypto = inner.contexts.get(context_options, |options| {
             compile(&inner.tls, Some(options))
         })?;
 
-        let options = changed::<QuicOptions>(request_config, &inner.config, KeyPart::Whole)
+        let options = request_config
+            .changed::<QuicOptions>(KeyScope::Full)
             .map(Cached::arc)
             .or_else(|| inner.options.clone());
         let resumption = options
@@ -150,7 +149,6 @@ impl QuicTls {
             let target = SessionTarget::new(
                 request,
                 route,
-                &inner.config,
                 TransportKind::Quic,
                 None,
                 tickets.session_id_context().map_err(Error::tls)?,

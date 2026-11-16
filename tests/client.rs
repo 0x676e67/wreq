@@ -1538,9 +1538,9 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
                 64
             };
             let emulation = Emulation::builder()
-                .http1_options(Http1Options::builder().max_headers(max_headers).build());
+                .config(Http1Options::builder().max_headers(max_headers).build());
             #[cfg(feature = "http2")]
-            let emulation = emulation.http2_options(
+            let emulation = emulation.config(
                 wreq::http2::Http2Options::builder()
                     .header_table_size(if strict && version == Version::HTTP_2 {
                         8192

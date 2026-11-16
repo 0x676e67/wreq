@@ -94,7 +94,7 @@ where
             let Conn {
                 transport,
                 connected,
-            } = Oneshot::new(connector, target.into_transport()).await?;
+            } = Oneshot::new(connector, target.into_request()).await?;
 
             Ok(Established::new(
                 transport.into_stream()?,

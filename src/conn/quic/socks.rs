@@ -33,8 +33,8 @@ use super::endpoint::{Endpoints, TUNNEL_MTU, handshake_error};
 use crate::{
     conn::{
         Conn,
-        dialer::{self, ConnectError, Dialer, SocketRequest, race, resolve},
-        request::{ConnectRequest, ConnectionKey},
+        dialer::{ConnectError, Dialer, SocketBindings, SocketRequest, race, resolve},
+        request::ConnectRequest,
     },
     error::ProxyConnect,
     proxy::matcher::Intercept,
@@ -103,13 +103,12 @@ pin_project! {
 pub(super) async fn connect(
     endpoints: &Endpoints,
     request: ConnectRequest,
-    connection_key: ConnectionKey,
+    deadline: Option<Instant>,
     proxy: Intercept,
     dns: DnsResolve,
-    deadline: Option<Instant>,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
-    let config = endpoints.tunnel_config(&request, connection_key)?;
+    let config = endpoints.tunnel_config(&request)?;
     let uri = request.uri();
     let host = crate::util::strip_ipv6_brackets(uri.host().ok_or(URI_MISSING_HOST)?);
     let port = uri.port_u16().unwrap_or(443);
@@ -119,7 +118,7 @@ pub(super) async fn connect(
             Ok(ip) => Address::Ip((ip, port).into()),
             Err(_) => Address::Domain(host.into(), port),
         };
-        return Ok(connect_target(endpoints, &request, &proxy, &config, target, deadline).await?);
+        return Ok(connect_target(endpoints, &request, deadline, &proxy, &config, target).await?);
     }
 
     let dialer = endpoints.dialer();
@@ -136,7 +135,7 @@ pub(super) async fn connect(
         |address| {
             let target = Address::Ip(address);
             let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
-                endpoints, &request, &proxy, &config, target, deadline,
+                endpoints, &request, deadline, &proxy, &config, target,
             ));
             Ok(attempt)
         },
@@ -150,17 +149,18 @@ pub(super) async fn connect(
 async fn connect_target(
     endpoints: &Endpoints,
     request: &ConnectRequest,
+    deadline: Option<Instant>,
     proxy: &Intercept,
     config: &QuicConfig,
     target: Address,
-    deadline: Option<Instant>,
 ) -> Result<Conn, ConnectError> {
     let dialer = endpoints.dialer();
+    let bindings = dialer.bindings(request.bindings());
     // The control connection takes the request's bindings, like the relay socket.
     let io = dialer
         .dial(SocketRequest::Tcp {
             uri: proxy.uri().clone(),
-            config: request.config().clone(),
+            bindings: bindings.clone(),
             secure: false,
             deadline,
         })
@@ -207,7 +207,7 @@ async fn connect_target(
             Address::Ip(relay) if relay.ip().is_unspecified() => {
                 return Err(PEER_ADDR_REQUIRED.into());
             }
-            Address::Ip(relay) => (relay_socket(dialer, request, relay)?, relay),
+            Address::Ip(relay) => (relay_socket(dialer, &bindings, relay)?, relay),
             Address::Domain(host, port) => {
                 // BND.PORT is authoritative even when the resolver returns another port.
                 let mut resolving = pin!(resolve(&host, port, true, |name| {
@@ -244,7 +244,7 @@ async fn connect_target(
                     .filter(preferred)
                     .chain(addresses.iter().filter(|addr| !preferred(addr)))
                 {
-                    match relay_socket(dialer, request, relay) {
+                    match relay_socket(dialer, &bindings, relay) {
                         Ok(socket) => {
                             selected = Some((socket, relay));
                             break;
@@ -275,11 +275,10 @@ async fn connect_target(
 /// Opens a relay socket with the same binding policy as direct QUIC.
 fn relay_socket(
     dialer: &Dialer,
-    request: &ConnectRequest,
+    bindings: &SocketBindings,
     remote: SocketAddr,
 ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-    let request_config = request.config();
-    let (ipv4, ipv6) = dialer::local_addresses(request_config, dialer.config());
+    let (ipv4, ipv6) = bindings.addresses();
     if matches!(
         (ipv4, ipv6, remote),
         (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
@@ -288,7 +287,7 @@ fn relay_socket(
     }
     Ok(dialer
         .runtime()
-        .udp_socket(dialer.bind_udp(request_config, remote)?)?)
+        .udp_socket(dialer.bind_udp(bindings, remote)?)?)
 }
 
 /// Labels a failed proxy stage, keeping it a proxy connect error.

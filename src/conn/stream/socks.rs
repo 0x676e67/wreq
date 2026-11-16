@@ -2,13 +2,17 @@
 
 use std::time::Instant;
 
+use http::Uri;
 use netty::proxy::socks::{DnsResolve, SocksConnector, SocksError, Version};
 use tower::{ServiceExt, service_fn};
 
-use super::tcp_request;
 use crate::{
-    conn::{dialer::Dialer, request::ConnectRequest},
+    conn::{
+        dialer::{Dialer, SocketRequest},
+        request::ConnectRequest,
+    },
     dns::Name,
+    ext::UriExt,
     proxy::matcher::Intercept,
     rt::BoxConnection,
 };
@@ -20,13 +24,24 @@ use crate::{
 pub(super) async fn connect(
     dialer: &Dialer,
     request: &ConnectRequest,
+    deadline: Option<Instant>,
     proxy: &Intercept,
     version: Version,
     dns: DnsResolve,
-    deadline: Option<Instant>,
 ) -> Result<BoxConnection, SocksError> {
-    let connect_proxy = service_fn(|uri| dialer.dial(tcp_request!(request, uri, deadline)));
+    let bindings = dialer.bindings(request.bindings());
+    let is_https = request.uri().is_https();
     let resolver = dialer.resolver().clone().map_request(Name::new);
+    let dialer = dialer.clone();
+    let connect_proxy = service_fn(move |uri: Uri| {
+        let secure = is_https || uri.is_https();
+        dialer.dial(SocketRequest::Tcp {
+            secure,
+            uri,
+            bindings: bindings.clone(),
+            deadline,
+        })
+    });
     let mut connector = SocksConnector::new(proxy.uri().clone(), connect_proxy, resolver);
     connector.set_auth(proxy.raw_auth());
     connector.set_version(version);

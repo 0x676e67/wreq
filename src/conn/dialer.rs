@@ -32,10 +32,12 @@ use {
 };
 
 pub(super) use self::race::race;
+use super::request::ConnectRequest;
 use crate::{
-    config::connect::ConnectConfig,
+    config::connect::{ConnectConfig, impl_connect_extension},
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
+    ext::UriExt,
     rt::{BoxConnection, DynRuntime, Timer as _},
 };
 
@@ -51,20 +53,32 @@ struct Inner {
     runtime: DynRuntime,
     resolver: DynResolver,
     tcp: tcp::Config,
-    config: ConnectConfig,
+    bindings: SocketBindings,
     happy_eyeballs_timeout: Option<Duration>,
+}
+
+/// Effective local IP addresses and network interface for dialing a socket.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SocketBindings {
+    pub(crate) ipv4: Option<Ipv4Addr>,
+    pub(crate) ipv6: Option<Ipv6Addr>,
+    pub(crate) interface: Option<Interface>,
 }
 
 /// A physical socket destination. TCP settings apply to the dialed hop.
 pub(super) enum SocketRequest {
+    /// Connects to a TCP host with request-scoped bindings and deadline.
     Tcp {
+        /// Target authority and port to resolve and dial.
         uri: Uri,
         /// Keeps TCP_NODELAY enabled through any TLS on this socket, including tunneled TLS.
         secure: bool,
         /// Lets the dial report its own timeout before the outer connector does.
         deadline: Option<Instant>,
-        config: ConnectConfig,
+        /// Effective socket bindings for this connection.
+        bindings: SocketBindings,
     },
+    /// Connects directly to a Unix domain socket path.
     #[cfg(unix)]
     Unix(Arc<Path>),
 }
@@ -81,7 +95,6 @@ pub struct ConnectError {
     pub(crate) msg: &'static str,
     pub(crate) addr: Option<SocketAddr>,
     pub(crate) cause: Option<BoxError>,
-    /// Every other address of the host would fail the same way, so the race ends here.
     pub(super) terminal: bool,
 }
 
@@ -154,7 +167,7 @@ impl Dialer {
         runtime: DynRuntime,
         resolver: DynResolver,
         tcp: tcp::Config,
-        config: ConnectConfig,
+        bindings: SocketBindings,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         Self {
@@ -162,7 +175,7 @@ impl Dialer {
                 runtime,
                 resolver,
                 tcp,
-                config,
+                bindings,
                 happy_eyeballs_timeout,
             }),
         }
@@ -180,6 +193,18 @@ impl Dialer {
     pub(crate) fn resolver(&self) -> &DynResolver {
         &self.inner.resolver
     }
+
+    /// Resolves each socket binding independently, preferring `bindings` over the dialer's.
+    /// Explicit unspecified addresses still select their address family during dialing.
+    pub(crate) fn bindings(&self, bindings: SocketBindings) -> SocketBindings {
+        SocketBindings {
+            ipv4: bindings.ipv4.or(self.inner.bindings.ipv4),
+            ipv6: bindings.ipv6.or(self.inner.bindings.ipv6),
+            interface: bindings
+                .interface
+                .or_else(|| self.inner.bindings.interface.clone()),
+        }
+    }
 }
 
 #[cfg(feature = "http3")]
@@ -196,20 +221,21 @@ impl Dialer {
         self.inner.happy_eyeballs_timeout
     }
 
-    /// Client configuration inherited by each dial.
+    /// Returns whether `bindings` matches the client's shared QUIC endpoints.
+    /// All fields must match, including the address family this dial does not use.
     #[inline]
-    pub(crate) fn config(&self) -> &ConnectConfig {
-        &self.inner.config
+    pub(crate) fn uses_client_bindings(&self, bindings: &SocketBindings) -> bool {
+        bindings == &self.inner.bindings
     }
 
     /// Binds a UDP socket for the address family of `remote` before the runtime registers it.
     pub(crate) fn bind_udp(
         &self,
-        request_config: &ConnectConfig,
+        bindings: &SocketBindings,
         remote: SocketAddr,
     ) -> Result<UdpSocket, ConnectError> {
-        let (ipv4, ipv6) = local_addresses(request_config, &self.inner.config);
-        let interface = interface(request_config, &self.inner.config);
+        let (ipv4, ipv6) = bindings.addresses();
+        let interface = bindings.interface();
         let address = match remote {
             SocketAddr::V4(_) => SocketAddr::from((ipv4.unwrap_or(Ipv4Addr::UNSPECIFIED), 0)),
             SocketAddr::V6(_) => SocketAddr::from((ipv6.unwrap_or(Ipv6Addr::UNSPECIFIED), 0)),
@@ -247,11 +273,11 @@ impl Dialer {
         match request {
             SocketRequest::Tcp {
                 uri,
-                config,
                 secure,
                 deadline,
+                bindings,
             } => {
-                let dial = self.dial_tcp(uri, config, secure, deadline);
+                let dial = self.dial_tcp(uri, secure, deadline, bindings);
                 cfg_select! {
                     unix => Either::Left(dial),
                     _ => dial,
@@ -268,9 +294,9 @@ impl Dialer {
     fn dial_tcp(
         &self,
         uri: Uri,
-        request_config: ConnectConfig,
         secure: bool,
         deadline: Option<Instant>,
+        bindings: SocketBindings,
     ) -> impl Future<Output = Result<BoxConnection, BoxError>> + use<> {
         // Disable Nagle during TLS handshakes.
         // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
@@ -282,8 +308,8 @@ impl Dialer {
                 inner.resolver.resolve(name)
             })
             .await?;
-            let addresses = local_addresses(&request_config, &inner.config);
-            let interface = interface(&request_config, &inner.config);
+            let addresses = bindings.addresses();
+            let interface = bindings.interface();
             let stream = race(
                 addrs,
                 addresses,
@@ -308,9 +334,55 @@ impl Dialer {
     }
 }
 
+// ===== impl SocketRequest =====
+
+impl SocketRequest {
+    /// Builds a TCP dial request, keeping `TCP_NODELAY` enabled across any TLS on the
+    /// connection or the proxy hop itself.
+    pub(super) fn tcp(
+        request: &ConnectRequest,
+        uri: Uri,
+        bindings: SocketBindings,
+        deadline: Option<Instant>,
+    ) -> Self {
+        Self::Tcp {
+            secure: request.uri().is_https() || uri.is_https(),
+            uri,
+            deadline,
+            bindings,
+        }
+    }
+}
+
+// ===== impl SocketBindings =====
+
+impl SocketBindings {
+    /// Extracts the effective local IPv4, IPv6, and interface settings from `config`.
+    pub(crate) fn from_config(config: &ConnectConfig) -> Self {
+        Self {
+            ipv4: config.get_ref::<Ipv4Addr>().copied(),
+            ipv6: config.get_ref::<Ipv6Addr>().copied(),
+            interface: config.get_ref::<Interface>().cloned(),
+        }
+    }
+
+    /// Returns the `(ipv4, ipv6)` local source addresses.
+    #[inline]
+    pub(crate) fn addresses(&self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
+        (self.ipv4, self.ipv6)
+    }
+
+    /// Borrows the bound network interface name, if configured.
+    #[inline]
+    pub(crate) fn interface(&self) -> Option<&str> {
+        self.interface.as_ref().map(Interface::as_str)
+    }
+}
+
 // ===== impl Interface =====
 
 impl Interface {
+    /// Borrows the interface name as a string slice.
     fn as_str(&self) -> &str {
         match self {
             Self::Static(name) => name,
@@ -342,16 +414,7 @@ impl Hash for Interface {
     }
 }
 
-/// Returns whether the effective bindings match the client's shared QUIC endpoints.
-/// All fields must match, including the address family this dial does not use.
-#[cfg(feature = "http3")]
-pub(super) fn uses_client_bindings(
-    request_config: &ConnectConfig,
-    client_config: &ConnectConfig,
-) -> bool {
-    local_addresses(request_config, client_config) == local_addresses(client_config, client_config)
-        && interface(request_config, client_config) == interface(client_config, client_config)
-}
+impl_connect_extension!(Ipv4Addr, Ipv6Addr, Interface);
 
 /// Sets one local address family without clearing the other.
 /// Passing `None` leaves both families unchanged.
@@ -379,30 +442,6 @@ pub(crate) fn set_local_addresses(
     if let Some(address) = ipv6 {
         config.insert(address);
     }
-}
-
-/// Resolves each local address independently, preferring request values over the client's.
-/// Explicit unspecified addresses still select their address family during dialing.
-pub(crate) fn local_addresses(
-    request_config: &ConnectConfig,
-    client_config: &ConnectConfig,
-) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
-    let config = request_config.with_base(client_config);
-    (
-        config.get_ref::<Ipv4Addr>().copied(),
-        config.get_ref::<Ipv6Addr>().copied(),
-    )
-}
-
-/// Borrows the request's interface name, falling back to the client's when absent.
-pub(crate) fn interface<'a>(
-    request_config: &'a ConnectConfig,
-    client_config: &'a ConnectConfig,
-) -> Option<&'a str> {
-    request_config
-        .with_base(client_config)
-        .get_ref::<Interface>()
-        .map(Interface::as_str)
 }
 
 cfg_select! {
@@ -468,6 +507,7 @@ cfg_select! {
 // ===== impl ConnectError =====
 
 impl ConnectError {
+    /// Creates a connection error with a static context message and underlying cause.
     pub(crate) fn new<E: Into<BoxError>>(msg: &'static str, cause: E) -> ConnectError {
         ConnectError {
             msg,
@@ -477,14 +517,17 @@ impl ConnectError {
         }
     }
 
+    /// Wraps a DNS resolution failure as a connection error.
     pub(crate) fn dns<E: Into<BoxError>>(cause: E) -> ConnectError {
         ConnectError::new("dns error", cause)
     }
 
+    /// Returns a closure mapping an error into a [ConnectError] with msg.
     pub(crate) fn m<E: Into<BoxError>>(msg: &'static str) -> impl FnOnce(E) -> ConnectError {
         move |cause| ConnectError::new(msg, cause)
     }
 
+    /// Constructs a NotConnected error when no resolved address can be dialed.
     fn network_unreachable() -> ConnectError {
         ConnectError::new(
             "connect error",
@@ -492,6 +535,7 @@ impl ConnectError {
         )
     }
 
+    /// Attaches the peer socket address attempted when the error occurred.
     fn with_addr(mut self, addr: SocketAddr) -> Self {
         self.addr = Some(addr);
         self
@@ -586,6 +630,7 @@ mod tests {
             io::ErrorKind::NotFound
         );
     }
+
     #[test]
     fn bindings_inherit_only_unspecified_fields() {
         let mut client_config = ConnectConfig::default();
@@ -595,9 +640,9 @@ mod tests {
             Some(Ipv6Addr::LOCALHOST),
         );
         client_config.insert(Interface::Static("lo"));
-        let mut request_config = ConnectConfig::default();
+        let mut request_config = ConnectConfig::default().with_base(&client_config);
         assert_eq!(
-            local_addresses(&request_config, &client_config),
+            request_config.bindings().addresses(),
             (Some(Ipv4Addr::LOCALHOST), Some(Ipv6Addr::LOCALHOST))
         );
         set_local_address(&mut request_config, Some(Ipv4Addr::UNSPECIFIED.into()));
@@ -605,11 +650,11 @@ mod tests {
         set_local_addresses(&mut request_config, None, Some(Ipv6Addr::UNSPECIFIED));
         set_local_addresses(&mut request_config, None, None);
         assert_eq!(
-            local_addresses(&request_config, &client_config),
+            request_config.bindings().addresses(),
             (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::UNSPECIFIED))
         );
-        assert_eq!(interface(&request_config, &client_config), Some("lo"));
+        assert_eq!(request_config.bindings().interface(), Some("lo"));
         request_config.insert(Interface::Static("eth0"));
-        assert_eq!(interface(&request_config, &client_config), Some("eth0"));
+        assert_eq!(request_config.bindings().interface(), Some("eth0"));
     }
 }

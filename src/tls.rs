@@ -42,7 +42,8 @@ use trust::{CertStore, Identity};
 use crate::{
     Error,
     config::connect::{
-        Cached, ConnectConfig, KeyPart, ScopedConfig, derive_deftly_template_ConfigKey,
+        Cached, ConnectConfig, KeyScope, ScopedConfig, derive_deftly_template_ConfigKey,
+        impl_connect_extension,
     },
     sync::Mutex,
 };
@@ -705,6 +706,8 @@ impl TlsOptions {
     }
 }
 
+impl_connect_extension!(cached: TlsOptions);
+
 // ===== impl Config =====
 
 impl Config {
@@ -748,13 +751,13 @@ impl Config {
     /// Missing options leave TLS customization to the backend's defaults; the client-wide
     /// trust, version, and ALPN policy still applies.
     pub(crate) fn stream(self, config: &ConnectConfig) -> crate::Result<StreamTls> {
-        StreamTls::new(self, config.clone())
+        StreamTls::new(self, config)
     }
 
     /// Compiles the client's QUIC context from its QUIC options.
     #[cfg(feature = "http3")]
     pub(crate) fn quic(self, config: &ConnectConfig) -> crate::Result<QuicTls> {
-        QuicTls::new(self, config.clone())
+        QuicTls::new(self, config)
     }
 }
 
@@ -798,7 +801,7 @@ impl<T: Clone, O: ScopedConfig> ContextCache<T, O> {
             return Ok(self.client.clone());
         };
         let key = ScopedIdentity {
-            hash: options.hash(KeyPart::Context),
+            hash: options.hash(KeyScope::Context),
             value: options.get().context_identity(),
         };
         if let Some(context) = self.requests.lock().get(&key) {
