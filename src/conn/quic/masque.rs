@@ -39,7 +39,10 @@ use tower::{BoxError, ServiceExt, service_fn};
 use super::endpoint::{Endpoints, TUNNEL_MTU};
 use crate::{
     Body,
-    conn::{Conn, request::ConnectRequest},
+    conn::{
+        Conn,
+        request::{ConnectRequest, ConnectionKey},
+    },
     error::ProxyConnect,
     ext::UriExt,
     proxy::matcher::Intercept,
@@ -102,11 +105,12 @@ struct Receiver(BoxStream<'static, Result<Bytes, ::quic::ConnectionError>>);
 pub(super) async fn connect(
     endpoints: &Endpoints,
     request: ConnectRequest,
+    connection_key: ConnectionKey,
     proxy: Intercept,
     deadline: Option<Instant>,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
-    let config = endpoints.tunnel_config(&request)?;
+    let config = endpoints.tunnel_config(&request, connection_key)?;
 
     // This scope classifies proxy setup failures separately from target TLS errors.
     let connect_proxy = async {
@@ -406,6 +410,7 @@ impl<B: Buf> rt::Connection<B> for OuterConnection {
     type RecvStream = Compat<http3_quic::RecvStream>;
     type OpenStreams = Compat<http3_quic::OpenStreams>;
 
+    #[inline]
     fn poll_accept_recv(
         &mut self,
         cx: &mut Context<'_>,
@@ -413,6 +418,7 @@ impl<B: Buf> rt::Connection<B> for OuterConnection {
         rt::Connection::<B>::poll_accept_recv(&mut self.inner, cx)
     }
 
+    #[inline]
     fn poll_accept_bidi(
         &mut self,
         cx: &mut Context<'_>,
@@ -420,6 +426,7 @@ impl<B: Buf> rt::Connection<B> for OuterConnection {
         rt::Connection::<B>::poll_accept_bidi(&mut self.inner, cx)
     }
 
+    #[inline]
     fn opener(&self) -> Self::OpenStreams {
         rt::Connection::<B>::opener(&self.inner)
     }
@@ -429,6 +436,7 @@ impl<B: Buf> rt::OpenStreams<B> for OuterConnection {
     type SendStream = Compat<http3_quic::SendStream<B>>;
     type BidiStream = Compat<http3_quic::BidiStream<B>>;
 
+    #[inline]
     fn poll_open_bidi(
         &mut self,
         cx: &mut Context<'_>,
@@ -436,6 +444,7 @@ impl<B: Buf> rt::OpenStreams<B> for OuterConnection {
         rt::OpenStreams::<B>::poll_open_bidi(&mut self.inner, cx)
     }
 
+    #[inline]
     fn poll_open_send(
         &mut self,
         cx: &mut Context<'_>,
@@ -443,6 +452,7 @@ impl<B: Buf> rt::OpenStreams<B> for OuterConnection {
         rt::OpenStreams::<B>::poll_open_send(&mut self.inner, cx)
     }
 
+    #[inline]
     fn close(&mut self, code: u64, reason: &[u8]) {
         rt::OpenStreams::<B>::close(&mut self.inner, code, reason);
     }

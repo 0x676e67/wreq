@@ -13,7 +13,7 @@ use educe::Educe;
 
 use crate::{
     Error,
-    config::connect::{ConfigScope, derive_deftly_template_ConfigKey},
+    config::connect::derive_deftly_template_ConfigKey,
     tls::{
         EchGrease, ExtensionType, KeyShare, Tls13Cipher,
         compress::{CertificateCompressionAlgorithm, CertificateCompressor},
@@ -38,7 +38,6 @@ pub struct QuicOptionsBuilder {
 #[educe(Default)]
 #[derive_deftly(ConfigKey)]
 #[deftly(config_key(
-    scope = "ConfigScope::QUIC",
     transport,
     context_key = "QuicContextIdentity",
     session_key = "QuicSessionIdentity"

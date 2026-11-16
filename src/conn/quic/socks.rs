@@ -34,7 +34,7 @@ use crate::{
     conn::{
         Conn,
         dialer::{self, ConnectError, Dialer, SocketRequest, race, resolve},
-        request::ConnectRequest,
+        request::{ConnectRequest, ConnectionKey},
     },
     error::ProxyConnect,
     proxy::matcher::Intercept,
@@ -103,12 +103,13 @@ pin_project! {
 pub(super) async fn connect(
     endpoints: &Endpoints,
     request: ConnectRequest,
+    connection_key: ConnectionKey,
     proxy: Intercept,
     dns: DnsResolve,
     deadline: Option<Instant>,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
-    let config = endpoints.tunnel_config(&request)?;
+    let config = endpoints.tunnel_config(&request, connection_key)?;
     let uri = request.uri();
     let host = crate::util::strip_ipv6_brackets(uri.host().ok_or(URI_MISSING_HOST)?);
     let port = uri.port_u16().unwrap_or(443);
@@ -159,7 +160,7 @@ async fn connect_target(
     let io = dialer
         .dial(SocketRequest::Tcp {
             uri: proxy.uri().clone(),
-            connect_options: request.connect_options().clone(),
+            config: request.config().clone(),
             secure: false,
             deadline,
         })
@@ -277,8 +278,8 @@ fn relay_socket(
     request: &ConnectRequest,
     remote: SocketAddr,
 ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-    let connect_options = request.connect_options();
-    let (ipv4, ipv6) = dialer::local_addresses(connect_options, dialer.connect_options());
+    let request_config = request.config();
+    let (ipv4, ipv6) = dialer::local_addresses(request_config, dialer.config());
     if matches!(
         (ipv4, ipv6, remote),
         (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
@@ -287,7 +288,7 @@ fn relay_socket(
     }
     Ok(dialer
         .runtime()
-        .udp_socket(dialer.bind_udp(connect_options, remote)?)?)
+        .udp_socket(dialer.bind_udp(request_config, remote)?)?)
 }
 
 /// Labels a failed proxy stage, keeping it a proxy connect error.

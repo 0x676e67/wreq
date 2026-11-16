@@ -44,7 +44,7 @@ enum TestConnector {
     Http3(SocketAddr, ::quic::ClientConfig),
 }
 
-impl Service<ConnectRequest> for TestConnector {
+impl Service<TransportRequest> for TestConnector {
     type Response = Conn;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -53,7 +53,7 @@ impl Service<ConnectRequest> for TestConnector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, _req: ConnectRequest) -> Self::Future {
+    fn call(&mut self, _req: TransportRequest) -> Self::Future {
         match self {
             Self::Fails => Box::pin(std::future::ready(Err(io::Error::from(
                 io::ErrorKind::ConnectionRefused,
@@ -154,12 +154,12 @@ fn connect_request(protocol: Protocol) -> ConnectRequest {
 
 /// Creates connection inputs with an explicit compatibility group.
 fn grouped_request(group: Group, protocol: Protocol) -> ConnectRequest {
-    let mut connect_options = Extensions::default();
-    connect_options.insert(group);
+    let mut config = ConnectConfig::default();
+    config.insert(group);
     ConnectRequest::test(
         http::Uri::from_static("http://localhost/"),
         Some(protocol),
-        connect_options,
+        config,
     )
 }
 
@@ -172,9 +172,25 @@ fn test_pool(connector: TestConnector) -> Pool<TestConnector> {
         },
         connector,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &Extensions::default(),
+        &ConnectConfig::default(),
         true,
     )
+}
+
+impl<C: TransportConnector> Pool<C> {
+    fn test_identity(&self, req: &ConnectRequest) -> ConnectionIdentity {
+        ConnectionIdentity::new(req, &self.inner.targeter.config)
+    }
+
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    fn test_key(&self, req: &ConnectRequest) -> ConnectionKey {
+        self.test_identity(req).key(req)
+    }
+
+    async fn test_checkout(&self, req: ConnectRequest) -> Result<Pooled, BoxError> {
+        let identity = self.test_identity(&req);
+        self.checkout(req, identity, false).await
+    }
 }
 
 /// Starts a local QUIC server and returns a connector trusting its certificate.
@@ -223,7 +239,7 @@ fn protocol_modes_build_specialized_entries() {
 
     let clones = Arc::new(AtomicUsize::new(0));
     let counter = CloneCounter(clones.clone());
-    let connector = tower::service_fn(move |_: ConnectRequest| {
+    let connector = tower::service_fn(move |_: TransportRequest| {
         let _counter = &counter;
         std::future::pending::<Result<Conn, BoxError>>()
     });
@@ -231,7 +247,7 @@ fn protocol_modes_build_specialized_entries() {
         Config::default(),
         connector,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &Extensions::default(),
+        &ConnectConfig::default(),
         true,
     );
     assert_eq!(clones.load(Ordering::Relaxed), 0);
@@ -247,8 +263,10 @@ fn protocol_modes_build_specialized_entries() {
     .into_iter()
     .enumerate()
     {
+        let req = connect_request(protocol);
         let target = PoolTarget {
-            req: connect_request(protocol),
+            identity: pool.test_identity(&req),
+            req,
             wait_for_reuse: false,
         };
         let entry = pool.inner.targeter.service(&target);
@@ -268,8 +286,8 @@ fn protocol_modes_build_specialized_entries() {
 async fn http2_checkouts_preserve_generation_and_cancellation() {
     // Equivalent HTTP/1 options leave the key unchanged in both modes.
     let http1 = Http1Options::builder().max_headers(96).build();
-    let mut client_options = Extensions::default();
-    client_options.insert(http1.clone());
+    let mut client_config = ConnectConfig::default();
+    client_config.insert(http1.clone());
 
     for protocol in [Protocol::Http2, Protocol::Auto] {
         let calls = Arc::new(AtomicUsize::new(0));
@@ -281,24 +299,20 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
             },
             TestConnector::Http2(calls.clone(), gate.clone()),
             DynRuntime::new(crate::rt::tokio::TokioRuntime),
-            &client_options,
+            &client_config,
             true,
         );
         let req = connect_request(protocol);
+        let key = pool.test_key(&req);
         let checkout = || {
-            let mut connect_options = req.connect_options().clone();
-            connect_options.insert(http1.clone());
+            let mut request_config = req.config().clone();
+            request_config.insert(http1.clone());
             let request_options =
-                Arc::downgrade(&connect_options.get_arc::<Http1Options>().unwrap());
+                Arc::downgrade(&request_config.get_arc::<Http1Options>().unwrap());
+            let req = ConnectRequest::new(req.uri(), protocol, request_config).unwrap();
             let target = PoolTarget {
-                req: ConnectRequest::new(
-                    req.uri(),
-                    Some(protocol),
-                    Protocol::Auto,
-                    connect_options,
-                    &client_options,
-                )
-                .unwrap(),
+                identity: pool.test_identity(&req),
+                req,
                 wait_for_reuse: false,
             };
             let (future, unused) = pool.inner.services.lock().with_service(
@@ -367,7 +381,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
             .inner
             .services
             .lock()
-            .get_mut(&req.key())
+            .get_mut(&key)
             .unwrap()
             .retain(pool.inner.now(), None);
         assert!(
@@ -419,11 +433,11 @@ async fn idle_task_tracks_reusable_state() {
         },
         TestConnector::KeepsAlive,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &Extensions::default(),
+        &ConnectConfig::default(),
         true,
     );
     let pooled = pool
-        .checkout(connect_request(Protocol::Http1), false)
+        .test_checkout(connect_request(Protocol::Http1))
         .await
         .expect("successful checkout");
 
@@ -445,11 +459,11 @@ async fn idle_task_tracks_reusable_state() {
         },
         TestConnector::KeepsAlive,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &Extensions::default(),
+        &ConnectConfig::default(),
         true,
     );
     let pooled = pool
-        .checkout(connect_request(Protocol::Http1), false)
+        .test_checkout(connect_request(Protocol::Http1))
         .await
         .expect("successful checkout");
 
@@ -470,10 +484,10 @@ async fn idle_task_waits_for_a_runtime_after_off_runtime_drop() {
         },
         TestConnector::KeepsAlive,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &Extensions::default(),
+        &ConnectConfig::default(),
         true,
     );
-    let checkout = || pool.checkout(connect_request(Protocol::Http1), false);
+    let checkout = || pool.test_checkout(connect_request(Protocol::Http1));
 
     // Returning a connection on a thread without a runtime keeps it pooled but
     // cannot start the watcher.
@@ -499,10 +513,13 @@ async fn extended_connect_checkout_only_clones_established_senders() {
         let calls = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let pool = test_pool(TestConnector::Http2(calls.clone(), gate.clone()));
-        let key = connect_request(protocol).key();
+        let req = connect_request(protocol);
+        let identity = pool.test_identity(&req);
+        let key = identity.key(&req);
         let checkout = || {
             let target = PoolTarget {
-                req: connect_request(protocol),
+                req: req.clone(),
+                identity: identity.clone(),
                 wait_for_reuse: false,
             };
             let (future, _) = pool.inner.services.lock().with_service(
@@ -559,14 +576,14 @@ async fn checkouts_remove_empty_map_entries() {
         Protocol::Auto,
     ] {
         let pool = test_pool(TestConnector::Fails);
-        let result = pool.checkout(connect_request(protocol), false).await;
+        let result = pool.test_checkout(connect_request(protocol)).await;
         assert!(result.is_err());
         assert!(pool.inner.services.lock().is_empty());
         assert!(!pool.inner.expire.is_running());
 
         let pool = test_pool(TestConnector::Pending);
-        let mut first = tokio_test::task::spawn(pool.checkout(connect_request(protocol), false));
-        let mut second = tokio_test::task::spawn(pool.checkout(connect_request(protocol), false));
+        let mut first = tokio_test::task::spawn(pool.test_checkout(connect_request(protocol)));
+        let mut second = tokio_test::task::spawn(pool.test_checkout(connect_request(protocol)));
         assert!(first.poll().is_pending());
         assert!(second.poll().is_pending());
         drop(first);
@@ -578,7 +595,7 @@ async fn checkouts_remove_empty_map_entries() {
 
     let pool = test_pool(TestConnector::ClosesAfterResponse);
     let mut pooled = pool
-        .checkout(connect_request(Protocol::Http1), false)
+        .test_checkout(connect_request(Protocol::Http1))
         .await
         .expect("successful checkout");
     std::future::poll_fn(|cx| pooled.poll_ready(cx))
@@ -607,7 +624,7 @@ async fn checkouts_remove_empty_map_entries() {
     let request_read = Arc::new(tokio::sync::Notify::new());
     let pool = test_pool(TestConnector::StallsAfterRequest(request_read.clone()));
     let mut pooled = pool
-        .checkout(connect_request(Protocol::Http1), false)
+        .test_checkout(connect_request(Protocol::Http1))
         .await
         .expect("successful checkout");
     std::future::poll_fn(|cx| pooled.poll_ready(cx))
@@ -634,7 +651,7 @@ async fn checkouts_remove_empty_map_entries() {
     let pool = test_pool(TestConnector::KeepsAlive);
     let req = grouped_request(Group::new("active"), Protocol::Http1);
     let mut first = pool
-        .checkout(req.clone(), false)
+        .test_checkout(req.clone())
         .await
         .expect("first checkout");
     std::future::poll_fn(|cx| first.poll_ready(cx))
@@ -671,7 +688,7 @@ async fn checkouts_remove_empty_map_entries() {
         .expect("reusable sender");
     drop(first);
 
-    let second = pool.checkout(req, false).await.expect("second checkout");
+    let second = pool.test_checkout(req).await.expect("second checkout");
 
     assert!(second.is_reused());
     assert_eq!(pool.inner.services.lock().iter_mut().count(), 1);
@@ -702,22 +719,24 @@ async fn pool_max_size_evicts_only_idle_groups() {
         },
         TestConnector::KeepsAlive,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        &Extensions::default(),
+        &ConnectConfig::default(),
         true,
     );
     let first_req = grouped_request(Group::new("first"), Protocol::Http1);
     let second_req = grouped_request(Group::new("second"), Protocol::Http1);
-    let first_key = first_req.key();
-    let second_key = second_req.key();
+    let first_identity = pool.test_identity(&first_req);
+    let second_identity = pool.test_identity(&second_req);
+    let first_key = first_identity.key(&first_req);
+    let second_key = second_identity.key(&second_req);
 
     let mut first = pool
-        .checkout(first_req, false)
+        .checkout(first_req, first_identity, false)
         .await
         .expect("first checkout");
     send(&mut first).await;
 
     let mut second = pool
-        .checkout(second_req, false)
+        .checkout(second_req, second_identity, false)
         .await
         .expect("second checkout");
     send(&mut second).await;
@@ -752,13 +771,13 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
             },
             connector,
             DynRuntime::new(crate::rt::tokio::TokioRuntime),
-            &Extensions::default(),
+            &ConnectConfig::default(),
             true,
         );
         let request = |name| grouped_request(Group::new(name), protocol);
         let [live, dead, next] = ["live", "dead", "next"].map(request);
-        let (live_key, dead_key, next_key) = (live.key(), dead.key(), next.key());
-        let checkout = |req| pool.checkout(req, false);
+        let [live_key, dead_key, next_key] = [&live, &dead, &next].map(|req| pool.test_key(req));
+        let checkout = |req| pool.test_checkout(req);
         let retained = |key| {
             pool.inner
                 .services
@@ -814,7 +833,7 @@ async fn mismatched_transport_fails_checkout() {
         ),
     ] {
         let Err(error) = test_pool(connector)
-            .checkout(connect_request(protocol), false)
+            .test_checkout(connect_request(protocol))
             .await
         else {
             panic!("{protocol:?}: checkout accepted a mismatched transport");

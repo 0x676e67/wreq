@@ -22,7 +22,7 @@ pub(super) async fn finish(
     io: impl Connection,
     request: ConnectRequest,
     tls: TlsConnector,
-    reset_nodelay: bool,
+    nodelay: bool,
     proxy: Option<Intercept>,
 ) -> Result<Conn, BoxError> {
     let (local_addr, remote_addr) = (io.local_addr(), io.peer_addr());
@@ -44,7 +44,7 @@ pub(super) async fn finish(
     let stream: Box<dyn Io> = match stream {
         MaybeHttpsStream::Http(stream) => Box::new(stream),
         MaybeHttpsStream::Https(stream) => {
-            if reset_nodelay {
+            if nodelay {
                 // Keep TCP_NODELAY on until the last TLS handshake on the socket completes.
                 stream.get_ref().set_nodelay(false)?;
             }

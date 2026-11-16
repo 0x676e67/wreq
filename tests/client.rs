@@ -1269,10 +1269,7 @@ async fn tls_alps_follows_alpn_offer() {
     use std::sync::Mutex;
 
     use btls::ssl::{ExtensionType, SelectCertError, SslAcceptor, SslMethod};
-    use wreq::{
-        Emulation,
-        tls::{AlpsProtocol, TlsOptions},
-    };
+    use wreq::tls::{AlpsProtocol, TlsOptions};
 
     // Records ALPN and both ALPS codepoints, then aborts before certificate selection.
     let hellos = Arc::new(Mutex::new(Vec::new()));
@@ -1310,7 +1307,7 @@ async fn tls_alps_follows_alpn_offer() {
         .alps_protocols([AlpsProtocol::HTTP2])
         .build();
     let client = Client::builder_tokio()
-        .emulation(Emulation::builder().config(tls).build())
+        .emulation(tls)
         .no_proxy()
         .timeout(Duration::from_secs(5))
         .build()
@@ -1328,10 +1325,10 @@ async fn tls_alps_follows_alpn_offer() {
     assert_eq!(
         *hellos.lock().unwrap(),
         [
-            #[cfg(feature = "http2")]
-            (Some(b"\x00\x0c\x02h2\x08http/1.1".to_vec()), true, false),
-            #[cfg(not(feature = "http2"))]
-            (Some(b"\x00\x09\x08http/1.1".to_vec()), false, false),
+            cfg_select! {
+                feature = "http2" => (Some(b"\x00\x0c\x02h2\x08http/1.1".to_vec()), true, false),
+                _ => (Some(b"\x00\x09\x08http/1.1".to_vec()), false, false),
+            },
             (Some(b"\x00\x09\x08http/1.1".to_vec()), false, false),
         ]
     );
@@ -1436,10 +1433,37 @@ async fn connection_pool_http2_errors_respect_negotiation() {
 
 #[tokio::test]
 async fn connection_pool_reuses_and_discards_poisoned_connections() {
-    let mut server = server::http(move |_| async move { http::Response::default() });
-    let url = format!("http://{}", server.addr());
+    use std::error::Error as _;
 
-    let http1 = Client::builder_tokio().http1_only().build().unwrap();
+    use wreq::Emulation;
+
+    let mut server = server::http(|request| async move {
+        let mut response = http::Response::default();
+        if request.uri().path() == "/limits" {
+            for i in 0..40 {
+                response.headers_mut().insert(
+                    header::HeaderName::try_from(format!("x-{i}")).unwrap(),
+                    HeaderValue::from_static("1"),
+                );
+            }
+        }
+        response
+    });
+    let url = format!("http://{}", server.addr());
+    let mut accepted = || {
+        server
+            .events()
+            .into_iter()
+            .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+            .count()
+    };
+    let builder = || {
+        Client::builder_tokio()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+    };
+
+    let http1 = builder().http1_only().build().unwrap();
     for _ in 0..2 {
         http1.get(&url).send().await.unwrap().bytes().await.unwrap();
     }
@@ -1455,7 +1479,7 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
         .unwrap();
 
     #[cfg(feature = "http2")]
-    let http2 = Client::builder_tokio().http2_only().build().unwrap();
+    let http2 = builder().http2_only().build().unwrap();
     #[cfg(feature = "http2")]
     {
         let responses =
@@ -1471,12 +1495,11 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
             .unwrap();
     }
 
-    let accepted = server
-        .events()
-        .iter()
-        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
-        .count();
-    assert_eq!(accepted, 1 + usize::from(cfg!(feature = "http2")));
+    let initial_connections = accepted();
+    assert_eq!(
+        initial_connections,
+        1 + usize::from(cfg!(feature = "http2"))
+    );
 
     for client in [
         &http1,
@@ -1499,12 +1522,88 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
         }
     }
 
-    let replacement_connections = server
-        .events()
-        .iter()
-        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
-        .count();
-    assert_eq!(replacement_connections, accepted);
+    assert_eq!(accepted(), initial_connections);
+
+    for (builder, version) in [
+        (builder().http1_only(), Version::HTTP_11),
+        #[cfg(feature = "http2")]
+        (builder().http2_only(), Version::HTTP_2),
+    ] {
+        let client = builder.build().unwrap();
+        // Only the options for the active protocol differ between requests.
+        let emulation = |strict| {
+            let max_headers = if strict && version == Version::HTTP_11 {
+                32
+            } else {
+                64
+            };
+            let emulation = Emulation::builder()
+                .http1_options(Http1Options::builder().max_headers(max_headers).build());
+            #[cfg(feature = "http2")]
+            let emulation = emulation.http2_options(
+                wreq::http2::Http2Options::builder()
+                    .header_table_size(if strict && version == Version::HTTP_2 {
+                        8192
+                    } else {
+                        4096
+                    })
+                    .build(),
+            );
+            emulation.build()
+        };
+        let send = async |strict| {
+            let response = client
+                .get(&url)
+                .emulation(emulation(strict))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.version(), version);
+            let address = response
+                .local_addr()
+                .expect("the response records the TCP socket");
+            response.bytes().await.unwrap();
+            address
+        };
+        let regular = send(false).await;
+        let strict = send(true).await;
+        assert_ne!(
+            regular, strict,
+            "{version:?} emulations must use different sockets"
+        );
+        assert_eq!(
+            send(false).await,
+            regular,
+            "{version:?} must reuse the regular socket"
+        );
+        assert_eq!(
+            send(true).await,
+            strict,
+            "{version:?} must reuse the strict socket"
+        );
+
+        if version == Version::HTTP_11 {
+            let error = client
+                .get(format!("{url}/limits"))
+                .emulation(emulation(true))
+                .send()
+                .await
+                .unwrap_err();
+            assert!(
+                std::iter::successors(error.source(), |&source| source.source()).any(|source| {
+                    source
+                        .downcast_ref::<netty::Error>()
+                        .is_some_and(netty::Error::is_parse)
+                }),
+                "the strict HTTP/1 emulation must reject 40 headers: {error:?}"
+            );
+        }
+        assert_eq!(
+            accepted(),
+            2,
+            "{version:?} emulations should each dial only once"
+        );
+    }
 }
 
 #[tokio::test]

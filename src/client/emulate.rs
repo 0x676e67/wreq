@@ -3,20 +3,10 @@ use http::HeaderMap;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
-    config::connect::{ConnectConfigValue, Extension, Extensions},
-    header::OrigHeaderMap,
-    http1::Http1Options,
-    tls::TlsOptions,
+    config::connect::ConnectConfig, header::OrigHeaderMap, http1::Http1Options, tls::TlsOptions,
 };
 #[cfg(feature = "http3")]
 use crate::{http3::Http3Options, quic::QuicOptions};
-
-/// Implements [`ProtocolConfig`] for the given protocol option type.
-macro_rules! impl_protocol_config {
-    ($type:ty) => {
-        impl ProtocolConfig for $type {}
-    };
-}
 
 /// Converts predefined or user-defined settings into [`Emulation`].
 pub trait IntoEmulation {
@@ -24,13 +14,8 @@ pub trait IntoEmulation {
     fn into_emulation(self) -> Emulation;
 }
 
-/// Protocol options an [`Emulation`] carries: [`TlsOptions`], [`Http1Options`],
-/// and options for enabled HTTP/2 and HTTP/3 protocols.
-/// This trait is sealed.
-pub trait ProtocolConfig: Extension + ConnectConfigValue {}
-
 /// Collects headers, header order and protocol options for an [`Emulation`].
-/// Building transfers those settings without cloning them.
+/// Each protocol setter replaces its previous value.
 #[must_use]
 #[derive(Debug)]
 pub struct EmulationBuilder {
@@ -45,27 +30,50 @@ pub struct EmulationBuilder {
 pub struct Emulation(
     pub(super) HeaderMap,
     pub(super) OrigHeaderMap,
-    pub(super) Extensions,
+    pub(super) ConnectConfig,
 );
-
-// ===== impl ProtocolConfig =====
-
-impl_protocol_config!(TlsOptions);
-impl_protocol_config!(Http1Options);
-#[cfg(feature = "http2")]
-impl_protocol_config!(Http2Options);
-#[cfg(feature = "http3")]
-impl_protocol_config!(Http3Options);
-#[cfg(feature = "http3")]
-impl_protocol_config!(QuicOptions);
 
 // ===== impl EmulationBuilder =====
 
 impl EmulationBuilder {
-    /// Sets one kind of protocol options; a later value of the same type replaces it.
+    /// Sets the TLS options for TCP connections.
     #[inline]
-    pub fn config<T: ProtocolConfig>(mut self, value: T) -> Self {
-        self.emulation.2.insert(value);
+    pub fn tls_options(mut self, options: TlsOptions) -> Self {
+        self.emulation.2.insert(options);
+        self
+    }
+
+    /// Sets the HTTP/1 options.
+    #[inline]
+    pub fn http1_options(mut self, options: Http1Options) -> Self {
+        self.emulation.2.insert(options);
+        self
+    }
+
+    /// Sets the HTTP/2 options.
+    #[inline]
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+    pub fn http2_options(mut self, options: Http2Options) -> Self {
+        self.emulation.2.insert(options);
+        self
+    }
+
+    /// Sets the HTTP/3 options.
+    #[inline]
+    #[cfg(feature = "http3")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
+    pub fn http3_options(mut self, options: Http3Options) -> Self {
+        self.emulation.2.insert(options);
+        self
+    }
+
+    /// Sets the QUIC transport and TLS options.
+    #[inline]
+    #[cfg(feature = "http3")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
+    pub fn quic_options(mut self, options: QuicOptions) -> Self {
+        self.emulation.2.insert(options);
         self
     }
 
@@ -102,10 +110,44 @@ impl Emulation {
     }
 }
 
-impl<T: ProtocolConfig> From<T> for Emulation {
+impl From<TlsOptions> for Emulation {
     #[inline]
-    fn from(value: T) -> Self {
-        Emulation::builder().config(value).build()
+    fn from(options: TlsOptions) -> Self {
+        Self::builder().tls_options(options).build()
+    }
+}
+
+impl From<Http1Options> for Emulation {
+    #[inline]
+    fn from(options: Http1Options) -> Self {
+        Self::builder().http1_options(options).build()
+    }
+}
+
+#[cfg(feature = "http2")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+impl From<Http2Options> for Emulation {
+    #[inline]
+    fn from(options: Http2Options) -> Self {
+        Self::builder().http2_options(options).build()
+    }
+}
+
+#[cfg(feature = "http3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
+impl From<Http3Options> for Emulation {
+    #[inline]
+    fn from(options: Http3Options) -> Self {
+        Self::builder().http3_options(options).build()
+    }
+}
+
+#[cfg(feature = "http3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
+impl From<QuicOptions> for Emulation {
+    #[inline]
+    fn from(options: QuicOptions) -> Self {
+        Self::builder().quic_options(options).build()
     }
 }
 

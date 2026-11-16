@@ -69,21 +69,35 @@ impl Service<TransportRequest> for QuicRouter {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, TransportRequest { request, deadline }: TransportRequest) -> Self::Future {
+    fn call(
+        &mut self,
+        TransportRequest {
+            request,
+            deadline,
+            identity: connection_identity,
+        }: TransportRequest,
+    ) -> Self::Future {
         let inner = self.inner.clone();
+        let connection_key = connection_identity.key(&request);
         match Route::select(&request, &inner.proxies) {
-            Route::Direct => {
-                Either::Left(Box::pin(
-                    async move { inner.endpoints.connect(&request).await },
-                ))
-            }
+            Route::Direct => Either::Left(Box::pin(async move {
+                inner.endpoints.connect(&request, connection_key).await
+            })),
             #[cfg(feature = "socks")]
             Route::Socks {
                 proxy,
                 version: Version::V5,
                 dns,
             } => Either::Left(Box::pin(async move {
-                socks::connect(&inner.endpoints, request, proxy, dns, deadline).await
+                socks::connect(
+                    &inner.endpoints,
+                    request,
+                    connection_key,
+                    proxy,
+                    dns,
+                    deadline,
+                )
+                .await
             })),
             Route::Quic(proxy) => {
                 // Environment proxy entries reach this point without builder validation.
@@ -91,7 +105,8 @@ impl Service<TransportRequest> for QuicRouter {
                     return Either::Right(future::err(ProxyConnect::Message(message).into()));
                 }
                 Either::Left(Box::pin(async move {
-                    masque::connect(&inner.endpoints, request, proxy, deadline).await
+                    masque::connect(&inner.endpoints, request, connection_key, proxy, deadline)
+                        .await
                 }))
             }
             _ => Either::Right(future::err(

@@ -67,7 +67,7 @@ use crate::cookie;
 use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Proxy,
-    config::connect::Extensions,
+    config::connect::ConnectConfig,
     conn::{self, BoxedTransportConnector, Conn, Connector, Unnameable, dialer},
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
@@ -179,7 +179,7 @@ struct Config {
     protocol: Protocol,
     https_only: bool,
     layers: Vec<BoxedClientServiceLayer>,
-    connect_options: Extensions,
+    defaults: ConnectConfig,
 }
 
 // ===== impl Client =====
@@ -237,7 +237,7 @@ impl Client {
                 protocol: Protocol::Auto,
                 https_only: false,
                 layers: Vec::new(),
-                connect_options: Extensions::default(),
+                defaults: ConnectConfig::default(),
             },
             runtime: DynRuntime::new(runtime),
         }
@@ -444,7 +444,7 @@ impl ClientBuilder {
                 self.config.connect,
                 self.runtime.clone(),
                 resolver,
-                &self.config.connect_options,
+                &self.config.defaults,
             )?;
 
             sealed::Builder::new(self.runtime.clone())
@@ -452,7 +452,7 @@ impl ClientBuilder {
                     #[cfg(feature = "cookies")]
                     self.config.cookie_store,
                 )
-                .connect_options(self.config.connect_options)
+                .config(self.config.defaults)
                 .protocol(self.config.protocol)
                 .pool_idle_timeout(self.config.pool_idle_timeout)
                 .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
@@ -1021,7 +1021,7 @@ impl ClientBuilder {
     where
         T: Into<Option<Http1Options>>,
     {
-        self.config.connect_options.set(options.into());
+        self.config.defaults.set(options.into());
         self
     }
 
@@ -1033,7 +1033,7 @@ impl ClientBuilder {
     where
         T: Into<Option<Http2Options>>,
     {
-        self.config.connect_options.set(options.into());
+        self.config.defaults.set(options.into());
         self
     }
 
@@ -1044,7 +1044,7 @@ impl ClientBuilder {
     where
         T: Into<Option<netty::http3::Http3Options>>,
     {
-        self.config.connect_options.set(options.into());
+        self.config.defaults.set(options.into());
         self
     }
 
@@ -1056,7 +1056,7 @@ impl ClientBuilder {
     where
         T: Into<Option<crate::quic::QuicOptions>>,
     {
-        self.config.connect_options.set(options.into());
+        self.config.defaults.set(options.into());
         self
     }
 
@@ -1231,7 +1231,7 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        dialer::set_local_address(&mut self.config.connect_options, addr.into());
+        dialer::set_local_address(&mut self.config.defaults, addr.into());
         self
     }
 
@@ -1259,7 +1259,7 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        dialer::set_local_addresses(&mut self.config.connect_options, ipv4.into(), ipv6.into());
+        dialer::set_local_addresses(&mut self.config.defaults, ipv4.into(), ipv6.into());
         self
     }
 
@@ -1335,7 +1335,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        dialer::set_interface(&mut self.config.connect_options, interface.into());
+        dialer::set_interface(&mut self.config.defaults, interface.into());
         self
     }
 
@@ -1457,7 +1457,7 @@ impl ClientBuilder {
     where
         T: Into<Option<TlsOptions>>,
     {
-        self.config.connect_options.set(options.into());
+        self.config.defaults.set(options.into());
         self
     }
 
@@ -1611,8 +1611,8 @@ impl ClientBuilder {
     /// The emulation does not create a connection group.
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> ClientBuilder {
-        let emulate::Emulation(headers, orig_headers, connect_options) = emulation.into_emulation();
-        self.config.connect_options.extend(connect_options);
+        let emulate::Emulation(headers, orig_headers, config) = emulation.into_emulation();
+        self.config.defaults.extend(config);
         self.default_headers(headers).orig_headers(orig_headers)
     }
 }
@@ -1637,7 +1637,7 @@ mod sealed {
 
         /// Protocol, options and socket bindings that requests inherit.
         protocol: Protocol,
-        connect_options: Extensions,
+        config: ConnectConfig,
 
         /// Connection-pool reuse and retention policy.
         pool_config: pool::Config,
@@ -1654,7 +1654,7 @@ mod sealed {
         pub fn new(runtime: DynRuntime) -> Self {
             Self {
                 protocol: Protocol::Auto,
-                connect_options: Extensions::default(),
+                config: ConnectConfig::default(),
                 pool_config: pool::Config {
                     idle_timeout: Some(Duration::from_secs(90)),
                     max_idle_per_host: usize::MAX,
@@ -1718,8 +1718,8 @@ mod sealed {
         ///
         /// Pool and session identities count only request values that differ from these.
         #[inline]
-        pub fn connect_options(mut self, connect_options: Extensions) -> Self {
-            self.connect_options = connect_options;
+        pub fn config(mut self, config: ConnectConfig) -> Self {
+            self.config = config;
             self
         }
 
@@ -1750,14 +1750,14 @@ mod sealed {
             let dispatch = svc::Dispatch::new(
                 self.pool_config,
                 connector,
-                &self.connect_options,
+                &self.config,
                 true,
                 #[cfg(feature = "cookies")]
                 self.cookie_store,
                 self.runtime,
             );
             ServiceBuilder::new()
-                .layer(svc::layer(self.protocol, self.connect_options, true))
+                .layer(svc::layer(self.protocol, self.config, true))
                 .service(dispatch)
         }
     }

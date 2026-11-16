@@ -10,17 +10,12 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-use http::Uri;
 use tower::{BoxError, Service};
 
+#[cfg(unix)]
+use crate::conn::dialer::SocketRequest;
 use crate::{
-    conn::{
-        Conn,
-        dialer::{Dialer, SocketRequest},
-        request::ConnectRequest,
-        route::Route,
-        svc::TransportRequest,
-    },
+    conn::{Conn, dialer::Dialer, request::ConnectRequest, route::Route, svc::TransportRequest},
     error::{ProxyConnect, ProxyMismatch},
     ext::UriExt,
     proxy::Matcher,
@@ -31,6 +26,22 @@ use crate::{
 mod socks;
 mod tls;
 mod tunnel;
+
+macro_rules! tcp_request {
+    ($request:expr, $uri:expr, $deadline:expr $(,)?) => {{
+        let (request, uri, deadline) = ($request, $uri, $deadline);
+        $crate::conn::dialer::SocketRequest::Tcp {
+            secure: $crate::ext::UriExt::is_https(request.uri())
+                || $crate::ext::UriExt::is_https(&uri),
+            uri,
+            config: request.config().clone(),
+            deadline,
+        }
+    }};
+}
+
+#[cfg(feature = "socks")]
+use tcp_request;
 
 /// Selects a stream route and establishes the connection, including any proxy and TLS handshakes.
 #[derive(Clone)]
@@ -61,7 +72,12 @@ impl Service<TransportRequest> for StreamConnector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, TransportRequest { request, deadline }: TransportRequest) -> Self::Future {
+    fn call(
+        &mut self,
+        TransportRequest {
+            request, deadline, ..
+        }: TransportRequest,
+    ) -> Self::Future {
         let route = Route::select(&request, &self.proxies);
         Box::pin(connect(
             self.dialer.clone(),
@@ -81,8 +97,8 @@ async fn connect(
     deadline: Option<Instant>,
 ) -> Result<Conn, BoxError> {
     debug!("starting new connection: {:?}", request.uri());
-    let target_https = request.uri().is_https();
-    let reset_nodelay = cfg_select! {
+    let is_https = request.uri().is_https();
+    let nodelay = cfg_select! {
         unix => !dialer.nodelay() && !matches!(route, Route::Unix(_)),
         _ => !dialer.nodelay(),
     };
@@ -91,14 +107,14 @@ async fn connect(
         Route::Direct => {
             let tls = tls.for_request(&request)?;
             let io = dialer
-                .dial(tcp_request(&request, request.uri().clone(), deadline))
+                .dial(tcp_request!(&request, request.uri().clone(), deadline))
                 .await?;
             (MaybeHttpsStream::Http(io), tls)
         }
-        Route::Http(proxy) if target_https => {
+        Route::Http(proxy) if is_https => {
             let tls = tls.for_request(&request)?;
             let io = tunnel::connect(&dialer, &tls, &request, Some(&proxy), |uri| {
-                tcp_request(&request, uri, deadline)
+                tcp_request!(&request, uri, deadline)
             })
             .await?;
             (io, tls)
@@ -109,10 +125,10 @@ async fn connect(
                 .map_err(|error| ProxyConnect::Source(error.into()))?;
             tls.no_alpn();
             let io = dialer
-                .dial(tcp_request(&request, proxy.uri().clone(), deadline))
+                .dial(tcp_request!(&request, proxy.uri().clone(), deadline))
                 .await
                 .map_err(ProxyConnect::Source)?;
-            return tls::finish(io, request, tls, reset_nodelay, Some(proxy))
+            return tls::finish(io, request, tls, nodelay, Some(proxy))
                 .await
                 .map_err(|error| ProxyConnect::Source(error).into());
         }
@@ -129,7 +145,7 @@ async fn connect(
         #[cfg(unix)]
         Route::Unix(path) => {
             let tls = tls.for_request(&request)?;
-            let io = if target_https {
+            let io = if is_https {
                 tunnel::connect(&dialer, &tls, &request, None, move |_| {
                     SocketRequest::Unix(path.clone())
                 })
@@ -144,16 +160,7 @@ async fn connect(
 
     // Unwrap the CONNECT result once, before the origin's TLS and subsequent I/O.
     match io {
-        MaybeHttpsStream::Http(io) => tls::finish(io, request, tls, reset_nodelay, None).await,
-        MaybeHttpsStream::Https(io) => tls::finish(io, request, tls, reset_nodelay, None).await,
-    }
-}
-
-fn tcp_request(request: &ConnectRequest, uri: Uri, deadline: Option<Instant>) -> SocketRequest {
-    SocketRequest::Tcp {
-        secure: request.uri().is_https() || uri.is_https(),
-        uri,
-        connect_options: request.connect_options().clone(),
-        deadline,
+        MaybeHttpsStream::Http(io) => tls::finish(io, request, tls, nodelay, None).await,
+        MaybeHttpsStream::Https(io) => tls::finish(io, request, tls, nodelay, None).await,
     }
 }

@@ -9,10 +9,9 @@ use std::{
     sync::Arc,
 };
 
-pub use self::identity::{Cached, ConfigScope, ConnectConfigValue, KeyPart};
 pub(crate) use self::identity::{
-    HASHER, ScopedConfig, Whole, changed, derive_deftly_template_ConfigKey,
-    impl_connect_config_value,
+    Cached, ConnectConfigValue, HASHER, KeyPart, ScopedConfig, Whole, changed,
+    derive_deftly_template_ConfigKey,
 };
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
@@ -22,42 +21,34 @@ use crate::{
 #[cfg(feature = "http3")]
 use crate::{http3::Http3Options, quic::QuicOptions};
 
-/// Shared connection extensions. Builders edit their own slots before a request is frozen.
+/// Connection settings stored on a client or an individual request.
 #[derive(Clone, Default)]
-pub(crate) struct Extensions(Option<Arc<Values>>);
+pub(crate) struct ConnectConfig(Option<Arc<Values>>);
 
 /// A borrowed request overlay, with client defaults for missing types.
 pub(crate) struct WithBase<'a> {
-    extensions: &'a Extensions,
-    base: &'a Extensions,
+    overlay_config: &'a ConnectConfig,
+    base_config: &'a ConnectConfig,
 }
 
-/// Maps a supported extension type to its field in the connection configuration.
-pub trait Extension: Sized + Send + Sync + 'static {
-    #[doc(hidden)]
+/// Maps a supported connection setting to its storage slot.
+pub(crate) trait ConnectExtension: Sized + Send + Sync + 'static {
     type Stored: Stored<Self>;
-
-    #[doc(hidden)]
     const INDEX: u32;
 
-    #[doc(hidden)]
     fn slot(values: &Values) -> &Option<Self::Stored>;
-
-    #[doc(hidden)]
     fn slot_mut(values: &mut Values) -> &mut Option<Self::Stored>;
 }
 
-#[doc(hidden)]
-pub trait Stored<T>: Clone {
+pub(crate) trait Stored<T>: Clone {
     fn store(value: T) -> Self;
     fn value(&self) -> &T;
 }
 
 macro_rules! extension_fields {
     ($($(#[$attr:meta])* $index:literal => $field:ident: $ty:ty as $stored:ty),+ $(,)?) => {
-        #[doc(hidden)]
         #[derive(Clone, Default)]
-        pub struct Values {
+        pub(crate) struct Values {
             fields: u16,
             $($(#[$attr])* $field: Option<$stored>,)+
         }
@@ -80,7 +71,7 @@ macro_rules! extension_fields {
         }
 
         $($(#[$attr])*
-        impl Extension for $ty {
+        impl ConnectExtension for $ty {
             type Stored = $stored;
             const INDEX: u32 = $index;
 
@@ -121,10 +112,10 @@ impl<T: Clone> Stored<T> for T {
     }
 }
 
-// ===== impl Extensions =====
+// ===== impl ConnectConfig =====
 
-impl Extensions {
-    pub(crate) fn insert<T: Extension>(&mut self, value: T) -> &mut Self {
+impl ConnectConfig {
+    pub(crate) fn insert<T: ConnectExtension>(&mut self, value: T) -> &mut Self {
         let values = Arc::make_mut(self.0.get_or_insert_with(Arc::default));
         *T::slot_mut(values) = Some(T::Stored::store(value));
         values.fields |= 1 << T::INDEX;
@@ -132,7 +123,7 @@ impl Extensions {
     }
 
     /// An absent value clears only this type's local setting.
-    pub(crate) fn set<T: Extension>(&mut self, value: Option<T>) -> &mut Self {
+    pub(crate) fn set<T: ConnectExtension>(&mut self, value: Option<T>) -> &mut Self {
         if let Some(value) = value {
             return self.insert(value);
         }
@@ -164,28 +155,28 @@ impl Extensions {
         self.0.is_none()
     }
 
-    pub(crate) fn get_ref<T: Extension>(&self) -> Option<&T> {
+    pub(crate) fn get_ref<T: ConnectExtension>(&self) -> Option<&T> {
         self.get::<T>().map(Stored::value)
     }
 
-    pub(crate) fn get_arc<T: Extension<Stored = Cached<T>>>(&self) -> Option<Arc<T>> {
+    pub(crate) fn get_arc<T: ConnectExtension<Stored = Cached<T>>>(&self) -> Option<Arc<T>> {
         self.get::<T>().map(Cached::arc)
     }
 
     /// Borrows the overlay and its defaults without merging or copying either set.
-    pub(crate) fn with_base<'a>(&'a self, base: &'a Self) -> WithBase<'a> {
+    pub(crate) fn with_base<'a>(&'a self, base_config: &'a Self) -> WithBase<'a> {
         WithBase {
-            extensions: self,
-            base,
+            overlay_config: self,
+            base_config,
         }
     }
 
-    pub(super) fn get<T: Extension>(&self) -> Option<&T::Stored> {
+    pub(super) fn get<T: ConnectExtension>(&self) -> Option<&T::Stored> {
         T::slot(self.0.as_deref()?).as_ref()
     }
 }
 
-impl fmt::Debug for Extensions {
+impl fmt::Debug for ConnectConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
             Some(values) => values.debug(f),
@@ -195,9 +186,9 @@ impl fmt::Debug for Extensions {
 }
 
 impl<'a> WithBase<'a> {
-    pub(crate) fn get_ref<T: Extension>(&self) -> Option<&'a T> {
-        self.extensions
+    pub(crate) fn get_ref<T: ConnectExtension>(&self) -> Option<&'a T> {
+        self.overlay_config
             .get_ref::<T>()
-            .or_else(|| self.base.get_ref())
+            .or_else(|| self.base_config.get_ref())
     }
 }

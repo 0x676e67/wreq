@@ -34,7 +34,7 @@ use crate::{
         error::{Error, ErrorKind},
         pool::{self, TransportConnector},
     },
-    config::connect::Extensions,
+    config::connect::ConnectConfig,
     ext::UriExt,
     rt::DynRuntime,
 };
@@ -78,7 +78,7 @@ struct Http1Upgrade {
 /// Sender checked out for one attempt.
 /// A struct rather than a tuple, since the upgrade field exists only with HTTP/2 or HTTP/3.
 struct CheckedOut {
-    pooled: pool::Pooled,
+    pooled: pool::pooled::Pooled,
     /// WebSocket upgrade rewritten for an extended CONNECT sender, restored if unsent.
     #[cfg(any(feature = "http2", feature = "http3"))]
     upgrade: Option<Http1Upgrade>,
@@ -91,24 +91,18 @@ where
     C: TransportConnector,
 {
     /// Creates the terminal request service and its shared connection pool.
-    /// Handshakes start from the client's `connect_options`; with `set_host`, HTTP/1
-    /// generates a missing `Host` field.
+    /// Handshakes start from the client's connection settings. With `set_host`, HTTP/1
+    /// generates a missing `Host` header.
     pub(crate) fn new(
         pool_config: pool::Config,
         connector: C,
-        connect_options: &Extensions,
+        config: &ConnectConfig,
         set_host: bool,
         #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn CookieStore>>,
         runtime: DynRuntime,
     ) -> Self {
         Self {
-            pool: pool::Pool::new(
-                pool_config,
-                connector,
-                runtime.clone(),
-                connect_options,
-                set_host,
-            ),
+            pool: pool::Pool::new(pool_config, connector, runtime.clone(), config, set_host),
             #[cfg(feature = "cookies")]
             cookie_store: RequestConfig::new(cookie_store),
             runtime,
@@ -123,13 +117,14 @@ where
     ) -> Result<(DispatchRequest<Body>, CheckedOut), DispatchError<Body>> {
         // RFC 8441 §3 and RFC 9220 §3: extended CONNECT only after the peer enabled it. A
         // miss keeps the dedicated HTTP/1.1 upgrade, so no HTTP/2 or HTTP/3 connection opens.
-        let reused: Option<pool::Pooled> = cfg_select! {
+        let reused: Option<pool::pooled::Pooled> = cfg_select! {
             any(feature = "http2", feature = "http3") => request
                 .extended_connect_key
                 .as_ref()
                 .and_then(|key| self.pool.checkout_extended_connect(key)),
             _ => None,
         };
+
         #[cfg(any(feature = "http2", feature = "http3"))]
         let mut request = request;
         #[cfg(any(feature = "http2", feature = "http3"))]
@@ -141,7 +136,11 @@ where
             Some(pooled) => pooled,
             None => match self
                 .pool
-                .checkout(request.req.clone(), request.dedicated)
+                .checkout(
+                    request.req.clone(),
+                    request.connection_identity.clone(),
+                    request.dedicated,
+                )
                 .await
             {
                 Ok(pooled) => pooled,
@@ -192,6 +191,7 @@ where
             .cookie_store
             .fetch(request.request.extensions())
             .cloned();
+
         #[cfg(feature = "cookies")]
         if let Some(ref cookie_store) = cookie_store {
             apply_request_cookies(
@@ -210,6 +210,7 @@ where
                 let unnegotiated_h2 = pooled.version() == Version::HTTP_2
                     && request.req.uri().is_https()
                     && !connect_info.is_negotiated_h2();
+
                 // A returned request was not sent; only protocol rejections are final,
                 // since they repeat on the same connection.
                 if let Some(unsent) = (!error.is_user()).then(|| error.take_message()).flatten() {
@@ -218,21 +219,29 @@ where
                     if let Some(upgrade) = upgrade {
                         upgrade.restore(&mut request.request);
                     }
-                    let error = error.into_client_error(ErrorKind::Canceled);
+
                     return Err(DispatchError::Unsent {
-                        error: with_h2_alpn_context(error, unnegotiated_h2)
-                            .with_connect_info(connect_info),
+                        error: with_h2_alpn_context(
+                            error.into_client_error(ErrorKind::Canceled),
+                            unnegotiated_h2,
+                        )
+                        .with_connect_info(connect_info),
                         request: Box::new(request),
                         connection_reused,
                     });
                 }
+
                 #[cfg(any(feature = "http2", feature = "http3"))]
                 if extended && pooled.extended_connect() == Some(false) {
                     return Err(DispatchError::Terminal(extended_connect_disabled(&pooled)));
                 }
-                let error = error.into_client_error(ErrorKind::SendRequest);
+
                 return Err(DispatchError::Terminal(
-                    with_h2_alpn_context(error, unnegotiated_h2).with_connect_info(connect_info),
+                    with_h2_alpn_context(
+                        error.into_client_error(ErrorKind::SendRequest),
+                        unnegotiated_h2,
+                    )
+                    .with_connect_info(connect_info),
                 ));
             }
         };
@@ -294,6 +303,7 @@ where
                 request.negotiable,
             )
             .map_err(DispatchError::Terminal)?;
+
             this.send(
                 request,
                 checked_out,
@@ -385,17 +395,19 @@ fn with_h2_alpn_context(error: Error, unnegotiated_h2: bool) -> Error {
 /// match the connection, and a plain CONNECT target gains its default port.
 fn reconcile(
     request: &mut Request<Body>,
-    pooled: &pool::Pooled,
+    pooled: &pool::pooled::Pooled,
     negotiable: bool,
 ) -> Result<bool, Error> {
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    let extended = matched_extended_connect(request, pooled)?;
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    if extended && pooled.extended_connect() == Some(false) {
-        return Err(extended_connect_disabled(pooled));
-    }
-    #[cfg(not(any(feature = "http2", feature = "http3")))]
-    let extended = false;
+    let extended = cfg_select! {
+        any(feature = "http2", feature = "http3") => {{
+            let extended = matched_extended_connect(request, pooled)?;
+            if extended && pooled.extended_connect() == Some(false) {
+                return Err(extended_connect_disabled(pooled));
+            }
+            extended
+        }}
+        _ => false,
+    };
 
     let version = pooled.version();
     let multiplexed = version != Version::HTTP_11;
@@ -424,7 +436,10 @@ fn reconcile(
 /// [RFC 8441 §4]: https://www.rfc-editor.org/rfc/rfc8441#section-4
 /// [RFC 9220 §3]: https://www.rfc-editor.org/rfc/rfc9220#section-3
 #[cfg(any(feature = "http2", feature = "http3"))]
-fn matched_extended_connect<B>(request: &Request<B>, pooled: &pool::Pooled) -> Result<bool, Error> {
+fn matched_extended_connect<B>(
+    request: &Request<B>,
+    pooled: &pool::pooled::Pooled,
+) -> Result<bool, Error> {
     let extensions = request.extensions();
     let http2 = cfg_select! {
         feature = "http2" => extensions.get::<http2::ext::Protocol>().is_some(),
@@ -450,7 +465,7 @@ fn matched_extended_connect<B>(request: &Request<B>, pooled: &pool::Pooled) -> R
 
 /// Rejects extended CONNECT unless the peer enabled it (RFC 8441 §3, RFC 9220 §3).
 #[cfg(any(feature = "http2", feature = "http3"))]
-fn extended_connect_disabled(pooled: &pool::Pooled) -> Error {
+fn extended_connect_disabled(pooled: &pool::pooled::Pooled) -> Error {
     warn!("peer did not enable extended CONNECT");
     Error::from_kind(ErrorKind::UserUnsupportedVersion)
         .with_context("peer did not enable extended CONNECT")
@@ -470,18 +485,22 @@ fn connect_target_port<B>(request: &mut Request<B>, multiplexed: bool) -> Result
     let Some(authority) = uri.authority() else {
         return Ok(());
     };
+
     // `Uri` also accepts ports a u16 cannot hold; only an absent or empty port is elided.
     let port = authority
         .as_str()
         .rsplit('@')
         .next()
         .and_then(|host_port| host_port.strip_prefix(authority.host()));
+
     if !matches!(port, Some("" | ":")) {
         return Ok(());
     }
+
     let target = format!("{}:{}", authority.host(), uri.port_or_default())
         .parse::<Authority>()
         .map_err(|error| Error::new(ErrorKind::SendRequest, error))?;
+
     if multiplexed
         && request
             .headers()
@@ -492,6 +511,7 @@ fn connect_target_port<B>(request: &mut Request<B>, multiplexed: bool) -> Result
             .map_err(|error| Error::new(ErrorKind::SendRequest, error))?;
         request.headers_mut().insert(HOST, host);
     }
+
     let mut parts = mem::take(request.uri_mut()).into_parts();
     parts.authority = Some(target);
     *request.uri_mut() =
@@ -539,134 +559,15 @@ fn store_response_cookies(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "cookies", feature = "http2", feature = "http3")))]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-
-    use futures_util::future;
-
     #[cfg(feature = "cookies")]
-    use super::super::tests::http1_dispatch;
-    use super::{super::tests::stack, *};
-    use crate::{
-        conn::{Conn, request::ConnectRequest},
-        protocol::Protocol,
+    use {
+        super::super::tests::{http1_dispatch, stack},
+        crate::protocol::Protocol,
     };
 
-    #[tokio::test]
-    async fn protocol_options_partition_connections_and_preserve_reuse() {
-        use bytes::Bytes;
-        use http_body_util::{BodyExt, Full};
-
-        let check = async |protocol, version| {
-            let calls = Arc::new(AtomicUsize::new(0));
-            let accepted = calls.clone();
-            let connector = tower::service_fn(move |_: ConnectRequest| {
-                let id = accepted.fetch_add(1, Ordering::Relaxed);
-                let (client, server) = tokio::io::duplex(16384);
-                tokio::spawn(async move {
-                    let service = hyper::service::service_fn(
-                        move |request: http::Request<hyper::body::Incoming>| async move {
-                            let mut response =
-                                Response::new(Full::new(Bytes::from(id.to_string())));
-                            if request.uri().path() == "/limits" {
-                                for i in 0..40 {
-                                    response.headers_mut().insert(
-                                        http::HeaderName::from_bytes(format!("x-{i}").as_bytes())
-                                            .unwrap(),
-                                        http::HeaderValue::from_static("1"),
-                                    );
-                                }
-                            }
-                            Ok::<_, std::convert::Infallible>(response)
-                        },
-                    );
-                    let _ = hyper_util::server::conn::auto::Builder::new(
-                        hyper_util::rt::TokioExecutor::new(),
-                    )
-                    .serve_connection(hyper_util::rt::TokioIo::new(server), service)
-                    .await;
-                });
-                future::ready(Ok::<_, BoxError>(Conn::test(client)))
-            });
-            let mut stack = stack(
-                Dispatch::new(
-                    pool::Config::default(),
-                    connector,
-                    &Extensions::default(),
-                    true,
-                    #[cfg(feature = "cookies")]
-                    None,
-                    DynRuntime::new(crate::rt::tokio::TokioRuntime),
-                ),
-                protocol,
-                true,
-            );
-            for (attempt, (strict, id)) in [(false, "0"), (true, "1"), (false, "0"), (true, "1")]
-                .into_iter()
-                .enumerate()
-            {
-                let over_limit = attempt == 3 && protocol == Protocol::Http1;
-                let mut request = Request::builder()
-                    .version(version)
-                    .uri(if over_limit {
-                        "http://localhost/limits"
-                    } else {
-                        "http://localhost/"
-                    })
-                    .body(crate::Body::default())
-                    .unwrap();
-                let mut connect_options = Extensions::default();
-                connect_options.insert(
-                    crate::http1::Http1Options::builder()
-                        .max_headers(if strict && protocol == Protocol::Http1 {
-                            32
-                        } else {
-                            64
-                        })
-                        .build(),
-                );
-                #[cfg(feature = "http2")]
-                connect_options.insert(
-                    crate::http2::Http2Options::builder()
-                        .header_table_size(if strict && protocol == Protocol::Http2 {
-                            8192
-                        } else {
-                            4096
-                        })
-                        .build(),
-                );
-                request.extensions_mut().insert(connect_options);
-                let response = tokio::time::timeout(
-                    std::time::Duration::from_secs(2),
-                    stack.ready().await.unwrap().call(request),
-                )
-                .await
-                .unwrap();
-                if over_limit {
-                    let error = response.unwrap_err();
-                    assert!(
-                        error
-                            .source()
-                            .and_then(|source| source.downcast_ref::<netty::Error>())
-                            .is_some_and(netty::Error::is_parse),
-                        "the selected HTTP/1 override must reject 40 headers: {error:?}"
-                    );
-                } else {
-                    let response = response.unwrap();
-                    assert_eq!(response.into_body().collect().await.unwrap().to_bytes(), id);
-                }
-            }
-            assert_eq!(calls.load(Ordering::Relaxed), 2);
-        };
-
-        check(Protocol::Http1, Version::HTTP_11).await;
-        #[cfg(feature = "http2")]
-        check(Protocol::Http2, Version::HTTP_2).await;
-    }
+    use super::*;
 
     #[cfg(feature = "cookies")]
     #[tokio::test]

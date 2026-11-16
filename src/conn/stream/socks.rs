@@ -25,7 +25,7 @@ pub(super) async fn connect(
     dns: DnsResolve,
     deadline: Option<Instant>,
 ) -> Result<BoxConnection, SocksError> {
-    let connect_proxy = service_fn(|uri| dialer.dial(tcp_request(request, uri, deadline)));
+    let connect_proxy = service_fn(|uri| dialer.dial(tcp_request!(request, uri, deadline)));
     let resolver = dialer.resolver().clone().map_request(Name::new);
     let mut connector = SocksConnector::new(proxy.uri().clone(), connect_proxy, resolver);
     connector.set_auth(proxy.raw_auth());

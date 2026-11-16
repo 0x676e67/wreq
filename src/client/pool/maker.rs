@@ -70,11 +70,7 @@ where
     }
 
     fn call(&mut self, target: PoolTarget) -> Self::Future {
-        let PoolTarget {
-            req,
-            wait_for_reuse,
-        } = target;
-        let reuse_delay = if wait_for_reuse {
+        let reuse_delay = if target.wait_for_reuse {
             self.reuse_delay
         } else {
             None
@@ -98,7 +94,7 @@ where
             let Conn {
                 transport,
                 connected,
-            } = Oneshot::new(connector, req).await?;
+            } = Oneshot::new(connector, target.into_transport()).await?;
 
             Ok(Established::new(
                 transport.into_stream()?,

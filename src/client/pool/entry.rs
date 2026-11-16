@@ -33,9 +33,9 @@ use super::{
     cache::{self, BackgroundConnect, Cache, Cached},
     pooled::Pooled,
 };
+use crate::client::proto::http1;
 #[cfg(test)]
 use crate::protocol::Protocol;
-use crate::{client::proto::http1, conn::request::ConnectRequest};
 
 /// Type-erased operations required from one mapped pool entry.
 ///
@@ -44,12 +44,12 @@ use crate::{client::proto::http1, conn::request::ConnectRequest};
 /// removed connection state for destruction after the map lock is released.
 pub(super) trait Entry: Send {
     /// Selects a checkout without polling service code under the map lock.
-    /// Poll or drop the checkout and unused request only after unlocking.
+    /// Poll or drop the checkout and unused target only after unlocking.
     fn checkout(
         &mut self,
         target: PoolTarget,
         pool_enabled: bool,
-    ) -> (Checkout, Option<ConnectRequest>);
+    ) -> (Checkout, Option<PoolTarget>);
 
     /// Clones an established shared sender without creating, joining, or draining
     /// work. HTTP/1 entries and generations still being made return `None`.
@@ -141,13 +141,13 @@ trait Http1Cache:
 #[cfg(any(feature = "http2", feature = "http3"))]
 type MuxMake = BoxFuture<'static, Result<mux::Connection, BoxError>>;
 
-/// Shared sender clone checked out from a singleton.
-#[cfg(any(feature = "http2", feature = "http3"))]
-pub(super) type MuxPooled = Singled<MuxMake, mux::Connection>;
-
 /// Future joining an existing singleton generation.
 #[cfg(any(feature = "http2", feature = "http3"))]
 type MuxCheckout = SingletonFuture<MuxMake, mux::Connection>;
+
+/// Shared sender clone checked out from a singleton.
+#[cfg(any(feature = "http2", feature = "http3"))]
+pub(super) type MuxPooled = Singled<MuxMake, mux::Connection>;
 
 /// Defers checkout completion and resource destruction until the map is unlocked.
 ///
@@ -251,7 +251,7 @@ where
         &mut self,
         mut target: PoolTarget,
         pool_enabled: bool,
-    ) -> (Checkout, Option<ConnectRequest>) {
+    ) -> (Checkout, Option<PoolTarget>) {
         target.wait_for_reuse = pool_enabled && !self.is_empty();
         let service = self.service.clone();
         let usage = EntryUse::new(self.state.clone());
@@ -323,7 +323,7 @@ where
         &mut self,
         target: PoolTarget,
         pool_enabled: bool,
-    ) -> (Checkout, Option<ConnectRequest>) {
+    ) -> (Checkout, Option<PoolTarget>) {
         let usage = EntryUse::new(self.state.clone());
         if let Some(future) = self.service.checkout() {
             let future = Checkout::Mux {
@@ -332,7 +332,7 @@ where
                 usage: Some(usage),
                 pool_enabled,
             };
-            return (future, Some(target.req));
+            return (future, Some(target));
         }
         let service = self.service.clone();
         let future = Checkout::Service(Box::pin(async move {
@@ -415,7 +415,7 @@ where
         &mut self,
         mut target: PoolTarget,
         pool_enabled: bool,
-    ) -> (Checkout, Option<ConnectRequest>) {
+    ) -> (Checkout, Option<PoolTarget>) {
         target.wait_for_reuse = pool_enabled && !self.is_empty();
         let usage = EntryUse::new(self.state.clone());
         if let Some((future, discarded)) = self.service.checkout_existing() {
@@ -425,7 +425,7 @@ where
                 usage: Some(usage),
                 pool_enabled,
             };
-            return (future, Some(target.req));
+            return (future, Some(target));
         }
         let service = self.service.clone();
         let future = Checkout::Service(Box::pin(async move {

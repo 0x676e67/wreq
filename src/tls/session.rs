@@ -27,7 +27,7 @@ use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 #[cfg(feature = "http3")]
 use crate::quic::{QuicOptions, QuicSessionIdentity};
 use crate::{
-    config::connect::{Cached, Extensions, HASHER, KeyPart, ScopedConfig, changed},
+    config::connect::{Cached, ConnectConfig, HASHER, KeyPart, ScopedConfig, changed},
     conn::request::{CommonOverrides, ConnectRequest},
     protocol::TransportKind,
     sync::Mutex,
@@ -150,18 +150,20 @@ impl SessionKey {
     fn new(
         req: &ConnectRequest,
         route: &Uri,
-        client: &Extensions,
+        client_config: &ConnectConfig,
         transport: TransportKind,
     ) -> Self {
-        let request = req.connect_options();
-        let overrides = CommonOverrides::new(request, client);
+        let request_config = req.config();
+        let overrides = CommonOverrides::new(request_config, client_config);
         let options = match transport {
             TransportKind::Stream => SessionOptions::Stream(
-                changed::<TlsOptions>(request, client, KeyPart::Session).map(session_identity),
+                changed::<TlsOptions>(request_config, client_config, KeyPart::Session)
+                    .map(session_identity),
             ),
             #[cfg(feature = "http3")]
             TransportKind::Quic => SessionOptions::Quic(
-                changed::<QuicOptions>(request, client, KeyPart::Session).map(session_identity),
+                changed::<QuicOptions>(request_config, client_config, KeyPart::Session)
+                    .map(session_identity),
             ),
         };
         let origin = req.uri().clone();
@@ -210,14 +212,14 @@ impl SessionTarget {
     pub(crate) fn new(
         req: &ConnectRequest,
         route: &Uri,
-        client: &Extensions,
+        config: &ConnectConfig,
         transport: TransportKind,
         remote_ip: Option<IpAddr>,
         session_id_context: [u8; SESSION_ID_CONTEXT_LENGTH],
     ) -> Self {
         Self {
             key: Key {
-                session: SessionKey::new(req, route, client, transport),
+                session: SessionKey::new(req, route, config, transport),
                 remote_ip: None,
                 session_id_context,
             },
@@ -401,28 +403,24 @@ mod tests {
         tls::{AlpnProtocol, AlpsProtocol, TlsOptionsBuilder},
     };
 
-    fn request(
-        protocol: Option<Protocol>,
-        connect_options: Extensions,
-        client: &Extensions,
-    ) -> ConnectRequest {
+    fn request(protocol: Option<Protocol>, config: ConnectConfig) -> ConnectRequest {
         let uri = Uri::from_static("https://example.com/a");
-        ConnectRequest::new(&uri, protocol, Protocol::Auto, connect_options, client).unwrap()
+        ConnectRequest::test(uri, protocol, config)
     }
 
-    fn tls(options: TlsOptionsBuilder) -> Extensions {
-        let mut connect_options = Extensions::default();
-        connect_options.insert(options.pre_shared_key(true).build());
-        connect_options
+    fn tls(options: TlsOptionsBuilder) -> ConnectConfig {
+        let mut config = ConnectConfig::default();
+        config.insert(options.pre_shared_key(true).build());
+        config
     }
 
     #[test]
     fn rsa_key_exchange_sessions_are_keyed_by_remote_ip() {
-        let client = Extensions::default();
-        let req = request(None, Extensions::default(), &client);
+        let config = ConnectConfig::default();
+        let req = request(None, ConnectConfig::default());
         let context = [1; SESSION_ID_CONTEXT_LENGTH];
         let target =
-            |ip| SessionTarget::new(&req, req.uri(), &client, TransportKind::Stream, ip, context);
+            |ip| SessionTarget::new(&req, req.uri(), &config, TransportKind::Stream, ip, context);
         let known = target(Some(IpAddr::from([192, 0, 2, 1])));
 
         let rsa = known.key_for(Some(Nid::KX_RSA)).unwrap();
@@ -435,12 +433,17 @@ mod tests {
 
     #[test]
     fn session_keys_ignore_negotiation_and_inherit_client_options() {
-        let client = tls(TlsOptions::builder());
-        let key = |protocol, connect_options: Extensions| {
-            let request = request(protocol, connect_options, &client);
-            SessionKey::new(&request, request.uri(), &client, TransportKind::Stream)
+        let client_config = tls(TlsOptions::builder());
+        let key = |protocol, request_config: ConnectConfig| {
+            let request = request(protocol, request_config);
+            SessionKey::new(
+                &request,
+                request.uri(),
+                &client_config,
+                TransportKind::Stream,
+            )
         };
-        let plain = key(None, Extensions::default());
+        let plain = key(None, ConnectConfig::default());
 
         // ALPN, ALPS, HTTP options and equal client options share tickets.
         let mut negotiation = tls(TlsOptions::builder()
@@ -448,19 +451,19 @@ mod tests {
             .alps_protocols([AlpsProtocol::HTTP1])
             .alps_use_new_codepoint(false));
         negotiation.insert(Http1Options::builder().max_headers(8).build());
-        for connect_options in [negotiation, tls(TlsOptions::builder())] {
-            assert!(plain == key(Some(Protocol::Http1), connect_options));
+        for request_config in [negotiation, tls(TlsOptions::builder())] {
+            assert!(plain == key(Some(Protocol::Http1), request_config));
         }
 
-        let mut grouped = Extensions::default();
+        let mut grouped = ConnectConfig::default();
         grouped.insert(Group::new("tenant"));
-        let mut proxied = Extensions::default();
+        let mut proxied = ConnectConfig::default();
         proxied.insert(
             crate::Proxy::all("http://localhost:8080")
                 .unwrap()
                 .into_matcher(),
         );
-        let origin = request(None, Extensions::default(), &client);
+        let origin = request(None, ConnectConfig::default());
         let others = [
             key(
                 None,
@@ -472,11 +475,11 @@ mod tests {
             SessionKey::new(
                 &origin,
                 &Uri::from_static("https://proxy:8443"),
-                &client,
+                &client_config,
                 TransportKind::Stream,
             ),
             #[cfg(feature = "http3")]
-            SessionKey::new(&origin, origin.uri(), &client, TransportKind::Quic),
+            SessionKey::new(&origin, origin.uri(), &client_config, TransportKind::Quic),
         ];
         for other in others {
             assert!(plain != other);
@@ -484,36 +487,35 @@ mod tests {
 
         #[cfg(feature = "http3")]
         {
-            let quic_key = |connect_options| {
-                let req = request(Some(Protocol::Http3), connect_options, &client);
-                SessionKey::new(&req, req.uri(), &client, TransportKind::Quic)
+            let quic_key = |request_config| {
+                let req = request(Some(Protocol::Http3), request_config);
+                SessionKey::new(&req, req.uri(), &client_config, TransportKind::Quic)
             };
-            let quic_origin = quic_key(Extensions::default());
-            let stream_options = tls(TlsOptions::builder().key_shares(Vec::new()));
-            assert!(quic_origin == quic_key(stream_options));
+            let quic_origin = quic_key(ConnectConfig::default());
+            let stream_config = tls(TlsOptions::builder().key_shares(Vec::new()));
+            assert!(quic_origin == quic_key(stream_config));
 
-            let mut quic_options = Extensions::default();
-            quic_options.insert(QuicOptions::builder().pre_shared_key(true).build());
-            assert!(quic_origin != quic_key(quic_options.clone()));
-            assert!(plain == key(None, quic_options));
+            let mut quic_config = ConnectConfig::default();
+            quic_config.insert(QuicOptions::builder().pre_shared_key(true).build());
+            assert!(quic_origin != quic_key(quic_config.clone()));
+            assert!(plain == key(None, quic_config));
         }
 
-        let mut client = client;
-        client.insert(Ipv4Addr::LOCALHOST);
-        client.insert(Ipv6Addr::LOCALHOST);
+        let mut client_config = client_config;
+        client_config.insert(Ipv4Addr::LOCALHOST);
+        client_config.insert(Ipv6Addr::LOCALHOST);
         let uri = Uri::from_static("https://example.com/");
-        let frozen = |requested| {
-            ConnectRequest::new(&uri, None, Protocol::Auto, requested, &client).unwrap()
-        };
-        let inherited = frozen(Extensions::default());
-        let mut partial = Extensions::default();
+        let frozen = |config| ConnectRequest::new(&uri, Protocol::Auto, config).unwrap();
+        let inherited = frozen(ConnectConfig::default());
+        let mut partial = ConnectConfig::default();
         partial.insert(Ipv4Addr::LOCALHOST);
         let partial = frozen(partial);
-        let mut changed = Extensions::default();
+        let mut changed = ConnectConfig::default();
         changed.insert(Ipv4Addr::UNSPECIFIED);
         let changed = frozen(changed);
         let assert_bindings = |transport: TransportKind| {
-            let key = |req: &ConnectRequest| SessionKey::new(req, req.uri(), &client, transport);
+            let key =
+                |req: &ConnectRequest| SessionKey::new(req, req.uri(), &client_config, transport);
             let inherited_key = key(&inherited);
             assert!(inherited_key == key(&partial));
             assert!(inherited_key != key(&changed));

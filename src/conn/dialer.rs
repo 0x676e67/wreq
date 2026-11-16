@@ -33,7 +33,7 @@ use {
 
 pub(super) use self::race::race;
 use crate::{
-    config::connect::{Extensions, impl_connect_config_value},
+    config::connect::ConnectConfig,
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
     rt::{BoxConnection, DynRuntime, Timer as _},
@@ -51,7 +51,7 @@ struct Inner {
     runtime: DynRuntime,
     resolver: DynResolver,
     tcp: tcp::Config,
-    connect_options: Extensions,
+    config: ConnectConfig,
     happy_eyeballs_timeout: Option<Duration>,
 }
 
@@ -63,7 +63,7 @@ pub(super) enum SocketRequest {
         secure: bool,
         /// Lets the dial report its own timeout before the outer connector does.
         deadline: Option<Instant>,
-        connect_options: Extensions,
+        config: ConnectConfig,
     },
     #[cfg(unix)]
     Unix(Arc<Path>),
@@ -154,7 +154,7 @@ impl Dialer {
         runtime: DynRuntime,
         resolver: DynResolver,
         tcp: tcp::Config,
-        connect_options: Extensions,
+        config: ConnectConfig,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         Self {
@@ -162,7 +162,7 @@ impl Dialer {
                 runtime,
                 resolver,
                 tcp,
-                connect_options,
+                config,
                 happy_eyeballs_timeout,
             }),
         }
@@ -198,18 +198,18 @@ impl Dialer {
 
     /// Client configuration inherited by each dial.
     #[inline]
-    pub(crate) fn connect_options(&self) -> &Extensions {
-        &self.inner.connect_options
+    pub(crate) fn config(&self) -> &ConnectConfig {
+        &self.inner.config
     }
 
     /// Binds a UDP socket for the address family of `remote` before the runtime registers it.
     pub(crate) fn bind_udp(
         &self,
-        connect_options: &Extensions,
+        request_config: &ConnectConfig,
         remote: SocketAddr,
     ) -> Result<UdpSocket, ConnectError> {
-        let (ipv4, ipv6) = local_addresses(connect_options, &self.inner.connect_options);
-        let interface = interface(connect_options, &self.inner.connect_options);
+        let (ipv4, ipv6) = local_addresses(request_config, &self.inner.config);
+        let interface = interface(request_config, &self.inner.config);
         let address = match remote {
             SocketAddr::V4(_) => SocketAddr::from((ipv4.unwrap_or(Ipv4Addr::UNSPECIFIED), 0)),
             SocketAddr::V6(_) => SocketAddr::from((ipv6.unwrap_or(Ipv6Addr::UNSPECIFIED), 0)),
@@ -247,11 +247,11 @@ impl Dialer {
         match request {
             SocketRequest::Tcp {
                 uri,
-                connect_options,
+                config,
                 secure,
                 deadline,
             } => {
-                let dial = self.dial_tcp(uri, connect_options, secure, deadline);
+                let dial = self.dial_tcp(uri, config, secure, deadline);
                 cfg_select! {
                     unix => Either::Left(dial),
                     _ => dial,
@@ -268,7 +268,7 @@ impl Dialer {
     fn dial_tcp(
         &self,
         uri: Uri,
-        connect_options: Extensions,
+        request_config: ConnectConfig,
         secure: bool,
         deadline: Option<Instant>,
     ) -> impl Future<Output = Result<BoxConnection, BoxError>> + use<> {
@@ -282,8 +282,8 @@ impl Dialer {
                 inner.resolver.resolve(name)
             })
             .await?;
-            let addresses = local_addresses(&connect_options, &inner.connect_options);
-            let interface = interface(&connect_options, &inner.connect_options);
+            let addresses = local_addresses(&request_config, &inner.config);
+            let interface = interface(&request_config, &inner.config);
             let stream = race(
                 addrs,
                 addresses,
@@ -307,10 +307,6 @@ impl Dialer {
         within_deadline(deadline, &self.inner.runtime, dial)
     }
 }
-
-impl_connect_config_value!(Ipv4Addr, SOCKET);
-impl_connect_config_value!(Ipv6Addr, SOCKET);
-impl_connect_config_value!(Interface, SOCKET);
 
 // ===== impl Interface =====
 
@@ -349,14 +345,17 @@ impl Hash for Interface {
 /// Returns whether the effective bindings match the client's shared QUIC endpoints.
 /// All fields must match, including the address family this dial does not use.
 #[cfg(feature = "http3")]
-pub(super) fn uses_client_bindings(request: &Extensions, client: &Extensions) -> bool {
-    local_addresses(request, client) == local_addresses(client, client)
-        && interface(request, client) == interface(client, client)
+pub(super) fn uses_client_bindings(
+    request_config: &ConnectConfig,
+    client_config: &ConnectConfig,
+) -> bool {
+    local_addresses(request_config, client_config) == local_addresses(client_config, client_config)
+        && interface(request_config, client_config) == interface(client_config, client_config)
 }
 
 /// Sets one local address family without clearing the other.
 /// Passing `None` leaves both families unchanged.
-pub(crate) fn set_local_address(config: &mut Extensions, address: Option<IpAddr>) {
+pub(crate) fn set_local_address(config: &mut ConnectConfig, address: Option<IpAddr>) {
     match address {
         Some(IpAddr::V4(address)) => {
             config.insert(address);
@@ -370,7 +369,7 @@ pub(crate) fn set_local_address(config: &mut Extensions, address: Option<IpAddr>
 
 /// Sets the supplied local address families; each `None` leaves its earlier value intact.
 pub(crate) fn set_local_addresses(
-    config: &mut Extensions,
+    config: &mut ConnectConfig,
     ipv4: Option<Ipv4Addr>,
     ipv6: Option<Ipv6Addr>,
 ) {
@@ -385,20 +384,23 @@ pub(crate) fn set_local_addresses(
 /// Resolves each local address independently, preferring request values over the client's.
 /// Explicit unspecified addresses still select their address family during dialing.
 pub(crate) fn local_addresses(
-    request: &Extensions,
-    client: &Extensions,
+    request_config: &ConnectConfig,
+    client_config: &ConnectConfig,
 ) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
-    let options = request.with_base(client);
+    let config = request_config.with_base(client_config);
     (
-        options.get_ref::<Ipv4Addr>().copied(),
-        options.get_ref::<Ipv6Addr>().copied(),
+        config.get_ref::<Ipv4Addr>().copied(),
+        config.get_ref::<Ipv6Addr>().copied(),
     )
 }
 
 /// Borrows the request's interface name, falling back to the client's when absent.
-pub(crate) fn interface<'a>(request: &'a Extensions, client: &'a Extensions) -> Option<&'a str> {
-    request
-        .with_base(client)
+pub(crate) fn interface<'a>(
+    request_config: &'a ConnectConfig,
+    client_config: &'a ConnectConfig,
+) -> Option<&'a str> {
+    request_config
+        .with_base(client_config)
         .get_ref::<Interface>()
         .map(Interface::as_str)
 }
@@ -417,7 +419,7 @@ cfg_select! {
         target_os = "watchos",
     ) => {
         /// Selects the interface name stored in this connection configuration.
-        pub(crate) fn set_interface(config: &mut Extensions, interface: Cow<'static, str>) {
+        pub(crate) fn set_interface(config: &mut ConnectConfig, interface: Cow<'static, str>) {
             config.insert(Interface::from(interface));
         }
 
@@ -586,28 +588,28 @@ mod tests {
     }
     #[test]
     fn bindings_inherit_only_unspecified_fields() {
-        let mut client = Extensions::default();
+        let mut client_config = ConnectConfig::default();
         set_local_addresses(
-            &mut client,
+            &mut client_config,
             Some(Ipv4Addr::LOCALHOST),
             Some(Ipv6Addr::LOCALHOST),
         );
-        client.insert(Interface::Static("lo"));
-        let mut request = Extensions::default();
+        client_config.insert(Interface::Static("lo"));
+        let mut request_config = ConnectConfig::default();
         assert_eq!(
-            local_addresses(&request, &client),
+            local_addresses(&request_config, &client_config),
             (Some(Ipv4Addr::LOCALHOST), Some(Ipv6Addr::LOCALHOST))
         );
-        set_local_address(&mut request, Some(Ipv4Addr::UNSPECIFIED.into()));
-        set_local_address(&mut request, None);
-        set_local_addresses(&mut request, None, Some(Ipv6Addr::UNSPECIFIED));
-        set_local_addresses(&mut request, None, None);
+        set_local_address(&mut request_config, Some(Ipv4Addr::UNSPECIFIED.into()));
+        set_local_address(&mut request_config, None);
+        set_local_addresses(&mut request_config, None, Some(Ipv6Addr::UNSPECIFIED));
+        set_local_addresses(&mut request_config, None, None);
         assert_eq!(
-            local_addresses(&request, &client),
+            local_addresses(&request_config, &client_config),
             (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::UNSPECIFIED))
         );
-        assert_eq!(interface(&request, &client), Some("lo"));
-        request.insert(Interface::Static("eth0"));
-        assert_eq!(interface(&request, &client), Some("eth0"));
+        assert_eq!(interface(&request_config, &client_config), Some("lo"));
+        request_config.insert(Interface::Static("eth0"));
+        assert_eq!(interface(&request_config, &client_config), Some("eth0"));
     }
 }

@@ -30,11 +30,13 @@ use super::{
     error::{Error, ErrorKind},
     request::RequestVersion,
 };
+#[cfg(any(feature = "http2", feature = "http3"))]
+use crate::conn::request::ConnectionKey;
 #[cfg(feature = "http3")]
 use crate::protocol::TransportKind;
 use crate::{
-    config::{connect::Extensions, request::RequestConfig},
-    conn::request::ConnectRequest,
+    config::{connect::ConnectConfig, request::RequestConfig},
+    conn::request::{ConnectRequest, ConnectionIdentity},
     ext::UriExt,
     protocol::Protocol,
 };
@@ -50,7 +52,7 @@ pub struct Stack<S, B> {
     inner: MapErr<RetryUnsent<S>, fn(DispatchError<B>) -> BoxError>,
     /// Client values a request inherits; keys count only request values that differ.
     protocol: Protocol,
-    connect_options: Extensions,
+    config: ConnectConfig,
 }
 
 /// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
@@ -106,19 +108,20 @@ struct Original {
     had_cookie: bool,
 }
 
-/// A request paired with the connection request shared by its attempts.
-/// The connection request is frozen before checkout and retained across unsent retries.
+/// An HTTP request and its frozen connection inputs and reuse key.
+/// The connection inputs and key survive unsent retries.
 /// Dispatch returns this value only when the original body has not been sent.
 pub struct DispatchRequest<B> {
     request: Request<B>,
     req: ConnectRequest,
+    connection_identity: ConnectionIdentity,
     /// Whether checkout always connects and never returns the sender to the pool.
     dedicated: bool,
     /// Whether the wire version follows the connection, as an explicit `Protocol::Auto` asks.
     negotiable: bool,
     /// Default-group key whose established sender may carry this WebSocket.
     #[cfg(any(feature = "http2", feature = "http3"))]
-    extended_connect_key: Option<crate::conn::request::ConnectionKey>,
+    extended_connect_key: Option<ConnectionKey>,
 }
 
 /// Creates the configuration and unsent-retry layers for a dispatch service.
@@ -128,14 +131,14 @@ pub struct DispatchRequest<B> {
 /// ownership of any request returned before encoding.
 pub fn layer<S, B>(
     protocol: Protocol,
-    connect_options: Extensions,
+    config: ConnectConfig,
     retry_unsent: bool,
 ) -> impl Layer<S, Service = Stack<S, B>> + Clone {
     ServiceBuilder::new()
         .layer_fn(move |inner| Stack {
             inner,
             protocol,
-            connect_options: connect_options.clone(),
+            config: config.clone(),
         })
         .map_err(DispatchError::into_error as fn(DispatchError<B>) -> BoxError)
         .layer_fn(move |inner| RetryUnsent {
@@ -179,7 +182,7 @@ impl<S, B> Stack<S, B> {
         }
 
         let extensions = request.extensions_mut();
-        let connect_options = extensions.remove::<Extensions>().unwrap_or_default();
+        let request_config = extensions.remove::<ConnectConfig>().unwrap_or_default();
         let dedicated = extensions.remove::<DedicatedConnection>();
 
         // Normalize wire versions to protocol choices; HTTP/1.0 and HTTP/1.1 share a pool.
@@ -204,26 +207,22 @@ impl<S, B> Stack<S, B> {
             None => None,
         };
 
-        let req = ConnectRequest::new(
-            uri,
-            protocol,
-            self.protocol,
-            connect_options,
-            &self.connect_options,
-        )
-        .map_err(|source| {
-            debug!("Client requires absolute-form URIs, received: {uri:?}");
-            Error::new(ErrorKind::UserAbsoluteUriRequired, source)
-        })?;
+        let req = ConnectRequest::new(uri, protocol.unwrap_or(self.protocol), request_config)
+            .map_err(|source| {
+                debug!("Client requires absolute-form URIs, received: {uri:?}");
+                Error::new(ErrorKind::UserAbsoluteUriRequired, source)
+            })?;
 
         // HTTP/3 has no cleartext form; an https-to-http redirect also ends here:
         // https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1
         #[cfg(feature = "http3")]
-        if req.resolved_protocol().transport() == TransportKind::Quic && !uri.is_https() {
+        if req.protocol().transport() == TransportKind::Quic && !uri.is_https() {
             warn!("HTTP/3 requires an https URI");
             return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
                 .with_context("HTTP/3 requires an https URI"));
         }
+
+        let connection_identity = ConnectionIdentity::new(&req, &self.config);
 
         // Probe the default group only where it may be HTTP/2, or HTTP/3 over https. Without
         // Alt-Svc discovery, an automatic client's explicit HTTP/3 group is not probed.
@@ -236,11 +235,12 @@ impl<S, B> Stack<S, B> {
                 Protocol::Http3 => uri.is_https(),
                 _ => false,
             })
-        .then(|| req.key_with_protocol(self.protocol, &self.connect_options));
+        .then(|| ConnectionKey::for_request(&req, self.protocol, &self.config));
 
         Ok(DispatchRequest {
             request,
             req,
+            connection_identity,
             dedicated: dedicated.is_some(),
             negotiable: protocol == Some(Protocol::Auto),
             #[cfg(any(feature = "http2", feature = "http3"))]
@@ -254,7 +254,7 @@ impl<S: Clone, B> Clone for Stack<S, B> {
         Self {
             inner: self.inner.clone(),
             protocol: self.protocol,
-            connect_options: self.connect_options.clone(),
+            config: self.config.clone(),
         }
     }
 }
@@ -390,7 +390,7 @@ mod tests {
 
     /// Wraps `service` in the request stack of a client without options.
     pub(super) fn stack<S, B>(service: S, protocol: Protocol, retry_unsent: bool) -> Stack<S, B> {
-        layer(protocol, Extensions::default(), retry_unsent).layer(service)
+        layer(protocol, ConnectConfig::default(), retry_unsent).layer(service)
     }
 
     /// Dispatches over fresh HTTP/1 connections whose server answers with `handler`.
@@ -401,7 +401,7 @@ mod tests {
     where
         F: Fn(Request<hyper::body::Incoming>) -> Response<String> + Clone + Send + Sync + 'static,
     {
-        let connector = tower::service_fn(move |_: ConnectRequest| {
+        let connector = tower::service_fn(move |_: crate::conn::TransportRequest| {
             let handler = handler.clone();
             let service = hyper::service::service_fn(move |request| {
                 future::ready(Ok::<_, std::convert::Infallible>(handler(request)))
@@ -416,7 +416,7 @@ mod tests {
         Dispatch::new(
             pool::Config::default(),
             connector,
-            &Extensions::default(),
+            &ConnectConfig::default(),
             true,
             #[cfg(feature = "cookies")]
             cookie_store,
@@ -463,7 +463,10 @@ mod tests {
         let plain = prepare("http://localhost/");
         let userinfo = prepare("http://user:pw@localhost/");
         assert_eq!(userinfo.request.uri(), "http://localhost/");
-        assert_eq!(userinfo.req.key(), plain.req.key());
+        assert_eq!(
+            userinfo.connection_identity.key(&userinfo.req),
+            plain.connection_identity.key(&plain.req)
+        );
     }
 
     #[test]
@@ -474,8 +477,8 @@ mod tests {
         let initial_http = Http1Options::builder().max_headers(8).build();
         let updated_http = Http1Options::builder().max_headers(16).build();
         let profile = Emulation::builder()
-            .config(initial_http.clone())
-            .config(tls.clone())
+            .http1_options(initial_http.clone())
+            .tls_options(tls.clone())
             .build();
         let client = Client::builder(crate::rt::tokio::TokioRuntime)
             .no_proxy()
@@ -495,7 +498,7 @@ mod tests {
             let wire: Request<crate::Body> = request.into();
             let request = crate::Request::from(wire);
             let request = stack.prepare(request.into()).unwrap();
-            let config = request.req.connect_options();
+            let config = request.req.config();
             assert_eq!(config.get_ref::<Http1Options>(), Some(&http));
             assert_eq!(config.get_ref::<TlsOptions>(), Some(&tls));
             assert_eq!(config.get_ref::<std::net::Ipv4Addr>(), Some(&address));
@@ -551,7 +554,7 @@ mod tests {
         let request = |dedicated| {
             let mut request = Request::get("https://localhost/chat")
                 .extension({
-                    let mut config = Extensions::default();
+                    let mut config = ConnectConfig::default();
                     config.insert(crate::Group::new("chat"));
                     config
                 })
@@ -568,7 +571,7 @@ mod tests {
         let regular = request(None);
         assert_eq!(
             request(Some(true)).extended_connect_key,
-            Some(regular.req.key())
+            Some(regular.connection_identity.key(&regular.req))
         );
         assert!(request(Some(false)).extended_connect_key.is_none());
     }
@@ -585,7 +588,7 @@ mod tests {
             let mut key = None;
             let service = tower::service_fn(move |mut request: DispatchRequest<crate::Body>| {
                 let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 {
-                    key = Some(request.req.key());
+                    key = Some(request.connection_identity.key(&request.req));
                     *request.request.uri_mut() = Uri::from_static("/upload?part=1");
                     Err(DispatchError::Unsent {
                         error: Error::new(ErrorKind::Canceled, std::io::Error::other("unsent")),
@@ -594,12 +597,9 @@ mod tests {
                     })
                 } else {
                     assert_eq!(request.request.uri(), "http://localhost/upload?part=1");
-                    assert_eq!(key, Some(request.req.key()));
+                    assert_eq!(key, Some(request.connection_identity.key(&request.req)));
                     assert_eq!(
-                        request
-                            .req
-                            .connect_options()
-                            .get_ref::<std::net::Ipv4Addr>(),
+                        request.req.config().get_ref::<std::net::Ipv4Addr>(),
                         Some(&std::net::Ipv4Addr::LOCALHOST)
                     );
                     Ok(request.request.into_body())
@@ -607,12 +607,12 @@ mod tests {
                 future::ready(result)
             });
 
-            let mut connect_options = Extensions::default();
-            connect_options.insert(std::net::Ipv4Addr::LOCALHOST);
+            let mut config = ConnectConfig::default();
+            config.insert(std::net::Ipv4Addr::LOCALHOST);
             let result = stack(service, Protocol::Auto, enabled)
                 .oneshot(
                     Request::builder()
-                        .extension(connect_options)
+                        .extension(config)
                         .uri("http://localhost/upload?part=1")
                         .body(crate::Body::from("payload"))
                         .unwrap(),

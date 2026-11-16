@@ -327,7 +327,7 @@ pub use self::{
     client::{
         Client, ClientBuilder,
         body::Body,
-        emulate::{Emulation, EmulationBuilder, IntoEmulation, ProtocolConfig},
+        emulate::{Emulation, EmulationBuilder, IntoEmulation},
         pool::PoolStrategy,
         request::{Request, RequestBuilder},
         response::Response,

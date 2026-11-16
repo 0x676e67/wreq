@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     Error,
-    config::connect::{Cached, Extensions, KeyPart, changed},
+    config::connect::{Cached, ConnectConfig, KeyPart, changed},
     conn::request::ConnectRequest,
     ext::UriExt,
     protocol::{Protocol, TransportKind},
@@ -43,8 +43,8 @@ pub struct StreamTls {
 
 /// Client TLS policy and its compiled contexts.
 struct Inner {
-    config: Config,
-    connect_options: Extensions,
+    tls: Config,
+    config: ConnectConfig,
     options: Option<Arc<TlsOptions>>,
     contexts: ContextCache<SslConnector, TlsOptions>,
 }
@@ -71,13 +71,13 @@ pub enum MaybeHttpsStream<T> {
 
 impl StreamTls {
     /// Compiles the client's TLS context while preserving the shared session scope.
-    pub(super) fn new(config: Config, connect_options: Extensions) -> crate::Result<Self> {
-        let options = connect_options.get_arc::<TlsOptions>();
-        let contexts = ContextCache::new(compile(&config, options.as_deref())?);
+    pub(super) fn new(tls: Config, config: ConnectConfig) -> crate::Result<Self> {
+        let options = config.get_arc::<TlsOptions>();
+        let contexts = ContextCache::new(compile(&tls, options.as_deref())?);
         Ok(Self {
             inner: Arc::new(Inner {
+                tls,
                 config,
-                connect_options,
                 options,
                 contexts,
             }),
@@ -88,14 +88,10 @@ impl StreamTls {
     /// Requests without different context options keep the client's context.
     pub(crate) fn for_request(self, req: &ConnectRequest) -> crate::Result<TlsConnector> {
         let inner = &*self.inner;
-        let options = changed::<TlsOptions>(
-            req.connect_options(),
-            &inner.connect_options,
-            KeyPart::Context,
-        );
+        let options = changed::<TlsOptions>(req.config(), &inner.config, KeyPart::Context);
         let context = inner
             .contexts
-            .get(options, |options| compile(&inner.config, Some(options)))?;
+            .get(options, |options| compile(&inner.tls, Some(options)))?;
         Ok(TlsConnector {
             tls: self,
             context,
@@ -115,17 +111,13 @@ impl StreamTls {
         alpn_enabled: bool,
     ) -> Result<Ssl, BoxError> {
         let inner = &*self.inner;
-        let options = changed::<TlsOptions>(
-            req.connect_options(),
-            &inner.connect_options,
-            KeyPart::Whole,
-        )
-        .map(Cached::get)
-        .or(inner.options.as_deref());
+        let options = changed::<TlsOptions>(req.config(), &inner.config, KeyPart::Whole)
+            .map(Cached::get)
+            .or(inner.options.as_deref());
         let mut cfg = context.configure()?;
 
-        cfg.set_use_server_name_indication(inner.config.sni);
-        cfg.set_verify_hostname(inner.config.verify_hostname);
+        cfg.set_use_server_name_indication(inner.tls.sni);
+        cfg.set_verify_hostname(inner.tls.verify_hostname);
 
         if let Some(options) = options
             && let Some(ref key_shares) = options.key_shares
@@ -136,7 +128,7 @@ impl StreamTls {
         // Disabled proxy ALPN also skips ALPS. An advertised ALPN list must be nonempty:
         // https://www.rfc-editor.org/rfc/rfc7301#section-3.1
         if alpn_enabled {
-            let protocols: &[AlpnProtocol] = match req.resolved_protocol() {
+            let protocols: &[AlpnProtocol] = match req.protocol() {
                 Protocol::Http1 => &[AlpnProtocol::HTTP1],
                 #[cfg(feature = "http2")]
                 Protocol::Http2 => &[AlpnProtocol::HTTP2],
@@ -186,11 +178,11 @@ impl StreamTls {
         }
 
         if options.is_some_and(|options| options.pre_shared_key) {
-            let tickets = &inner.config.tickets;
+            let tickets = &inner.tls.tickets;
             let target = SessionTarget::new(
                 req,
                 route,
-                &inner.connect_options,
+                &inner.config,
                 TransportKind::Stream,
                 remote_ip,
                 tickets.session_id_context()?,
@@ -251,7 +243,7 @@ impl TlsConnector {
     /// Returns whether responses carry the peer's [`TlsInfo`](crate::tls::TlsInfo).
     #[inline]
     pub(crate) fn tls_info(&self) -> bool {
-        self.tls.inner.config.tls_info
+        self.tls.inner.tls.tls_info
     }
 
     /// Runs the TLS handshake with `route` over an established transport, or returns it

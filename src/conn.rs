@@ -21,15 +21,15 @@ use dialer::{Dialer, tcp};
 use layer::deadline::{Deadline, DeadlineLayer};
 #[cfg(all(test, feature = "http3"))]
 pub(crate) use quic::test_server_config;
-pub(crate) use svc::{Io, Transport};
-use svc::{TransportConnector, TransportRequest};
+use svc::TransportConnector;
+pub(crate) use svc::{Io, Transport, TransportRequest};
 use tower::{
     BoxError, Layer, ServiceBuilder, ServiceExt,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either},
 };
 
 use crate::{
-    config::connect::Extensions, dns::DynResolver, error::map_timeout_to_connector_error,
+    config::connect::ConnectConfig, dns::DynResolver, error::map_timeout_to_connector_error,
     proxy::Matcher as ProxyMatcher, rt::DynRuntime, tls,
 };
 
@@ -91,30 +91,30 @@ impl Connector {
     /// Builds the dialer and the transport connector, then stacks the user's layers and the
     /// connection deadline over them.
     pub(crate) fn new(
-        config: Config,
+        connector_config: Config,
         runtime: DynRuntime,
         resolver: DynResolver,
-        connect_options: &Extensions,
+        config: &ConnectConfig,
     ) -> Result<Self, crate::Error> {
         let dialer = Dialer::new(
             runtime.clone(),
             resolver,
-            config.tcp,
-            connect_options.clone(),
-            config.happy_eyeballs_timeout,
+            connector_config.tcp,
+            config.clone(),
+            connector_config.happy_eyeballs_timeout,
         );
         let connector = TransportConnector::new(
             dialer,
-            config.tls,
-            config.proxies,
-            config.verbose,
-            connect_options,
+            connector_config.tls,
+            connector_config.proxies,
+            connector_config.verbose,
+            config,
         )?;
 
-        let service = if config.layers.is_empty() {
+        let service = if connector_config.layers.is_empty() {
             Either::Left(connector)
         } else {
-            let service = config.layers.iter().fold(
+            let service = connector_config.layers.iter().fold(
                 BoxCloneSyncService::new(connector.map_request(|Unnameable(request)| request)),
                 |service, layer| layer.layer(service),
             );
@@ -126,7 +126,10 @@ impl Connector {
         };
 
         Ok(ServiceBuilder::new()
-            .layer(DeadlineLayer::new(config.connect_timeout, runtime))
+            .layer(DeadlineLayer::new(
+                connector_config.connect_timeout,
+                runtime,
+            ))
             .service(service))
     }
 }
@@ -134,7 +137,11 @@ impl Connector {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "http3")]
-    use {super::request::ConnectRequest, crate::protocol::Protocol, std::sync::Arc};
+    use {
+        super::request::{ConnectRequest, ConnectionIdentity},
+        crate::protocol::Protocol,
+        std::sync::Arc,
+    };
 
     use super::*;
 
@@ -189,20 +196,21 @@ mod tests {
                 config,
                 runtime.clone(),
                 resolver.clone(),
-                &Extensions::default(),
+                &ConnectConfig::default(),
             )
             .unwrap();
             let request = ConnectRequest::test(
                 ::http::Uri::from_static("https://localhost/"),
                 Some(Protocol::Http3),
-                Extensions::default(),
+                ConnectConfig::default(),
             );
+            let identity = ConnectionIdentity::new(&request, &ConnectConfig::default());
             let serve = async {
                 let _accepted = server.accept().await.unwrap().await;
                 std::future::pending::<()>().await
             };
             let result = tokio::select! {
-                result = connector.oneshot(request) => result,
+                result = connector.oneshot(TransportRequest::new(request, identity)) => result,
                 () = serve => unreachable!(),
             };
             match delay {
@@ -233,10 +241,10 @@ mod tests {
                 .unwrap()
                 .into_matcher()
         };
-        let mut overridden = Extensions::default();
+        let mut overridden = ConnectConfig::default();
         overridden.insert(proxy());
-        for (proxies, connect_options) in [
-            (vec![proxy()], Extensions::default()),
+        for (proxies, request_config) in [
+            (vec![proxy()], ConnectConfig::default()),
             (Vec::new(), overridden),
         ] {
             let config = Config {
@@ -247,16 +255,17 @@ mod tests {
                 config,
                 runtime.clone(),
                 DynResolver::new(Arc::new(NoDns)),
-                &Extensions::default(),
+                &ConnectConfig::default(),
             )
             .unwrap();
             let request = ConnectRequest::test(
                 ::http::Uri::from_static("https://localhost/"),
                 Some(Protocol::Http3),
-                connect_options,
+                request_config,
             );
+            let identity = ConnectionIdentity::new(&request, &ConnectConfig::default());
             let error = connector
-                .oneshot(request)
+                .oneshot(TransportRequest::new(request, identity))
                 .await
                 .err()
                 .expect("QUIC must reject a proxy route");

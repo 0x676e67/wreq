@@ -469,9 +469,7 @@ impl Matcher {
     }
 }
 
-impl crate::config::connect::ConnectConfigValue for Matcher {
-    const SCOPE: crate::config::connect::ConfigScope = crate::config::connect::ConfigScope::ROUTE;
-}
+impl crate::config::connect::ConnectConfigValue for Matcher {}
 
 // ===== impl Extra =====
 

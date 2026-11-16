@@ -28,13 +28,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     orig_headers.insert("Accept");
 
     let emulation = Emulation::builder()
-        .config(
+        .tls_options(
             TlsOptions::builder()
                 .alpn_protocols([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
                 .min_tls_version(TlsVersion::TLS_1_2)
                 .build(),
         )
-        .config(
+        .http2_options(
             Http2Options::builder()
                 .initial_window_size(16_777_216)
                 .build(),

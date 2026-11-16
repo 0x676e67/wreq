@@ -7,19 +7,7 @@ use std::{
 
 use lru::DefaultHasher;
 
-use super::{Extension, Extensions, Stored};
-
-/// Implements whole-value identity for one connection configuration type.
-macro_rules! impl_connect_config_value {
-    ($type:ty, $scope:ident) => {
-        impl $crate::config::connect::ConnectConfigValue for $type {
-            const SCOPE: $crate::config::connect::ConfigScope =
-                $crate::config::connect::ConfigScope::$scope;
-        }
-    };
-}
-
-pub(crate) use impl_connect_config_value;
+use super::{ConnectConfig, ConnectExtension, Stored};
 
 derive_deftly::define_derive_deftly! {
     /// Derives full and scoped equality and hashing, requiring one group per field.
@@ -128,8 +116,6 @@ derive_deftly::define_derive_deftly! {
     }
 
     impl $crate::config::connect::ConnectConfigValue for $ttype {
-        const SCOPE: $crate::config::connect::ConfigScope = ${tmeta(config_key(scope)) as expr};
-
         fn hash_parts(&self) -> [u64; 3] {
             use std::hash::{BuildHasher, Hash, Hasher};
             use $crate::config::connect::HASHER;
@@ -186,13 +172,9 @@ pub(crate) use derive_deftly_template_ConfigKey;
 /// Shares one process-wide seed across configuration, pool and session identity hashes.
 pub(crate) static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
 
-/// Identifies which transports or protocols use a configuration value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ConfigScope(u16);
-
 /// Selects the fields compared by a reuse key; TLS and QUIC options use distinct parts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyPart {
+pub(crate) enum KeyPart {
     /// Pool keys compare the whole value.
     Whole,
     /// Session keys exclude ALPN, ALPS and QUIC transport parameters.
@@ -205,10 +187,7 @@ pub enum KeyPart {
 ///
 /// Hashes are cached on insertion, so values must not change while stored, and
 /// `hash_parts` must agree with `eq_part` for every [`KeyPart`].
-pub trait ConnectConfigValue: Clone + Eq + Hash + Send + Sync + 'static {
-    /// Transports or protocols that use this configuration.
-    const SCOPE: ConfigScope;
-
+pub(crate) trait ConnectConfigValue: Clone + Eq + Hash + Send + Sync + 'static {
     /// Hashes indexed by [`KeyPart`].
     fn hash_parts(&self) -> [u64; 3] {
         [HASHER.hash_one(self); 3]
@@ -230,9 +209,8 @@ pub(crate) trait ScopedConfig: ConnectConfigValue {
 }
 
 /// A shared option and the hashes computed when it is stored.
-#[doc(hidden)]
 #[derive(Clone)]
-pub struct Cached<T> {
+pub(crate) struct Cached<T> {
     value: Arc<T>,
     hashes: [u64; 3],
 }
@@ -246,36 +224,27 @@ pub(crate) struct Whole<T> {
 
 /// Selects a local option when it differs from the explicit client default.
 pub(crate) fn changed<'a, T>(
-    request: &'a Extensions,
-    base: &Extensions,
+    request_config: &'a ConnectConfig,
+    client_config: &ConnectConfig,
     part: KeyPart,
 ) -> Option<&'a Cached<T>>
 where
-    T: Extension<Stored = Cached<T>> + ConnectConfigValue,
+    T: ConnectExtension<Stored = Cached<T>> + ConnectConfigValue,
 {
-    let value = request.get::<T>()?;
-    (!base.get::<T>().is_some_and(|other| value.same(other, part))).then_some(value)
+    let value = request_config.get::<T>()?;
+    (!client_config
+        .get::<T>()
+        .is_some_and(|other| value.same(other, part)))
+    .then_some(value)
 }
 
-// ===== impl ConfigScope =====
+// ===== impl ConnectConfigValue =====
 
-// Retained as part of the inherited ProtocolConfig contract. Reuse keys select their own fields.
-impl ConfigScope {
-    pub const TLS: Self = Self(1);
-    pub const QUIC: Self = Self(1 << 1);
-    pub const HTTP1: Self = Self(1 << 2);
-    pub const HTTP2: Self = Self(1 << 3);
-    pub const HTTP3: Self = Self(1 << 4);
-    pub const SOCKET: Self = Self(1 << 5);
-    pub const ROUTE: Self = Self(1 << 6);
-    pub const GROUP: Self = Self(1 << 7);
-}
-
-impl_connect_config_value!(crate::http1::Http1Options, HTTP1);
+impl ConnectConfigValue for crate::http1::Http1Options {}
 #[cfg(feature = "http2")]
-impl_connect_config_value!(crate::http2::Http2Options, HTTP2);
+impl ConnectConfigValue for crate::http2::Http2Options {}
 #[cfg(feature = "http3")]
-impl_connect_config_value!(crate::http3::Http3Options, HTTP3);
+impl ConnectConfigValue for crate::http3::Http3Options {}
 
 // ===== impl Cached =====
 

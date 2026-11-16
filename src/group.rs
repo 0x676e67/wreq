@@ -5,8 +5,6 @@
 
 use std::sync::Arc;
 
-use crate::config::connect::{ConfigScope, ConnectConfigValue};
-
 /// An opaque partition added to the automatic connection identity.
 /// Requests in different groups never share pooled connections, even when
 /// their transport settings are otherwise compatible.
@@ -53,10 +51,6 @@ impl From<u64> for Group {
     fn from(value: u64) -> Self {
         Self(GroupId::Number(value))
     }
-}
-
-impl ConnectConfigValue for Group {
-    const SCOPE: ConfigScope = ConfigScope::GROUP;
 }
 
 #[cfg(test)]
