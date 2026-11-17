@@ -6,19 +6,28 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-use netty::{conn, rt::quic::Compat};
-use tower::{BoxError, Service, ServiceExt};
+use http::Request;
+use netty::{conn, http3::Http3Options, rt::quic::Compat};
+use tower::{BoxError, Layer, Service, ServiceExt};
 
-use super::mux::{Connection, Sender};
+use super::{
+    configure,
+    mux::{Connection, Sender},
+};
 use crate::{
     Body,
-    client::pool::{ConnectService, PoolTarget},
-    config::connect::impl_connect_config_value,
+    client::pool::{Checkout, PoolTarget},
+    config::connect::ConnectConfig,
     conn::Conn,
     rt::DynRuntime,
 };
 
-impl_connect_config_value!(netty::http3::Http3Options, HTTP3);
+/// Layers HTTP/3 handshaking over a QUIC connector.
+pub struct ConnectLayer<'a> {
+    builder: &'a Arc<conn::http3::Builder<DynRuntime>>,
+    options: Option<&'a Http3Options>,
+    runtime: &'a DynRuntime,
+}
 
 /// Establishes HTTP/3 connections for the pool's shared singleton.
 /// Handshakes use the entry's builder and do not wait for the peer, so, as for HTTP/2,
@@ -30,26 +39,44 @@ pub struct Connect<C> {
     runtime: DynRuntime,
 }
 
-// ===== impl Connect =====
+// ===== impl ConnectLayer =====
 
-impl<C> Connect<C> {
-    /// Creates the HTTP/3 connection service.
+impl<'a> ConnectLayer<'a> {
+    /// Borrows the builder and per-entry overrides until the service is assembled.
+    #[must_use]
     pub fn new(
-        connector: C,
-        builder: Arc<conn::http3::Builder<DynRuntime>>,
-        runtime: DynRuntime,
+        builder: &'a Arc<conn::http3::Builder<DynRuntime>>,
+        options: Option<&'a Http3Options>,
+        runtime: &'a DynRuntime,
     ) -> Self {
         Self {
-            connector,
             builder,
+            options,
             runtime,
         }
     }
 }
 
-impl<C> Service<PoolTarget> for Connect<C>
+impl<C> Layer<C> for ConnectLayer<'_> {
+    type Service = Connect<C>;
+
+    fn layer(&self, connector: C) -> Self::Service {
+        Connect {
+            connector,
+            builder: configure(self.builder, self.options, conn::http3::Builder::options),
+            runtime: self.runtime.clone(),
+        }
+    }
+}
+
+// ===== impl Connect =====
+
+impl<C> Service<Checkout<PoolTarget>> for Connect<C>
 where
-    C: ConnectService,
+    C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError, Future: Send + 'static>
+        + Clone
+        + Send
+        + 'static,
 {
     type Response = Connection;
     type Error = BoxError;
@@ -60,7 +87,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, target: PoolTarget) -> Self::Future {
+    fn call(&mut self, checkout: Checkout<PoolTarget>) -> Self::Future {
         let mut connector = self.connector.clone();
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
@@ -70,7 +97,7 @@ where
             let Conn {
                 transport,
                 connected,
-            } = connector.call(target.into_request()).await?;
+            } = connector.call(checkout.target.into_request()).await?;
             let (quic, endpoint) = transport.into_quic()?;
             let quic = Compat::new(http3_quic::Connection::new(quic));
             let (mut tx, connection) = Arc::unwrap_or_clone(builder)

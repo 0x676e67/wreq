@@ -1,16 +1,17 @@
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{
+    hash::{BuildHasher, Hasher},
+    num::NonZeroUsize,
+    sync::{Arc, LazyLock},
+};
 
-use lru::LruCache;
+use lru::{DefaultHasher, LruCache};
 
 use super::Config;
-use crate::{
-    Result,
-    config::connect::{ConnectConfig, ConnectConfigValue, KeyScope},
-    sync::Mutex,
-};
+use crate::{Result, config::connect::ConnectConfig, sync::Mutex, tls_key::ContextOptions};
 
 const REQUEST_CONTEXTS: NonZeroUsize =
     NonZeroUsize::new(16).expect("request context capacity must be non-zero");
+static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
 
 /// One transport's TLS policy, client configuration, and compiled contexts.
 /// A connection configures its own copy of a compiled context for the handshake.
@@ -22,9 +23,7 @@ pub(super) struct TlsContext<O, T> {
     requests: Mutex<LruCache<u64, (Arc<O>, T)>>,
 }
 
-// ===== impl TlsContext =====
-
-impl<O: ConnectConfigValue, T: Clone> TlsContext<O, T> {
+impl<O: ContextOptions, T: Clone> TlsContext<O, T> {
     pub(super) fn new(
         tls: Config,
         client_config: &ConnectConfig,
@@ -48,12 +47,23 @@ impl<O: ConnectConfigValue, T: Clone> TlsContext<O, T> {
         overrides: &ConnectConfig,
         compile: impl FnOnce(&Config, Option<&O>) -> Result<T>,
     ) -> Result<T> {
-        let Some((hash, options)) = overrides.context_override::<O>(&self.client_config) else {
+        let Some(options) = overrides.get_arc::<O>() else {
             return Ok(self.client_context.clone());
         };
+        if self
+            .options
+            .as_ref()
+            .is_some_and(|client| client.same_context(&options))
+        {
+            return Ok(self.client_context.clone());
+        }
+
+        let mut hasher = HASHER.build_hasher();
+        options.hash_context(&mut hasher);
+        let hash = hasher.finish();
         // A fingerprint collision is a cache miss, so compare the compiled options on a hit.
         if let Some((cached, context)) = self.requests.lock().get(&hash)
-            && (Arc::ptr_eq(cached, &options) || cached.eq_scope(&options, KeyScope::Context))
+            && cached.same_context(&options)
         {
             return Ok(context.clone());
         }

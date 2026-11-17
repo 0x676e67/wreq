@@ -13,7 +13,7 @@ use std::{path::Path, sync::Arc};
 
 use http::{HeaderMap, Uri, header::HeaderValue};
 
-use crate::{IntoUri, config::connect::impl_connect_config_value, ext::UriExt};
+use crate::{IntoUri, ext::UriExt};
 
 // # Internals
 //
@@ -455,10 +455,19 @@ impl NoProxy {
 // ===== impl Matcher =====
 
 impl Matcher {
+    /// Returns a matcher based on the system's proxy configuration.
+    #[must_use]
     pub(crate) fn system() -> Self {
         Self {
             inner: Box::new(matcher::Matcher::from_system()),
         }
+    }
+
+    /// Intercept the given destination URI, returning the intercepted
+    /// proxy configuration if there is a match.
+    #[must_use]
+    pub(crate) fn intercept(&self, dst: &Uri) -> Option<Intercepted> {
+        self.inner.intercept(dst)
     }
 
     /// Selects the first matching proxy, checking the request's proxy before the client's.
@@ -475,16 +484,7 @@ impl Matcher {
                     .find_map(|proxy| proxy.intercept(destination))
             })
     }
-
-    /// Intercept the given destination URI, returning the intercepted
-    /// proxy configuration if there is a match.
-    #[inline]
-    pub(crate) fn intercept(&self, dst: &Uri) -> Option<Intercepted> {
-        self.inner.intercept(dst)
-    }
 }
-
-impl_connect_config_value!(Matcher, COMMON);
 
 // ===== impl Extra =====
 

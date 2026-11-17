@@ -5,8 +5,6 @@
 
 use std::sync::Arc;
 
-use crate::config::connect::impl_connect_config_value;
-
 /// An opaque partition added to the automatic connection identity.
 /// Requests in different groups never share pooled connections, even when
 /// their transport settings are otherwise compatible.
@@ -54,8 +52,6 @@ impl From<u64> for Group {
         Self(GroupId::Number(value))
     }
 }
-
-impl_connect_config_value!(Group, COMMON);
 
 #[cfg(test)]
 mod tests {

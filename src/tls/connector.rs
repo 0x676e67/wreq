@@ -27,7 +27,10 @@ use crate::{
     Error,
     config::connect::ConnectConfig,
     protocol::Protocol,
-    tls::{AlpnProtocol, TlsOptions, session::SessionTarget},
+    tls::{
+        AlpnProtocol, TlsOptions,
+        session::{SessionTarget, Transport},
+    },
 };
 
 const URI_MISSING_HOST: &str = "URI missing host";
@@ -172,7 +175,7 @@ impl TlsConnector {
                 overrides,
                 &contexts.client_config,
                 route,
-                false,
+                Transport::Stream,
                 remote_ip,
                 tickets.session_id_context()?,
             );

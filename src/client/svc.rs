@@ -30,12 +30,13 @@ use {
 
 use super::{
     error::{Error, ErrorKind},
-    pool::{self, ConnectService, PoolKey},
+    pool::{self, PoolKey, PoolTarget},
     request::RequestVersion,
 };
 use crate::{
     Body,
     config::{connect::ConnectConfig, request::RequestConfig},
+    conn::{Conn, options::Options},
     ext::UriExt,
     protocol::Protocol,
     rt::DynRuntime,
@@ -98,7 +99,7 @@ struct Original {
 /// Dispatch returns this value only when the original body has not been sent.
 pub(super) struct DispatchRequest<B> {
     request: Request<B>,
-    pool_key: PoolKey,
+    pool_key: PoolKey<PoolTarget>,
     /// Whether checkout always connects and never returns the sender to the pool.
     #[cfg(feature = "ws")]
     dedicated: bool,
@@ -106,7 +107,7 @@ pub(super) struct DispatchRequest<B> {
     negotiable: bool,
     /// Default-group key whose established sender may carry this WebSocket.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-    extended_connect_key: Option<PoolKey>,
+    extended_connect_key: Option<PoolKey<PoolTarget>>,
 }
 
 /// Performs one connection-pool checkout and protocol send attempt.
@@ -277,12 +278,17 @@ impl<S> Stack<S> {
     }
 
     #[must_use]
-    fn pool_key(&self, origin: Uri, protocol: Protocol, request: &ConnectConfig) -> PoolKey {
-        PoolKey::new(
+    fn pool_key(
+        &self,
+        origin: Uri,
+        protocol: Protocol,
+        request: &ConnectConfig,
+    ) -> PoolKey<PoolTarget> {
+        PoolKey::new(PoolTarget {
             origin,
             protocol,
-            request.for_protocol(protocol, &self.config),
-        )
+            options: Options::new(protocol, request, &self.config),
+        })
     }
 }
 
@@ -380,7 +386,11 @@ where
 
 impl<C> Dispatch<C>
 where
-    C: ConnectService,
+    C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError, Future: Send + 'static>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     /// Creates the terminal request service and its shared connection pool.
     /// Handshakes start from the client's connection settings, and HTTP/1 generates
@@ -463,6 +473,7 @@ where
         checked_out: CheckedOut,
     ) -> Result<Response<Incoming>, DispatchError<Body>> {
         // Cookies keep the request URI; only the wire target of a CONNECT changes.
+        let is_https = request.request.uri().is_https();
         #[cfg(feature = "cookies")]
         let uri = request.request.uri().clone();
         let extended = reconcile(
@@ -502,7 +513,7 @@ where
                 let connection_reused = pooled.is_reused();
                 let connect_info = pooled.connected().clone();
                 let unnegotiated_h2 = pooled.version() == Version::HTTP_2
-                    && request.pool_key.origin().is_https()
+                    && is_https
                     && !connect_info.is_negotiated_h2();
 
                 // A returned request was not sent; only protocol rejections are final,
@@ -574,7 +585,11 @@ impl<C> Clone for Dispatch<C> {
 
 impl<C> Service<DispatchRequest<Body>> for Dispatch<C>
 where
-    C: ConnectService,
+    C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError, Future: Send + 'static>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     type Response = Response<Incoming>;
     type Error = DispatchError<Body>;

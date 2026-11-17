@@ -78,7 +78,7 @@ macro_rules! set_hello_options {
             set_option_ref_try!($cfg, cipher_list, $conn, set_cipher_list)
         );
         set_option_ref_try!($cfg, tls13_cipher_list, $conn, set_tls13_ciphers);
-        set_option_ref_try!($cfg, certificate_compressors, $conn, set_cert_compressors);
+        $cfg.certificate_compressors.register($conn).map_err(Error::tls)?;
         set_option_ref_try!(
             $cfg,
             delegated_credentials,

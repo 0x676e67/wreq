@@ -6,26 +6,24 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-use netty::conn;
+use netty::{conn, http2::Http2Options};
 use tower::{BoxError, Layer, Service};
 
 use super::{
-    Established,
+    Established, configure,
     mux::{Connection, Sender},
 };
-use crate::{config::connect::impl_connect_config_value, rt::DynRuntime};
-
-impl_connect_config_value!(netty::http2::Http2Options, HTTP2);
+use crate::rt::DynRuntime;
 
 /// Layers HTTP/2 handshaking over an established-transport service.
 ///
 /// Fixed HTTP/2 wraps the connector directly; automatic mode supplies a
 /// transport selected by negotiation. Both handshake with their entry's builder
 /// and return a cloneable sender for the pool's singleton service.
-#[derive(Clone)]
-pub struct ConnectLayer {
-    builder: Arc<conn::http2::Builder<DynRuntime>>,
-    runtime: DynRuntime,
+pub struct ConnectLayer<'a> {
+    builder: &'a Arc<conn::http2::Builder<DynRuntime>>,
+    options: Option<&'a Http2Options>,
+    runtime: &'a DynRuntime,
 }
 
 /// Performs an HTTP/2 handshake for a transport-producing service.
@@ -42,21 +40,29 @@ pub struct Connect<S> {
 
 // ===== impl ConnectLayer =====
 
-impl ConnectLayer {
-    /// Creates an HTTP/2 handshake layer for pooled connections.
+impl<'a> ConnectLayer<'a> {
+    /// Borrows the builder and per-entry overrides until the service is assembled.
     #[must_use]
-    pub fn new(builder: Arc<conn::http2::Builder<DynRuntime>>, runtime: DynRuntime) -> Self {
-        Self { builder, runtime }
+    pub fn new(
+        builder: &'a Arc<conn::http2::Builder<DynRuntime>>,
+        options: Option<&'a Http2Options>,
+        runtime: &'a DynRuntime,
+    ) -> Self {
+        Self {
+            builder,
+            options,
+            runtime,
+        }
     }
 }
 
-impl<S> Layer<S> for ConnectLayer {
+impl<S> Layer<S> for ConnectLayer<'_> {
     type Service = Connect<S>;
 
     fn layer(&self, service: S) -> Self::Service {
         Connect {
             service,
-            builder: self.builder.clone(),
+            builder: configure(self.builder, self.options, conn::http2::Builder::options),
             runtime: self.runtime.clone(),
         }
     }

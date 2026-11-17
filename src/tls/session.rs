@@ -9,9 +9,10 @@ pub(super) mod store;
 use std::{
     borrow::Borrow,
     hash::{BuildHasher, Hash, Hasher},
+    mem,
     net::IpAddr,
     num::NonZeroUsize,
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use btls::{
@@ -19,20 +20,18 @@ use btls::{
     ssl::{ClientSession, SslSessionRef},
 };
 use http::Uri;
-use lru::LruCache;
+use lru::{DefaultHasher, LruCache};
 pub(crate) use store::Tickets;
 #[cfg(feature = "http3")]
-use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
+use {crate::quic::QuicOptions, btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 
-use crate::{
-    config::connect::{ConnectConfig, HASHER, KeyScope},
-    sync::Mutex,
-    tls::TlsVersion,
-};
+use super::{TlsOptions, TlsVersion};
+use crate::{config::connect::ConnectConfig, conn::options::CommonOptions, sync::Mutex};
 
 const SESSION_ID_CONTEXT_LENGTH: usize = 32;
 // Bounds the session keys kept by the built-in and default LRU stores.
 const SESSION_ENTRY_CAPACITY: usize = 1024;
+static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
 
 /// An opaque key identifying a TLS session store entry.
 ///
@@ -52,9 +51,16 @@ pub struct Key {
 ///
 /// A session using RSA key exchange is cached under the remote IP as well, and is not cached
 /// when the IP is unknown.
-pub(crate) struct SessionTarget {
+pub(super) struct SessionTarget {
     key: Key,
     remote_ip: Option<IpAddr>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Transport {
+    Stream,
+    #[cfg(feature = "http3")]
+    Quic,
 }
 
 /// TLS identity of one connection: transport, origin, TLS peer, and the request
@@ -66,9 +72,16 @@ pub(crate) struct SessionTarget {
 struct SessionKey {
     origin: Uri,
     route: Uri,
-    quic: bool,
-    overrides: ConnectConfig,
+    common: CommonOptions,
+    options: SessionOptions,
     hash: u64,
+}
+
+#[derive(Clone)]
+enum SessionOptions {
+    Stream(Option<Arc<TlsOptions>>),
+    #[cfg(feature = "http3")]
+    Quic(Option<Arc<QuicOptions>>),
 }
 
 /// A TLS session that can be stored and retrieved from a session store.
@@ -134,7 +147,7 @@ pub struct LruTlsSessionStore {
 // ===== impl SessionKey =====
 
 impl SessionKey {
-    /// Derives the TLS identity of a connection request (`quic` vs stream), authenticating
+    /// Derives the TLS identity of a connection request, authenticating
     /// `route`: the origin itself, or the proxy hop that carries it.
     #[must_use]
     fn new(
@@ -142,22 +155,19 @@ impl SessionKey {
         request_config: &ConnectConfig,
         client_config: &ConnectConfig,
         route: &Uri,
-        quic: bool,
+        transport: Transport,
     ) -> Self {
-        let overrides = request_config.for_session(client_config, quic);
+        let common = CommonOptions::new(request_config, client_config);
+        let options = SessionOptions::new(transport, request_config, client_config);
         let origin = origin.clone();
         let route = route.clone();
-        let mut state = HASHER.build_hasher();
-        origin.hash(&mut state);
-        route.hash(&mut state);
-        quic.hash(&mut state);
-        overrides.hash_scope(KeyScope::Session, &mut state);
+        let hash = HASHER.hash_one((&origin, &route, &common, &options));
         Self {
             origin,
             route,
-            quic,
-            overrides,
-            hash: state.finish(),
+            common,
+            options,
+            hash,
         }
     }
 }
@@ -165,10 +175,10 @@ impl SessionKey {
 impl PartialEq for SessionKey {
     fn eq(&self, other: &Self) -> bool {
         self.hash == other.hash
-            && self.quic == other.quic
             && self.origin == other.origin
             && self.route == other.route
-            && self.overrides.eq_scope(&other.overrides, KeyScope::Session)
+            && self.common == other.common
+            && self.options == other.options
     }
 }
 
@@ -180,24 +190,81 @@ impl Hash for SessionKey {
     }
 }
 
+// ===== impl SessionOptions =====
+
+impl SessionOptions {
+    fn new(transport: Transport, request: &ConnectConfig, client: &ConnectConfig) -> Self {
+        match transport {
+            Transport::Stream => Self::Stream(request.get_arc::<TlsOptions>().filter(|options| {
+                !client
+                    .get_ref::<TlsOptions>()
+                    .is_some_and(|base| options.same_session(base))
+            })),
+            #[cfg(feature = "http3")]
+            Transport::Quic => Self::Quic(request.get_arc::<QuicOptions>().filter(|options| {
+                !client
+                    .get_ref::<QuicOptions>()
+                    .is_some_and(|base| options.same_session(base))
+            })),
+        }
+    }
+}
+
+impl PartialEq for SessionOptions {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Stream(None), Self::Stream(None)) => true,
+            (Self::Stream(Some(left)), Self::Stream(Some(right))) => left.same_session(right),
+            #[cfg(feature = "http3")]
+            (Self::Quic(None), Self::Quic(None)) => true,
+            #[cfg(feature = "http3")]
+            (Self::Quic(Some(left)), Self::Quic(Some(right))) => left.same_session(right),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for SessionOptions {}
+
+impl Hash for SessionOptions {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        mem::discriminant(self).hash(state);
+        match self {
+            Self::Stream(options) => {
+                options.is_some().hash(state);
+                if let Some(options) = options {
+                    options.hash_session(state);
+                }
+            }
+            #[cfg(feature = "http3")]
+            Self::Quic(options) => {
+                options.is_some().hash(state);
+                if let Some(options) = options {
+                    options.hash_session(state);
+                }
+            }
+        }
+    }
+}
+
 // ===== impl SessionTarget =====
 
 impl SessionTarget {
     /// Identifies a connection for `origin` that authenticates `route` at `remote_ip`, within a
     /// client's session scope.
     #[must_use]
-    pub(crate) fn new(
+    pub(super) fn new(
         origin: &Uri,
         request_config: &ConnectConfig,
         client_config: &ConnectConfig,
         route: &Uri,
-        quic: bool,
+        transport: Transport,
         remote_ip: Option<IpAddr>,
         session_id_context: [u8; SESSION_ID_CONTEXT_LENGTH],
     ) -> Self {
         Self {
             key: Key {
-                session: SessionKey::new(origin, request_config, client_config, route, quic),
+                session: SessionKey::new(origin, request_config, client_config, route, transport),
                 remote_ip: None,
                 session_id_context,
             },
@@ -207,7 +274,7 @@ impl SessionTarget {
 
     /// Returns the key shared by every remote address.
     #[cfg(feature = "http3")]
-    pub(crate) fn into_key(self) -> Key {
+    pub(super) fn into_key(self) -> Key {
         self.key
     }
 
@@ -374,6 +441,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        conn::options::Options,
         ext::UriExt,
         group::Group,
         http1::Http1Options,
@@ -390,7 +458,7 @@ mod tests {
         let protocol = protocol.unwrap_or(Protocol::Auto);
         (
             uri.origin().unwrap(),
-            config.for_protocol(protocol, client_config),
+            Options::new(protocol, &config, client_config).into_config(),
         )
     }
 
@@ -405,7 +473,17 @@ mod tests {
         let config = ConnectConfig::default();
         let (origin, body) = request(None, ConnectConfig::default(), &config);
         let context = [1; SESSION_ID_CONTEXT_LENGTH];
-        let target = |ip| SessionTarget::new(&origin, &body, &config, &origin, false, ip, context);
+        let target = |ip| {
+            SessionTarget::new(
+                &origin,
+                &body,
+                &config,
+                &origin,
+                Transport::Stream,
+                ip,
+                context,
+            )
+        };
         let known = target(Some(IpAddr::from([192, 0, 2, 1])));
 
         let rsa = known.key_for(Some(Nid::KX_RSA)).unwrap();
@@ -421,7 +499,7 @@ mod tests {
         let client_config = tls(TlsOptions::builder());
         let key = |protocol, request_config: ConnectConfig| {
             let (origin, body) = request(protocol, request_config, &client_config);
-            SessionKey::new(&origin, &body, &client_config, &origin, false)
+            SessionKey::new(&origin, &body, &client_config, &origin, Transport::Stream)
         };
         let plain = key(None, ConnectConfig::default());
 
@@ -457,10 +535,16 @@ mod tests {
                 &origin_body,
                 &client_config,
                 &Uri::from_static("https://proxy:8443"),
-                false,
+                Transport::Stream,
             ),
             #[cfg(feature = "http3")]
-            SessionKey::new(&origin_uri, &origin_body, &client_config, &origin_uri, true),
+            SessionKey::new(
+                &origin_uri,
+                &origin_body,
+                &client_config,
+                &origin_uri,
+                Transport::Quic,
+            ),
         ];
         for other in others {
             assert!(plain != other);
@@ -470,27 +554,41 @@ mod tests {
         {
             let quic_key = |request_config| {
                 let (origin, body) = request(Some(Protocol::Http3), request_config, &client_config);
-                SessionKey::new(&origin, &body, &client_config, &origin, true)
+                SessionKey::new(&origin, &body, &client_config, &origin, Transport::Quic)
             };
             let quic_origin = quic_key(ConnectConfig::default());
             let stream_config = tls(TlsOptions::builder().key_shares(Vec::new()));
             assert!(quic_origin == quic_key(stream_config));
 
             let mut quic_config = ConnectConfig::default();
+            let options = QuicOptions::builder().pre_shared_key(true);
+            quic_config.insert(options.clone().build());
+            let resumed = quic_key(quic_config.clone());
+            assert!(quic_origin != resumed);
+            assert!(plain == key(None, quic_config));
+
+            let mut quic_config = ConnectConfig::default();
             quic_config.insert(
-                crate::quic::QuicOptions::builder()
-                    .pre_shared_key(true)
+                options
+                    .clone()
+                    .initial_mtu(1280)
+                    .enable_alps_protocol(true)
                     .build(),
             );
-            assert!(quic_origin != quic_key(quic_config.clone()));
-            assert!(plain == key(None, quic_config));
+            assert!(resumed == quic_key(quic_config));
+
+            let mut quic_config = ConnectConfig::default();
+            quic_config.insert(options.key_shares(Vec::new()).build());
+            assert!(resumed != quic_key(quic_config));
         }
 
         let mut client_config = client_config;
         client_config.insert(Ipv4Addr::LOCALHOST);
         client_config.insert(Ipv6Addr::LOCALHOST);
         let uri = Uri::from_static("https://example.com/");
-        let frozen = |config: ConnectConfig| config.for_protocol(Protocol::Auto, &client_config);
+        let frozen = |config: ConnectConfig| {
+            Options::new(Protocol::Auto, &config, &client_config).into_config()
+        };
         let inherited = frozen(ConnectConfig::default());
         let mut partial = ConnectConfig::default();
         partial.insert(Ipv4Addr::LOCALHOST);
@@ -498,15 +596,15 @@ mod tests {
         let mut changed = ConnectConfig::default();
         changed.insert(Ipv4Addr::UNSPECIFIED);
         let changed = frozen(changed);
-        let assert_bindings = |quic: bool| {
+        let assert_bindings = |transport| {
             let key =
-                |body: &ConnectConfig| SessionKey::new(&uri, body, &client_config, &uri, quic);
+                |body: &ConnectConfig| SessionKey::new(&uri, body, &client_config, &uri, transport);
             let inherited_key = key(&inherited);
             assert!(inherited_key == key(&partial));
             assert!(inherited_key != key(&changed));
         };
-        assert_bindings(false);
+        assert_bindings(Transport::Stream);
         #[cfg(feature = "http3")]
-        assert_bindings(true);
+        assert_bindings(Transport::Quic);
     }
 }

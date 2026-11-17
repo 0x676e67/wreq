@@ -5,7 +5,6 @@
 use std::{
     collections::VecDeque,
     future::Future,
-    hash::{Hash, Hasher},
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroUsize,
     ops::Deref,
@@ -28,13 +27,15 @@ use tower::BoxError;
 
 use super::{Bindings, TUNNEL_MTU, bind_udp};
 use crate::{
-    config::connect::{ConnectConfig, KeyScope},
+    config::connect::ConnectConfig,
     conn::{
         Conn, Connected, HttpInfo, Transport,
         connected::tls_info,
         dialer::{ConnectError, Race, resolve},
+        options::Options,
     },
     dns::{DynResolver, SocketAddrs},
+    protocol::Protocol,
     quic::QuicOptions,
     rt::{DynRuntime, Timer as _},
     sync::Mutex,
@@ -96,10 +97,10 @@ struct ScopedTokens {
 }
 
 /// The target origin and its normalized HTTP/3 overrides.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct TokenKey {
     origin: Uri,
-    overrides: ConnectConfig,
+    options: Options,
 }
 
 /// Outer MTU fitting a tunneled 1200-byte datagram: QUIC short header (1 + 20-byte CID + 4),
@@ -421,7 +422,7 @@ impl Endpoints {
                 tokens: self.tokens.clone(),
                 key: TokenKey {
                     origin: origin.clone(),
-                    overrides: overrides.clone(),
+                    options: Options::new(Protocol::Http3, overrides, &self.client_config),
                 },
             })
         });
@@ -584,23 +585,6 @@ impl Path {
     }
 }
 
-// ===== impl TokenKey =====
-
-impl PartialEq for TokenKey {
-    fn eq(&self, other: &Self) -> bool {
-        self.origin == other.origin && self.overrides.eq_scope(&other.overrides, KeyScope::Full)
-    }
-}
-
-impl Eq for TokenKey {}
-
-impl Hash for TokenKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.origin.hash(state);
-        self.overrides.hash_scope(KeyScope::Full, state);
-    }
-}
-
 // ===== impl ScopedTokens =====
 
 impl TokenStore for ScopedTokens {
@@ -642,7 +626,6 @@ mod tests {
         conn::{ConnectRequestExt, layer::deadline::DeadlineLayer},
         dns::{Addrs, Name, Resolve, Resolving},
         ext::UriExt,
-        protocol::Protocol,
         rt::tokio::TokioRuntime,
         tls::{self, trust::CertStore},
     };
@@ -696,7 +679,7 @@ mod tests {
         config: ConnectConfig,
         client_config: &ConnectConfig,
     ) -> Request<ConnectConfig> {
-        let config = config.for_protocol(protocol, client_config);
+        let config = Options::new(protocol, &config, client_config).into_config();
         Request::new_connect(uri.origin().unwrap(), protocol, config)
     }
 
@@ -1184,7 +1167,7 @@ mod tests {
         let first = request("first", None);
         let key = TokenKey {
             origin: first.uri().clone(),
-            overrides: first.body().clone(),
+            options: Options::new(Protocol::Http3, first.body(), &endpoints.client_config),
         };
         let received = |endpoints: &Endpoints| {
             endpoints

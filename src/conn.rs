@@ -5,6 +5,7 @@
 mod connected;
 mod dialer;
 mod layer;
+pub(crate) mod options;
 #[cfg(feature = "http3")]
 mod quic;
 mod stream;
@@ -61,8 +62,7 @@ struct ConnectDeadline(Instant);
 
 /// Connection-specific operations on the internal request passed through the connector.
 pub(crate) trait ConnectRequestExt {
-    /// Builds an internal CONNECT request with the overrides selected by
-    /// [`ConnectConfig::for_protocol`] against this connector's client configuration.
+    /// Builds an internal CONNECT request with the selected protocol and connection overrides.
     #[must_use]
     fn new_connect(origin: Uri, protocol: Protocol, config: ConnectConfig) -> Self
     where
@@ -179,7 +179,8 @@ mod tests {
         config: ConnectConfig,
     ) -> Request<ConnectConfig> {
         let protocol = protocol.unwrap_or(Protocol::Auto);
-        let config = config.for_protocol(protocol, &ConnectConfig::default());
+        let config =
+            options::Options::new(protocol, &config, &ConnectConfig::default()).into_config();
         Request::new_connect(uri.origin().unwrap(), protocol, config)
     }
 

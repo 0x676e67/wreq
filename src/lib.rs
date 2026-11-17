@@ -299,6 +299,9 @@
 mod trace;
 #[macro_use]
 mod ext;
+#[macro_use]
+#[path = "tls/key.rs"]
+mod tls_key;
 mod client;
 mod config;
 mod conn;

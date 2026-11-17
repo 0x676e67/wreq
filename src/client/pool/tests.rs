@@ -9,7 +9,7 @@ use http::Request;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(feature = "http2")]
 use {
-    super::entry::Checkout, bytes::Bytes, http::Response, http_body_util::Empty,
+    super::entry::CheckoutFuture, bytes::Bytes, http::Response, http_body_util::Empty,
     tower::util::Oneshot,
 };
 #[cfg(feature = "http3")]
@@ -150,24 +150,24 @@ impl Service<Request<ConnectConfig>> for TestConnector {
 /// Creates a pool key for a local test origin.
 fn pool_key(
     protocol: Protocol,
-    request_config: ConnectConfig,
+    request_config: &ConnectConfig,
     client_config: &ConnectConfig,
-) -> PoolKey {
-    PoolKey::new(
-        http::Uri::from_static("http://localhost/"),
+) -> PoolKey<PoolTarget> {
+    PoolKey::new(PoolTarget {
+        origin: http::Uri::from_static("http://localhost/"),
         protocol,
-        request_config.for_protocol(protocol, client_config),
-    )
+        options: Options::new(protocol, request_config, client_config),
+    })
 }
 
-fn connect_key(protocol: Protocol) -> PoolKey {
+fn connect_key(protocol: Protocol) -> PoolKey<PoolTarget> {
     grouped_key(Group::new("test"), protocol)
 }
 
-fn grouped_key(group: Group, protocol: Protocol) -> PoolKey {
+fn grouped_key(group: Group, protocol: Protocol) -> PoolKey<PoolTarget> {
     let mut config = ConnectConfig::default();
     config.insert(group);
-    pool_key(protocol, config, &ConnectConfig::default())
+    pool_key(protocol, &config, &ConnectConfig::default())
 }
 
 /// Creates a pool without periodic cleanup so empty-entry removal is explicit.
@@ -184,8 +184,8 @@ fn test_pool(connector: TestConnector) -> Pool<TestConnector> {
     )
 }
 
-impl<C: ConnectService> Pool<C> {
-    async fn test_checkout(&self, key: PoolKey) -> Result<Pooled, BoxError> {
+impl Pool<TestConnector> {
+    async fn test_checkout(&self, key: PoolKey<PoolTarget>) -> Result<Pooled, BoxError> {
         self.checkout(&key, false).await
     }
 }
@@ -239,7 +239,7 @@ fn http3_connector() -> TestConnector {
 }
 
 #[test]
-fn protocol_modes_build_specialized_entries() {
+fn protocol_modes_clone_connector_once() {
     /// Counts connector copies made while composing protocol entries.
     /// Shares the counter between clones without creating a transport.
     /// Captured by the connector closure to observe service graph construction.
@@ -279,14 +279,7 @@ fn protocol_modes_build_specialized_entries() {
     .enumerate()
     {
         let key = connect_key(protocol);
-        let entry = pool.inner.targeter.service(&key);
-
-        let expected = match protocol {
-            #[cfg(not(feature = "http2"))]
-            Protocol::Auto => Protocol::Http1,
-            protocol => protocol,
-        };
-        assert_eq!(entry.protocol(), expected);
+        let _entry = pool.inner.new_entry(&key);
         assert_eq!(clones.load(Ordering::Relaxed), index + 1);
     }
 }
@@ -314,17 +307,15 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         );
         let mut request_config = ConnectConfig::default();
         request_config.insert(Group::new("test"));
-        let key = pool_key(protocol, request_config.clone(), &client_config);
+        let key = pool_key(protocol, &request_config, &client_config);
         request_config.insert(http1.clone());
-        let equivalent_key = pool_key(protocol, request_config, &client_config);
+        let equivalent_key = pool_key(protocol, &request_config, &client_config);
         assert_eq!(equivalent_key, key);
         let checkout = || {
             let mut services = pool.inner.services.lock();
-            let entry = services.get_or_insert_with(&equivalent_key, || {
-                pool.inner.targeter.service(&equivalent_key)
-            });
-            assert_eq!(entry.protocol(), protocol);
-            entry.checkout(&equivalent_key, true)
+            let entry = services
+                .get_or_insert_with(&equivalent_key, || pool.inner.new_entry(&equivalent_key));
+            entry.checkout(equivalent_key.as_ref(), true)
         };
 
         let mut driver = tokio_test::task::spawn(checkout());
@@ -332,7 +323,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         let held = if protocol == Protocol::Http2 {
             let waiter = checkout();
-            assert!(matches!(waiter, Checkout::Mux { .. }));
+            assert!(matches!(waiter, CheckoutFuture::Mux { .. }));
             let mut waiter = tokio_test::task::spawn(waiter);
             assert!(waiter.poll().is_pending());
             drop(driver);
@@ -356,7 +347,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         let mut checkouts = Vec::new();
         for i in 0..100 {
             let future = checkout();
-            assert!(matches!(future, Checkout::Mux { .. }));
+            assert!(matches!(future, CheckoutFuture::Mux { .. }));
             if i % 2 == 0 {
                 checkouts.push(future);
             }

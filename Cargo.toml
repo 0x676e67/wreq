@@ -121,8 +121,8 @@ tower = { version = "0.5.3", default-features = false, features = [
 ] }
 tokio = { version = "1.52.3", default-features = false, features = ["io-util", "sync"] }
 compio = { version = "0.19.2", features = ["io", "io-compat"], optional = true }
-educe = { version = "0.7.6", default-features = false, features = ["Default"] }
-derive-deftly = { version = "1.14.0", default-features = false, features = ["minimal-1", "meta-as-expr"] }
+educe = { version = "0.8.2", default-features = false, features = ["Default"] }
+derive-deftly = { version = "1.14.0", default-features = false, features = ["minimal-1"] }
 
 # Optional deps...
 

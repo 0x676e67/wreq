@@ -21,23 +21,20 @@ use http::{
     HeaderValue, Method, Request, Response, Uri,
     header::{HOST, PROXY_AUTHORIZATION},
 };
-use netty::{body::Incoming, conn};
+use netty::{body::Incoming, conn, http1::Http1Options};
 use tokio::sync::oneshot;
 use tower::{BoxError, Layer, Service};
 
-use super::{Established, SendError, is_expired};
+use super::{Established, SendError, configure, is_expired};
 use crate::{
     Body,
     client::{
         error::{Error, ErrorKind},
         pool::cache::Started,
     },
-    config::connect::impl_connect_config_value,
     conn::Connected,
     rt::{DynRuntime, Timer as _},
 };
-
-impl_connect_config_value!(netty::http1::Http1Options, HTTP1);
 
 /// Prepares and sends requests over one reusable HTTP/1 connection.
 ///
@@ -55,11 +52,11 @@ pub struct Connection {
 ///
 /// The resulting service waits for the physical connector, performs the
 /// handshake with its entry's builder, and returns a cacheable [`Connection`].
-#[derive(Clone)]
-pub struct ConnectLayer {
-    builder: Arc<conn::http1::Builder>,
+pub struct ConnectLayer<'a> {
+    builder: &'a Arc<conn::http1::Builder>,
+    options: Option<&'a Http1Options>,
+    runtime: &'a DynRuntime,
     set_host: bool,
-    runtime: DynRuntime,
 }
 
 /// Connects a transport and performs an HTTP/1 handshake.
@@ -99,25 +96,31 @@ enum ConnectState<F> {
 
 // ===== impl ConnectLayer =====
 
-impl ConnectLayer {
-    /// Creates an HTTP/1 handshake layer for pooled connections.
+impl<'a> ConnectLayer<'a> {
+    /// Borrows the builder and per-entry overrides until the service is assembled.
     #[must_use]
-    pub fn new(builder: Arc<conn::http1::Builder>, runtime: DynRuntime, set_host: bool) -> Self {
+    pub fn new(
+        builder: &'a Arc<conn::http1::Builder>,
+        options: Option<&'a Http1Options>,
+        runtime: &'a DynRuntime,
+        set_host: bool,
+    ) -> Self {
         Self {
             builder,
-            set_host,
+            options,
             runtime,
+            set_host,
         }
     }
 }
 
-impl<S> Layer<S> for ConnectLayer {
+impl<S> Layer<S> for ConnectLayer<'_> {
     type Service = Connect<S>;
 
     fn layer(&self, service: S) -> Self::Service {
         Connect {
             service,
-            builder: self.builder.clone(),
+            builder: configure(self.builder, self.options, conn::http1::Builder::options),
             runtime: self.runtime.clone(),
             set_host: self.set_host,
         }

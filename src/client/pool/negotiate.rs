@@ -727,10 +727,10 @@ mod tests {
             pending: Arc::new(Mutex::new(VecDeque::new())),
         };
 
-        assert!(matches!(
+        std::assert_matches!(
             Oneshot::new(negotiate, ()).await.unwrap(),
             Negotiated::Left("fallback")
-        ));
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
         let calls = Arc::new(AtomicUsize::new(0));

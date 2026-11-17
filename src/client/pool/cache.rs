@@ -554,8 +554,8 @@ where
                 {
                     let shutdown = cache_shutdown(locked.shutdown.subscribe());
                     let background = future.take().map(|future| {
-                        let _ = active.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                            Some(count.saturating_add(1))
+                        active.update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                            count.saturating_add(1)
                         });
                         BackgroundConnect {
                             future,
@@ -640,8 +640,8 @@ impl<S> Cached<S> {
         active: Arc<AtomicUsize>,
         reused: bool,
     ) -> Self {
-        let _ = active.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-            Some(count.saturating_add(1))
+        active.update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            count.saturating_add(1)
         });
         Self {
             discard: false,
@@ -680,10 +680,9 @@ impl<S> Cached<S> {
     /// Releases this wrapper's active checkout exactly once.
     fn release_active(&mut self) {
         if std::mem::take(&mut self.active_checkout) {
-            let _ = self
-                .active
-                .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                    Some(count.saturating_sub(1))
+            self.active
+                .update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                    count.saturating_sub(1)
                 });
         }
     }
@@ -737,19 +736,19 @@ where
 impl<S> Drop for Cached<S> {
     fn drop(&mut self) {
         let discarded = match self.inner.take() {
-            Some(service) if !self.discard => match self.shared.upgrade() {
-                Some(shared) => {
-                    let result = {
-                        let mut shared = shared.lock();
-                        let result = shared.put(service);
-                        self.release_active();
-                        result
-                    };
-                    finish_put(result);
-                    None
-                }
-                None => Some(service),
-            },
+            Some(service)
+                if !self.discard
+                    && let Some(shared) = self.shared.upgrade() =>
+            {
+                let result = {
+                    let mut shared = shared.lock();
+                    let result = shared.put(service);
+                    self.release_active();
+                    result
+                };
+                finish_put(result);
+                None
+            }
             service => service,
         };
         self.release_active();
@@ -888,10 +887,9 @@ pub(super) struct BackgroundConnect<F, S> {
 
 impl<F, S> Drop for BackgroundConnect<F, S> {
     fn drop(&mut self) {
-        let _ = self
-            .active
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                Some(count.saturating_sub(1))
+        self.active
+            .update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                count.saturating_sub(1)
             });
     }
 }
@@ -916,16 +914,13 @@ where
             return Poll::Ready(());
         }
 
-        match ready!(Pin::new(&mut self.future).poll(cx)) {
-            Ok(service) => {
-                if let Some(shared) = self.shared.upgrade() {
-                    let result = shared.lock().put(service);
-                    finish_put(result);
-                }
-                Poll::Ready(())
-            }
-            Err(_) => Poll::Ready(()),
+        if let Ok(service) = ready!(Pin::new(&mut self.future).poll(cx))
+            && let Some(shared) = self.shared.upgrade()
+        {
+            let result = shared.lock().put(service);
+            finish_put(result);
         }
+        Poll::Ready(())
     }
 }
 
@@ -1140,10 +1135,7 @@ mod tests {
 
         drop(held);
         assert!(wake.0.load(Ordering::SeqCst));
-        assert!(matches!(
-            ready.as_mut().poll(&mut wake_cx),
-            Poll::Ready(Ok(()))
-        ));
+        std::assert_matches!(ready.as_mut().poll(&mut wake_cx), Poll::Ready(Ok(())));
         drop(ready);
         let held = cache.call(0).await.unwrap();
 

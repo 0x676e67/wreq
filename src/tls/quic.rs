@@ -16,7 +16,7 @@ use super::{
     AlpnProtocol, AlpsProtocol, Config, TlsVersion,
     context::TlsContext,
     ext::{SslContextBuilderExt as _, set_ech_grease_host},
-    session::{Key, SessionTarget, Tickets},
+    session::{Key, SessionTarget, Tickets, Transport},
 };
 use crate::{Error, Result, config::connect::ConnectConfig, quic::QuicOptions, sync::Mutex};
 
@@ -119,7 +119,7 @@ impl QuicTls {
                 overrides,
                 &contexts.client_config,
                 route,
-                true,
+                Transport::Quic,
                 None,
                 tickets.session_id_context().map_err(Error::tls)?,
             );
@@ -328,7 +328,7 @@ mod tests {
         use btls::ssl::SslContextRef;
 
         use super::*;
-        use crate::{group::Group, protocol::Protocol, tls::KeyShare};
+        use crate::{conn::options::Options, group::Group, protocol::Protocol, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
         let overrides = |grease: Option<bool>, group| {
@@ -337,15 +337,18 @@ mod tests {
                 config.insert(Group::new(group));
             }
             if let Some(grease) = grease {
-                config.insert(
-                    QuicOptions::builder()
-                        .curves_list("X25519")
-                        .key_shares(vec![KeyShare::P256])
-                        .grease_enabled(grease)
-                        .build(),
-                );
+                let options = QuicOptions::builder()
+                    .curves_list("X25519")
+                    .key_shares(vec![KeyShare::P256])
+                    .grease_enabled(grease);
+                let options = if group.is_some() {
+                    options.initial_mtu(1280).enable_alps_protocol(true)
+                } else {
+                    options
+                };
+                config.insert(options.build());
             }
-            config.for_protocol(Protocol::Http3, &ConnectConfig::default())
+            Options::new(Protocol::Http3, &config, &ConnectConfig::default()).into_config()
         };
         let uri = Uri::from_static("https://localhost/");
         let tls = Config::default().quic(&ConnectConfig::default()).unwrap();
