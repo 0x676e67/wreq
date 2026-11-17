@@ -50,13 +50,13 @@ where
     T: RequestConfigValue,
 {
     /// Creates a new `RequestConfig` with the provided value.
-    #[inline]
+    #[must_use]
     pub(crate) const fn new(v: Option<T::Value>) -> Self {
         RequestConfig(v)
     }
 
     /// Returns a reference to the inner value of this request-scoped configuration.
-    #[inline]
+    #[must_use]
     pub(crate) const fn as_ref(&self) -> Option<&T::Value> {
         self.0.as_ref()
     }
@@ -65,7 +65,7 @@ where
     ///
     /// If the request specifies a value, use that value; otherwise, attempt to retrieve it from the
     /// current instance (typically a client instance).
-    #[inline]
+    #[must_use]
     pub(crate) fn fetch<'a>(&'a self, extensions: &'a Extensions) -> Option<&'a T::Value> {
         Self::get(extensions).or(self.as_ref())
     }
@@ -75,7 +75,7 @@ where
     /// This method attempts to remove a value of type [`RequestConfig<T>`] from the provided
     /// [`http::Extensions`]. If such a value exists, the current internal value is replaced with
     /// the removed value. If not, the internal value remains unchanged.
-    #[inline]
+    #[must_use]
     pub(crate) fn load(&mut self, extensions: &mut Extensions) -> Option<&T::Value> {
         if let Some(value) = RequestConfig::<T>::remove(extensions) {
             self.0.replace(value);
@@ -89,7 +89,7 @@ where
     /// This method attempts to remove a [`RequestConfig<T>`] from the provided
     /// [`http::Extensions`]. If a value is found, it is returned. If not, the current value is
     /// cloned and returned instead.
-    #[inline]
+    #[must_use]
     pub(crate) fn take<'a>(&'a self, extensions: &'a mut Extensions) -> Option<T::Value> {
         extensions.remove().unwrap_or_else(|| self.clone()).0
     }
@@ -98,7 +98,7 @@ where
     /// present.
     ///
     /// Internally fetches [`RequestConfig<T>`] and returns a reference to its inner value, if set.
-    #[inline]
+    #[must_use]
     pub(crate) fn get(extensions: &Extensions) -> Option<&T::Value> {
         extensions.get::<RequestConfig<T>>()?.0.as_ref()
     }
@@ -108,7 +108,7 @@ where
     ///
     /// This ensures a [`RequestConfig<T>`] exists and returns a mutable reference to its inner
     /// `Option<T::Value>`.
-    #[inline]
+    #[must_use]
     pub(crate) fn get_mut(extensions: &mut Extensions) -> &mut Option<T::Value> {
         &mut extensions.get_or_insert_default::<RequestConfig<T>>().0
     }
@@ -116,7 +116,7 @@ where
     /// Removes and returns the stored value from the given [`http::Extensions`], if present.
     ///
     /// This consumes the [`RequestConfig<T>`] entry and extracts its inner value.
-    #[inline]
+    #[must_use]
     pub(crate) fn remove(extensions: &mut Extensions) -> Option<T::Value> {
         extensions.remove::<RequestConfig<T>>()?.0
     }

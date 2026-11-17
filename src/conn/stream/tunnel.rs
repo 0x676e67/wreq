@@ -1,20 +1,21 @@
 //! HTTP CONNECT over a TCP or Unix proxy socket.
 
-use std::{future::Future, time::Instant};
+use std::future::Future;
 
 use http::{Request, Uri};
 use netty::proxy::tunnel::{TunnelConnector, TunnelError};
 use tower::{ServiceExt, service_fn};
 
 use crate::{
+    config::connect::ConnectConfig,
     conn::{
-        ConnectRequestExt, ConnectionKey,
-        dialer::{Dial, Dialer, SocketBindings},
+        ConnectRequestExt,
+        dialer::{Dial, Dialer},
     },
     ext::UriExt,
     proxy::Intercepted,
     rt::{BoxConnection, Connection},
-    tls::connector::{HandshakeOptions, MaybeHttpsStream, TlsConnector},
+    tls::connector::{MaybeHttpsStream, TlsConnector},
 };
 
 // The Unix path selects the socket. This URI marks the hop as plain HTTP.
@@ -30,12 +31,12 @@ const UNIX_PROXY_URI: &str = "http://localhost";
 pub(super) fn connect(
     dialer: Dialer,
     tls: &TlsConnector,
-    request: &Request<ConnectionKey>,
+    request: &Request<ConnectConfig>,
     route: &Intercepted,
-    bindings: SocketBindings,
-    deadline: Option<Instant>,
 ) -> impl Future<Output = Result<MaybeHttpsStream<BoxConnection>, TunnelError>> + Send {
     let target = request.uri().clone();
+    let deadline = request.deadline();
+    let config = request.body().clone();
     let (proxy_uri, proxy) = match route {
         Intercepted::Proxy(proxy) => (proxy.uri().clone(), Some(proxy)),
         #[cfg(unix)]
@@ -47,7 +48,7 @@ pub(super) fn connect(
         let dial = match route {
             Intercepted::Proxy(_) => Dial::Tcp {
                 uri: uri.clone(),
-                bindings: bindings.clone(),
+                config: config.clone(),
                 deadline,
                 nodelay: true,
             },
@@ -55,20 +56,24 @@ pub(super) fn connect(
             Intercepted::Unix(path) => Dial::Unix(path.clone()),
         };
         // netty requires a future that owns its inputs. Keep only the TLS options
-        // and the key used to scope tickets for this handshake.
+        // and the origin used to scope tickets for this handshake.
         let tls = (!uri.is_http()).then(|| {
             let mut tls = tls.clone();
             tls.no_alpn();
-            let options = HandshakeOptions::new(request.connect_config()).into_owned();
-            (tls, request.body().clone(), options)
+            (
+                tls,
+                request.uri().clone(),
+                request.protocol(),
+                request.body().clone(),
+            )
         });
         async move {
             let io = dialer.oneshot(dial).await?;
-            let Some((tls, key, options)) = tls else {
+            let Some((tls, origin, protocol, config)) = tls else {
                 return Ok(MaybeHttpsStream::Http(io));
             };
             let remote_ip = io.peer_addr().map(|addr| addr.ip());
-            tls.handshake(io, &key, options.as_ref(), &uri, remote_ip)
+            tls.handshake(io, &origin, protocol, &config, &uri, remote_ip)
                 .await
                 .map(MaybeHttpsStream::Https)
         }

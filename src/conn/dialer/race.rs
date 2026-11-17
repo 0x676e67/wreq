@@ -47,6 +47,7 @@ struct Attempt<F> {
 // ===== impl Race =====
 
 impl<S> Race<S> {
+    #[must_use]
     pub fn new(delay: Option<Duration>, sleep: S) -> Self {
         Self { delay, sleep }
     }

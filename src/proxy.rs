@@ -469,7 +469,7 @@ impl Matcher {
     }
 }
 
-impl_connect_config_value!(Matcher);
+impl_connect_config_value!(Matcher, COMMON);
 
 // ===== impl Extra =====
 

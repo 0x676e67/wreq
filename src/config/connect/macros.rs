@@ -1,7 +1,11 @@
-/// Implements the default connection-key comparison for a type.
+/// Implements [`ConnectConfigValue`](crate::config::connect::ConnectConfigValue) for a type
+/// with uniform equality across all scopes.
 macro_rules! impl_connect_config_value {
-    ($type:ty) => {
-        impl $crate::config::connect::ConnectConfigValue for $type {}
+    ($type:ty, $target:ident) => {
+        impl $crate::config::connect::ConnectConfigValue for $type {
+            const TARGET: $crate::config::connect::KeyTarget =
+                $crate::config::connect::KeyTarget::$target;
+        }
     };
 }
 
@@ -48,55 +52,6 @@ derive_deftly::define_derive_deftly! {
         }}
     }}
 
-    ${define CONTEXT_KEY ${tmeta(config_key(context_key)) as ident}}
-    ${define SESSION_KEY ${tmeta(config_key(session_key)) as ident}}
-
-    ${define IDENTITY_FIELD {
-        $fname: ${if fmeta(config_key(map)) {
-            ::std::vec::Vec<${fmeta(config_key(map_type)) as ty}>
-        } else {
-            $ftype
-        }},
-    }}
-    ${define IDENTITY_VALUE {
-        $fname: ${if fmeta(config_key(map)) {
-            self.$fname.as_deref().unwrap_or_default().iter()
-                .map(${fmeta(config_key(map)) as expr})
-                .collect()
-        } else {
-            ::core::clone::Clone::clone(&self.$fname)
-        }},
-    }}
-
-    #[derive(Clone, PartialEq, Eq, Hash)]
-    pub(crate) struct $CONTEXT_KEY {
-        ${for fields { ${when fmeta(config_key(context))} $IDENTITY_FIELD }}
-    }
-
-    #[derive(Clone, PartialEq, Eq, Hash)]
-    pub(crate) struct $SESSION_KEY {
-        context: $CONTEXT_KEY,
-        ${for fields { ${when fmeta(config_key(connection))} $IDENTITY_FIELD }}
-    }
-
-    impl $crate::config::connect::ScopedConfig for $ttype {
-        type Context = $CONTEXT_KEY;
-        type Session = $SESSION_KEY;
-
-        fn context_identity(&self) -> Self::Context {
-            $CONTEXT_KEY {
-                ${for fields { ${when fmeta(config_key(context))} $IDENTITY_VALUE }}
-            }
-        }
-
-        fn session_identity(&self) -> Self::Session {
-            $SESSION_KEY {
-                context: self.context_identity(),
-                ${for fields { ${when fmeta(config_key(connection))} $IDENTITY_VALUE }}
-            }
-        }
-    }
-
     impl PartialEq for $ttype {
         fn eq(&self, other: &Self) -> bool {
             true ${for fields { && $SAME_FIELD }}
@@ -114,6 +69,8 @@ derive_deftly::define_derive_deftly! {
     }
 
     impl $crate::config::connect::ConnectConfigValue for $ttype {
+        const TARGET: $crate::config::connect::KeyTarget = ${tmeta(config_key(target)) as expr};
+
         fn hash_scopes(&self) -> [u64; 3] {
             use std::hash::{BuildHasher, Hash, Hasher};
             use $crate::config::connect::HASHER;
@@ -157,6 +114,7 @@ derive_deftly::define_derive_deftly! {
     ${if tmeta(config_key(transport)) {
         impl $ttype {
             /// Returns whether both configure the same transport.
+            #[must_use]
             pub(crate) fn same_transport(&self, other: &Self) -> bool {
                 true ${for fields { ${when fmeta(config_key(transport))} && $SAME_FIELD }}
             }

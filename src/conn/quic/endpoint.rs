@@ -25,13 +25,13 @@ use lru::LruCache;
 use tokio::sync::Notify;
 use tower::BoxError;
 
-use super::bind_udp;
+use super::{TUNNEL_MTU, bind_udp};
 use crate::{
-    config::connect::Cached,
+    config::connect::ConnectConfig,
     conn::{
-        Conn, ConnectRequestExt, Connected, ConnectionKey, HttpInfo, Transport,
+        Conn, ConnectRequestExt, Connected, HttpInfo, Transport,
         connected::tls_info,
-        dialer::{ConnectError, Race, SocketBindings, resolve},
+        dialer::{ConnectError, Race, resolve},
     },
     dns::{DynResolver, SocketAddrs},
     quic::QuicOptions,
@@ -46,7 +46,6 @@ use crate::{
 pub(super) struct Endpoints {
     runtime: DynRuntime,
     resolver: DynResolver,
-    client_bindings: SocketBindings,
     happy_eyeballs_timeout: Option<Duration>,
     tls: QuicTls,
     direct_transport: Arc<TransportConfig>,
@@ -74,22 +73,18 @@ struct Slots {
     ipv6: Mutex<Option<Endpoint>>,
 }
 
-/// Address validation tokens from NEW_TOKEN frames, kept per pool key.
+/// Address validation tokens from NEW_TOKEN frames, kept per origin and overrides.
 ///
 /// A token links the connection that received it to the one presenting it, so only connections
 /// that may share a pool entry share tokens
 /// ([RFC 9000 Section 8.1.3](https://www.rfc-editor.org/rfc/rfc9000#section-8.1.3)).
-struct Tokens(Mutex<LruCache<ConnectionKey, VecDeque<Bytes>>>);
+struct Tokens(Mutex<LruCache<(Uri, ConnectConfig), VecDeque<Bytes>>>);
 
-/// The token store of one connection attempt, scoped to its pool key.
+/// The token store of one connection attempt, scoped to its pool identity.
 struct ScopedTokens {
     tokens: Arc<Tokens>,
-    key: ConnectionKey,
+    key: (Uri, ConnectConfig),
 }
-
-/// UDP payload a tunnel must carry for QUIC, which pads client Initial datagrams to 1200 bytes
-/// ([RFC 9000 Section 14.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-14.1)).
-pub(super) const TUNNEL_MTU: u16 = 1200;
 
 /// Outer MTU fitting a tunneled 1200-byte datagram: QUIC short header (1 + 20-byte CID + 4),
 /// AEAD tag (16), DATAGRAM frame (9), Quarter Stream ID (8) and Context ID (1), at most.
@@ -111,7 +106,6 @@ impl Endpoints {
     pub(super) fn new(
         runtime: DynRuntime,
         resolver: DynResolver,
-        client_bindings: SocketBindings,
         happy_eyeballs_timeout: Option<Duration>,
         tls: QuicTls,
     ) -> crate::Result<Self> {
@@ -121,7 +115,6 @@ impl Endpoints {
         Ok(Self {
             runtime,
             resolver,
-            client_bindings,
             happy_eyeballs_timeout,
             tls,
             direct_transport,
@@ -132,8 +125,15 @@ impl Endpoints {
     }
 
     #[inline]
+    #[must_use]
     pub(super) fn runtime(&self) -> &DynRuntime {
         &self.runtime
+    }
+
+    #[inline]
+    #[must_use]
+    pub(super) fn connect_config(&self) -> &ConnectConfig {
+        self.tls.connect_config()
     }
 
     /// Resolves a target or relay using the client's DNS policy.
@@ -167,13 +167,14 @@ impl Endpoints {
     /// Opens a UDP endpoint for the address family of `remote`.
     fn open(
         &self,
-        bindings: &SocketBindings,
+        addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+        interface: Option<&str>,
         remote: SocketAddr,
     ) -> Result<Endpoint, ConnectError> {
         Endpoint::new(
             endpoint_config(),
             None,
-            bind_udp(bindings, remote)?,
+            bind_udp(addresses, interface, remote)?,
             self.runtime.quic(),
         )
         .map_err(ConnectError::m("quic endpoint error"))
@@ -185,7 +186,8 @@ impl Endpoints {
     async fn connect_addr(
         &self,
         slots: &Slots,
-        bindings: &SocketBindings,
+        addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+        interface: Option<&str>,
         quic_config: &QuicConfig,
         address: SocketAddr,
         host: &str,
@@ -195,15 +197,22 @@ impl Endpoints {
         } else {
             &slots.ipv6
         };
-        let mut endpoint = self.endpoint(slot, bindings, address)?;
+        let mut endpoint = self.endpoint(slot, addresses, interface, address)?;
         // The attempt takes its own ticket before entering the endpoint's lock. A retry after
         // a stopped driver offers it again, since that driver never sent it.
         let client = quic_config.client();
         let connect = |endpoint: &Endpoint| endpoint.connect_with(client.clone(), address, host);
         let mut connecting = connect(&endpoint);
         if driver_stopped(&connecting, quic_config) {
-            (endpoint, connecting) =
-                self.reconnect(slot, &endpoint, bindings, quic_config, address, connect)?;
+            (endpoint, connecting) = self.reconnect(
+                slot,
+                &endpoint,
+                addresses,
+                interface,
+                quic_config,
+                address,
+                connect,
+            )?;
         }
         let connection = connecting
             .map_err(|error| {
@@ -219,11 +228,13 @@ impl Endpoints {
     /// Uses the slot's endpoint unless it is `stale` or reports a stopped driver too, and
     /// otherwise replaces it with a fresh one. The slot stays locked, so concurrent retries
     /// share one replacement.
+    #[allow(clippy::too_many_arguments)]
     fn reconnect(
         &self,
         slot: &Mutex<Option<Endpoint>>,
         stale: &Endpoint,
-        bindings: &SocketBindings,
+        addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+        interface: Option<&str>,
         quic_config: &QuicConfig,
         address: SocketAddr,
         connect: impl Fn(&Endpoint) -> Result<Connecting, ::quic::ConnectError>,
@@ -237,7 +248,7 @@ impl Endpoints {
                 return Ok((current.clone(), connecting));
             }
         }
-        let fresh = self.open(bindings, address)?;
+        let fresh = self.open(addresses, interface, address)?;
         let connecting = connect(&fresh);
         if !driver_stopped(&connecting, quic_config) {
             *slot = Some(fresh.clone());
@@ -249,24 +260,31 @@ impl Endpoints {
     fn endpoint(
         &self,
         slot: &Mutex<Option<Endpoint>>,
-        bindings: &SocketBindings,
+        addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+        interface: Option<&str>,
         remote: SocketAddr,
     ) -> Result<Endpoint, ConnectError> {
         let mut slot = slot.lock();
         if let Some(endpoint) = slot.as_ref() {
             return Ok(endpoint.clone());
         }
-        let endpoint = self.open(bindings, remote)?;
+        let endpoint = self.open(addresses, interface, remote)?;
         *slot = Some(endpoint.clone());
         Ok(endpoint)
     }
 
     /// Connects to the request's route directly and retains the connection's endpoint.
-    pub(super) async fn connect(&self, request: &Request<ConnectionKey>) -> Result<Conn, BoxError> {
+    pub(super) async fn connect(&self, request: &Request<ConnectConfig>) -> Result<Conn, BoxError> {
         let config = self.config(request, Path::Direct)?;
-        let bindings = SocketBindings::from_config(request.connect_config());
-        let shared = bindings == self.client_bindings;
-        let (connection, endpoint) = self.dial(request.uri(), &bindings, &config, shared).await?;
+        let connect_config = self.connect_config();
+        let shared = request.local_addresses(connect_config)
+            == (
+                connect_config.get_ref::<Ipv4Addr>().copied(),
+                connect_config.get_ref::<Ipv6Addr>().copied(),
+            )
+            && request.interface(connect_config)
+                == connect_config.get_ref::<Arc<str>>().map(Arc::as_ref);
+        let (connection, endpoint) = self.dial(request.uri(), request, &config, shared).await?;
         self.connection(connection, endpoint)
     }
 
@@ -274,14 +292,13 @@ impl Endpoints {
     /// slots. TLS tickets retain the original request identity and the proxy's distinct route.
     pub(super) async fn connect_proxy(
         &self,
-        request: &Request<ConnectionKey>,
+        request: &Request<ConnectConfig>,
         uri: &Uri,
         deadline: Option<Instant>,
     ) -> Result<(Connection, Endpoint), BoxError> {
         let mut config = self.tls.config(request, uri)?;
         config.transport_config(self.transport(request, Path::Proxy)?);
-        let bindings = SocketBindings::from_config(request.connect_config());
-        let dial = self.dial(uri, &bindings, &config, false);
+        let dial = self.dial(uri, request, &config, false);
         let Some(deadline) = deadline else {
             return dial.await;
         };
@@ -295,7 +312,7 @@ impl Endpoints {
     /// configuration error costs no proxy setup.
     pub(super) fn tunnel_config(
         &self,
-        request: &Request<ConnectionKey>,
+        request: &Request<ConnectConfig>,
     ) -> Result<QuicConfig, BoxError> {
         self.config(request, Path::Tunnel)
     }
@@ -308,7 +325,7 @@ impl Endpoints {
     /// closes the endpoint instead; it exits on its own once the endpoint is idle.
     pub(super) async fn finish_tunnel(
         &self,
-        request: &Request<ConnectionKey>,
+        request: &Request<ConnectConfig>,
         config: &QuicConfig,
         socket: impl AsyncUdpSocket,
         remote: SocketAddr,
@@ -345,7 +362,7 @@ impl Endpoints {
     async fn dial(
         &self,
         uri: &Uri,
-        bindings: &SocketBindings,
+        request: &Request<ConnectConfig>,
         config: &QuicConfig,
         shared: bool,
     ) -> Result<(Connection, Endpoint), BoxError> {
@@ -360,12 +377,21 @@ impl Endpoints {
                 .map(|address| SocketAddr::new(address.ip().to_canonical(), address.port()))
                 .collect(),
         );
+        let connect_config = self.connect_config();
+        let bind_addresses = request.local_addresses(connect_config);
+        let interface = request.interface(connect_config);
         let local = Slots::default();
         let slots = if shared { &self.slots } else { &local };
         Ok(self
-            .race(addresses, bindings.addresses(), |address| {
-                let attempt: BoxFuture<'_, _> =
-                    Box::pin(self.connect_addr(slots, bindings, config, address, host));
+            .race(addresses, bind_addresses, |address| {
+                let attempt: BoxFuture<'_, _> = Box::pin(self.connect_addr(
+                    slots,
+                    bind_addresses,
+                    interface,
+                    config,
+                    address,
+                    host,
+                ));
                 Ok(attempt)
             })
             .await?)
@@ -373,12 +399,12 @@ impl Endpoints {
 
     /// Attaches the transport of `path` and single-use address tokens to the original
     /// target's TLS configuration.
-    fn config(&self, request: &Request<ConnectionKey>, path: Path) -> Result<QuicConfig, BoxError> {
+    fn config(&self, request: &Request<ConnectConfig>, path: Path) -> Result<QuicConfig, BoxError> {
         let mut config = self.tls.config(request, request.uri())?;
         config.transport_config(self.transport(request, path)?);
         config.token_store(Arc::new(ScopedTokens {
             tokens: self.tokens.clone(),
-            key: request.body().clone(),
+            key: (request.uri().clone(), request.body().clone()),
         }));
         Ok(config)
     }
@@ -387,15 +413,13 @@ impl Endpoints {
     /// request changes transport options; a tunnel's is built for each connection.
     fn transport(
         &self,
-        request: &Request<ConnectionKey>,
+        request: &Request<ConnectConfig>,
         path: Path,
     ) -> crate::Result<Arc<TransportConfig>> {
         let client = self.tls.options();
         let requested = request
-            .connect_config()
-            .local()
-            .get_ref::<Cached<QuicOptions>>()
-            .map(Cached::get)
+            .body()
+            .get_ref::<QuicOptions>()
             .filter(|requested| !client.is_some_and(|client| requested.same_transport(client)));
         match (path, requested) {
             (Path::Direct, None) => Ok(self.direct_transport.clone()),
@@ -556,36 +580,6 @@ impl TokenStore for ScopedTokens {
     }
 }
 
-/// Returns a QUIC server configuration for `localhost` and the loopback addresses, with its
-/// certificate in DER.
-#[cfg(test)]
-pub(crate) fn test_server_config() -> (::quic::ServerConfig, Vec<u8>) {
-    use ::quic::crypto::rustls::QuicServerConfig;
-
-    let cert = rcgen::generate_simple_self_signed(vec![
-        "localhost".into(),
-        "127.0.0.1".into(),
-        "::ffff:127.0.0.1".into(),
-        "::1".into(),
-    ])
-    .unwrap();
-    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .unwrap()
-    .with_no_client_auth()
-    .with_single_cert(
-        vec![cert.cert.der().clone()],
-        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
-    )
-    .unwrap();
-    tls.alpn_protocols = vec![b"h3".to_vec()];
-    let config =
-        ::quic::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls).unwrap()));
-    (config, cert.cert.der().to_vec())
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -601,15 +595,42 @@ mod tests {
     use super::*;
     use crate::{
         config::connect::ConnectConfig,
-        conn::{
-            ConnectAttempt, layer::deadline::DeadlineLayer, test_connect_request,
-            test_connect_request_with_config,
-        },
+        conn::{ConnectRequestExt, layer::deadline::DeadlineLayer},
         dns::{Addrs, Name, Resolve, Resolving},
+        ext::UriExt,
         protocol::Protocol,
         rt::tokio::TokioRuntime,
         tls::{self, trust::CertStore},
     };
+
+    /// Returns a QUIC server configuration for `localhost` and the loopback addresses, with its
+    /// certificate in DER.
+    fn test_server_config() -> (::quic::ServerConfig, Vec<u8>) {
+        use ::quic::crypto::rustls::QuicServerConfig;
+
+        let cert = rcgen::generate_simple_self_signed(vec![
+            "localhost".into(),
+            "127.0.0.1".into(),
+            "::ffff:127.0.0.1".into(),
+            "::1".into(),
+        ])
+        .unwrap();
+        let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.cert.der().clone()],
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+        )
+        .unwrap();
+        tls.alpn_protocols = vec![b"h3".to_vec()];
+        let config =
+            ::quic::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls).unwrap()));
+        (config, cert.cert.der().to_vec())
+    }
 
     struct Resolver {
         addresses: Vec<SocketAddr>,
@@ -625,13 +646,23 @@ mod tests {
         }
     }
 
-    fn request(uri: Uri, config: ConnectConfig) -> Request<ConnectionKey> {
-        test_connect_request(uri, None, config)
+    fn request_for(
+        uri: &Uri,
+        protocol: Protocol,
+        config: ConnectConfig,
+        client_config: &ConnectConfig,
+    ) -> Request<ConnectConfig> {
+        let config = config.for_protocol(protocol, client_config);
+        Request::new_connect(uri.origin().unwrap(), protocol, config)
+    }
+
+    fn request(uri: Uri, config: ConnectConfig) -> Request<ConnectConfig> {
+        request_for(&uri, Protocol::Auto, config, &ConnectConfig::default())
     }
 
     async fn connect(
         endpoints: &Endpoints,
-        request: Request<ConnectionKey>,
+        request: Request<ConnectConfig>,
         server: &::quic::Endpoint,
     ) -> (Connection, Endpoint, Connection) {
         let uri = request.uri().clone();
@@ -664,7 +695,6 @@ mod tests {
         Endpoints::new(
             runtime,
             resolver,
-            SocketBindings::from_config((&config).into()),
             happy_eyeballs_timeout,
             tls.quic(&config).unwrap(),
         )
@@ -700,7 +730,7 @@ mod tests {
         })
     }
 
-    fn literal(address: SocketAddr) -> Request<ConnectionKey> {
+    fn literal(address: SocketAddr) -> Request<ConnectConfig> {
         request(
             format!("https://{address}/").parse().unwrap(),
             ConnectConfig::default(),
@@ -877,9 +907,8 @@ mod tests {
             None,
         );
         let uri = Uri::from_static("https://localhost/");
-        let request = |request_config| {
-            test_connect_request_with_config(&uri, Protocol::Auto, request_config, &client_config)
-        };
+        let request =
+            |request_config| request_for(&uri, Protocol::Auto, request_config, &client_config);
         let (first, shared, _peer) =
             connect(&endpoints, request(ConnectConfig::default()), &server).await;
         assert_eq!(shared.local_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
@@ -918,17 +947,23 @@ mod tests {
             .build();
         let mut testnet = ConnectConfig::default();
         testnet.insert(Ipv4Addr::new(192, 0, 2, 1));
-        endpoints.client_bindings = SocketBindings::from_config((&testnet).into());
+        let original_tls = endpoints.tls.clone();
+        endpoints.tls = tls::Config {
+            cert_store: Some(CertStore::from_der_certs([&cert]).unwrap()),
+            ..Default::default()
+        }
+        .quic(&testnet)
+        .unwrap();
         let mut request_config = ConnectConfig::default();
-        request_config.insert(Cached::new(invalid));
-        let invalid = test_connect_request_with_config(
+        request_config.insert(invalid);
+        let invalid = request_for(
             &Uri::from_static("https://localhost/"),
             Protocol::Http3,
             request_config,
             &testnet,
         );
         let error = endpoints.connect(&invalid).await.err().unwrap();
-        endpoints.client_bindings = SocketBindings::default();
+        endpoints.tls = original_tls;
         let mut chain = std::iter::successors(
             Some(&*error as &(dyn std::error::Error + 'static)),
             |error| error.source(),
@@ -943,9 +978,9 @@ mod tests {
         let request = literal(blackhole.local_addr().unwrap());
         let timed_out =
             DeadlineLayer::new(Some(Duration::from_millis(30)), endpoints.runtime().clone())
-                .layer(service_fn(|attempt: ConnectAttempt| {
+                .layer(service_fn(|request: Request<ConnectConfig>| {
                     let endpoints = &endpoints;
-                    async move { endpoints.connect(&attempt.request).await }
+                    async move { endpoints.connect(&request).await }
                 }))
                 .oneshot(request)
                 .await
@@ -1096,16 +1131,18 @@ mod tests {
             let mut config = ConnectConfig::default();
             config.insert(crate::group::Group::new(group));
             if let Some(options) = http3 {
-                config.insert(Cached::new(options));
+                config.insert(options);
             }
-            test_connect_request(
-                Uri::from_static("https://localhost/"),
-                Some(Protocol::Http3),
+            request_for(
+                &Uri::from_static("https://localhost/"),
+                Protocol::Http3,
                 config,
+                &ConnectConfig::default(),
             )
         };
 
-        let key = request("first", None).body().clone();
+        let first = request("first", None);
+        let key = (first.uri().clone(), first.body().clone());
         let received = |endpoints: &Endpoints| {
             endpoints
                 .tokens
@@ -1157,7 +1194,7 @@ mod tests {
         let (config, cert) = test_server_config();
         let server = ::quic::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         let mut client_config = ConnectConfig::default();
-        client_config.insert(Cached::new(QuicOptions::default()));
+        client_config.insert(QuicOptions::default());
         let endpoints = endpoints_with(
             resolving(vec![server.local_addr().unwrap()]),
             &cert,
@@ -1167,8 +1204,8 @@ mod tests {
         let uri = Uri::from_static("https://localhost/");
         let request = |options| {
             let mut config = ConnectConfig::default();
-            config.insert(Cached::new(options));
-            test_connect_request_with_config(&uri, Protocol::Http3, config, &client_config)
+            config.insert(options);
+            request_for(&uri, Protocol::Http3, config, &client_config)
         };
 
         let tls_only = request(QuicOptions::builder().curves_list("X25519").build());

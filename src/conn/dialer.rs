@@ -32,21 +32,13 @@ use tower::Service;
 
 pub(super) use self::race::Race;
 use crate::{
-    config::connect::ConnectConfigRef,
+    config::connect::ConnectConfig,
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
     rt::{BoxConnection, DynRuntime, Timer as _},
 };
 
 const CONNECT_TIMEOUT: &str = "connect timeout";
-
-/// Effective local IP addresses and network interface for dialing a socket.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct SocketBindings {
-    ipv4: Option<Ipv4Addr>,
-    ipv6: Option<Ipv6Addr>,
-    interface: Option<Arc<str>>,
-}
 
 /// A physical stream dial. Unix dials use the outer connector's deadline.
 pub(super) enum Dial {
@@ -55,7 +47,7 @@ pub(super) enum Dial {
         /// Disables Nagle for this dial even when the client leaves it enabled.
         nodelay: bool,
         deadline: Option<Instant>,
-        bindings: SocketBindings,
+        config: ConnectConfig,
     },
     #[cfg(unix)]
     Unix(Arc<Path>),
@@ -107,6 +99,7 @@ struct State {
     runtime: DynRuntime,
     resolver: DynResolver,
     tcp: tcp::Config,
+    config: ConnectConfig,
     happy_eyeballs_timeout: Option<Duration>,
 }
 
@@ -119,10 +112,12 @@ pub(super) struct Dialer {
 // ===== impl Dialer =====
 
 impl Dialer {
+    #[must_use]
     pub(super) fn new(
         runtime: DynRuntime,
         resolver: DynResolver,
         tcp: tcp::Config,
+        config: ConnectConfig,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         Self {
@@ -130,47 +125,9 @@ impl Dialer {
                 runtime,
                 resolver,
                 tcp,
+                config,
                 happy_eyeballs_timeout,
             }),
-        }
-    }
-
-    fn connect_tcp(
-        &self,
-        uri: Uri,
-        bindings: SocketBindings,
-        nodelay: bool,
-        deadline: Option<Instant>,
-    ) -> impl Future<Output = Result<BoxConnection, BoxError>> + use<> {
-        let nodelay = nodelay || self.state.tcp.nodelay;
-        let state = self.state.clone();
-        let connect = async move {
-            let (host, port) = tcp::get_host_port(&uri)?;
-            let addrs = resolve(host, port, uri.port().is_some(), |name| {
-                state.resolver.resolve(name)
-            })
-            .await?;
-            let stream = Race::new(state.happy_eyeballs_timeout, |duration| {
-                state.runtime.sleep(duration)
-            })
-            .run(addrs, bindings.addresses(), |addr| {
-                tcp::connect_socket(&addr, &state.tcp, &bindings, nodelay, &state.runtime)
-                    .map(|future| future.map_err(ConnectError::m("tcp connect error")))
-            })
-            .await?;
-            Ok(stream)
-        };
-
-        let sleep = deadline.map(|deadline| self.state.runtime.sleep_until(deadline));
-        async move {
-            let Some(sleep) = sleep else {
-                return connect.await;
-            };
-            // A dial that completes at the deadline wins.
-            match select(pin!(connect), sleep).await {
-                Either::Left((result, _)) => result,
-                Either::Right(_) => Err(ConnectError::timeout().into()),
-            }
         }
     }
 }
@@ -178,14 +135,17 @@ impl Dialer {
 impl Service<Dial> for Dialer {
     type Response = BoxConnection;
     type Error = BoxError;
-    #[cfg(unix)]
-    type Future = Either<
-        BoxFuture<'static, Result<Self::Response, Self::Error>>,
-        ErrInto<crate::rt::Connecting, BoxError>,
-    >;
-    #[cfg(not(unix))]
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+    type Future = cfg_select! {
+        unix => {
+            Either<
+                BoxFuture<'static, Result<Self::Response, Self::Error>>,
+                ErrInto<crate::rt::Connecting, BoxError>,
+            >
+        }
+        _ => { BoxFuture<'static, Result<Self::Response, Self::Error>> }
+    };
 
+    #[inline]
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
@@ -194,48 +154,64 @@ impl Service<Dial> for Dialer {
         match dial {
             Dial::Tcp {
                 uri,
-                bindings,
+                config,
                 deadline,
                 nodelay,
             } => {
-                let connect = Box::pin(self.connect_tcp(uri, bindings, nodelay, deadline));
+                let nodelay = nodelay || self.state.tcp.nodelay;
+                let state = self.state.clone();
+                let addresses = (
+                    config.get_or::<Ipv4Addr>(&state.config).copied(),
+                    config.get_or::<Ipv6Addr>(&state.config).copied(),
+                );
+                let interface = config.get_or::<Arc<str>>(&state.config).cloned();
+
+                // Start the TCP connection attempt with Happy Eyeballs and deadline handling.
+                let connect = async move {
+                    let (host, port) = tcp::get_host_port(&uri)?;
+                    let addrs = resolve(host, port, uri.port().is_some(), |name| {
+                        state.resolver.resolve(name)
+                    })
+                    .await?;
+                    Race::new(state.happy_eyeballs_timeout, |duration| {
+                        state.runtime.sleep(duration)
+                    })
+                    .run(addrs, addresses, |addr| {
+                        tcp::connect_socket(
+                            &addr,
+                            &state.tcp,
+                            addresses,
+                            interface.as_deref(),
+                            nodelay,
+                            &state.runtime,
+                        )
+                        .map(|future| future.map_err(ConnectError::m("tcp connect error")))
+                    })
+                    .await
+                    .map_err(BoxError::from)
+                };
+
+                // Start the deadline timer if a deadline is specified.
+                let sleep = deadline.map(|deadline| self.state.runtime.sleep_until(deadline));
+                let future = Box::pin(async move {
+                    let Some(sleep) = sleep else {
+                        return connect.await;
+                    };
+                    // A dial that completes at the deadline wins.
+                    match select(pin!(connect), sleep).await {
+                        Either::Left((result, _)) => result,
+                        Either::Right(_) => Err(ConnectError::timeout().into()),
+                    }
+                });
+
                 cfg_select! {
-                    unix => Either::Left(connect),
-                    _ => connect,
+                    unix => Either::Left(future),
+                    _ => future,
                 }
             }
             #[cfg(unix)]
             Dial::Unix(path) => Either::Right(self.state.runtime.connect_unix(path).err_into()),
         }
-    }
-}
-
-// ===== impl SocketBindings =====
-
-impl SocketBindings {
-    /// Resolves each binding independently. Explicit unspecified addresses still select a family.
-    pub(super) fn from_config(config: ConnectConfigRef<'_>) -> Self {
-        Self {
-            ipv4: config.get_ref::<Ipv4Addr>().copied(),
-            ipv6: config.get_ref::<Ipv6Addr>().copied(),
-            interface: config.get_ref::<Arc<str>>().cloned(),
-        }
-    }
-
-    /// Returns the `(ipv4, ipv6)` local source addresses.
-    #[inline]
-    pub(super) fn addresses(&self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
-        (self.ipv4, self.ipv6)
-    }
-
-    /// Applies the configured interface before the socket is bound.
-    #[inline]
-    pub(super) fn bind_interface(
-        &self,
-        socket: &socket2::Socket,
-        address: SocketAddr,
-    ) -> io::Result<()> {
-        bind_interface(socket, address, self.interface.as_deref())
     }
 }
 
@@ -253,7 +229,7 @@ cfg_select! {
         target_os = "watchos",
     ) => {
         /// Applies the selected interface before binding or connecting the socket.
-        fn bind_interface(
+        pub(super) fn bind_interface(
             socket: &socket2::Socket,
             address: SocketAddr,
             interface: Option<&str>,
@@ -284,7 +260,7 @@ cfg_select! {
     }
     _ => {
         /// Unsupported platforms have no public interface selector.
-        fn bind_interface(
+        pub(super) fn bind_interface(
             _socket: &socket2::Socket,
             _address: SocketAddr,
             _interface: Option<&str>,
@@ -298,6 +274,7 @@ cfg_select! {
 
 impl ConnectError {
     /// Creates a connection error with a static context message and underlying cause.
+    #[must_use]
     pub(super) fn new<E: Into<BoxError>>(msg: &'static str, cause: E) -> ConnectError {
         ConnectError {
             msg,
@@ -308,10 +285,12 @@ impl ConnectError {
     }
 
     /// Wraps a DNS resolution failure as a connection error.
+    #[must_use]
     fn dns<E: Into<BoxError>>(cause: E) -> ConnectError {
         ConnectError::new("dns error", cause)
     }
 
+    #[must_use]
     pub(super) fn timeout() -> Self {
         Self::new(CONNECT_TIMEOUT, io::Error::from(io::ErrorKind::TimedOut))
     }
@@ -435,30 +414,44 @@ mod tests {
             .insert(Arc::<str>::from("lo"));
         let mut request_config = ConnectConfig::default();
         assert_eq!(
-            SocketBindings::from_config(ConnectConfigRef::new(&request_config, &client_config))
-                .addresses(),
+            (
+                request_config.get_or::<Ipv4Addr>(&client_config).copied(),
+                request_config.get_or::<Ipv6Addr>(&client_config).copied(),
+            ),
             (Some(Ipv4Addr::LOCALHOST), Some(Ipv6Addr::LOCALHOST))
         );
         request_config
             .insert(Ipv4Addr::UNSPECIFIED)
             .insert_if_some(None::<Ipv6Addr>);
-        let bindings =
-            SocketBindings::from_config(ConnectConfigRef::new(&request_config, &client_config));
         assert_eq!(
-            bindings.addresses(),
+            (
+                request_config.get_or::<Ipv4Addr>(&client_config).copied(),
+                request_config.get_or::<Ipv6Addr>(&client_config).copied(),
+            ),
             (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::LOCALHOST))
         );
-        assert_eq!(bindings.interface.as_deref(), Some("lo"));
+        assert_eq!(
+            request_config
+                .get_or::<Arc<str>>(&client_config)
+                .map(Arc::as_ref),
+            Some("lo")
+        );
         request_config
             .insert_if_some(None::<Ipv4Addr>)
             .insert_if_some(Some(Ipv6Addr::UNSPECIFIED))
             .insert(Arc::<str>::from("eth0"));
-        let bindings =
-            SocketBindings::from_config(ConnectConfigRef::new(&request_config, &client_config));
         assert_eq!(
-            bindings.addresses(),
+            (
+                request_config.get_or::<Ipv4Addr>(&client_config).copied(),
+                request_config.get_or::<Ipv6Addr>(&client_config).copied(),
+            ),
             (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::UNSPECIFIED))
         );
-        assert_eq!(bindings.interface.as_deref(), Some("eth0"));
+        assert_eq!(
+            request_config
+                .get_or::<Arc<str>>(&client_config)
+                .map(Arc::as_ref),
+            Some("eth0")
+        );
     }
 }

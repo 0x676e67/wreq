@@ -1,43 +1,32 @@
-//! [`Connect`] selects a route and sends the attempt to the stream or QUIC service.
+//! [`Connect`] dispatches each connection request to the stream or QUIC service.
 
 use std::{
     sync::Arc,
     task::{Context, Poll, ready},
 };
 
-use futures_util::future::{self, Either, Ready};
+#[cfg(feature = "http3")]
+use futures_util::future::Either;
+use http::Request;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Service, ServiceBuilder};
 
 use super::{
-    Config, Conn, ConnectAttempt, ConnectRequestExt,
+    Config, Conn,
     dialer::Dialer,
     layer::verbose::{self, Verbose},
     stream,
 };
 #[cfg(feature = "http3")]
-use super::{dialer::SocketBindings, quic};
-use crate::{
-    config::connect::{Cached, ConnectConfig},
-    dns::DynResolver,
-    ext::UriExt,
-    protocol::TransportKind,
-    proxy::Matcher,
-    rt::DynRuntime,
-};
-
-type StreamFuture = <Verbose<stream::Connect> as Service<ConnectAttempt<stream::Route>>>::Future;
+use super::{ConnectRequestExt, quic};
 #[cfg(feature = "http3")]
-type RoutedFuture =
-    Either<StreamFuture, <quic::Connect as Service<ConnectAttempt<quic::Route>>>::Future>;
-#[cfg(not(feature = "http3"))]
-type RoutedFuture = StreamFuture;
+use crate::protocol::Protocol;
+use crate::{config::connect::ConnectConfig, dns::DynResolver, rt::DynRuntime};
 
-/// Selects a route using the client's proxy rules and the request's transport.
-/// Clones share the proxy rules and the state of both connection services.
+/// Dispatches connection requests to the stream or QUIC transport service.
+/// Clones share the state of both transport connection services.
 #[derive(Clone)]
 pub(crate) struct Connect {
-    proxies: Arc<Vec<Matcher>>,
     stream: Verbose<stream::Connect>,
     #[cfg(feature = "http3")]
     quic: quic::Connect,
@@ -66,7 +55,7 @@ impl<T> Io for T where T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static
 // ===== impl Connect =====
 
 impl Connect {
-    /// Builds the available transports with the client's proxy rules.
+    /// Builds the available transports with the client's proxy rules and bindings.
     pub(super) fn new(
         runtime: &DynRuntime,
         resolver: DynResolver,
@@ -80,10 +69,12 @@ impl Connect {
         config: &ConnectConfig,
     ) -> crate::Result<Self> {
         let tcp_nodelay = tcp.nodelay;
+        let proxies = Arc::new(proxies);
         let dialer = Dialer::new(
             runtime.clone(),
             resolver.clone(),
             tcp,
+            config.clone(),
             happy_eyeballs_timeout,
         );
 
@@ -91,7 +82,7 @@ impl Connect {
         let quic = quic::Connect::new(
             runtime.clone(),
             resolver.clone(),
-            SocketBindings::from_config(config.into()),
+            proxies.clone(),
             happy_eyeballs_timeout,
             tls.clone().quic(config)?,
             #[cfg(feature = "socks")]
@@ -100,6 +91,7 @@ impl Connect {
 
         let stream = stream::Connect::new(
             dialer,
+            proxies,
             tls.stream(config)?,
             tcp_nodelay,
             #[cfg(feature = "socks")]
@@ -107,7 +99,6 @@ impl Connect {
         );
 
         Ok(Self {
-            proxies: Arc::new(proxies),
             #[cfg(feature = "http3")]
             quic,
             stream: ServiceBuilder::new()
@@ -117,10 +108,18 @@ impl Connect {
     }
 }
 
-impl Service<ConnectAttempt> for Connect {
+impl Service<Request<ConnectConfig>> for Connect {
     type Response = Conn;
     type Error = BoxError;
-    type Future = Either<RoutedFuture, Ready<Result<Conn, BoxError>>>;
+    type Future = cfg_select! {
+        feature = "http3" => {
+            Either<
+                <Verbose<stream::Connect> as Service<Request<ConnectConfig>>>::Future,
+                <quic::Connect as Service<Request<ConnectConfig>>>::Future,
+            >
+        }
+        _ => { <Verbose<stream::Connect> as Service<Request<ConnectConfig>>>::Future }
+    };
 
     #[inline]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -130,50 +129,16 @@ impl Service<ConnectAttempt> for Connect {
         Poll::Ready(Ok(()))
     }
 
-    fn call(
-        &mut self,
-        ConnectAttempt {
-            request, deadline, ..
-        }: ConnectAttempt,
-    ) -> Self::Future {
-        let uri = request.uri();
-        // A request proxy takes precedence only when it intercepts this origin.
-        let proxy = request
-            .connect_config()
-            .get_ref::<Cached<Matcher>>()
-            .map(Cached::get)
-            .and_then(|proxy| proxy.intercept(uri))
-            .or_else(|| self.proxies.iter().find_map(|proxy| proxy.intercept(uri)));
-        let transport = cfg_select! {
-            feature = "http3" => request.body().protocol().transport(),
-            _ => TransportKind::Stream,
-        };
-        let future = match transport {
-            TransportKind::Stream => stream::Route::new(proxy, uri.is_https())
-                .map(|route| {
-                    let future = self.stream.call(ConnectAttempt {
-                        request,
-                        deadline,
-                        route,
-                    });
-                    cfg_select! {
-                        feature = "http3" => Either::Left(future),
-                        _ => future,
-                    }
-                })
-                .map_err(Into::into),
-            #[cfg(feature = "http3")]
-            TransportKind::Quic => quic::Route::new(proxy).map(|route| {
-                Either::Right(self.quic.call(ConnectAttempt {
-                    request,
-                    deadline,
-                    route,
-                }))
-            }),
-        };
-        match future {
-            Ok(future) => Either::Left(future),
-            Err(error) => Either::Right(future::err(error)),
+    fn call(&mut self, request: Request<ConnectConfig>) -> Self::Future {
+        cfg_select! {
+            feature = "http3" => {
+                if request.protocol() == Protocol::Http3 {
+                    Either::Right(self.quic.call(request))
+                } else {
+                    Either::Left(self.stream.call(request))
+                }
+            }
+            _ => self.stream.call(request),
         }
     }
 }

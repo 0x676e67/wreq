@@ -80,6 +80,7 @@ pub(super) trait Entry: Send {
 
     /// Returns the protocol topology constructed for this entry.
     #[cfg(test)]
+    #[must_use]
     fn protocol(&self) -> Protocol;
 }
 

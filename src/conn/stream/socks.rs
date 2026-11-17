@@ -1,13 +1,15 @@
 //! SOCKS negotiation over a TCP proxy socket.
 
-use std::time::Instant;
-
-use http::Uri;
+use http::{Request, Uri};
 use netty::proxy::socks::{DnsResolve, SocksConnector, SocksError, Version};
 use tower::ServiceExt;
 
 use crate::{
-    conn::dialer::{Dial, Dialer, SocketBindings},
+    config::connect::ConnectConfig,
+    conn::{
+        ConnectRequestExt,
+        dialer::{Dial, Dialer},
+    },
     dns::{DynResolver, Name},
     ext::UriExt,
     proxy::matcher::Intercept,
@@ -21,18 +23,19 @@ use crate::{
 pub(super) async fn connect(
     dialer: Dialer,
     resolver: DynResolver,
-    target: &Uri,
-    bindings: SocketBindings,
-    deadline: Option<Instant>,
+    request: &Request<ConnectConfig>,
     proxy: &Intercept,
     (version, dns): (Version, DnsResolve),
 ) -> Result<BoxConnection, SocksError> {
+    let target = request.uri();
+    let deadline = request.deadline();
+    let config = request.body().clone();
     let is_https = target.is_https();
     let resolver = resolver.map_request(Name::new);
     let connect_proxy = dialer.map_request(move |uri: Uri| Dial::Tcp {
         nodelay: is_https || uri.is_https(),
         uri,
-        bindings: bindings.clone(),
+        config: config.clone(),
         deadline,
     });
     let mut connector = SocksConnector::new(proxy.uri().clone(), connect_proxy, resolver);

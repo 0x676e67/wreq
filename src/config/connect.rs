@@ -1,47 +1,49 @@
-//! Connection options and the read-only view used to inherit client defaults.
+//! Connection options and scoped key comparisons.
 
 mod identity;
 mod macros;
 
-use std::sync::Arc;
-
-use http::Extensions;
+use std::{any::TypeId, fmt, hash::Hash, iter, sync::Arc};
 
 pub(crate) use self::{
     identity::{
-        Cached, ConnectConfigValue, Full, HASHER, KeyScope, ScopedConfig, changed, changed_value,
+        ConnectConfigValue, Entry, HASHER, KeyScope, KeyTarget, ScopedEntry, hash_overrides,
+        same_overrides, select_overrides,
     },
     macros::{derive_deftly_template_ConfigKey, impl_connect_config_value},
 };
+use crate::protocol::Protocol;
 
 /// One set of connection options, shared until edited.
-/// A setting's type is its key, so adding settings requires no change to the store.
-#[derive(Clone, Debug, Default)]
+/// Entries are sorted by `TypeId` and cache their scoped identity hashes on insertion.
+#[derive(Clone, Default)]
 pub(crate) struct ConnectConfig {
-    extensions: Option<Arc<Extensions>>,
-}
-
-/// Reads connection options with the request's values taking precedence over client defaults.
-#[derive(Clone, Copy)]
-pub(crate) struct ConnectConfigRef<'a> {
-    local: &'a ConnectConfig,
-    base: Option<&'a ConnectConfig>,
+    entries: Option<Arc<[Entry]>>,
 }
 
 // ===== impl ConnectConfig =====
 
 impl ConnectConfig {
     /// Stores a setting, replacing any previous value of the same type.
-    pub(crate) fn insert<T: Clone + Send + Sync + 'static>(&mut self, value: T) -> &mut Self {
-        Arc::make_mut(self.extensions.get_or_insert_with(Arc::default)).insert(value);
+    pub(crate) fn insert<T: ConnectConfigValue>(&mut self, value: T) -> &mut Self {
+        let entry = Entry::new(value);
+        let entries = self.entries();
+        let (index, replaced) = match search(entries, entry.id()) {
+            Ok(index) => (index, 1),
+            Err(index) => (index, 0),
+        };
+        self.entries = collect(
+            entries[..index]
+                .iter()
+                .cloned()
+                .chain(iter::once(entry))
+                .chain(entries[index + replaced..].iter().cloned()),
+        );
         self
     }
 
     /// Inserts a setting when supplied, leaving the previous value intact for `None`.
-    pub(crate) fn insert_if_some<T: Clone + Send + Sync + 'static>(
-        &mut self,
-        value: Option<T>,
-    ) -> &mut Self {
+    pub(crate) fn insert_if_some<T: ConnectConfigValue>(&mut self, value: Option<T>) -> &mut Self {
         if let Some(value) = value {
             self.insert(value);
         }
@@ -49,80 +51,156 @@ impl ConnectConfig {
     }
 
     /// Sets the value of a type, or removes it when given `None`.
-    pub(crate) fn set<T: Clone + Send + Sync + 'static>(&mut self, value: Option<T>) -> &mut Self {
+    pub(crate) fn set<T: ConnectConfigValue>(&mut self, value: Option<T>) -> &mut Self {
         if let Some(value) = value {
             return self.insert(value);
         }
-        if let Some(extensions) = &mut self.extensions
-            && extensions.get::<T>().is_some()
+        if let Some(entries) = self.entries.as_deref()
+            && let Ok(index) = search(entries, TypeId::of::<T>())
         {
-            if extensions.len() == 1 {
-                self.extensions = None;
-            } else {
-                Arc::make_mut(extensions).remove::<T>();
-            }
+            self.entries = collect(
+                entries[..index]
+                    .iter()
+                    .chain(&entries[index + 1..])
+                    .cloned(),
+            );
         }
         self
     }
 
     /// Overlays the settings from `other`, leaving unmentioned types intact.
     pub(crate) fn extend(&mut self, other: Self) {
-        let Some(other) = other.extensions else {
+        let (Some(left), Some(right)) = (self.entries.as_deref(), other.entries.as_deref()) else {
+            if self.entries.is_none() {
+                self.entries = other.entries;
+            }
             return;
         };
-        match &mut self.extensions {
-            Some(extensions) => Arc::make_mut(extensions).extend(Arc::unwrap_or_clone(other)),
-            None => self.extensions = Some(other),
+        let mut merged = Vec::with_capacity(left.len() + right.len());
+        let (mut left, mut right) = (left.iter().peekable(), right.iter().peekable());
+        while let (Some(l), Some(r)) = (left.peek().map(|e| e.id()), right.peek().map(|e| e.id())) {
+            if l == r {
+                left.next();
+            }
+            let next = if l < r { left.next() } else { right.next() };
+            merged.extend(next.cloned());
+        }
+        merged.extend(left.chain(right).cloned());
+        self.entries = Some(merged.into());
+    }
+
+    /// Returns a subset containing only entries applicable to `protocol` that differ from `client`.
+    #[must_use]
+    pub(crate) fn for_protocol(&self, protocol: Protocol, client: &Self) -> Self {
+        Self {
+            entries: select_overrides(self, client, KeyScope::Full, |target| {
+                target.matches_protocol(protocol)
+            }),
         }
     }
 
     /// Returns whether this set has no options.
+    #[inline]
+    #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
-        self.extensions.is_none()
+        self.entries.is_none()
     }
 
     /// Borrows the setting stored for `T`.
-    pub(crate) fn get_ref<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.extensions.as_deref()?.get::<T>()
+    #[inline]
+    #[must_use]
+    pub(crate) fn get_ref<T: 'static>(&self) -> Option<&T> {
+        self.entry(TypeId::of::<T>())?.downcast_ref::<T>()
     }
-}
 
-// ===== impl ConnectConfigRef =====
+    /// Returns the reference to `T` from `self`, falling back to `default`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn get_or<'a, T: 'static>(&'a self, default: &'a Self) -> Option<&'a T> {
+        self.get_ref().or_else(|| default.get_ref())
+    }
 
-impl<'a> ConnectConfigRef<'a> {
-    /// Reads the request's options with the client's options as defaults.
-    pub(crate) fn new(request_config: &'a ConnectConfig, client_config: &'a ConnectConfig) -> Self {
-        Self {
-            local: request_config,
-            base: Some(client_config),
+    /// Clones the shared handle stored for `T`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn get_arc<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        self.entry(TypeId::of::<T>())?.downcast_arc::<T>()
+    }
+
+    /// Returns the entry for `T` if it differs from `base` under `scope`.
+    #[must_use]
+    pub(crate) fn changed_entry<T: 'static>(&self, base: &Self, scope: KeyScope) -> Option<&Entry> {
+        let entry = self.entry(TypeId::of::<T>())?;
+        (!base
+            .entry(entry.id())
+            .is_some_and(|other| entry.same(other, scope)))
+        .then_some(entry)
+    }
+
+    /// Borrows `T` from `self` if it differs from `base` under `scope`.
+    #[must_use]
+    pub(crate) fn changed<T: 'static>(&self, base: &Self, scope: KeyScope) -> Option<&T> {
+        self.changed_entry::<T>(base, scope)?.downcast_ref::<T>()
+    }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn entries(&self) -> &[Entry] {
+        self.entries.as_deref().unwrap_or_default()
+    }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn clone_entries(&self) -> Option<Arc<[Entry]>> {
+        self.entries.clone()
+    }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn entry(&self, id: TypeId) -> Option<&Entry> {
+        let entries = self.entries();
+        search(entries, id).ok().map(|index| &entries[index])
+    }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
+        match (&self.entries, &other.entries) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
         }
     }
+}
 
-    /// Returns the options set on the request itself.
-    pub(crate) fn local(&self) -> &'a ConnectConfig {
-        self.local
-    }
-
-    /// Borrows the effective value of `T`, checking the request first.
-    pub(crate) fn get_ref<T: Send + Sync + 'static>(&self) -> Option<&'a T> {
-        self.local
-            .get_ref::<T>()
-            .or_else(|| self.base.and_then(ConnectConfig::get_ref::<T>))
+impl PartialEq for ConnectConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr_eq(other) || same_overrides(&self.entries, &other.entries, KeyScope::Full)
     }
 }
 
-impl<'a> From<&'a ConnectConfig> for ConnectConfigRef<'a> {
-    fn from(config: &'a ConnectConfig) -> Self {
-        Self {
-            local: config,
-            base: None,
-        }
+impl Eq for ConnectConfig {}
+
+impl Hash for ConnectConfig {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        hash_overrides(self.entries.as_deref(), KeyScope::Full, state);
     }
 }
 
-impl Default for ConnectConfigRef<'_> {
-    fn default() -> Self {
-        static EMPTY: ConnectConfig = ConnectConfig { extensions: None };
-        Self::from(&EMPTY)
+impl fmt::Debug for ConnectConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConnectConfig")
+            .field("len", &self.entries().len())
+            .finish()
     }
+}
+
+fn search(entries: &[Entry], id: TypeId) -> Result<usize, usize> {
+    entries.binary_search_by_key(&id, Entry::id)
+}
+
+#[must_use]
+fn collect(entries: impl Iterator<Item = Entry>) -> Option<Arc<[Entry]>> {
+    let entries: Vec<_> = entries.collect();
+    (!entries.is_empty()).then(|| entries.into())
 }

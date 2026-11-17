@@ -37,7 +37,7 @@ use crate::{
     rt::{DynRuntime, Timer as _},
 };
 
-impl_connect_config_value!(netty::http1::Http1Options);
+impl_connect_config_value!(netty::http1::Http1Options, HTTP1);
 
 /// Prepares and sends requests over one reusable HTTP/1 connection.
 ///
@@ -101,6 +101,7 @@ enum ConnectState<F> {
 
 impl ConnectLayer {
     /// Creates an HTTP/1 handshake layer for pooled connections.
+    #[must_use]
     pub fn new(builder: Arc<conn::http1::Builder>, runtime: DynRuntime, set_host: bool) -> Self {
         Self {
             builder,
@@ -134,6 +135,7 @@ where
     type Error = BoxError;
     type Future = ConnectFuture<S::Future>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx)
     }
@@ -238,26 +240,31 @@ impl Connection {
     }
 
     /// Returns metadata for the underlying transport.
+    #[must_use]
     pub fn connected(&self) -> &Connected {
         &self.connected
     }
 
     /// Returns whether the protocol sender is immediately ready.
+    #[must_use]
     pub fn is_ready(&self) -> bool {
         self.tx.is_ready()
     }
 
     /// Records when the exclusive sender becomes idle.
+    #[inline(always)]
     pub fn mark_idle(&mut self) {
         self.idle_at = self.runtime.now();
     }
 
     /// Returns whether the exclusive sender can safely re-enter the cache.
+    #[must_use]
     pub fn is_open(&self) -> bool {
         !self.connected().poisoned() && self.is_ready()
     }
 
     /// Returns whether the sender is healthy and within its idle timeout.
+    #[must_use]
     pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
         self.is_open() && !is_expired(self.idle_at, now, timeout)
     }
@@ -268,6 +275,7 @@ impl Service<Request<Body>> for Connection {
     type Error = SendError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.tx
             .poll_ready(cx)

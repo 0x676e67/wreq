@@ -14,10 +14,7 @@ use educe::Educe;
 use crate::{
     Error,
     config::connect::derive_deftly_template_ConfigKey,
-    tls::{
-        EchGrease, ExtensionType, KeyShare, Tls13Cipher,
-        compress::{CertificateCompressionAlgorithm, CertificateCompressor},
-    },
+    tls::{EchGrease, ExtensionType, KeyShare, Tls13Cipher, compress::CertificateCompressor},
 };
 
 /// Builder for [`QuicOptions`].
@@ -37,11 +34,7 @@ pub struct QuicOptionsBuilder {
 #[derive(Debug, Clone, Educe, Deftly)]
 #[educe(Default)]
 #[derive_deftly(ConfigKey)]
-#[deftly(config_key(
-    transport,
-    context_key = "QuicContextIdentity",
-    session_key = "QuicSessionIdentity"
-))]
+#[deftly(config_key(transport, target = "crate::config::connect::KeyTarget::QUIC"))]
 pub struct QuicOptions {
     /// Closes the connection after this much inactivity, advertised as `max_idle_timeout`
     /// ([RFC 9000 Section 10.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-10.1)).
@@ -166,11 +159,7 @@ pub struct QuicOptions {
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(
-        context,
-        map = "|compressor| compressor.algorithm()",
-        map_type = "CertificateCompressionAlgorithm"
-    ))]
+    #[deftly(config_key(context, map = "|compressor| compressor.algorithm()"))]
     pub certificate_compressors: Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
 
     /// Signature algorithms for delegated credentials ([RFC 9345](https://datatracker.ietf.org/doc/html/rfc9345)).

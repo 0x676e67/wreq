@@ -46,6 +46,7 @@ impl_request_config_value!(DefaultHeaders, bool);
 
 impl ConfigServiceLayer {
     /// Creates a new [`ConfigServiceLayer`].
+    #[must_use]
     pub fn new(https_only: bool, headers: HeaderMap, orig_headers: OrigHeaderMap) -> Self {
         let orig_headers = (!orig_headers.is_empty()).then_some(orig_headers);
         ConfigServiceLayer {

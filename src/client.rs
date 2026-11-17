@@ -67,7 +67,7 @@ use crate::cookie;
 use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Proxy,
-    config::connect::{Cached, ConnectConfig},
+    config::connect::ConnectConfig,
     conn::{self, BoxedConnectLayer, BoxedConnectService, Conn, ConnectStack, Unnameable},
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
@@ -1028,9 +1028,7 @@ impl ClientBuilder {
     where
         T: Into<Option<Http1Options>>,
     {
-        self.config
-            .connect_config
-            .set(options.into().map(Cached::new));
+        self.config.connect_config.set(options.into());
         self
     }
 
@@ -1042,9 +1040,7 @@ impl ClientBuilder {
     where
         T: Into<Option<Http2Options>>,
     {
-        self.config
-            .connect_config
-            .set(options.into().map(Cached::new));
+        self.config.connect_config.set(options.into());
         self
     }
 
@@ -1055,9 +1051,7 @@ impl ClientBuilder {
     where
         T: Into<Option<netty::http3::Http3Options>>,
     {
-        self.config
-            .connect_config
-            .set(options.into().map(Cached::new));
+        self.config.connect_config.set(options.into());
         self
     }
 
@@ -1069,9 +1063,7 @@ impl ClientBuilder {
     where
         T: Into<Option<crate::quic::QuicOptions>>,
     {
-        self.config
-            .connect_config
-            .set(options.into().map(Cached::new));
+        self.config.connect_config.set(options.into());
         self
     }
 
@@ -1481,9 +1473,7 @@ impl ClientBuilder {
     where
         T: Into<Option<TlsOptions>>,
     {
-        self.config
-            .connect_config
-            .set(options.into().map(Cached::new));
+        self.config.connect_config.set(options.into());
         self
     }
 
@@ -1633,8 +1623,8 @@ impl ClientBuilder {
     // Emulation options
 
     /// Applies the emulation's headers and protocol options.
-    /// Supplied options replace matching settings; absent ones are kept.
-    /// The emulation does not create a connection group.
+    /// Supplied options and headers replace matching entries; absent ones stay and original
+    /// header names append. Does not create a connection group.
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> ClientBuilder {
         let emulate::Emulation(headers, orig_headers, config) = emulation.into_emulation();

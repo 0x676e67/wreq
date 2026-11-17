@@ -67,11 +67,13 @@ impl Connection {
     }
 
     /// Returns metadata for the underlying transport.
+    #[must_use]
     pub fn connected(&self) -> &Connected {
         &self.connected
     }
 
     /// Returns the HTTP version spoken by the protocol sender.
+    #[must_use]
     pub fn version(&self) -> Version {
         match &self.tx {
             #[cfg(feature = "http2")]
@@ -82,6 +84,7 @@ impl Connection {
     }
 
     /// Returns whether the protocol sender is immediately ready.
+    #[must_use]
     pub fn is_ready(&self) -> bool {
         match &self.tx {
             #[cfg(feature = "http2")]
@@ -92,6 +95,7 @@ impl Connection {
     }
 
     /// Returns whether the protocol sender has closed.
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         match &self.tx {
             #[cfg(feature = "http2")]
@@ -102,6 +106,7 @@ impl Connection {
     }
 
     /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS.
+    #[must_use]
     pub fn extended_connect(&self) -> Option<bool> {
         match &self.tx {
             #[cfg(feature = "http2")]
@@ -113,6 +118,7 @@ impl Connection {
 
     /// Returns whether netty reports no live exchange: no response awaited, body unread,
     /// request body sending or `CONNECT` tunnel open.
+    #[must_use]
     pub fn is_idle(&self) -> bool {
         match &self.tx {
             #[cfg(feature = "http2")]
@@ -123,16 +129,19 @@ impl Connection {
     }
 
     /// Returns whether a checkout is active or netty reports a live exchange.
+    #[must_use]
     pub fn is_in_use(&self) -> bool {
         self.state.has_checkouts() || !self.is_idle()
     }
 
     /// Marks the shared sender checked out until response headers are returned.
+    #[inline(always)]
     pub fn begin_checkout(&self) {
         self.state.acquire();
     }
 
     /// Ends response-header checkout and records when its count reaches zero.
+    #[inline(always)]
     pub fn finish_checkout(&self) {
         let _ = self.state.release(self.runtime.now());
     }
@@ -141,6 +150,7 @@ impl Connection {
     ///
     /// A connection in use never idle-expires. With no busy-to-idle signal, seeing it in use
     /// moves `idle_at` to `now`, so idle time counts from when it was last seen in use.
+    #[must_use]
     pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
         if self.connected.poisoned() || self.is_closed() {
             return false;
@@ -185,6 +195,7 @@ impl Service<Request<Body>> for Connection {
 
 impl ConnectionState {
     /// Creates idle checkout state for a newly established connection.
+    #[must_use]
     fn new(idle_at: Instant) -> Self {
         Self {
             checkouts: AtomicUsize::new(0),
@@ -241,17 +252,20 @@ impl ConnectionState {
     }
 
     /// Returns whether a sender checkout is active.
+    #[must_use]
     fn has_checkouts(&self) -> bool {
         self.checkouts.load(Ordering::Acquire) != 0
     }
 
     /// Moves the idle start to `now` for a connection seen in use, never backwards.
+    #[inline(always)]
     fn touch(&self, now: Instant) {
         let mut idle_at = self.idle_at.lock();
         *idle_at = (*idle_at).max(now);
     }
 
     /// Returns when the connection was last released or seen in use.
+    #[must_use]
     fn idle_at(&self) -> Instant {
         *self.idle_at.lock()
     }

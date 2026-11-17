@@ -15,7 +15,7 @@ use super::{
 };
 use crate::{config::connect::impl_connect_config_value, rt::DynRuntime};
 
-impl_connect_config_value!(netty::http2::Http2Options);
+impl_connect_config_value!(netty::http2::Http2Options, HTTP2);
 
 /// Layers HTTP/2 handshaking over an established-transport service.
 ///
@@ -44,6 +44,7 @@ pub struct Connect<S> {
 
 impl ConnectLayer {
     /// Creates an HTTP/2 handshake layer for pooled connections.
+    #[must_use]
     pub fn new(builder: Arc<conn::http2::Builder<DynRuntime>>, runtime: DynRuntime) -> Self {
         Self { builder, runtime }
     }
@@ -72,6 +73,7 @@ where
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx)
     }

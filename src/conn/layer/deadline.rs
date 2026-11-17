@@ -12,7 +12,8 @@ use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 
 use crate::{
-    conn::{ConnectAttempt, ConnectionKey},
+    config::connect::ConnectConfig,
+    conn::ConnectDeadline,
     error::TimedOut,
     rt::{BoxSleep, DynRuntime, Timer as _, deadline_after},
 };
@@ -26,7 +27,7 @@ pub(crate) struct DeadlineLayer {
 
 /// Bounds each connector call by one deadline, started in `call` after readiness waits.
 /// It covers everything beneath: user layers, proxy setup and the transport handshakes.
-/// Dials that use the deadline in [`ConnectAttempt`] can report their own timeout before the
+/// Dials that use the attached [`ConnectDeadline`] can report their own timeout before the
 /// outer timer ends the call.
 #[derive(Clone)]
 pub(crate) struct Deadline<S> {
@@ -52,6 +53,7 @@ pin_project! {
 impl DeadlineLayer {
     /// Creates a layer that bounds each connector call by `timeout`, measured on `runtime`'s
     /// clock. `None` leaves calls unbounded.
+    #[must_use]
     pub(crate) fn new(timeout: Option<Duration>, runtime: DynRuntime) -> Self {
         Self { timeout, runtime }
     }
@@ -72,9 +74,9 @@ impl<S> Layer<S> for DeadlineLayer {
 
 // ===== impl Deadline =====
 
-impl<S> Service<Request<ConnectionKey>> for Deadline<S>
+impl<S> Service<Request<ConnectConfig>> for Deadline<S>
 where
-    S: Service<ConnectAttempt>,
+    S: Service<Request<ConnectConfig>>,
     S::Error: Into<BoxError>,
 {
     type Response = S::Response;
@@ -86,16 +88,17 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, request: Request<ConnectionKey>) -> Self::Future {
+    fn call(&mut self, mut request: Request<ConnectConfig>) -> Self::Future {
         let deadline = self
             .timeout
             .map(|timeout| deadline_after(self.runtime.now(), timeout));
+
+        if let Some(deadline) = deadline {
+            request.extensions_mut().insert(ConnectDeadline(deadline));
+        }
+
         ResponseFuture {
-            future: self.inner.call(ConnectAttempt {
-                request,
-                deadline,
-                route: (),
-            }),
+            future: self.inner.call(request),
             sleep: deadline.map(|deadline| self.runtime.sleep_until(deadline)),
         }
     }

@@ -12,7 +12,6 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, Wake, Waker, ready},
-    time::Instant,
 };
 
 use ::quic::{
@@ -36,10 +35,11 @@ use netty::{
 use tokio::sync::{Notify, futures::OwnedNotified};
 use tower::{BoxError, ServiceExt, service_fn};
 
-use super::endpoint::{Endpoints, TUNNEL_MTU};
+use super::{TUNNEL_MTU, endpoint::Endpoints};
 use crate::{
     Body,
-    conn::{Conn, ConnectionKey},
+    config::connect::ConnectConfig,
+    conn::{Conn, ConnectRequestExt},
     error::ProxyConnect,
     ext::UriExt,
     proxy::matcher::Intercept,
@@ -101,12 +101,12 @@ struct Receiver(BoxStream<'static, Result<Bytes, ::quic::ConnectionError>>);
 /// Opens CONNECT-UDP and authenticates the target; its endpoint retains the outer connection.
 pub(super) async fn connect(
     endpoints: &Endpoints,
-    request: Request<ConnectionKey>,
-    deadline: Option<Instant>,
+    request: Request<ConnectConfig>,
     proxy: Intercept,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
     let config = endpoints.tunnel_config(&request)?;
+    let deadline = request.deadline();
 
     // This scope classifies proxy setup failures separately from target TLS errors.
     let connect_proxy = async {

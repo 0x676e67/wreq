@@ -22,9 +22,7 @@ use super::{
 };
 use crate::{
     Error, Result,
-    config::connect::{Cached, ConnectConfig, KeyScope, changed},
-    conn::{ConnectRequestExt, ConnectionKey},
-    protocol::TransportKind,
+    config::connect::{ConnectConfig, Entry, KeyScope},
     quic::QuicOptions,
     sync::Mutex,
 };
@@ -37,8 +35,9 @@ pub(crate) struct QuicTls(Arc<Inner>);
 /// Client policy, QUIC options and compiled TLS contexts.
 struct Inner {
     tls: Config,
+    connect_config: ConnectConfig,
     options: Option<Arc<QuicOptions>>,
-    contexts: ContextCache<QuicClientConfig, QuicOptions>,
+    contexts: ContextCache<QuicClientConfig>,
 }
 
 /// The QUIC configuration of one connection, shared by its address race.
@@ -85,13 +84,21 @@ struct Attempt {
 impl QuicTls {
     /// Compiles the client's QUIC TLS context and retains its initial QUIC options.
     pub(super) fn new(tls: Config, config: &ConnectConfig) -> Result<Self> {
-        let options = config.get_ref::<Cached<QuicOptions>>().map(Cached::arc);
+        let options = config.get_arc::<QuicOptions>();
         let contexts = ContextCache::new(compile(&tls, options.as_deref())?);
         Ok(Self(Arc::new(Inner {
             tls,
+            connect_config: config.clone(),
             options,
             contexts,
         })))
+    }
+
+    /// Returns the client's connection configuration used as defaults for requests.
+    #[inline]
+    #[must_use]
+    pub(crate) fn connect_config(&self) -> &ConnectConfig {
+        &self.0.connect_config
     }
 
     /// Returns the client's QUIC options.
@@ -113,7 +120,7 @@ impl QuicTls {
     /// its own copy.
     pub(crate) fn config(
         &self,
-        request: &Request<ConnectionKey>,
+        request: &Request<ConnectConfig>,
         route: &Uri,
     ) -> Result<QuicConfig> {
         let inner = &*self.0;
@@ -125,14 +132,16 @@ impl QuicTls {
             return Err(Error::tls("HTTP/3 requires TLS 1.3"));
         }
 
-        let request_config = request.connect_config();
-        let context_options = changed::<QuicOptions>(request_config, KeyScope::Context);
+        let request_config = request.body();
+        let context_options =
+            request_config.changed_entry::<QuicOptions>(&inner.connect_config, KeyScope::Context);
         let mut crypto = inner.contexts.get(context_options, |options| {
             compile(&inner.tls, Some(options))
         })?;
 
-        let options = changed::<QuicOptions>(request_config, KeyScope::Full)
-            .map(Cached::arc)
+        let options = request_config
+            .changed_entry::<QuicOptions>(&inner.connect_config, KeyScope::Full)
+            .and_then(Entry::downcast_arc)
             .or_else(|| inner.options.clone());
         let resumption = options
             .as_ref()
@@ -150,9 +159,11 @@ impl QuicTls {
         let resumption = if resumption {
             let tickets = inner.tls.tickets.clone();
             let target = SessionTarget::new(
-                request,
+                request.uri(),
+                request_config,
+                &inner.connect_config,
                 route,
-                TransportKind::Quic,
+                true,
                 None,
                 tickets.session_id_context().map_err(Error::tls)?,
             );
@@ -383,7 +394,7 @@ mod tests {
         use btls::ssl::SslContextRef;
 
         use super::*;
-        use crate::{conn::test_connect_request, group::Group, protocol::Protocol, tls::KeyShare};
+        use crate::{conn::ConnectRequestExt, group::Group, protocol::Protocol, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
         let request = |grease: Option<bool>, group| {
@@ -392,16 +403,17 @@ mod tests {
                 config.insert(Group::new(group));
             }
             if let Some(grease) = grease {
-                config.insert(Cached::new(
+                config.insert(
                     QuicOptions::builder()
                         .curves_list("X25519")
                         .key_shares(vec![KeyShare::P256])
                         .grease_enabled(grease)
                         .build(),
-                ));
+                );
             }
             let uri = Uri::from_static("https://localhost/");
-            test_connect_request(uri, Some(Protocol::Http3), config)
+            let config = config.for_protocol(Protocol::Http3, &ConnectConfig::default());
+            Request::new_connect(uri, Protocol::Http3, config)
         };
         let tls = Config::default().quic(&ConnectConfig::default()).unwrap();
         let [client, first, second, other] = [

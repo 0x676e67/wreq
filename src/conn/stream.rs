@@ -3,14 +3,16 @@
 //! The outer service enforces the connection deadline across dialing and handshakes.
 //! TCP dials share that deadline so their timeout errors reach connector middleware.
 
-#[cfg(unix)]
-use std::path::Path;
+#[cfg(feature = "socks")]
+mod socks;
+mod tunnel;
+
 use std::{
     sync::Arc,
     task::{Context, Poll},
 };
 
-use futures_util::future::BoxFuture;
+use futures_util::future::{self, BoxFuture, Either, Ready};
 use http::Request;
 #[cfg(feature = "socks")]
 use netty::proxy::socks::{DnsResolve, Version};
@@ -19,42 +21,21 @@ use tower::{BoxError, Service, ServiceExt};
 #[cfg(feature = "socks")]
 use crate::dns::DynResolver;
 use crate::{
+    config::connect::ConnectConfig,
     conn::{
-        Conn, ConnectAttempt, ConnectRequestExt, Connected, ConnectionKey, HttpInfo, Io, Transport,
+        Conn, ConnectRequestExt, Connected, HttpInfo, Io, Transport,
         connected::tls_info,
-        dialer::{Dial, Dialer, SocketBindings},
+        dialer::{Dial, Dialer},
     },
     error::{ProxyConnect, ProxyMismatch},
     ext::UriExt,
-    proxy::{Intercepted, matcher::Intercept},
+    proxy::{Intercepted, Matcher, matcher::Intercept},
     rt::Connection,
     tls::{
         AlpnProtocol,
-        connector::{HandshakeOptions, MaybeHttpsStream, StreamTls, TlsConnector},
+        connector::{MaybeHttpsStream, StreamTls, TlsConnector},
     },
 };
-
-#[cfg(feature = "socks")]
-mod socks;
-mod tunnel;
-
-type ConnectFuture = BoxFuture<'static, Result<Conn, BoxError>>;
-
-pub(crate) enum Route {
-    Direct,
-    /// Sends the HTTP request directly to the proxy. TLS, if used, authenticates the proxy.
-    Forward(Intercept),
-    /// CONNECT uses HTTP/1.1 to the proxy. The origin handshake keeps its own ALPN.
-    Tunnel(Intercepted),
-    #[cfg(feature = "socks")]
-    Socks {
-        proxy: Intercept,
-        version: Version,
-        dns: DnsResolve,
-    },
-    #[cfg(unix)]
-    Unix(Arc<Path>),
-}
 
 /// Establishes the byte stream HTTP/1 or HTTP/2 uses, including proxy and TLS handshakes.
 #[derive(Clone)]
@@ -64,24 +45,109 @@ pub(crate) struct Connect {
 
 struct State {
     dialer: Dialer,
+    proxies: Arc<Vec<Matcher>>,
     tls: StreamTls,
     tcp_nodelay: bool,
     #[cfg(feature = "socks")]
     resolver: DynResolver,
 }
 
-// ===== impl Route =====
+// ===== impl Connect =====
 
-impl Route {
-    pub(super) fn new(proxy: Option<Intercepted>, is_https: bool) -> Result<Self, ProxyMismatch> {
-        Ok(match proxy {
-            None => Self::Direct,
+impl Connect {
+    /// Combines the dial service with the client's proxy rules and stream TLS.
+    #[must_use]
+    pub(super) fn new(
+        dialer: Dialer,
+        proxies: Arc<Vec<Matcher>>,
+        tls: StreamTls,
+        tcp_nodelay: bool,
+        #[cfg(feature = "socks")] resolver: DynResolver,
+    ) -> Self {
+        Self {
+            state: Arc::new(State {
+                dialer,
+                proxies,
+                tls,
+                tcp_nodelay,
+                #[cfg(feature = "socks")]
+                resolver,
+            }),
+        }
+    }
+}
+
+impl Service<Request<ConnectConfig>> for Connect {
+    type Response = Conn;
+    type Error = BoxError;
+    type Future = Either<BoxFuture<'static, Result<Conn, BoxError>>, Ready<Result<Conn, BoxError>>>;
+
+    #[inline]
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    #[inline]
+    fn call(&mut self, request: Request<ConnectConfig>) -> Self::Future {
+        let proxy = request.intercept(&self.state.proxies);
+        if let Some(Intercepted::Proxy(proxy)) = &proxy
+            && proxy.uri().scheme_str() == Some("quic")
+        {
+            return Either::Right(future::err(
+                ProxyMismatch("QUIC proxies require HTTP/3").into(),
+            ));
+        }
+        Either::Left(Box::pin(self.state.clone().connect(request, proxy)))
+    }
+}
+
+// ===== impl State =====
+
+impl State {
+    async fn connect(
+        self: Arc<Self>,
+        request: Request<ConnectConfig>,
+        proxy: Option<Intercepted>,
+    ) -> Result<Conn, BoxError> {
+        debug!("starting new connection: {:?}", request.uri());
+        let deadline = request.deadline();
+        let is_https = request.uri().is_https();
+        let uses_tcp = cfg_select! {
+            unix => !matches!(proxy, Some(Intercepted::Unix(_))),
+            _ => true,
+        };
+        let nodelay = (!self.tcp_nodelay && uses_tcp).then_some(false);
+        let dialer = self.dialer.clone();
+
+        let (io, tls) = match proxy {
+            None => {
+                let tls = self.tls.clone().for_request(&request)?;
+                // Disable Nagle through TLS when the target is secure.
+                // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
+                let io = dialer
+                    .oneshot(Dial::Tcp {
+                        uri: request.uri().clone(),
+                        config: request.body().clone(),
+                        deadline,
+                        nodelay: is_https,
+                    })
+                    .await?;
+                (MaybeHttpsStream::Http(io), tls)
+            }
             #[cfg(unix)]
-            Some(proxy @ Intercepted::Unix(_)) if is_https => Self::Tunnel(proxy),
+            Some(proxy @ Intercepted::Unix(_)) if is_https => {
+                let tls = self.tls.clone().for_request(&request)?;
+                (tunnel::connect(dialer, &tls, &request, &proxy).await?, tls)
+            }
             #[cfg(unix)]
-            Some(Intercepted::Unix(path)) => Self::Unix(path),
+            Some(Intercepted::Unix(path)) => {
+                let tls = self.tls.clone().for_request(&request)?;
+                (
+                    MaybeHttpsStream::Http(dialer.oneshot(Dial::Unix(path)).await?),
+                    tls,
+                )
+            }
             Some(Intercepted::Proxy(proxy)) => match proxy.uri().scheme_str() {
-                Some("quic") => return Err(ProxyMismatch("QUIC proxies require HTTP/3")),
                 #[cfg(feature = "socks")]
                 Some(scheme @ ("socks4" | "socks4a" | "socks5" | "socks5h")) => {
                     let version = match scheme {
@@ -92,139 +158,44 @@ impl Route {
                         "socks4a" | "socks5h" => DnsResolve::Remote,
                         _ => DnsResolve::Local,
                     };
-                    Self::Socks {
-                        proxy,
-                        version,
-                        dns,
-                    }
-                }
-                _ if is_https => Self::Tunnel(Intercepted::Proxy(proxy)),
-                _ => Self::Forward(proxy),
-            },
-        })
-    }
-
-    fn uses_tcp(&self) -> bool {
-        cfg_select! {
-            unix => !matches!(self, Self::Unix(_) | Self::Tunnel(Intercepted::Unix(_))),
-            _ => true,
-        }
-    }
-}
-
-// ===== impl Connect =====
-
-impl Connect {
-    /// Combines the dial service with the client's stream TLS configuration.
-    pub(super) fn new(
-        dialer: Dialer,
-        tls: StreamTls,
-        tcp_nodelay: bool,
-        #[cfg(feature = "socks")] resolver: DynResolver,
-    ) -> Self {
-        Self {
-            state: Arc::new(State {
-                dialer,
-                tls,
-                tcp_nodelay,
-                #[cfg(feature = "socks")]
-                resolver,
-            }),
-        }
-    }
-}
-
-impl Service<ConnectAttempt<Route>> for Connect {
-    type Response = Conn;
-    type Error = BoxError;
-    type Future = ConnectFuture;
-
-    #[inline]
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    #[inline]
-    fn call(&mut self, attempt: ConnectAttempt<Route>) -> Self::Future {
-        Box::pin(self.state.clone().connect(attempt))
-    }
-}
-
-// ===== impl State =====
-
-impl State {
-    async fn connect(
-        self: Arc<Self>,
-        ConnectAttempt {
-            request,
-            deadline,
-            route,
-        }: ConnectAttempt<Route>,
-    ) -> Result<Conn, BoxError> {
-        debug!("starting new connection: {:?}", request.uri());
-        let nodelay = (!self.tcp_nodelay && route.uses_tcp()).then_some(false);
-        let bindings = SocketBindings::from_config(request.connect_config());
-        let mut tls = match self.tls.clone().for_request(&request) {
-            Ok(tls) => tls,
-            Err(error) if matches!(route, Route::Forward(_)) => {
-                return Err(ProxyConnect::Source(error.into()).into());
-            }
-            Err(error) => return Err(error.into()),
-        };
-
-        let dialer = self.dialer.clone();
-        let io = match route {
-            Route::Direct => {
-                // Disable Nagle through TLS when the target is secure.
-                // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-                let io = dialer
-                    .oneshot(Dial::Tcp {
-                        uri: request.uri().clone(),
-                        bindings,
-                        deadline,
-                        nodelay: request.uri().is_https(),
-                    })
+                    let tls = self.tls.clone().for_request(&request)?;
+                    let io = socks::connect(
+                        dialer,
+                        self.resolver.clone(),
+                        &request,
+                        &proxy,
+                        (version, dns),
+                    )
                     .await?;
-                MaybeHttpsStream::Http(io)
-            }
-            Route::Tunnel(proxy) => {
-                tunnel::connect(dialer, &tls, &request, &proxy, bindings, deadline).await?
-            }
-            Route::Forward(proxy) => {
-                tls.no_alpn();
-                let io = dialer
-                    .oneshot(Dial::Tcp {
-                        uri: proxy.uri().clone(),
-                        bindings,
-                        deadline,
-                        nodelay: proxy.uri().is_https(),
-                    })
-                    .await
-                    .map_err(ProxyConnect::Source)?;
-                return finish(io, request, tls, nodelay, Some(proxy))
-                    .await
-                    .map_err(|error| ProxyConnect::Source(error).into());
-            }
-            #[cfg(feature = "socks")]
-            Route::Socks {
-                proxy,
-                version,
-                dns,
-            } => {
-                let io = socks::connect(
-                    dialer,
-                    self.resolver.clone(),
-                    request.uri(),
-                    bindings,
-                    deadline,
-                    &proxy,
-                    (version, dns),
-                )
-                .await?;
-                MaybeHttpsStream::Http(io)
-            }
-            #[cfg(unix)]
-            Route::Unix(path) => MaybeHttpsStream::Http(dialer.oneshot(Dial::Unix(path)).await?),
+                    (MaybeHttpsStream::Http(io), tls)
+                }
+                _ if is_https => {
+                    let tls = self.tls.clone().for_request(&request)?;
+                    let io =
+                        tunnel::connect(dialer, &tls, &request, &Intercepted::Proxy(proxy)).await?;
+                    (io, tls)
+                }
+                _ => {
+                    let mut tls = self
+                        .tls
+                        .clone()
+                        .for_request(&request)
+                        .map_err(|error| ProxyConnect::Source(error.into()))?;
+                    tls.no_alpn();
+                    let io = dialer
+                        .oneshot(Dial::Tcp {
+                            uri: proxy.uri().clone(),
+                            config: request.body().clone(),
+                            deadline,
+                            nodelay: proxy.uri().is_https(),
+                        })
+                        .await
+                        .map_err(ProxyConnect::Source)?;
+                    return finish(io, request, tls, nodelay, Some(proxy))
+                        .await
+                        .map_err(|error| ProxyConnect::Source(error).into());
+                }
+            },
         };
 
         // Unwrap the CONNECT result once, before the origin's TLS and subsequent I/O.
@@ -239,7 +210,7 @@ impl State {
 /// dialed hop, including when it carries a CONNECT tunnel.
 async fn finish(
     io: impl Connection,
-    request: Request<ConnectionKey>,
+    request: Request<ConnectConfig>,
     tls: TlsConnector,
     nodelay: Option<bool>,
     proxy: Option<Intercept>,
@@ -249,12 +220,12 @@ async fn finish(
     let stream = if tls_peer.is_http() {
         MaybeHttpsStream::Http(io)
     } else {
-        let options = HandshakeOptions::new(request.connect_config());
         MaybeHttpsStream::Https(
             tls.handshake(
                 io,
+                request.uri(),
+                request.protocol(),
                 request.body(),
-                options,
                 tls_peer,
                 remote_addr.map(|addr| addr.ip()),
             )
@@ -269,9 +240,11 @@ async fn finish(
             local_addr,
         });
     }
+
     if let Some(proxy) = proxy {
         connected = connected.proxy(proxy);
     }
+
     let stream: Box<dyn Io> = match stream {
         MaybeHttpsStream::Http(stream) => Box::new(stream),
         MaybeHttpsStream::Https(stream) => {

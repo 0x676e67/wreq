@@ -18,7 +18,7 @@ use crate::{
     rt::DynRuntime,
 };
 
-impl_connect_config_value!(netty::http3::Http3Options);
+impl_connect_config_value!(netty::http3::Http3Options, HTTP3);
 
 /// Establishes HTTP/3 connections for the pool's shared singleton.
 /// Handshakes use the entry's builder and do not wait for the peer, so, as for HTTP/2,
@@ -55,6 +55,7 @@ where
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }

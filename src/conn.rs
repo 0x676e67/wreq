@@ -1,41 +1,40 @@
 //! [`ConnectStack`] applies connector layers and a deadline to [`svc::Connect`].
-//! It routes each attempt to the [`stream`] or QUIC service, which returns a [`Conn`]
-//! with the established [`Transport`] and its [`Connected`] metadata.
+//! It dispatches each connection request to the [`stream`] or QUIC service, which returns a
+//! [`Conn`] with the established [`Transport`] and its [`Connected`] metadata.
 
 mod connected;
-mod key;
+mod dialer;
 mod layer;
 #[cfg(feature = "http3")]
 mod quic;
 mod stream;
 mod svc;
 
-pub(super) mod dialer;
-
 use std::time::{Duration, Instant};
+#[cfg(feature = "http3")]
+use std::{
+    net::{Ipv4Addr, Ipv6Addr},
+    sync::Arc,
+};
 
-pub(crate) use connected::{Connected, HttpInfo};
 use dialer::tcp;
-use http::{Method, Request};
-pub(crate) use key::{CommonOverrides, ConnectionKey};
+use http::{Method, Request, Uri};
 use layer::deadline::{Deadline, DeadlineLayer};
-#[cfg(all(test, feature = "http3"))]
-pub(crate) use quic::test_server_config;
-pub(crate) use svc::{Io, Transport};
-#[cfg(all(test, feature = "http3"))]
-pub(crate) use tests::test_connect_request;
-#[cfg(test)]
-pub(crate) use tests::test_connect_request_with_config;
 use tower::{
     BoxError, Layer, ServiceBuilder, ServiceExt,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapErr, MapRequest},
 };
 
+pub(crate) use self::{
+    connected::{Connected, HttpInfo},
+    svc::{Io, Transport},
+};
 use crate::{
-    config::connect::{ConnectConfig, ConnectConfigRef},
+    config::connect::ConnectConfig,
     dns::DynResolver,
     error::map_timeout_to_connector_error,
-    proxy::Matcher as ProxyMatcher,
+    protocol::Protocol,
+    proxy::{Intercepted, Matcher as ProxyMatcher},
     rt::DynRuntime,
     tls,
 };
@@ -49,11 +48,11 @@ pub type BoxedConnectLayer =
 
 type LayeredConnect = MapRequest<
     MapErr<BoxedConnectService, fn(BoxError) -> BoxError>,
-    fn(ConnectAttempt) -> Unnameable,
+    fn(Request<ConnectConfig>) -> Unnameable,
 >;
 
 /// Establishes stream and QUIC transports under one connection deadline.
-/// Without user layers [`svc::Connect`] is called directly; user layers see it
+/// Without user layers [`svc::Connect`] is called directly; user layers see the request
 /// behind [`Unnameable`]. Clones share the transports' state.
 pub(crate) type ConnectStack = Deadline<Either<svc::Connect, LayeredConnect>>;
 
@@ -66,33 +65,44 @@ pub(crate) struct Config {
     pub(crate) verbose: bool,
 }
 
-/// One connection attempt under an optional deadline.
-/// [`svc::Connect`] replaces `()` with the selected transport route.
-#[derive(Clone)]
-pub(crate) struct ConnectAttempt<R = ()> {
-    request: Request<ConnectionKey>,
-    deadline: Option<Instant>,
-    route: R,
-}
+/// Deadline attached to a connection request by [`Deadline`].
+#[derive(Clone, Copy)]
+struct ConnectDeadline(Instant);
 
-/// Connection-specific operations on the HTTP request passed to the connector.
+/// Connection-specific operations on the internal request passed through the connector.
 pub(crate) trait ConnectRequestExt {
-    /// Builds an internal CONNECT request using the origin and configuration of a frozen key.
-    fn from_key(
-        key: ConnectionKey,
-        request_config: ConnectConfig,
-        client_config: ConnectConfig,
-    ) -> Self
+    /// Builds an internal CONNECT request for `origin`, `protocol`, and normalized `config`.
+    #[must_use]
+    fn new_connect(origin: Uri, protocol: Protocol, config: ConnectConfig) -> Self
     where
         Self: Sized;
 
-    /// Borrows the connection options with request values taking precedence.
-    fn connect_config(&self) -> ConnectConfigRef<'_>;
+    /// Returns the selected HTTP protocol mode for this connection attempt.
+    #[must_use]
+    fn protocol(&self) -> Protocol;
+
+    /// Returns the outer connection deadline, if any.
+    #[must_use]
+    fn deadline(&self) -> Option<Instant>;
+
+    /// Selects the proxy matching this request's origin, preferring a request override.
+    #[must_use]
+    fn intercept(&self, proxies: &[ProxyMatcher]) -> Option<Intercepted>;
+
+    /// Returns the local IPv4 and IPv6 addresses from this request or `client`.
+    #[must_use]
+    #[cfg(feature = "http3")]
+    fn local_addresses(&self, client: &ConnectConfig) -> (Option<Ipv4Addr>, Option<Ipv6Addr>);
+
+    /// Returns the outbound network interface from this request or `client`.
+    #[must_use]
+    #[cfg(feature = "http3")]
+    fn interface<'a>(&'a self, client: &'a ConnectConfig) -> Option<&'a str>;
 }
 
 /// Opaque request passed through user-supplied connector layers.
 /// Keeps transport selection, connection configuration and the connect deadline internal.
-pub struct Unnameable(pub(super) ConnectAttempt);
+pub struct Unnameable(pub(super) Request<ConnectConfig>);
 
 /// Established connection and metadata returned through connector middleware.
 /// Protocol handshakes take the transport through `into_stream` or `into_quic`,
@@ -119,7 +129,7 @@ impl Default for Config {
 // ===== impl ConnectStack =====
 
 impl ConnectStack {
-    /// Stacks the user's layers and the connection deadline over the router.
+    /// Stacks the user's layers and the connection deadline over the transport router.
     pub(crate) fn new(
         runtime: DynRuntime,
         resolver: DynResolver,
@@ -151,64 +161,72 @@ impl ConnectStack {
 
 // ===== impl ConnectRequestExt =====
 
-impl ConnectRequestExt for Request<ConnectionKey> {
-    fn from_key(
-        key: ConnectionKey,
-        request_config: ConnectConfig,
-        client_config: ConnectConfig,
-    ) -> Self {
-        let origin = key.origin().clone();
-        let mut request = Self::new(key);
+impl ConnectRequestExt for Request<ConnectConfig> {
+    fn new_connect(origin: Uri, protocol: Protocol, config: ConnectConfig) -> Self {
+        let mut request = Self::new(config);
         *request.method_mut() = Method::CONNECT;
         *request.uri_mut() = origin;
-        if !request_config.is_empty() || !client_config.is_empty() {
-            request
-                .extensions_mut()
-                .insert((request_config, client_config));
+        if protocol != Protocol::Auto {
+            request.extensions_mut().insert(protocol);
         }
         request
     }
 
-    fn connect_config(&self) -> ConnectConfigRef<'_> {
+    #[inline]
+    fn protocol(&self) -> Protocol {
         self.extensions()
-            .get::<(ConnectConfig, ConnectConfig)>()
-            .map(|(local, base)| ConnectConfigRef::new(local, base))
-            .unwrap_or_default()
+            .get::<Protocol>()
+            .copied()
+            .unwrap_or(Protocol::Auto)
+    }
+
+    #[inline]
+    fn deadline(&self) -> Option<Instant> {
+        self.extensions().get::<ConnectDeadline>().map(|d| d.0)
+    }
+
+    fn intercept(&self, proxies: &[ProxyMatcher]) -> Option<Intercepted> {
+        let uri = self.uri();
+        self.body()
+            .get_ref::<ProxyMatcher>()
+            .and_then(|proxy| proxy.intercept(uri))
+            .or_else(|| proxies.iter().find_map(|proxy| proxy.intercept(uri)))
+    }
+
+    #[inline]
+    #[cfg(feature = "http3")]
+    fn local_addresses(&self, client: &ConnectConfig) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
+        (
+            self.body().get_or::<Ipv4Addr>(client).copied(),
+            self.body().get_or::<Ipv6Addr>(client).copied(),
+        )
+    }
+
+    #[inline]
+    #[cfg(feature = "http3")]
+    fn interface<'a>(&'a self, client: &'a ConnectConfig) -> Option<&'a str> {
+        self.body().get_or::<Arc<str>>(client).map(Arc::as_ref)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use http::Uri;
     #[cfg(feature = "http3")]
-    use {crate::config::connect::Cached, std::sync::Arc};
+    use std::sync::Arc;
 
     use super::*;
-    use crate::protocol::Protocol;
-
-    pub(crate) fn test_connect_request_with_config(
-        uri: &Uri,
-        protocol: Protocol,
-        request_config: ConnectConfig,
-        client_config: &ConnectConfig,
-    ) -> Request<ConnectionKey> {
-        let config = ConnectConfigRef::new(&request_config, client_config);
-        let key = ConnectionKey::for_request(uri, protocol, config).unwrap();
-        Request::from_key(key, request_config, client_config.clone())
-    }
+    #[cfg(feature = "http3")]
+    use crate::ext::UriExt;
 
     #[cfg(feature = "http3")]
-    pub(crate) fn test_connect_request(
+    fn test_connect_request(
         uri: Uri,
         protocol: Option<Protocol>,
         config: ConnectConfig,
-    ) -> Request<ConnectionKey> {
-        test_connect_request_with_config(
-            &uri,
-            protocol.unwrap_or(Protocol::Auto),
-            config,
-            &ConnectConfig::default(),
-        )
+    ) -> Request<ConnectConfig> {
+        let protocol = protocol.unwrap_or(Protocol::Auto);
+        let config = config.for_protocol(protocol, &ConnectConfig::default());
+        Request::new_connect(uri.origin().unwrap(), protocol, config)
     }
 
     impl Conn {
@@ -236,7 +254,28 @@ mod tests {
             }
         }
 
-        let (server_config, cert) = test_server_config();
+        let cert = rcgen::generate_simple_self_signed(vec![
+            "localhost".into(),
+            "127.0.0.1".into(),
+            "::1".into(),
+        ])
+        .unwrap();
+        let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.cert.der().clone()],
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+        )
+        .unwrap();
+        tls.alpn_protocols = vec![b"h3".to_vec()];
+        let server_config = ::quic::ServerConfig::with_crypto(Arc::new(
+            ::quic::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
+        ));
+        let cert = cert.cert.der().to_vec();
         let server =
             ::quic::Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         // Bound without replying, so a dial to it stays pending until the deadline.
@@ -267,7 +306,7 @@ mod tests {
             )
             .unwrap();
             let request = test_connect_request(
-                ::http::Uri::from_static("https://localhost/"),
+                Uri::from_static("https://localhost/"),
                 Some(Protocol::Http3),
                 ConnectConfig::default(),
             );
@@ -308,7 +347,7 @@ mod tests {
                 .into_matcher()
         };
         let mut overridden = ConnectConfig::default();
-        overridden.insert(Cached::new(proxy()));
+        overridden.insert(proxy());
         for (proxies, request_config) in [
             (vec![proxy()], ConnectConfig::default()),
             (Vec::new(), overridden),
@@ -327,7 +366,7 @@ mod tests {
             )
             .unwrap();
             let request = test_connect_request(
-                ::http::Uri::from_static("https://localhost/"),
+                Uri::from_static("https://localhost/"),
                 Some(Protocol::Http3),
                 request_config,
             );

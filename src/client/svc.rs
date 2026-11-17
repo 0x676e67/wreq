@@ -33,15 +33,9 @@ use super::{
     pool::{self, ConnectService, PoolTarget},
     request::RequestVersion,
 };
-#[cfg(feature = "http3")]
-use crate::protocol::TransportKind;
 use crate::{
     Body,
-    config::{
-        connect::{ConnectConfig, ConnectConfigRef},
-        request::RequestConfig,
-    },
-    conn::ConnectionKey,
+    config::{connect::ConnectConfig, request::RequestConfig},
     ext::UriExt,
     protocol::Protocol,
     rt::DynRuntime,
@@ -113,7 +107,7 @@ pub(super) struct DispatchRequest<B> {
     negotiable: bool,
     /// Default-group key whose established sender may carry this WebSocket.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-    extended_connect_key: Option<ConnectionKey>,
+    extended_connect_key: Option<pool::PoolKey>,
 }
 
 /// Performs one connection-pool checkout and protocol send attempt.
@@ -169,6 +163,7 @@ struct CheckedOut {
 /// Configuration runs once and shares the client's values across service clones.
 /// Terminal dispatch errors are mapped only after retry classification, preserving
 /// ownership of any request returned before encoding.
+#[must_use]
 pub(super) fn layer<S>(
     protocol: Protocol,
     config: ConnectConfig,
@@ -242,17 +237,17 @@ impl<S> Stack<S> {
             None => None,
         };
 
-        let config = ConnectConfigRef::new(&request_config, &self.config);
-        let key = ConnectionKey::for_request(uri, protocol.unwrap_or(self.protocol), config)
-            .map_err(|source| {
-                debug!("Client requires absolute-form URIs, received: {uri:?}");
-                Error::new(ErrorKind::UserAbsoluteUriRequired, source)
-            })?;
+        let origin = uri.origin().map_err(|source| {
+            debug!("Client requires absolute-form URIs, received: {uri:?}");
+            Error::new(ErrorKind::UserAbsoluteUriRequired, source)
+        })?;
+        let negotiable = protocol == Some(Protocol::Auto);
+        let protocol = protocol.unwrap_or(self.protocol);
 
         // HTTP/3 has no cleartext form; an https-to-http redirect also ends here:
         // https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1
         #[cfg(feature = "http3")]
-        if key.protocol().transport() == TransportKind::Quic && !uri.is_https() {
+        if protocol == Protocol::Http3 && !uri.is_https() {
             warn!("HTTP/3 requires an https URI");
             return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
                 .with_context("HTTP/3 requires an https URI"));
@@ -269,17 +264,26 @@ impl<S> Stack<S> {
                 Protocol::Http3 => uri.is_https(),
                 _ => false,
             })
-        .then(|| key.with_protocol(self.protocol, config));
+        .then(|| self.pool_key(origin.clone(), self.protocol, &request_config));
 
         Ok(DispatchRequest {
             request,
-            target: PoolTarget::new(key, request_config, self.config.clone()),
+            target: PoolTarget::new(self.pool_key(origin, protocol, &request_config)),
             #[cfg(feature = "ws")]
             dedicated: dedicated.is_some(),
-            negotiable: protocol == Some(Protocol::Auto),
+            negotiable,
             #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
             extended_connect_key,
         })
+    }
+
+    #[must_use]
+    fn pool_key(&self, origin: Uri, protocol: Protocol, request: &ConnectConfig) -> pool::PoolKey {
+        pool::PoolKey::new(
+            origin,
+            protocol,
+            request.for_protocol(protocol, &self.config),
+        )
     }
 }
 
@@ -382,6 +386,7 @@ where
     /// Creates the terminal request service and its shared connection pool.
     /// Handshakes start from the client's connection settings, and HTTP/1 generates
     /// any missing `Host` header.
+    #[must_use]
     pub(super) fn new(
         pool_config: pool::Config,
         connector: C,
@@ -593,6 +598,7 @@ where
 
 impl<B> DispatchError<B> {
     /// Extracts the underlying boxed error, discarding any unsent request.
+    #[must_use]
     fn into_error(self) -> BoxError {
         match self {
             Self::CheckoutCanceled { error, .. }
@@ -609,6 +615,7 @@ impl Http1Upgrade {
     /// Rewrites the GET upgrade as extended CONNECT for a sender of `version`, keeping the
     /// other WebSocket fields ([RFC 8441 §5](https://www.rfc-editor.org/rfc/rfc8441#section-5),
     /// [RFC 9220 §3](https://www.rfc-editor.org/rfc/rfc9220#section-3)).
+    #[must_use]
     fn into_extended_connect<B>(request: &mut Request<B>, version: Version) -> Self {
         *request.method_mut() = Method::CONNECT;
         *request.version_mut() = version;
@@ -651,6 +658,7 @@ impl Http1Upgrade {
 }
 
 /// Explains failures of HTTP/2 used over HTTPS without negotiating `h2` in ALPN.
+#[must_use]
 fn with_h2_alpn_context(error: Error, unnegotiated_h2: bool) -> Error {
     if unnegotiated_h2 {
         error.with_context(
@@ -738,6 +746,7 @@ fn matched_extended_connect<B>(
 }
 
 /// Rejects extended CONNECT unless the peer enabled it (RFC 8441 §3, RFC 9220 §3).
+#[must_use]
 #[cfg(any(feature = "http2", feature = "http3"))]
 fn extended_connect_disabled(pooled: &pool::pooled::Pooled) -> Error {
     warn!("peer did not enable extended CONNECT");
@@ -1000,7 +1009,7 @@ mod tests {
             }
         }
 
-        let connector = tower::service_fn(|_: Request<ConnectionKey>| {
+        let connector = tower::service_fn(|_: Request<ConnectConfig>| {
             let (client, server) = tokio::io::duplex(16384);
             let service = hyper::service::service_fn(|request: Request<hyper::body::Incoming>| {
                 let target = format!("{} {:?}", request.uri(), request.headers()[COOKIE]);

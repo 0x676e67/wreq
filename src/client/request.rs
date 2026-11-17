@@ -32,7 +32,7 @@ use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{
-        connect::{Cached, ConnectConfig},
+        connect::ConnectConfig,
         request::{RequestConfig, RequestConfigValue, impl_request_config_value},
     },
     ext::UriExt,
@@ -690,8 +690,7 @@ impl RequestBuilder {
     /// Set the proxy for this request.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.connect_config_mut()
-                .insert(Cached::new(proxy.into_matcher()));
+            req.connect_config_mut().insert(proxy.into_matcher());
         }
         self
     }
@@ -805,8 +804,8 @@ impl RequestBuilder {
     }
 
     /// Applies the emulation's headers and protocol options to this request.
-    /// Supplied options replace matching overrides; absent ones are kept. An empty
-    /// header order keeps the existing one. Group, proxy, version and socket settings stay.
+    /// Supplied options and headers replace matching entries; absent ones stay and non-empty
+    /// original header names append. Group, proxy, version, and socket settings stay.
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let Emulation(headers, orig_headers, config) = emulation.into_emulation();

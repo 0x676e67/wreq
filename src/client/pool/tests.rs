@@ -14,13 +14,13 @@ use {
 };
 #[cfg(feature = "http3")]
 use {
-    crate::conn::{Connected, Transport, test_server_config},
-    ::quic::crypto::rustls::QuicClientConfig,
+    crate::conn::{Connected, Transport},
+    ::quic::crypto::rustls::{QuicClientConfig, QuicServerConfig},
     std::net::{Ipv4Addr, SocketAddr},
 };
 
 use super::*;
-use crate::{config::connect::ConnectConfigRef, conn::Conn, group::Group};
+use crate::{conn::Conn, group::Group};
 
 /// Connector behavior used to exercise unsuccessful checkout cleanup.
 #[derive(Clone)]
@@ -44,7 +44,7 @@ enum TestConnector {
     Http3(SocketAddr, ::quic::ClientConfig),
 }
 
-impl Service<Request<ConnectionKey>> for TestConnector {
+impl Service<Request<ConnectConfig>> for TestConnector {
     type Response = Conn;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -53,7 +53,7 @@ impl Service<Request<ConnectionKey>> for TestConnector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, _req: Request<ConnectionKey>) -> Self::Future {
+    fn call(&mut self, _req: Request<ConnectConfig>) -> Self::Future {
         match self {
             Self::Fails => Box::pin(std::future::ready(Err(io::Error::from(
                 io::ErrorKind::ConnectionRefused,
@@ -151,15 +151,13 @@ impl Service<Request<ConnectionKey>> for TestConnector {
 fn pool_target(
     protocol: Protocol,
     request_config: ConnectConfig,
-    client_config: ConnectConfig,
+    client_config: &ConnectConfig,
 ) -> PoolTarget {
-    let key = ConnectionKey::for_request(
-        &http::Uri::from_static("http://localhost/"),
+    PoolTarget::new(PoolKey::new(
+        http::Uri::from_static("http://localhost/"),
         protocol,
-        ConnectConfigRef::new(&request_config, &client_config),
-    )
-    .unwrap();
-    PoolTarget::new(key, request_config, client_config)
+        request_config.for_protocol(protocol, client_config),
+    ))
 }
 
 fn connect_target(protocol: Protocol) -> PoolTarget {
@@ -169,7 +167,7 @@ fn connect_target(protocol: Protocol) -> PoolTarget {
 fn grouped_target(group: Group, protocol: Protocol) -> PoolTarget {
     let mut config = ConnectConfig::default();
     config.insert(group);
-    pool_target(protocol, config, ConnectConfig::default())
+    pool_target(protocol, config, &ConnectConfig::default())
 }
 
 /// Creates a pool without periodic cleanup so empty-entry removal is explicit.
@@ -196,16 +194,34 @@ impl<C: ConnectService> Pool<C> {
 /// The server keeps every accepted connection open until the test runtime ends.
 #[cfg(feature = "http3")]
 fn http3_connector() -> TestConnector {
-    let (config, cert) = test_server_config();
+    let cert = rcgen::generate_simple_self_signed(vec![
+        "localhost".into(),
+        "127.0.0.1".into(),
+        "::1".into(),
+    ])
+    .unwrap();
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let mut server_tls = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.cert.der().clone()],
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+        )
+        .unwrap();
+    server_tls.alpn_protocols = vec![b"h3".to_vec()];
+    let config = ::quic::ServerConfig::with_crypto(Arc::new(
+        QuicServerConfig::try_from(server_tls).unwrap(),
+    ));
+
     let mut roots = rustls::RootCertStore::empty();
-    roots.add(cert.into()).unwrap();
-    let mut tls = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .unwrap()
-    .with_root_certificates(roots)
-    .with_no_client_auth();
+    roots.add(cert.cert.der().clone()).unwrap();
+    let mut tls = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
     tls.alpn_protocols = vec![b"h3".to_vec()];
 
     let server = ::quic::Endpoint::server(config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
@@ -238,7 +254,7 @@ fn protocol_modes_build_specialized_entries() {
 
     let clones = Arc::new(AtomicUsize::new(0));
     let counter = CloneCounter(clones.clone());
-    let connector = tower::service_fn(move |_: Request<ConnectionKey>| {
+    let connector = tower::service_fn(move |_: Request<ConnectConfig>| {
         let _counter = &counter;
         std::future::pending::<Result<Conn, BoxError>>()
     });
@@ -281,7 +297,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
     // Equivalent HTTP/1 options leave the key unchanged in both modes.
     let http1 = Http1Options::builder().max_headers(96).build();
     let mut client_config = ConnectConfig::default();
-    client_config.insert(Cached::new(http1.clone()));
+    client_config.insert(http1.clone());
 
     for protocol in [Protocol::Http2, Protocol::Auto] {
         let calls = Arc::new(AtomicUsize::new(0));
@@ -297,30 +313,21 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
             true,
         );
         let req = connect_target(protocol);
-        let key = req.key.clone();
+        let key = pool.inner.targeter.key(&req);
         let checkout = || {
-            let mut request_config = req.request_config.clone();
-            request_config.insert(Cached::new(http1.clone()));
-            let request_options = Arc::downgrade(
-                &request_config
-                    .get_ref::<Cached<Http1Options>>()
-                    .unwrap()
-                    .arc(),
-            );
-            let target = pool_target(protocol, request_config, client_config.clone());
+            let mut request_config = req.key.config.clone();
+            request_config.insert(http1.clone());
+            let target = pool_target(protocol, request_config, &client_config);
+            assert_eq!(target.key.config, req.key.config);
             let (future, unused) = pool.inner.services.lock().with_service(
                 &pool.inner.targeter,
                 target,
                 |entry, target| {
                     assert_eq!(entry.protocol(), protocol);
-                    let checkout = entry.checkout(target, true);
-                    assert_ne!(request_options.strong_count(), 0);
-                    checkout
+                    entry.checkout(target, true)
                 },
             );
-            let reused = unused.is_some();
             drop(unused);
-            assert_eq!(request_options.strong_count() == 0, reused);
             future
         };
 
@@ -507,7 +514,7 @@ async fn extended_connect_checkout_only_clones_established_senders() {
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let pool = test_pool(TestConnector::Http2(calls.clone(), gate.clone()));
         let req = connect_target(protocol);
-        let key = req.key.clone();
+        let key = pool.inner.targeter.key(&req);
         let checkout = || {
             let target = req.clone();
             let (future, _) = pool.inner.services.lock().with_service(
@@ -712,8 +719,8 @@ async fn pool_max_size_evicts_only_idle_groups() {
     );
     let first_req = grouped_target(Group::new("first"), Protocol::Http1);
     let second_req = grouped_target(Group::new("second"), Protocol::Http1);
-    let first_key = first_req.key.clone();
-    let second_key = second_req.key.clone();
+    let first_key = pool.inner.targeter.key(&first_req);
+    let second_key = pool.inner.targeter.key(&second_req);
 
     let mut first = pool
         .checkout(first_req, false)
@@ -762,7 +769,8 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
         );
         let request = |name| grouped_target(Group::new(name), protocol);
         let [live, dead, next] = ["live", "dead", "next"].map(request);
-        let [live_key, dead_key, next_key] = [&live, &dead, &next].map(|req| req.key.clone());
+        let [live_key, dead_key, next_key] =
+            [&live, &dead, &next].map(|req| pool.inner.targeter.key(req));
         let checkout = |req| pool.test_checkout(req);
         let retained = |key| {
             pool.inner
