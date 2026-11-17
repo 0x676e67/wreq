@@ -65,6 +65,7 @@ impl Connect {
             proxies,
             happy_eyeballs_timeout,
             verbose,
+            ..
         }: Config,
         config: &ConnectConfig,
     ) -> crate::Result<Self> {

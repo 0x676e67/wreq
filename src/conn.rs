@@ -52,6 +52,7 @@ pub(crate) struct Config {
     pub(crate) tcp: tcp::Config,
     pub(crate) tls: tls::Config,
     pub(crate) proxies: Vec<ProxyMatcher>,
+    pub(crate) connect_timeout: Option<Duration>,
     pub(crate) happy_eyeballs_timeout: Option<Duration>,
     pub(crate) verbose: bool,
 }
@@ -97,6 +98,7 @@ impl Default for Config {
             tcp: tcp::Config::default(),
             tls: tls::Config::default(),
             proxies: Vec::new(),
+            connect_timeout: None,
             happy_eyeballs_timeout: Some(Duration::from_millis(300)),
             verbose: false,
         }
@@ -112,9 +114,9 @@ impl ConnectStack {
         resolver: DynResolver,
         config: Config,
         connect_config: &ConnectConfig,
-        connect_timeout: Option<Duration>,
         layers: Vec<BoxedConnectLayer>,
     ) -> Result<Self, crate::Error> {
+        let connect_timeout = config.connect_timeout;
         let connect = svc::Connect::new(&runtime, resolver, config, connect_config)?;
         let service = if layers.is_empty() {
             Either::Left(connect)
@@ -248,6 +250,7 @@ mod tests {
                     ),
                     ..Default::default()
                 },
+                connect_timeout: Some(Duration::from_millis(500)),
                 happy_eyeballs_timeout: delay,
                 ..Default::default()
             };
@@ -256,7 +259,6 @@ mod tests {
                 resolver.clone(),
                 config,
                 &ConnectConfig::default(),
-                Some(Duration::from_millis(500)),
                 Vec::new(),
             )
             .unwrap();
@@ -316,7 +318,6 @@ mod tests {
                 DynResolver::new(Arc::new(NoDns)),
                 config,
                 &ConnectConfig::default(),
-                None,
                 Vec::new(),
             )
             .unwrap();

@@ -178,7 +178,6 @@ struct Config {
     pool: pool::Config,
     connect: conn::Config,
     connect_config: ConnectConfig,
-    connect_timeout: Option<Duration>,
 }
 
 // ===== impl Client =====
@@ -239,7 +238,6 @@ impl Client {
                 },
                 connect: conn::Config::default(),
                 connect_config: ConnectConfig::default(),
-                connect_timeout: None,
             },
             runtime: DynRuntime::new(runtime),
         }
@@ -446,7 +444,6 @@ impl ClientBuilder {
                 resolver,
                 self.config.connect,
                 &self.config.connect_config,
-                self.config.connect_timeout,
                 self.config.connector_layers,
             )?;
 
@@ -910,7 +907,7 @@ impl ClientBuilder {
     /// By default there is no connection timeout.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.connect_timeout = Some(timeout);
+        self.config.connect.connect_timeout = Some(timeout);
         self
     }
 
