@@ -71,7 +71,8 @@ struct ConnectDeadline(Instant);
 
 /// Connection-specific operations on the internal request passed through the connector.
 pub(crate) trait ConnectRequestExt {
-    /// Builds an internal CONNECT request for `origin`, `protocol`, and normalized `config`.
+    /// Builds an internal CONNECT request with the overrides selected by
+    /// [`ConnectConfig::for_protocol`] against this connector's client configuration.
     #[must_use]
     fn new_connect(origin: Uri, protocol: Protocol, config: ConnectConfig) -> Self
     where

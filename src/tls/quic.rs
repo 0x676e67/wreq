@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     Error, Result,
-    config::connect::{ConnectConfig, Entry, KeyScope},
+    config::connect::{ConnectConfig, KeyScope},
     quic::QuicOptions,
     sync::Mutex,
 };
@@ -132,16 +132,14 @@ impl QuicTls {
             return Err(Error::tls("HTTP/3 requires TLS 1.3"));
         }
 
-        let request_config = request.body();
-        let context_options =
-            request_config.changed_entry::<QuicOptions>(&inner.connect_config, KeyScope::Context);
-        let mut crypto = inner.contexts.get(context_options, |options| {
-            compile(&inner.tls, Some(options))
-        })?;
+        let connect_config = request.body();
+        let mut crypto = inner.contexts.get(
+            connect_config.changed_entry::<QuicOptions>(&inner.connect_config, KeyScope::Context),
+            |options| compile(&inner.tls, Some(options)),
+        )?;
 
-        let options = request_config
-            .changed_entry::<QuicOptions>(&inner.connect_config, KeyScope::Full)
-            .and_then(Entry::downcast_arc)
+        let options = connect_config
+            .get_arc::<QuicOptions>()
             .or_else(|| inner.options.clone());
         let resumption = options
             .as_ref()
@@ -160,7 +158,7 @@ impl QuicTls {
             let tickets = inner.tls.tickets.clone();
             let target = SessionTarget::new(
                 request.uri(),
-                request_config,
+                connect_config,
                 &inner.connect_config,
                 route,
                 true,

@@ -9,7 +9,6 @@ use std::{
 
 use lru::DefaultHasher;
 
-use super::ConnectConfig;
 use crate::protocol::Protocol;
 
 /// Shares one process-wide seed across configuration, pool, context, and session hashes.
@@ -30,7 +29,8 @@ pub(crate) enum KeyScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct KeyTarget(u8);
 
-/// Configuration values stored in [`ConnectConfig`] and compared by reuse keys.
+/// Configuration values stored in [`ConnectConfig`](super::ConnectConfig) and compared by reuse
+/// keys.
 ///
 /// Hashes are cached on insertion, so values must not change while stored, and
 /// `hash_scopes` must agree with `eq_scope` for every [`KeyScope`].
@@ -207,85 +207,6 @@ impl Eq for ScopedEntry {}
 impl Hash for ScopedEntry {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_u64(self.entry.hash(self.scope));
-    }
-}
-
-/// Selects request overrides matching `predicate` that differ from `client` under `scope`.
-#[must_use]
-pub(crate) fn select_overrides(
-    request: &ConnectConfig,
-    client: &ConnectConfig,
-    scope: KeyScope,
-    predicate: impl Fn(KeyTarget) -> bool,
-) -> Option<Arc<[Entry]>> {
-    if request.is_empty() || request.ptr_eq(client) {
-        return None;
-    }
-
-    let entries = request.entries();
-    let mut kept = 0usize;
-    let mut selected = Vec::new();
-    for (index, entry) in entries.iter().enumerate() {
-        let keep = predicate(entry.target())
-            && !client
-                .entry(entry.id())
-                .is_some_and(|base| entry.same(base, scope));
-        if !keep {
-            continue;
-        }
-        if selected.is_empty() {
-            if kept == index {
-                kept += 1;
-                continue;
-            }
-            selected.reserve(entries.len() - index + kept);
-            selected.extend_from_slice(&entries[..kept]);
-        }
-        selected.push(entry.clone());
-    }
-
-    if !selected.is_empty() {
-        Some(Arc::from(selected))
-    } else if kept == entries.len() {
-        request.clone_entries()
-    } else if kept > 0 {
-        Some(Arc::from(&entries[..kept]))
-    } else {
-        None
-    }
-}
-
-/// Compares two optional override slices under `scope`.
-#[must_use]
-pub(crate) fn same_overrides(
-    left: &Option<Arc<[Entry]>>,
-    right: &Option<Arc<[Entry]>>,
-    scope: KeyScope,
-) -> bool {
-    match (left, right) {
-        (None, None) => true,
-        (Some(left), Some(right)) => {
-            Arc::ptr_eq(left, right)
-                || (left.len() == right.len()
-                    && left.iter().zip(right.iter()).all(|(a, b)| a.same(b, scope)))
-        }
-        _ => false,
-    }
-}
-
-/// Folds the hashes of `overrides` under `scope` into `state`.
-pub(crate) fn hash_overrides(
-    overrides: Option<&[Entry]>,
-    scope: KeyScope,
-    state: &mut impl std::hash::Hasher,
-) {
-    if let Some(entries) = overrides {
-        entries.len().hash(state);
-        for entry in entries {
-            state.write_u64(entry.hash(scope));
-        }
-    } else {
-        0usize.hash(state);
     }
 }
 

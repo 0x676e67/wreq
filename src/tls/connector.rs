@@ -110,14 +110,13 @@ impl TlsConnector {
         &self,
         origin: &Uri,
         protocol: Protocol,
-        request_config: &ConnectConfig,
+        config: &ConnectConfig,
         route: &Uri,
         remote_ip: Option<IpAddr>,
     ) -> Result<Ssl, BoxError> {
         let inner = &*self.tls.inner;
-        let request_options =
-            request_config.changed::<TlsOptions>(&inner.connect_config, KeyScope::Full);
-        let options = request_options.or(inner.options.as_deref());
+        let options = config.get_ref::<TlsOptions>();
+        let options = options.or(inner.options.as_deref());
         let mut cfg = self.context.configure()?;
 
         cfg.set_use_server_name_indication(inner.tls.sni);
@@ -133,7 +132,7 @@ impl TlsConnector {
         // https://www.rfc-editor.org/rfc/rfc7301#section-3.1
         if self.alpn_enabled {
             let auto = || {
-                request_options
+                options
                     .into_iter()
                     .chain(inner.options.as_deref())
                     .filter_map(|options| options.alpn_protocols.as_deref())
@@ -190,7 +189,7 @@ impl TlsConnector {
             let tickets = &inner.tls.tickets;
             let target = SessionTarget::new(
                 origin,
-                request_config,
+                config,
                 &inner.connect_config,
                 route,
                 false,

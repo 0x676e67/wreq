@@ -25,9 +25,7 @@ pub(crate) use store::Tickets;
 use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 
 use crate::{
-    config::connect::{
-        ConnectConfig, Entry, HASHER, KeyScope, hash_overrides, same_overrides, select_overrides,
-    },
+    config::connect::{ConnectConfig, HASHER, KeyScope},
     sync::Mutex,
     tls::TlsVersion,
 };
@@ -69,7 +67,7 @@ struct SessionKey {
     origin: Uri,
     route: Uri,
     quic: bool,
-    overrides: Option<Arc<[Entry]>>,
+    overrides: ConnectConfig,
     hash: u64,
 }
 
@@ -146,17 +144,14 @@ impl SessionKey {
         route: &Uri,
         quic: bool,
     ) -> Self {
-        let overrides =
-            select_overrides(request_config, client_config, KeyScope::Session, |target| {
-                target.matches_session(quic)
-            });
+        let overrides = request_config.for_session(client_config, quic);
         let origin = origin.clone();
         let route = route.clone();
         let mut state = HASHER.build_hasher();
         origin.hash(&mut state);
         route.hash(&mut state);
         quic.hash(&mut state);
-        hash_overrides(overrides.as_deref(), KeyScope::Session, &mut state);
+        overrides.hash_scope(KeyScope::Session, &mut state);
         Self {
             origin,
             route,
@@ -173,7 +168,7 @@ impl PartialEq for SessionKey {
             && self.quic == other.quic
             && self.origin == other.origin
             && self.route == other.route
-            && same_overrides(&self.overrides, &other.overrides, KeyScope::Session)
+            && self.overrides.eq_scope(&other.overrides, KeyScope::Session)
     }
 }
 
