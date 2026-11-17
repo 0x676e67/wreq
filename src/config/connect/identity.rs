@@ -2,13 +2,14 @@
 
 use std::{
     any::{Any, TypeId},
-    hash::{BuildHasher, Hash},
+    hash::{BuildHasher, Hash, Hasher},
     net::{Ipv4Addr, Ipv6Addr},
     sync::{Arc, LazyLock},
 };
 
 use lru::DefaultHasher;
 
+use super::{ConnectConfig, collect};
 use crate::protocol::Protocol;
 
 /// Shares one process-wide seed across configuration, pool, context, and session hashes.
@@ -54,7 +55,7 @@ pub(crate) trait ConnectConfigValue: Clone + Eq + Hash + Send + Sync + 'static {
 
 /// Shared configuration entry carrying precomputed scoped hashes and typed equality.
 #[derive(Clone)]
-pub(crate) struct Entry {
+pub(super) struct Entry {
     id: TypeId,
     target: KeyTarget,
     value: Arc<dyn Any + Send + Sync>,
@@ -62,11 +63,100 @@ pub(crate) struct Entry {
     eq: fn(&dyn Any, &dyn Any, KeyScope) -> bool,
 }
 
-/// Cache key wrapping an [`Entry`] compared at a fixed [`KeyScope`].
-#[derive(Clone)]
-pub(crate) struct ScopedEntry {
-    entry: Entry,
-    scope: KeyScope,
+// ===== impl ConnectConfig =====
+
+impl ConnectConfig {
+    /// Returns a subset containing only entries applicable to `protocol` that differ from `client`.
+    #[must_use]
+    pub(crate) fn for_protocol(&self, protocol: Protocol, client: &Self) -> Self {
+        self.select_overrides(client, KeyScope::Full, |target| {
+            target.matches_protocol(protocol)
+        })
+    }
+
+    /// Selects overrides that differ from `client` for TLS session reuse on this transport.
+    #[must_use]
+    pub(crate) fn for_session(&self, client: &Self, quic: bool) -> Self {
+        self.select_overrides(client, KeyScope::Session, |target| {
+            target.matches_session(quic)
+        })
+    }
+
+    /// Returns the Context hash and shared options when they differ from the client.
+    #[must_use]
+    pub(crate) fn context_override<T: ConnectConfigValue>(
+        &self,
+        client: &Self,
+    ) -> Option<(u64, Arc<T>)> {
+        let entry = self.entry(TypeId::of::<T>())?;
+        if client
+            .entry(entry.id())
+            .is_some_and(|other| entry.same(other, KeyScope::Context))
+        {
+            return None;
+        }
+        Some((entry.hash(KeyScope::Context), entry.downcast_arc()?))
+    }
+
+    /// Compares the entries at the given reuse scope.
+    #[must_use]
+    pub(crate) fn eq_scope(&self, other: &Self, scope: KeyScope) -> bool {
+        match (&self.entries, &other.entries) {
+            (None, None) => true,
+            (Some(left), Some(right)) => {
+                Arc::ptr_eq(left, right)
+                    || (left.len() == right.len()
+                        && left.iter().zip(right.iter()).all(|(a, b)| a.same(b, scope)))
+            }
+            _ => false,
+        }
+    }
+
+    /// Hashes the entries using the same scope as [`Self::eq_scope`].
+    pub(crate) fn hash_scope(&self, scope: KeyScope, state: &mut impl Hasher) {
+        let entries = self.entries();
+        entries.len().hash(state);
+        for entry in entries {
+            state.write_u64(entry.hash(scope));
+        }
+    }
+
+    fn select_overrides(
+        &self,
+        client: &Self,
+        scope: KeyScope,
+        applies: impl Fn(KeyTarget) -> bool,
+    ) -> Self {
+        let Some(entries) = &self.entries else {
+            return Self::default();
+        };
+        if client
+            .entries
+            .as_ref()
+            .is_some_and(|base| Arc::ptr_eq(entries, base))
+        {
+            return Self::default();
+        }
+
+        let keep = |entry: &Entry| {
+            applies(entry.target())
+                && !client
+                    .entry(entry.id())
+                    .is_some_and(|base| entry.same(base, scope))
+        };
+        let Some(skip) = entries.iter().position(|entry| !keep(entry)) else {
+            return self.clone();
+        };
+
+        Self {
+            entries: collect(
+                entries[..skip]
+                    .iter()
+                    .chain(entries[skip + 1..].iter().filter(|entry| keep(entry)))
+                    .cloned(),
+            ),
+        }
+    }
 }
 
 // ===== impl KeyTarget =====
@@ -175,38 +265,6 @@ impl Entry {
     #[must_use]
     pub(crate) fn downcast_arc<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         self.value.clone().downcast::<T>().ok()
-    }
-}
-
-// ===== impl ScopedEntry =====
-
-impl ScopedEntry {
-    /// Creates a cache key comparing `entry` at `scope`.
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(entry: Entry, scope: KeyScope) -> Self {
-        Self { entry, scope }
-    }
-
-    /// Borrows the underlying value as `T`.
-    #[inline]
-    #[must_use]
-    pub(crate) fn get<T: 'static>(&self) -> Option<&T> {
-        self.entry.downcast_ref::<T>()
-    }
-}
-
-impl PartialEq for ScopedEntry {
-    fn eq(&self, other: &Self) -> bool {
-        self.scope == other.scope && self.entry.same(&other.entry, self.scope)
-    }
-}
-
-impl Eq for ScopedEntry {}
-
-impl Hash for ScopedEntry {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.entry.hash(self.scope));
     }
 }
 

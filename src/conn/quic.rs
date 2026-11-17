@@ -26,7 +26,7 @@ use crate::conn::dialer::Dialer;
 use crate::{
     config::connect::ConnectConfig,
     conn::{
-        Conn, ConnectRequestExt,
+        Conn,
         dialer::{ConnectError, bind_interface},
     },
     dns::DynResolver,
@@ -55,6 +55,12 @@ pub(crate) struct Connect {
     dialer: Dialer,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Bindings<'a> {
+    addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+    interface: Option<&'a str>,
+}
+
 // ===== impl Connect =====
 
 impl Connect {
@@ -65,6 +71,7 @@ impl Connect {
         proxies: Arc<Vec<Matcher>>,
         happy_eyeballs_timeout: Option<Duration>,
         tls: QuicTls,
+        client_config: &ConnectConfig,
         #[cfg(feature = "socks")] dialer: Dialer,
     ) -> crate::Result<Self> {
         Ok(Self {
@@ -73,6 +80,7 @@ impl Connect {
                 resolver,
                 happy_eyeballs_timeout,
                 tls,
+                client_config,
             )?),
             proxies,
             #[cfg(feature = "socks")]
@@ -93,7 +101,11 @@ impl Service<Request<ConnectConfig>> for Connect {
 
     fn call(&mut self, request: Request<ConnectConfig>) -> Self::Future {
         let endpoints = self.endpoints.clone();
-        match request.intercept(&self.proxies) {
+        match Matcher::select(
+            request.body().get_ref::<Matcher>(),
+            &self.proxies,
+            request.uri(),
+        ) {
             None => Either::Left(Box::pin(async move { endpoints.connect(&request).await })),
             #[cfg(unix)]
             Some(Intercepted::Unix(_)) => {
@@ -126,14 +138,14 @@ impl Service<Request<ConnectConfig>> for Connect {
 }
 
 /// Binds a UDP socket for the address family of `remote` before the runtime registers it.
-fn bind_udp(
-    addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
-    interface: Option<&str>,
-    remote: SocketAddr,
-) -> Result<UdpSocket, ConnectError> {
+fn bind_udp(bindings: Bindings<'_>, remote: SocketAddr) -> Result<UdpSocket, ConnectError> {
     let address = match remote {
-        SocketAddr::V4(_) => SocketAddr::from((addresses.0.unwrap_or(Ipv4Addr::UNSPECIFIED), 0)),
-        SocketAddr::V6(_) => SocketAddr::from((addresses.1.unwrap_or(Ipv6Addr::UNSPECIFIED), 0)),
+        SocketAddr::V4(_) => {
+            SocketAddr::from((bindings.addresses.0.unwrap_or(Ipv4Addr::UNSPECIFIED), 0))
+        }
+        SocketAddr::V6(_) => {
+            SocketAddr::from((bindings.addresses.1.unwrap_or(Ipv6Addr::UNSPECIFIED), 0))
+        }
     };
 
     // Create a new UDP socket for the appropriate address family.
@@ -157,7 +169,7 @@ fn bind_udp(
     }
 
     // Bind the socket to the specified interface, if provided.
-    bind_interface(&socket, address, interface)
+    bind_interface(&socket, address, bindings.interface)
         .map_err(ConnectError::m("quic bind interface error"))?;
 
     // Bind the socket to the local address.

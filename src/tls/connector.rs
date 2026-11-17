@@ -13,18 +13,19 @@ use btls::{
     ex_data::Index,
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode, SslVersion},
 };
-use http::{Request, Uri};
+use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::BoxError;
 
 use super::{
-    Config, ContextCache,
+    Config,
+    context::TlsContext,
     ext::{SslContextBuilderExt, set_ech_grease_host},
 };
 use crate::{
     Error,
-    config::connect::{ConnectConfig, KeyScope},
+    config::connect::ConnectConfig,
     protocol::Protocol,
     tls::{AlpnProtocol, TlsOptions, session::SessionTarget},
 };
@@ -36,15 +37,7 @@ const URI_MISSING_HOST: &str = "URI missing host";
 /// Different request context options are compiled once and cached.
 #[derive(Clone)]
 pub struct StreamTls {
-    inner: Arc<Inner>,
-}
-
-/// Client TLS policy and its compiled contexts.
-struct Inner {
-    tls: Config,
-    connect_config: ConnectConfig,
-    options: Option<Arc<TlsOptions>>,
-    contexts: ContextCache<SslConnector>,
+    contexts: Arc<TlsContext<TlsOptions, SslConnector>>,
 }
 
 /// Runs the TLS handshakes of one request over streams it is given: the target's and an
@@ -70,28 +63,15 @@ pub enum MaybeHttpsStream<T> {
 impl StreamTls {
     /// Compiles the client's TLS context while preserving the shared session scope.
     pub(super) fn new(tls: Config, config: &ConnectConfig) -> crate::Result<Self> {
-        let options = config.get_arc::<TlsOptions>();
-        let contexts = ContextCache::new(compile(&tls, options.as_deref())?);
         Ok(Self {
-            inner: Arc::new(Inner {
-                tls,
-                connect_config: config.clone(),
-                options,
-                contexts,
-            }),
+            contexts: Arc::new(TlsContext::new(tls, config, compile)?),
         })
     }
 
     /// Selects the context for the request's TLS options before dialing.
     /// Requests without different context options keep the client's context.
-    pub(crate) fn for_request(self, req: &Request<ConnectConfig>) -> crate::Result<TlsConnector> {
-        let inner = &*self.inner;
-        let options = req
-            .body()
-            .changed_entry::<TlsOptions>(&inner.connect_config, KeyScope::Context);
-        let context = inner
-            .contexts
-            .get(options, |options| compile(&inner.tls, Some(options)))?;
+    pub(crate) fn for_config(self, overrides: &ConnectConfig) -> crate::Result<TlsConnector> {
+        let context = self.contexts.for_config(overrides, compile)?;
         Ok(TlsConnector {
             tls: self,
             context,
@@ -110,17 +90,17 @@ impl TlsConnector {
         &self,
         origin: &Uri,
         protocol: Protocol,
-        config: &ConnectConfig,
+        overrides: &ConnectConfig,
         route: &Uri,
         remote_ip: Option<IpAddr>,
     ) -> Result<Ssl, BoxError> {
-        let inner = &*self.tls.inner;
-        let options = config.get_ref::<TlsOptions>();
-        let options = options.or(inner.options.as_deref());
+        let contexts = &self.tls.contexts;
+        let options = overrides.get_ref::<TlsOptions>();
+        let options = options.or(contexts.options.as_deref());
         let mut cfg = self.context.configure()?;
 
-        cfg.set_use_server_name_indication(inner.tls.sni);
-        cfg.set_verify_hostname(inner.tls.verify_hostname);
+        cfg.set_use_server_name_indication(contexts.tls.sni);
+        cfg.set_verify_hostname(contexts.tls.verify_hostname);
 
         if let Some(options) = options
             && let Some(ref key_shares) = options.key_shares
@@ -134,7 +114,7 @@ impl TlsConnector {
             let auto = || {
                 options
                     .into_iter()
-                    .chain(inner.options.as_deref())
+                    .chain(contexts.options.as_deref())
                     .filter_map(|options| options.alpn_protocols.as_deref())
                     .find(|protocols| !protocols.is_empty())
                     .unwrap_or(&[
@@ -186,11 +166,11 @@ impl TlsConnector {
         }
 
         if options.is_some_and(|options| options.pre_shared_key) {
-            let tickets = &inner.tls.tickets;
+            let tickets = &contexts.tls.tickets;
             let target = SessionTarget::new(
                 origin,
-                config,
-                &inner.connect_config,
+                overrides,
+                &contexts.client_config,
                 route,
                 false,
                 remote_ip,
@@ -248,7 +228,7 @@ impl TlsConnector {
     /// Returns whether responses carry the peer's [`TlsInfo`](crate::tls::TlsInfo).
     #[inline]
     pub(crate) fn tls_info(&self) -> bool {
-        self.tls.inner.tls.tls_info
+        self.tls.contexts.tls.tls_info
     }
 
     /// Authenticates the origin or proxy at `route` with the selected TLS options.
@@ -258,14 +238,14 @@ impl TlsConnector {
         io: IO,
         origin: &Uri,
         protocol: Protocol,
-        request_config: &ConnectConfig,
+        overrides: &ConnectConfig,
         route: &Uri,
         remote_ip: Option<IpAddr>,
     ) -> Result<SslStream<IO>, BoxError>
     where
         IO: AsyncRead + AsyncWrite + Unpin,
     {
-        let ssl = self.ssl_for_connection(origin, protocol, request_config, route, remote_ip)?;
+        let ssl = self.ssl_for_connection(origin, protocol, overrides, route, remote_ip)?;
         let mut stream = SslStream::new(ssl, io)?;
         Pin::new(&mut stream).connect().await?;
         Ok(stream)

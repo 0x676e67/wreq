@@ -64,7 +64,7 @@ use self::{
     entry::{Entry, EntryState, Http1Entry},
     expire::{Expire, Retain},
     maker::ConnectionMaker,
-    map::{Map, Target},
+    map::Map,
     pooled::Pooled,
 };
 #[cfg(any(feature = "http2", feature = "http3"))]
@@ -74,7 +74,7 @@ use self::{
 };
 use super::proto::{Established, http1};
 use crate::{
-    config::connect::{ConnectConfig, HASHER},
+    config::connect::{ConnectConfig, HASHER, KeyScope},
     conn::{Conn, ConnectRequestExt},
     protocol::Protocol,
     rt::DynRuntime,
@@ -239,13 +239,12 @@ struct PoolInner<C> {
     services: Mutex<Map<PoolKey, Box<dyn Entry>>>,
 }
 
-/// Destination of one pool checkout.
-///
-/// The request's protocol selects the entry's topology. The existing entry sets
-/// `wait_for_reuse`, keeping cold starts free of the reuse-first delay.
+/// Inputs owned by a checkout that may open a new connection.
 #[derive(Clone)]
 pub(super) struct PoolTarget {
-    pub(super) key: PoolKey,
+    origin: Uri,
+    protocol: Protocol,
+    config: ConnectConfig,
 
     /// Whether this checkout can wait for existing pool state to become reusable.
     wait_for_reuse: bool,
@@ -253,9 +252,9 @@ pub(super) struct PoolTarget {
 
 /// Factory that creates one protocol-specific service graph per destination group.
 ///
-/// [`Map`] calls this factory on a key miss. Fixed protocol targets receive their
-/// matching pool; Auto combines HTTP/1 and HTTP/2 through [`Negotiate`]. Unpooled
-/// checkouts create a temporary entry. Entries hold only a weak reference to [`PoolInner`].
+/// Fixed protocols receive their matching pool. Auto combines HTTP/1 and HTTP/2
+/// through [`Negotiate`], and unpooled checkouts create a temporary entry.
+/// Entries hold only a weak reference to [`PoolInner`].
 struct PoolTargeter<C> {
     /// Physical connection service.
     connector: C,
@@ -379,17 +378,11 @@ where
     /// returns the sender, the call creates a temporary entry for this request.
     pub(super) async fn checkout(
         &self,
-        target: PoolTarget,
+        key: &PoolKey,
         dedicated: bool,
     ) -> Result<Pooled, BoxError> {
         if !self.inner.enabled || dedicated {
-            return self
-                .inner
-                .targeter
-                .service(&target)
-                .checkout(target, false)
-                .0
-                .await;
+            return self.inner.targeter.service(key).checkout(key, false).await;
         }
 
         // The guard needs a lexical scope outside await for this future to remain Send.
@@ -398,13 +391,10 @@ where
             let mut services = self.inner.services.lock();
             // Inspect only this group on checkout. A global retained-group scan
             // would add O(group count) work and nested locking to every pool hit.
-            let ((future, unused), discarded) =
-                services.with_service(&self.inner.targeter, target, |service, target| {
-                    let discarded = service.retain(now, self.inner.idle_timeout);
-                    (service.checkout(target, true), discarded)
-                });
+            let service = services.get_or_insert_with(key, || self.inner.targeter.service(key));
+            let discarded = service.retain(now, self.inner.idle_timeout);
+            let future = service.checkout(key, true);
             drop(services);
-            drop(unused);
             drop(discarded);
             future
         };
@@ -445,12 +435,15 @@ impl PoolKey {
     /// Builds a pool key and precomputes its lookup hash.
     #[must_use]
     pub(super) fn new(origin: Uri, protocol: Protocol, config: ConnectConfig) -> Self {
-        let hash = HASHER.hash_one((&origin, protocol, &config));
+        let mut state = HASHER.build_hasher();
+        origin.hash(&mut state);
+        protocol.hash(&mut state);
+        config.hash_scope(KeyScope::Full, &mut state);
         Self {
             origin,
             protocol,
             config,
-            hash,
+            hash: state.finish(),
         }
     }
 
@@ -460,12 +453,6 @@ impl PoolKey {
     pub(super) fn origin(&self) -> &Uri {
         &self.origin
     }
-
-    /// Builds the connector request when a cache miss opens a new connection.
-    #[must_use]
-    pub(super) fn into_request(self) -> Request<ConnectConfig> {
-        Request::new_connect(self.origin, self.protocol, self.config)
-    }
 }
 
 impl PartialEq for PoolKey {
@@ -474,7 +461,7 @@ impl PartialEq for PoolKey {
         self.hash == other.hash
             && self.protocol == other.protocol
             && self.origin == other.origin
-            && self.config == other.config
+            && self.config.eq_scope(&other.config, KeyScope::Full)
     }
 }
 
@@ -490,19 +477,20 @@ impl Hash for PoolKey {
 // ===== impl PoolTarget =====
 
 impl PoolTarget {
-    /// Wraps a pool key before checking out an entry.
     #[must_use]
-    pub(super) fn new(key: PoolKey) -> Self {
+    fn new(key: &PoolKey, wait_for_reuse: bool) -> Self {
         Self {
-            key,
-            wait_for_reuse: false,
+            origin: key.origin.clone(),
+            protocol: key.protocol,
+            config: key.config.clone(),
+            wait_for_reuse,
         }
     }
 
     /// Builds the connector request when a cache miss opens a new connection.
     #[must_use]
     pub(super) fn into_request(self) -> Request<ConnectConfig> {
-        self.key.into_request()
+        Request::new_connect(self.origin, self.protocol, self.config)
     }
 }
 
@@ -663,26 +651,16 @@ impl<C> PoolTargeter<C> {
             self.runtime.clone(),
         )
     }
-}
-
-impl<C> Target<PoolTarget> for PoolTargeter<C>
-where
-    C: ConnectService,
-{
-    type Key = PoolKey;
-    type Service = Box<dyn Entry>;
-
-    fn key(&self, target: &PoolTarget) -> Self::Key {
-        target.key.clone()
-    }
-
     /// Builds only the pool components required by the target's protocol mode.
     ///
     /// A pool entry's builders use the effective HTTP options of that protocol.
-    fn service(&self, target: &PoolTarget) -> Self::Service {
+    fn service(&self, key: &PoolKey) -> Box<dyn Entry>
+    where
+        C: ConnectService,
+    {
         let pool = self.pool.clone();
-        let entry_key = self.key(target);
-        let (protocol, config) = (target.key.protocol, &target.key.config);
+        let entry_key = key.clone();
+        let (protocol, config) = (key.protocol, &key.config);
         let state = Arc::new(EntryState {
             uses: AtomicUsize::new(0),
             maintain: Box::new(move |identity| {

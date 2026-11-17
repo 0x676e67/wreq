@@ -31,7 +31,7 @@ use tower::{BoxError, ServiceExt};
 
 use super::{
     TUNNEL_MTU, bind_udp,
-    endpoint::{Endpoints, handshake_error},
+    endpoint::{Endpoints, QuicConfig, handshake_error},
 };
 use crate::{
     config::connect::ConnectConfig,
@@ -43,7 +43,6 @@ use crate::{
     proxy::matcher::Intercept,
     rt::BoxConnection,
     sync::Mutex,
-    tls::quic::QuicConfig,
 };
 
 static URI_MISSING_HOST: &str = "HTTP/3 URI has no host";
@@ -263,7 +262,7 @@ async fn connect_target(
     let ended = socket.shared.ended.clone();
 
     endpoints
-        .finish_tunnel(request, config, socket, relay, ended)
+        .finish_tunnel(request.uri(), config, socket, relay, ended)
         .await
         .map_err(handshake_error(TARGET_HANDSHAKE_ERROR))
 }
@@ -274,19 +273,16 @@ fn relay_socket(
     request: &Request<ConnectConfig>,
     remote: SocketAddr,
 ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-    let connect_config = endpoints.connect_config();
-    let addresses = request.local_addresses(connect_config);
+    let bindings = endpoints.bindings(request.body());
     if matches!(
-        (addresses.0, addresses.1, remote),
+        (bindings.addresses.0, bindings.addresses.1, remote),
         (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
     ) {
         return Err("relay address does not match local bindings".into());
     }
-    Ok(endpoints.runtime().udp_socket(bind_udp(
-        addresses,
-        request.interface(connect_config),
-        remote,
-    )?)?)
+    Ok(endpoints
+        .runtime()
+        .udp_socket(bind_udp(bindings, remote)?)?)
 }
 
 /// Labels a failed proxy stage, keeping it a proxy connect error.

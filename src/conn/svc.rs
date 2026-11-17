@@ -85,6 +85,7 @@ impl Connect {
             proxies.clone(),
             happy_eyeballs_timeout,
             tls.clone().quic(config)?,
+            config,
             #[cfg(feature = "socks")]
             dialer.clone(),
         )?;

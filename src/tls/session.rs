@@ -351,11 +351,11 @@ impl TlsSessionStore for LruTlsSessionStore {
     fn pop(&self, key: &Key) -> Option<TlsSession> {
         let mut keys = self.inner.lock();
         let sessions = keys.get_mut(key)?;
-        let session = sessions.peek_mru()?.0.clone();
-        let retired_session = if session.should_be_single_use() {
-            sessions.pop_entry(&session)
+        let session = sessions.peek_mru()?.0;
+        let session = if session.should_be_single_use() {
+            sessions.pop_mru()?.0
         } else {
-            None
+            session.clone()
         };
         let retired_entry = if sessions.is_empty() {
             keys.pop_entry(key)
@@ -363,7 +363,6 @@ impl TlsSessionStore for LruTlsSessionStore {
             None
         };
         drop(keys);
-        drop(retired_session);
         drop(retired_entry);
         Some(session)
     }
@@ -375,7 +374,6 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::connect::ConnectConfig,
         ext::UriExt,
         group::Group,
         http1::Http1Options,

@@ -450,10 +450,13 @@ impl QuicOptions {
         }
     }
 
-    /// Builds the transport configuration of a connection.
+    /// Builds a transport with the datagram frame limit selected for its path.
     ///
     /// Returns an error when a value does not fit its transport parameter.
-    pub(crate) fn transport(&self) -> crate::Result<::quic::TransportConfig> {
+    pub(crate) fn transport(
+        &self,
+        datagram_frame_size: Option<u64>,
+    ) -> crate::Result<::quic::TransportConfig> {
         use ::quic::{IdleTimeout, TransportConfig, VarInt};
 
         // The backend reserves every allowed stream when a connection starts.
@@ -513,7 +516,7 @@ impl QuicOptions {
                 MAX_STREAMS,
             )?);
         }
-        if let Some(size) = self.max_datagram_frame_size {
+        if let Some(size) = datagram_frame_size {
             let size = (size != 0)
                 .then(|| {
                     let name = "max_datagram_frame_size";

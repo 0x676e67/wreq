@@ -99,7 +99,7 @@ struct State {
     runtime: DynRuntime,
     resolver: DynResolver,
     tcp: tcp::Config,
-    config: ConnectConfig,
+    client_config: ConnectConfig,
     happy_eyeballs_timeout: Option<Duration>,
 }
 
@@ -117,7 +117,7 @@ impl Dialer {
         runtime: DynRuntime,
         resolver: DynResolver,
         tcp: tcp::Config,
-        config: ConnectConfig,
+        client_config: ConnectConfig,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         Self {
@@ -125,7 +125,7 @@ impl Dialer {
                 runtime,
                 resolver,
                 tcp,
-                config,
+                client_config,
                 happy_eyeballs_timeout,
             }),
         }
@@ -161,10 +161,10 @@ impl Service<Dial> for Dialer {
                 let nodelay = nodelay || self.state.tcp.nodelay;
                 let state = self.state.clone();
                 let addresses = (
-                    config.get_or::<Ipv4Addr>(&state.config).copied(),
-                    config.get_or::<Ipv6Addr>(&state.config).copied(),
+                    config.get_or::<Ipv4Addr>(&state.client_config).copied(),
+                    config.get_or::<Ipv6Addr>(&state.client_config).copied(),
                 );
-                let interface = config.get_or::<Arc<str>>(&state.config).cloned();
+                let interface = config.get_or::<Arc<str>>(&state.client_config).cloned();
 
                 // Start the TCP connection attempt with Happy Eyeballs and deadline handling.
                 let connect = async move {
@@ -352,7 +352,6 @@ mod tests {
     use tower::{Service, service_fn};
 
     use super::*;
-    use crate::config::connect::ConnectConfig;
 
     const V4: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 443);
     const V6: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 443);

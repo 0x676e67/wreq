@@ -149,7 +149,7 @@ pub(super) async fn connect(
     let (socket, remote) = connect_proxy.await.map_err(ProxyConnect::Source)?;
     let ended = socket.shared.ended.clone();
     endpoints
-        .finish_tunnel(&request, &config, socket, remote, ended)
+        .finish_tunnel(request.uri(), &config, socket, remote, ended)
         .await
 }
 

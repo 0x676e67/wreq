@@ -30,7 +30,7 @@ use {
 
 use super::{
     error::{Error, ErrorKind},
-    pool::{self, ConnectService, PoolTarget},
+    pool::{self, ConnectService, PoolKey},
     request::RequestVersion,
 };
 use crate::{
@@ -94,12 +94,11 @@ struct Original {
     had_cookie: bool,
 }
 
-/// An HTTP request and its frozen connection inputs and reuse key.
-/// The connection inputs and key survive unsent retries.
+/// An HTTP request and the pool key it keeps across unsent retries.
 /// Dispatch returns this value only when the original body has not been sent.
 pub(super) struct DispatchRequest<B> {
     request: Request<B>,
-    target: PoolTarget,
+    pool_key: PoolKey,
     /// Whether checkout always connects and never returns the sender to the pool.
     #[cfg(feature = "ws")]
     dedicated: bool,
@@ -107,7 +106,7 @@ pub(super) struct DispatchRequest<B> {
     negotiable: bool,
     /// Default-group key whose established sender may carry this WebSocket.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-    extended_connect_key: Option<pool::PoolKey>,
+    extended_connect_key: Option<PoolKey>,
 }
 
 /// Performs one connection-pool checkout and protocol send attempt.
@@ -268,7 +267,7 @@ impl<S> Stack<S> {
 
         Ok(DispatchRequest {
             request,
-            target: PoolTarget::new(self.pool_key(origin, protocol, &request_config)),
+            pool_key: self.pool_key(origin, protocol, &request_config),
             #[cfg(feature = "ws")]
             dedicated: dedicated.is_some(),
             negotiable,
@@ -278,8 +277,8 @@ impl<S> Stack<S> {
     }
 
     #[must_use]
-    fn pool_key(&self, origin: Uri, protocol: Protocol, request: &ConnectConfig) -> pool::PoolKey {
-        pool::PoolKey::new(
+    fn pool_key(&self, origin: Uri, protocol: Protocol, request: &ConnectConfig) -> PoolKey {
+        PoolKey::new(
             origin,
             protocol,
             request.for_protocol(protocol, &self.config),
@@ -431,7 +430,7 @@ where
         };
         let pooled = match reused {
             Some(pooled) => pooled,
-            None => match self.pool.checkout(request.target.clone(), dedicated).await {
+            None => match self.pool.checkout(&request.pool_key, dedicated).await {
                 Ok(pooled) => pooled,
                 Err(error) if pool::is_canceled(&*error) => {
                     return Err(DispatchError::CheckoutCanceled {
@@ -503,7 +502,7 @@ where
                 let connection_reused = pooled.is_reused();
                 let connect_info = pooled.connected().clone();
                 let unnegotiated_h2 = pooled.version() == Version::HTTP_2
-                    && request.target.key.origin().is_https()
+                    && request.pool_key.origin().is_https()
                     && !connect_info.is_negotiated_h2();
 
                 // A returned request was not sent; only protocol rejections are final,
@@ -896,7 +895,7 @@ mod tests {
         let plain = prepare("http://localhost/");
         let userinfo = prepare("http://user:pw@localhost/");
         assert_eq!(userinfo.request.uri(), "http://localhost/");
-        assert_eq!(userinfo.target.key, plain.target.key);
+        assert_eq!(userinfo.pool_key, plain.pool_key);
     }
 
     #[tokio::test]
@@ -911,7 +910,7 @@ mod tests {
             let mut key = None;
             let service = tower::service_fn(move |mut request: DispatchRequest<crate::Body>| {
                 let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 {
-                    key = Some(request.target.key.clone());
+                    key = Some(request.pool_key.clone());
                     *request.request.uri_mut() = Uri::from_static("/upload?part=1");
                     *request.request.version_mut() = Version::HTTP_2;
                     #[cfg(feature = "cookies")]
@@ -929,7 +928,7 @@ mod tests {
                     assert_eq!(request.request.version(), Version::HTTP_10);
                     #[cfg(feature = "cookies")]
                     assert!(!request.request.headers().contains_key(COOKIE));
-                    assert_eq!(key.as_ref(), Some(&request.target.key));
+                    assert_eq!(key.as_ref(), Some(&request.pool_key));
                     Ok(request.request.into_body())
                 };
                 future::ready(result)

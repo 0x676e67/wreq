@@ -29,7 +29,7 @@ use {
 };
 
 use super::{
-    PoolTarget,
+    PoolKey, PoolTarget,
     cache::{self, BackgroundConnect, Cache, Cached},
     pooled::Pooled,
 };
@@ -44,12 +44,8 @@ use crate::protocol::Protocol;
 /// removed connection state for destruction after the map lock is released.
 pub(super) trait Entry: Send {
     /// Selects a checkout without polling service code under the map lock.
-    /// Poll or drop the checkout and unused target only after unlocking.
-    fn checkout(
-        &mut self,
-        target: PoolTarget,
-        pool_enabled: bool,
-    ) -> (Checkout, Option<PoolTarget>);
+    /// Poll or drop the checkout only after unlocking.
+    fn checkout(&mut self, key: &PoolKey, pool_enabled: bool) -> Checkout;
 
     /// Clones an established shared sender without creating, joining, or draining
     /// work. HTTP/1 entries and generations still being made return `None`.
@@ -248,20 +244,15 @@ where
     /// A reuse-first delay is enabled only when the entry already contains work
     /// that may yield a sender. [`EntryUse`] keeps the map entry alive until the
     /// checkout either fails or transfers ownership to [`Pooled`].
-    fn checkout(
-        &mut self,
-        mut target: PoolTarget,
-        pool_enabled: bool,
-    ) -> (Checkout, Option<PoolTarget>) {
-        target.wait_for_reuse = pool_enabled && !self.is_empty();
+    fn checkout(&mut self, key: &PoolKey, pool_enabled: bool) -> Checkout {
+        let target = PoolTarget::new(key, pool_enabled && !self.is_empty());
         let service = self.service.clone();
         let usage = EntryUse::new(self.state.clone());
-        let future = Checkout::Service(Box::pin(async move {
+        Checkout::Service(Box::pin(async move {
             Oneshot::new(service, target)
                 .await
                 .map(|service| Pooled::new_h1(service, pool_enabled, usage))
-        }));
-        (future, None)
+        }))
     }
 
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
@@ -317,30 +308,23 @@ where
 {
     /// Joins the current generation or starts one when the entry is empty.
     ///
-    /// The target keeps `wait_for_reuse` unset, so a cold start never waits for
-    /// HTTP/1-style reuse. Every participant carries [`EntryUse`] until singleton
-    /// checkout finishes.
-    fn checkout(
-        &mut self,
-        target: PoolTarget,
-        pool_enabled: bool,
-    ) -> (Checkout, Option<PoolTarget>) {
+    /// Every participant carries [`EntryUse`] until singleton checkout finishes.
+    fn checkout(&mut self, key: &PoolKey, pool_enabled: bool) -> Checkout {
         let usage = EntryUse::new(self.state.clone());
         if let Some(future) = self.service.checkout() {
-            let future = Checkout::Mux {
+            return Checkout::Mux {
                 future,
                 discarded: None,
                 usage: Some(usage),
                 pool_enabled,
             };
-            return (future, Some(target));
         }
+        let target = PoolTarget::new(key, false);
         let service = self.service.clone();
-        let future = Checkout::Service(Box::pin(async move {
+        Checkout::Service(Box::pin(async move {
             let service = Oneshot::new(service, target).await?;
             Ok(Pooled::new_mux(service, pool_enabled, usage))
-        }));
-        (future, None)
+        }))
     }
 
     #[cfg(feature = "ws")]
@@ -413,32 +397,27 @@ where
         + 'static,
 {
     /// Joins existing upgraded work or checks out through the composed service.
-    fn checkout(
-        &mut self,
-        mut target: PoolTarget,
-        pool_enabled: bool,
-    ) -> (Checkout, Option<PoolTarget>) {
-        target.wait_for_reuse = pool_enabled && !self.is_empty();
+    fn checkout(&mut self, key: &PoolKey, pool_enabled: bool) -> Checkout {
+        let wait_for_reuse = pool_enabled && !self.is_empty();
         let usage = EntryUse::new(self.state.clone());
         if let Some((future, discarded)) = self.service.checkout_existing() {
-            let future = Checkout::Mux {
+            return Checkout::Mux {
                 future,
                 discarded: (!discarded.is_empty()).then(|| defer_drop(discarded)),
                 usage: Some(usage),
                 pool_enabled,
             };
-            return (future, Some(target));
         }
+        let target = PoolTarget::new(key, wait_for_reuse);
         let service = self.service.clone();
-        let future = Checkout::Service(Box::pin(async move {
+        Checkout::Service(Box::pin(async move {
             Oneshot::new(service, target)
                 .await
                 .map(|service| match service {
                     Negotiated::Left(service) => Pooled::new_h1(service, pool_enabled, usage),
                     Negotiated::Right(service) => Pooled::new_mux(service, pool_enabled, usage),
                 })
-        }));
-        (future, None)
+        }))
     }
 
     /// Uses only the upgraded side; HTTP/1 fallback and pending transports stay untouched.

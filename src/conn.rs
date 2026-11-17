@@ -11,11 +11,6 @@ mod stream;
 mod svc;
 
 use std::time::{Duration, Instant};
-#[cfg(feature = "http3")]
-use std::{
-    net::{Ipv4Addr, Ipv6Addr},
-    sync::Arc,
-};
 
 use dialer::tcp;
 use http::{Method, Request, Uri};
@@ -30,13 +25,8 @@ pub(crate) use self::{
     svc::{Io, Transport},
 };
 use crate::{
-    config::connect::ConnectConfig,
-    dns::DynResolver,
-    error::map_timeout_to_connector_error,
-    protocol::Protocol,
-    proxy::{Intercepted, Matcher as ProxyMatcher},
-    rt::DynRuntime,
-    tls,
+    config::connect::ConnectConfig, dns::DynResolver, error::map_timeout_to_connector_error,
+    protocol::Protocol, proxy::Matcher as ProxyMatcher, rt::DynRuntime, tls,
 };
 
 /// Type-erased connection service passed through user-supplied layers.
@@ -85,20 +75,6 @@ pub(crate) trait ConnectRequestExt {
     /// Returns the outer connection deadline, if any.
     #[must_use]
     fn deadline(&self) -> Option<Instant>;
-
-    /// Selects the proxy matching this request's origin, preferring a request override.
-    #[must_use]
-    fn intercept(&self, proxies: &[ProxyMatcher]) -> Option<Intercepted>;
-
-    /// Returns the local IPv4 and IPv6 addresses from this request or `client`.
-    #[must_use]
-    #[cfg(feature = "http3")]
-    fn local_addresses(&self, client: &ConnectConfig) -> (Option<Ipv4Addr>, Option<Ipv6Addr>);
-
-    /// Returns the outbound network interface from this request or `client`.
-    #[must_use]
-    #[cfg(feature = "http3")]
-    fn interface<'a>(&'a self, client: &'a ConnectConfig) -> Option<&'a str>;
 }
 
 /// Opaque request passed through user-supplied connector layers.
@@ -184,29 +160,6 @@ impl ConnectRequestExt for Request<ConnectConfig> {
     #[inline]
     fn deadline(&self) -> Option<Instant> {
         self.extensions().get::<ConnectDeadline>().map(|d| d.0)
-    }
-
-    fn intercept(&self, proxies: &[ProxyMatcher]) -> Option<Intercepted> {
-        let uri = self.uri();
-        self.body()
-            .get_ref::<ProxyMatcher>()
-            .and_then(|proxy| proxy.intercept(uri))
-            .or_else(|| proxies.iter().find_map(|proxy| proxy.intercept(uri)))
-    }
-
-    #[inline]
-    #[cfg(feature = "http3")]
-    fn local_addresses(&self, client: &ConnectConfig) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
-        (
-            self.body().get_or::<Ipv4Addr>(client).copied(),
-            self.body().get_or::<Ipv6Addr>(client).copied(),
-        )
-    }
-
-    #[inline]
-    #[cfg(feature = "http3")]
-    fn interface<'a>(&'a self, client: &'a ConnectConfig) -> Option<&'a str> {
-        self.body().get_or::<Arc<str>>(client).map(Arc::as_ref)
     }
 }
 

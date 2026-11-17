@@ -461,6 +461,21 @@ impl Matcher {
         }
     }
 
+    /// Selects the first matching proxy, checking the request's proxy before the client's.
+    pub(crate) fn select(
+        request_proxy: Option<&Self>,
+        client_proxies: &[Self],
+        destination: &Uri,
+    ) -> Option<Intercepted> {
+        request_proxy
+            .and_then(|proxy| proxy.intercept(destination))
+            .or_else(|| {
+                client_proxies
+                    .iter()
+                    .find_map(|proxy| proxy.intercept(destination))
+            })
+    }
+
     /// Intercept the given destination URI, returning the intercepted
     /// proxy configuration if there is a match.
     #[inline]

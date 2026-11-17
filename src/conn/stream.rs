@@ -89,7 +89,11 @@ impl Service<Request<ConnectConfig>> for Connect {
 
     #[inline]
     fn call(&mut self, request: Request<ConnectConfig>) -> Self::Future {
-        let proxy = request.intercept(&self.state.proxies);
+        let proxy = Matcher::select(
+            request.body().get_ref::<Matcher>(),
+            &self.state.proxies,
+            request.uri(),
+        );
         if let Some(Intercepted::Proxy(proxy)) = &proxy
             && proxy.uri().scheme_str() == Some("quic")
         {
@@ -121,7 +125,7 @@ impl State {
 
         let (io, tls) = match proxy {
             None => {
-                let tls = self.tls.clone().for_request(&request)?;
+                let tls = self.tls.clone().for_config(request.body())?;
                 // Disable Nagle through TLS when the target is secure.
                 // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
                 let io = dialer
@@ -136,12 +140,12 @@ impl State {
             }
             #[cfg(unix)]
             Some(proxy @ Intercepted::Unix(_)) if is_https => {
-                let tls = self.tls.clone().for_request(&request)?;
+                let tls = self.tls.clone().for_config(request.body())?;
                 (tunnel::connect(dialer, &tls, &request, &proxy).await?, tls)
             }
             #[cfg(unix)]
             Some(Intercepted::Unix(path)) => {
-                let tls = self.tls.clone().for_request(&request)?;
+                let tls = self.tls.clone().for_config(request.body())?;
                 (
                     MaybeHttpsStream::Http(dialer.oneshot(Dial::Unix(path)).await?),
                     tls,
@@ -158,7 +162,7 @@ impl State {
                         "socks4a" | "socks5h" => DnsResolve::Remote,
                         _ => DnsResolve::Local,
                     };
-                    let tls = self.tls.clone().for_request(&request)?;
+                    let tls = self.tls.clone().for_config(request.body())?;
                     let io = socks::connect(
                         dialer,
                         self.resolver.clone(),
@@ -170,7 +174,7 @@ impl State {
                     (MaybeHttpsStream::Http(io), tls)
                 }
                 _ if is_https => {
-                    let tls = self.tls.clone().for_request(&request)?;
+                    let tls = self.tls.clone().for_config(request.body())?;
                     let io =
                         tunnel::connect(dialer, &tls, &request, &Intercepted::Proxy(proxy)).await?;
                     (io, tls)
@@ -179,7 +183,7 @@ impl State {
                     let mut tls = self
                         .tls
                         .clone()
-                        .for_request(&request)
+                        .for_config(request.body())
                         .map_err(|error| ProxyConnect::Source(error.into()))?;
                     tls.no_alpn();
                     let io = dialer

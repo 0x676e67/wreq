@@ -1,21 +1,15 @@
-//! Connection options and scoped key comparisons.
+//! Type-indexed client and request connection options.
 
 mod identity;
 mod macros;
 
-use std::{
-    any::TypeId,
-    fmt,
-    hash::{Hash, Hasher},
-    iter,
-    sync::Arc,
-};
+use std::{any::TypeId, fmt, iter, sync::Arc};
 
+use self::identity::Entry;
 pub(crate) use self::{
-    identity::{ConnectConfigValue, Entry, HASHER, KeyScope, KeyTarget, ScopedEntry},
+    identity::{ConnectConfigValue, HASHER, KeyScope, KeyTarget},
     macros::{derive_deftly_template_ConfigKey, impl_connect_config_value},
 };
-use crate::protocol::Protocol;
 
 /// One set of connection options, shared until edited.
 /// Entries are sorted by `TypeId` and cache their scoped identity hashes on insertion.
@@ -92,29 +86,6 @@ impl ConnectConfig {
         self.entries = Some(merged.into());
     }
 
-    /// Returns a subset containing only entries applicable to `protocol` that differ from `client`.
-    #[must_use]
-    pub(crate) fn for_protocol(&self, protocol: Protocol, client: &Self) -> Self {
-        self.select_overrides(client, KeyScope::Full, |target| {
-            target.matches_protocol(protocol)
-        })
-    }
-
-    /// Selects overrides that differ from `client` for TLS session reuse on this transport.
-    #[must_use]
-    pub(crate) fn for_session(&self, client: &Self, quic: bool) -> Self {
-        self.select_overrides(client, KeyScope::Session, |target| {
-            target.matches_session(quic)
-        })
-    }
-
-    /// Returns whether this set has no options.
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.entries.is_none()
-    }
-
     /// Borrows the setting stored for `T`.
     #[inline]
     #[must_use]
@@ -122,11 +93,11 @@ impl ConnectConfig {
         self.entry(TypeId::of::<T>())?.downcast_ref::<T>()
     }
 
-    /// Returns the reference to `T` from `self`, falling back to `default`.
+    /// Borrows `T` from the request, falling back to the client's configuration.
     #[inline]
     #[must_use]
-    pub(crate) fn get_or<'a, T: 'static>(&'a self, default: &'a Self) -> Option<&'a T> {
-        self.get_ref().or_else(|| default.get_ref())
+    pub(crate) fn get_or<'a, T: 'static>(&'a self, client_config: &'a Self) -> Option<&'a T> {
+        self.get_ref().or_else(|| client_config.get_ref())
     }
 
     /// Clones the shared handle stored for `T`.
@@ -134,39 +105,6 @@ impl ConnectConfig {
     #[must_use]
     pub(crate) fn get_arc<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         self.entry(TypeId::of::<T>())?.downcast_arc::<T>()
-    }
-
-    /// Returns the entry for `T` if it differs from `base` under `scope`.
-    #[must_use]
-    pub(crate) fn changed_entry<T: 'static>(&self, base: &Self, scope: KeyScope) -> Option<&Entry> {
-        let entry = self.entry(TypeId::of::<T>())?;
-        (!base
-            .entry(entry.id())
-            .is_some_and(|other| entry.same(other, scope)))
-        .then_some(entry)
-    }
-
-    /// Compares the entries at the given reuse scope.
-    #[must_use]
-    pub(crate) fn eq_scope(&self, other: &Self, scope: KeyScope) -> bool {
-        match (&self.entries, &other.entries) {
-            (None, None) => true,
-            (Some(left), Some(right)) => {
-                Arc::ptr_eq(left, right)
-                    || (left.len() == right.len()
-                        && left.iter().zip(right.iter()).all(|(a, b)| a.same(b, scope)))
-            }
-            _ => false,
-        }
-    }
-
-    /// Hashes the entries using the same scope as [`Self::eq_scope`].
-    pub(crate) fn hash_scope(&self, scope: KeyScope, state: &mut impl Hasher) {
-        let entries = self.entries();
-        entries.len().hash(state);
-        for entry in entries {
-            state.write_u64(entry.hash(scope));
-        }
     }
 
     #[inline]
@@ -178,73 +116,6 @@ impl ConnectConfig {
     fn entry(&self, id: TypeId) -> Option<&Entry> {
         let entries = self.entries();
         search(entries, id).ok().map(|index| &entries[index])
-    }
-
-    #[inline]
-    fn ptr_eq(&self, other: &Self) -> bool {
-        match (&self.entries, &other.entries) {
-            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
-            (None, None) => true,
-            _ => false,
-        }
-    }
-
-    fn select_overrides(
-        &self,
-        client: &Self,
-        scope: KeyScope,
-        predicate: impl Fn(KeyTarget) -> bool,
-    ) -> Self {
-        if self.is_empty() || self.ptr_eq(client) {
-            return Self::default();
-        }
-
-        let entries = self.entries();
-        let mut kept = 0;
-        let mut selected = Vec::new();
-        for (index, entry) in entries.iter().enumerate() {
-            let keep = predicate(entry.target())
-                && !client
-                    .entry(entry.id())
-                    .is_some_and(|base| entry.same(base, scope));
-            if !keep {
-                continue;
-            }
-            if selected.is_empty() {
-                if kept == index {
-                    kept += 1;
-                    continue;
-                }
-                selected.reserve(entries.len() - index + kept);
-                selected.extend_from_slice(&entries[..kept]);
-            }
-            selected.push(entry.clone());
-        }
-
-        let entries = if !selected.is_empty() {
-            Some(Arc::from(selected))
-        } else if kept == entries.len() {
-            return self.clone();
-        } else if kept > 0 {
-            Some(Arc::from(&entries[..kept]))
-        } else {
-            None
-        };
-        Self { entries }
-    }
-}
-
-impl PartialEq for ConnectConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.eq_scope(other, KeyScope::Full)
-    }
-}
-
-impl Eq for ConnectConfig {}
-
-impl Hash for ConnectConfig {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.hash_scope(KeyScope::Full, state);
     }
 }
 

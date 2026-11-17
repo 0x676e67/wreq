@@ -7,6 +7,7 @@
 mod macros;
 
 pub(super) mod connector;
+mod context;
 mod ext;
 #[cfg(feature = "http3")]
 pub(super) mod quic;
@@ -19,7 +20,6 @@ pub mod trust;
 use std::{
     borrow::Cow,
     hash::{Hash, Hasher},
-    num::NonZeroUsize,
     sync::Arc,
 };
 
@@ -33,7 +33,6 @@ use derive_deftly::Deftly;
 use educe::Educe;
 use ext::SslContextBuilderExt;
 use keylog::KeyLog;
-use lru::LruCache;
 #[cfg(feature = "http3")]
 use quic::QuicTls;
 use session::Tickets;
@@ -41,10 +40,7 @@ use trust::{CertStore, Identity};
 
 use crate::{
     Error,
-    config::connect::{
-        ConnectConfig, Entry, KeyScope, ScopedEntry, derive_deftly_template_ConfigKey,
-    },
-    sync::Mutex,
+    config::connect::{ConnectConfig, derive_deftly_template_ConfigKey},
 };
 
 /// Peer certificate information attached to response extensions when
@@ -416,19 +412,6 @@ pub(crate) struct Config {
     pub(crate) tls_info: bool,
 }
 
-/// The client's compiled TLS context and the most recently used request contexts.
-///
-/// Contexts are stored without per-connection callbacks or session caches; each connection
-/// sets its own on a copy.
-struct ContextCache<T> {
-    client: T,
-    requests: Mutex<LruCache<ScopedEntry, T>>,
-}
-
-/// Request contexts kept per client, least recently used evicted first.
-const REQUEST_CONTEXTS: NonZeroUsize =
-    NonZeroUsize::new(16).expect("request context capacity must be non-zero");
-
 // ===== impl TlsOptionsBuilder =====
 
 impl TlsOptionsBuilder {
@@ -762,42 +745,6 @@ impl Default for Config {
             tickets: Arc::new(Tickets::new(None)),
             tls_info: false,
         }
-    }
-}
-
-// ===== impl ContextCache =====
-
-impl<T: Clone> ContextCache<T> {
-    /// Starts with the client's context and no request contexts.
-    fn new(client: T) -> Self {
-        Self {
-            client,
-            requests: Mutex::new(LruCache::sparse(REQUEST_CONTEXTS)),
-        }
-    }
-
-    /// Looks up the compiled context for `entry`, or returns the client's context for `None`.
-    /// A missing request context is compiled outside the lock, so concurrent misses may
-    /// compile it more than once.
-    fn get<O: 'static>(
-        &self,
-        entry: Option<&Entry>,
-        compile: impl FnOnce(&O) -> crate::Result<T>,
-    ) -> crate::Result<T> {
-        let Some(entry) = entry else {
-            return Ok(self.client.clone());
-        };
-        let key = ScopedEntry::new(entry.clone(), KeyScope::Context);
-        if let Some(context) = self.requests.lock().get(&key) {
-            return Ok(context.clone());
-        }
-        let Some(options) = key.get::<O>() else {
-            return Err(Error::tls("mismatched TLS context entry"));
-        };
-        let context = compile(options)?;
-        // An evicted context is freed after the lock is released.
-        let _evicted = self.requests.lock().push(key, context.clone());
-        Ok(context)
     }
 }
 
