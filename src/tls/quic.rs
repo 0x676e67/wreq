@@ -9,7 +9,7 @@ use btls::{
     x509::{X509Ref, X509StoreContextRef},
 };
 use bytes::Bytes;
-use http::Uri;
+use http::{Request, Uri};
 use quic::{
     TokenStore, TransportConfig,
     crypto::btls::{NoSessionCache, QuicClientConfig, SessionCache, Zeroizing},
@@ -23,7 +23,7 @@ use super::{
 use crate::{
     Error, Result,
     config::connect::{Cached, ConnectConfig, KeyScope, changed},
-    conn::request::ConnectRequest,
+    conn::{ConnectRequestExt, ConnectionKey},
     protocol::TransportKind,
     quic::QuicOptions,
     sync::Mutex,
@@ -85,7 +85,7 @@ struct Attempt {
 impl QuicTls {
     /// Compiles the client's QUIC TLS context and retains its initial QUIC options.
     pub(super) fn new(tls: Config, config: &ConnectConfig) -> Result<Self> {
-        let options = config.get_arc::<QuicOptions>();
+        let options = config.get_ref::<Cached<QuicOptions>>().map(Cached::arc);
         let contexts = ContextCache::new(compile(&tls, options.as_deref())?);
         Ok(Self(Arc::new(Inner {
             tls,
@@ -111,7 +111,11 @@ impl QuicTls {
     /// QUIC always negotiates TLS 1.3, so a client capped below it fails here rather than
     /// when it is built. Contexts are shared, so each connection installs its SSL callback on
     /// its own copy.
-    pub(crate) fn config(&self, request: &ConnectRequest, route: &Uri) -> Result<QuicConfig> {
+    pub(crate) fn config(
+        &self,
+        request: &Request<ConnectionKey>,
+        route: &Uri,
+    ) -> Result<QuicConfig> {
         let inner = &*self.0;
         if inner
             .tls
@@ -121,7 +125,7 @@ impl QuicTls {
             return Err(Error::tls("HTTP/3 requires TLS 1.3"));
         }
 
-        let request_config = request.config();
+        let request_config = request.connect_config();
         let context_options = changed::<QuicOptions>(request_config, KeyScope::Context);
         let mut crypto = inner.contexts.get(context_options, |options| {
             compile(&inner.tls, Some(options))
@@ -379,7 +383,7 @@ mod tests {
         use btls::ssl::SslContextRef;
 
         use super::*;
-        use crate::{group::Group, protocol::Protocol, tls::KeyShare};
+        use crate::{conn::test_connect_request, group::Group, protocol::Protocol, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
         let request = |grease: Option<bool>, group| {
@@ -388,16 +392,16 @@ mod tests {
                 config.insert(Group::new(group));
             }
             if let Some(grease) = grease {
-                config.insert(
+                config.insert(Cached::new(
                     QuicOptions::builder()
                         .curves_list("X25519")
                         .key_shares(vec![KeyShare::P256])
                         .grease_enabled(grease)
                         .build(),
-                );
+                ));
             }
             let uri = Uri::from_static("https://localhost/");
-            ConnectRequest::test(uri, Some(Protocol::Http3), config)
+            test_connect_request(uri, Some(Protocol::Http3), config)
         };
         let tls = Config::default().quic(&ConnectConfig::default()).unwrap();
         let [client, first, second, other] = [

@@ -13,7 +13,7 @@ use educe::Educe;
 
 use crate::{
     Error,
-    config::connect::{derive_deftly_template_ConfigKey, impl_connect_extension},
+    config::connect::derive_deftly_template_ConfigKey,
     tls::{
         EchGrease, ExtensionType, KeyShare, Tls13Cipher,
         compress::{CertificateCompressionAlgorithm, CertificateCompressor},
@@ -543,5 +543,3 @@ impl QuicOptions {
         Ok(transport)
     }
 }
-
-impl_connect_extension!(cached: QuicOptions);

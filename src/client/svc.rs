@@ -12,18 +12,15 @@ use std::{
 };
 
 use futures_util::future::{self, BoxFuture, Either, Ready};
+#[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+use http::{
+    HeaderMap,
+    header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
+};
 use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST, uri::Authority};
 use netty::body::Incoming;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service, ServiceExt, layer::layer_fn, util::Oneshot};
-#[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-use {
-    crate::conn::request::ConnectionKey,
-    http::{
-        HeaderMap,
-        header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
-    },
-};
 #[cfg(feature = "cookies")]
 use {
     crate::cookie::{CookieStore, Cookies},
@@ -33,15 +30,18 @@ use {
 
 use super::{
     error::{Error, ErrorKind},
-    pool::{self, TransportConnector},
+    pool::{self, ConnectService, PoolTarget},
     request::RequestVersion,
 };
 #[cfg(feature = "http3")]
 use crate::protocol::TransportKind;
 use crate::{
     Body,
-    config::{connect::ConnectConfig, request::RequestConfig},
-    conn::request::ConnectRequest,
+    config::{
+        connect::{ConnectConfig, ConnectConfigRef},
+        request::RequestConfig,
+    },
+    conn::ConnectionKey,
     ext::UriExt,
     protocol::Protocol,
     rt::DynRuntime,
@@ -105,7 +105,7 @@ struct Original {
 /// Dispatch returns this value only when the original body has not been sent.
 pub(super) struct DispatchRequest<B> {
     request: Request<B>,
-    req: ConnectRequest,
+    target: PoolTarget,
     /// Whether checkout always connects and never returns the sender to the pool.
     #[cfg(feature = "ws")]
     dedicated: bool,
@@ -242,21 +242,17 @@ impl<S> Stack<S> {
             None => None,
         };
 
-        let req = ConnectRequest::new(
-            uri,
-            protocol.unwrap_or(self.protocol),
-            request_config,
-            &self.config,
-        )
-        .map_err(|source| {
-            debug!("Client requires absolute-form URIs, received: {uri:?}");
-            Error::new(ErrorKind::UserAbsoluteUriRequired, source)
-        })?;
+        let config = ConnectConfigRef::new(&request_config, &self.config);
+        let key = ConnectionKey::for_request(uri, protocol.unwrap_or(self.protocol), config)
+            .map_err(|source| {
+                debug!("Client requires absolute-form URIs, received: {uri:?}");
+                Error::new(ErrorKind::UserAbsoluteUriRequired, source)
+            })?;
 
         // HTTP/3 has no cleartext form; an https-to-http redirect also ends here:
         // https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1
         #[cfg(feature = "http3")]
-        if req.protocol().transport() == TransportKind::Quic && !uri.is_https() {
+        if key.protocol().transport() == TransportKind::Quic && !uri.is_https() {
             warn!("HTTP/3 requires an https URI");
             return Err(Error::from_kind(ErrorKind::UserUnsupportedVersion)
                 .with_context("HTTP/3 requires an https URI"));
@@ -273,17 +269,11 @@ impl<S> Stack<S> {
                 Protocol::Http3 => uri.is_https(),
                 _ => false,
             })
-        .then(|| {
-            if req.protocol() == self.protocol {
-                req.key().clone()
-            } else {
-                ConnectionKey::new(req.uri().clone(), self.protocol, req.config())
-            }
-        });
+        .then(|| key.with_protocol(self.protocol, config));
 
         Ok(DispatchRequest {
             request,
-            req,
+            target: PoolTarget::new(key, request_config, self.config.clone()),
             #[cfg(feature = "ws")]
             dedicated: dedicated.is_some(),
             negotiable: protocol == Some(Protocol::Auto),
@@ -387,7 +377,7 @@ where
 
 impl<C> Dispatch<C>
 where
-    C: TransportConnector,
+    C: ConnectService,
 {
     /// Creates the terminal request service and its shared connection pool.
     /// Handshakes start from the client's connection settings, and HTTP/1 generates
@@ -436,7 +426,7 @@ where
         };
         let pooled = match reused {
             Some(pooled) => pooled,
-            None => match self.pool.checkout(request.req.clone(), dedicated).await {
+            None => match self.pool.checkout(request.target.clone(), dedicated).await {
                 Ok(pooled) => pooled,
                 Err(error) if pool::is_canceled(&*error) => {
                     return Err(DispatchError::CheckoutCanceled {
@@ -508,7 +498,7 @@ where
                 let connection_reused = pooled.is_reused();
                 let connect_info = pooled.connected().clone();
                 let unnegotiated_h2 = pooled.version() == Version::HTTP_2
-                    && request.req.uri().is_https()
+                    && request.target.key.origin().is_https()
                     && !connect_info.is_negotiated_h2();
 
                 // A returned request was not sent; only protocol rejections are final,
@@ -580,7 +570,7 @@ impl<C> Clone for Dispatch<C> {
 
 impl<C> Service<DispatchRequest<Body>> for Dispatch<C>
 where
-    C: TransportConnector,
+    C: ConnectService,
 {
     type Response = Response<Incoming>;
     type Error = DispatchError<Body>;
@@ -897,7 +887,7 @@ mod tests {
         let plain = prepare("http://localhost/");
         let userinfo = prepare("http://user:pw@localhost/");
         assert_eq!(userinfo.request.uri(), "http://localhost/");
-        assert_eq!(userinfo.req.key(), plain.req.key());
+        assert_eq!(userinfo.target.key, plain.target.key);
     }
 
     #[tokio::test]
@@ -912,7 +902,7 @@ mod tests {
             let mut key = None;
             let service = tower::service_fn(move |mut request: DispatchRequest<crate::Body>| {
                 let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 {
-                    key = Some(request.req.key().clone());
+                    key = Some(request.target.key.clone());
                     *request.request.uri_mut() = Uri::from_static("/upload?part=1");
                     *request.request.version_mut() = Version::HTTP_2;
                     #[cfg(feature = "cookies")]
@@ -930,7 +920,7 @@ mod tests {
                     assert_eq!(request.request.version(), Version::HTTP_10);
                     #[cfg(feature = "cookies")]
                     assert!(!request.request.headers().contains_key(COOKIE));
-                    assert_eq!(key.as_ref(), Some(request.req.key()));
+                    assert_eq!(key.as_ref(), Some(&request.target.key));
                     Ok(request.request.into_body())
                 };
                 future::ready(result)
@@ -1010,7 +1000,7 @@ mod tests {
             }
         }
 
-        let connector = tower::service_fn(|_: ConnectRequest| {
+        let connector = tower::service_fn(|_: Request<ConnectionKey>| {
             let (client, server) = tokio::io::duplex(16384);
             let service = hyper::service::service_fn(|request: Request<hyper::body::Incoming>| {
                 let target = format!("{} {:?}", request.uri(), request.headers()[COOKIE]);

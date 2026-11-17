@@ -67,8 +67,8 @@ use crate::cookie;
 use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Proxy,
-    config::connect::ConnectConfig,
-    conn::{self, BoxedTransportConnector, Conn, Connector, Unnameable, dialer},
+    config::connect::{Cached, ConnectConfig},
+    conn::{self, BoxedConnectLayer, BoxedConnectService, Conn, ConnectStack, Unnameable},
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
     header::OrigHeaderMap,
@@ -103,7 +103,9 @@ cfg_select! {
 }
 
 type ClientService = Timeout<
-    ConfigService<MaybeDecompression<FollowRedirect<Retry<RetryPolicy, svc::Client<Connector>>>>>,
+    ConfigService<
+        MaybeDecompression<FollowRedirect<Retry<RetryPolicy, svc::Client<ConnectStack>>>>,
+    >,
 >;
 
 type BoxedClientService = BoxCloneSyncService<
@@ -172,9 +174,11 @@ struct Config {
     protocol: Protocol,
     https_only: bool,
     layers: Vec<BoxedClientServiceLayer>,
+    connector_layers: Vec<BoxedConnectLayer>,
     pool: pool::Config,
     connect: conn::Config,
-    defaults: ConnectConfig,
+    connect_config: ConnectConfig,
+    connect_timeout: Option<Duration>,
 }
 
 // ===== impl Client =====
@@ -215,11 +219,7 @@ impl Client {
                     feature = "deflate",
                 ))]
                 accept_encoding: AcceptEncoding::default(),
-                connect: conn::Config::default(),
-                pool: pool::Config {
-                    idle_timeout: Some(Duration::from_secs(90)),
-                    ..pool::Config::default()
-                },
+
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
                 redirect_policy: redirect::Policy::none(),
@@ -232,7 +232,14 @@ impl Client {
                 protocol: Protocol::Auto,
                 https_only: false,
                 layers: Vec::new(),
-                defaults: ConnectConfig::default(),
+                connector_layers: Vec::new(),
+                pool: pool::Config {
+                    idle_timeout: Some(Duration::from_secs(90)),
+                    ..pool::Config::default()
+                },
+                connect: conn::Config::default(),
+                connect_config: ConnectConfig::default(),
+                connect_timeout: None,
             },
             runtime: DynRuntime::new(runtime),
         }
@@ -434,23 +441,29 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let connector = Connector::new(
-                self.config.connect,
+            let connector = ConnectStack::new(
                 self.runtime.clone(),
                 resolver,
-                &self.config.defaults,
+                self.config.connect,
+                &self.config.connect_config,
+                self.config.connect_timeout,
+                self.config.connector_layers,
             )?;
 
             let dispatch = svc::Dispatch::new(
                 self.config.pool,
                 connector,
-                &self.config.defaults,
+                &self.config.connect_config,
                 #[cfg(feature = "cookies")]
                 self.config.cookie_store,
                 self.runtime.clone(),
             );
             ServiceBuilder::new()
-                .layer(svc::layer(self.config.protocol, self.config.defaults, true))
+                .layer(svc::layer(
+                    self.config.protocol,
+                    self.config.connect_config,
+                    true,
+                ))
                 .service(dispatch)
         };
 
@@ -889,14 +902,15 @@ impl ClientBuilder {
     /// Sets a time limit for establishing a connection.
     ///
     /// The timer starts after connector readiness and covers connector layers, DNS resolution,
-    /// proxy setup, TCP dialing and TLS, and QUIC handshakes.
-    /// A timeout reported while resolving or dialing a proxy is a [proxy connect
-    /// error](Error::is_proxy_connect).
+    /// proxy setup, TCP and Unix dialing, TLS, and QUIC handshakes.
+    /// A timeout returned by a TCP or QUIC proxy dial is a [proxy connect
+    /// error](Error::is_proxy_connect). If the outer deadline expires first, including
+    /// while waiting for a Unix proxy socket, the error is a [connect error](Error::is_connect).
     ///
     /// By default there is no connection timeout.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.connect.connect_timeout = Some(timeout);
+        self.config.connect_timeout = Some(timeout);
         self
     }
 
@@ -1014,7 +1028,9 @@ impl ClientBuilder {
     where
         T: Into<Option<Http1Options>>,
     {
-        self.config.defaults.set(options.into());
+        self.config
+            .connect_config
+            .set(options.into().map(Cached::new));
         self
     }
 
@@ -1026,7 +1042,9 @@ impl ClientBuilder {
     where
         T: Into<Option<Http2Options>>,
     {
-        self.config.defaults.set(options.into());
+        self.config
+            .connect_config
+            .set(options.into().map(Cached::new));
         self
     }
 
@@ -1037,7 +1055,9 @@ impl ClientBuilder {
     where
         T: Into<Option<netty::http3::Http3Options>>,
     {
-        self.config.defaults.set(options.into());
+        self.config
+            .connect_config
+            .set(options.into().map(Cached::new));
         self
     }
 
@@ -1049,7 +1069,9 @@ impl ClientBuilder {
     where
         T: Into<Option<crate::quic::QuicOptions>>,
     {
-        self.config.defaults.set(options.into());
+        self.config
+            .connect_config
+            .set(options.into().map(Cached::new));
         self
     }
 
@@ -1220,12 +1242,15 @@ impl ClientBuilder {
     /// # }
     /// ```
     #[inline]
-    pub fn local_address<T>(mut self, addr: T) -> ClientBuilder
+    pub fn local_address<T>(self, addr: T) -> ClientBuilder
     where
         T: Into<Option<IpAddr>>,
     {
-        dialer::set_local_address(&mut self.config.defaults, addr.into());
-        self
+        match addr.into() {
+            Some(IpAddr::V4(addr)) => self.local_addresses(addr, None),
+            Some(IpAddr::V6(addr)) => self.local_addresses(None, addr),
+            None => self,
+        }
     }
 
     /// Sets the local IPv4 and IPv6 addresses for new IP sockets.
@@ -1252,7 +1277,11 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        dialer::set_local_addresses(&mut self.config.defaults, ipv4.into(), ipv6.into());
+        let (ipv4, ipv6) = (ipv4.into(), ipv6.into());
+        self.config
+            .connect_config
+            .insert_if_some(ipv4)
+            .insert_if_some(ipv6);
         self
     }
 
@@ -1328,7 +1357,9 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        dialer::set_interface(&mut self.config.defaults, interface.into());
+        self.config
+            .connect_config
+            .insert(Arc::<str>::from(interface.into()));
         self
     }
 
@@ -1450,7 +1481,9 @@ impl ClientBuilder {
     where
         T: Into<Option<TlsOptions>>,
     {
-        self.config.defaults.set(options.into());
+        self.config
+            .connect_config
+            .set(options.into().map(Cached::new));
         self
     }
 
@@ -1585,7 +1618,7 @@ impl ClientBuilder {
     #[inline]
     pub fn connector_layer<L>(mut self, layer: L) -> ClientBuilder
     where
-        L: Layer<BoxedTransportConnector> + Send + Sync + 'static,
+        L: Layer<BoxedConnectService> + Send + Sync + 'static,
         L::Service: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>
             + Clone
             + Send
@@ -1593,7 +1626,7 @@ impl ClientBuilder {
             + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
-        self.config.connect.layers.push(layer);
+        self.config.connector_layers.push(layer);
         self
     }
 
@@ -1605,7 +1638,7 @@ impl ClientBuilder {
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> ClientBuilder {
         let emulate::Emulation(headers, orig_headers, config) = emulation.into_emulation();
-        self.config.defaults.extend(config);
+        self.config.connect_config.extend(config);
         self.default_headers(headers).orig_headers(orig_headers)
     }
 }

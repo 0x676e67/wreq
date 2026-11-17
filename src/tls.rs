@@ -43,7 +43,6 @@ use crate::{
     Error,
     config::connect::{
         Cached, ConnectConfig, KeyScope, ScopedConfig, derive_deftly_template_ConfigKey,
-        impl_connect_extension,
     },
     sync::Mutex,
 };
@@ -705,8 +704,6 @@ impl TlsOptions {
         }
     }
 }
-
-impl_connect_extension!(cached: TlsOptions);
 
 // ===== impl Config =====
 

@@ -9,7 +9,7 @@ use std::{
 use http::uri::Uri;
 use socket2::TcpKeepalive;
 
-use super::{ConnectError, bind_interface};
+use super::{ConnectError, SocketBindings};
 use crate::{
     ext::UriExt,
     rt::{Connecting, DynRuntime},
@@ -96,8 +96,7 @@ fn bind_local_address(
 pub(super) fn connect_socket(
     addr: &SocketAddr,
     config: &Config,
-    addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
-    interface: Option<&str>,
+    bindings: &SocketBindings,
     nodelay: bool,
     runtime: &DynRuntime,
 ) -> Result<Connecting, ConnectError> {
@@ -118,7 +117,8 @@ pub(super) fn connect_socket(
         warn!("tcp set_keepalive error: {_e}");
     }
 
-    bind_interface(&socket, *addr, interface)
+    bindings
+        .bind_interface(&socket, *addr)
         .map_err(ConnectError::m("tcp bind interface error"))?;
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -128,7 +128,7 @@ pub(super) fn connect_socket(
         warn!("tcp set_tcp_user_timeout error: {_e}");
     }
 
-    bind_local_address(&socket, addr, &addresses.0, &addresses.1)
+    bind_local_address(&socket, addr, &bindings.ipv4, &bindings.ipv6)
         .map_err(ConnectError::m("tcp bind local error"))?;
 
     if config.reuse_address

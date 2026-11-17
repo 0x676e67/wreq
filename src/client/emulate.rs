@@ -5,7 +5,10 @@ use http::HeaderMap;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
-    config::connect::ConnectConfig, header::OrigHeaderMap, http1::Http1Options, tls::TlsOptions,
+    config::connect::{Cached, ConnectConfig},
+    header::OrigHeaderMap,
+    http1::Http1Options,
+    tls::TlsOptions,
 };
 #[cfg(feature = "http3")]
 use crate::{http3::Http3Options, quic::QuicOptions};
@@ -94,7 +97,7 @@ macro_rules! impl_from_option {
                 #[inline]
                 fn from(options: $ty) -> Self {
                     let mut config = ConnectConfig::default();
-                    config.insert(options);
+                    config.insert(Cached::new(options));
                     Self(HeaderMap::new(), OrigHeaderMap::new(), config)
                 }
             }

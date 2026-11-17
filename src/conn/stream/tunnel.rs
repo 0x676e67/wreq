@@ -1,20 +1,24 @@
 //! HTTP CONNECT over a TCP or Unix proxy socket.
 
-use http::Uri;
+use std::{future::Future, time::Instant};
+
+use http::{Request, Uri};
 use netty::proxy::tunnel::{TunnelConnector, TunnelError};
-use tower::{BoxError, ServiceExt, service_fn};
+use tower::{ServiceExt, service_fn};
 
 use crate::{
     conn::{
-        dialer::{Dialer, SocketRequest},
-        request::ConnectRequest,
+        ConnectRequestExt, ConnectionKey,
+        dialer::{Dial, Dialer, SocketBindings},
     },
-    proxy::matcher::Intercept,
+    ext::UriExt,
+    proxy::Intercepted,
     rt::{BoxConnection, Connection},
-    tls::connector::{MaybeHttpsStream, TlsConnector},
+    tls::connector::{HandshakeOptions, MaybeHttpsStream, TlsConnector},
 };
 
 // The Unix path selects the socket. This URI marks the hop as plain HTTP.
+#[cfg(unix)]
 const UNIX_PROXY_URI: &str = "http://localhost";
 
 /// Opens a [CONNECT tunnel] to the request's origin.
@@ -23,21 +27,51 @@ const UNIX_PROXY_URI: &str = "http://localhost";
 /// context with ALPN disabled so this hop can send HTTP/1.1 CONNECT.
 ///
 /// [CONNECT tunnel]: https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6
-pub(super) async fn connect(
-    dialer: &Dialer,
+pub(super) fn connect(
+    dialer: Dialer,
     tls: &TlsConnector,
-    request: &ConnectRequest,
-    proxy: Option<&Intercept>,
-    socket_request: impl Fn(Uri) -> SocketRequest + Send,
-) -> Result<MaybeHttpsStream<BoxConnection>, TunnelError> {
+    request: &Request<ConnectionKey>,
+    route: &Intercepted,
+    bindings: SocketBindings,
+    deadline: Option<Instant>,
+) -> impl Future<Output = Result<MaybeHttpsStream<BoxConnection>, TunnelError>> + Send {
     let target = request.uri().clone();
-    let proxy_uri = proxy.map_or_else(|| Uri::from_static(UNIX_PROXY_URI), |p| p.uri().clone());
+    let (proxy_uri, proxy) = match route {
+        Intercepted::Proxy(proxy) => (proxy.uri().clone(), Some(proxy)),
+        #[cfg(unix)]
+        Intercepted::Unix(_) => (Uri::from_static(UNIX_PROXY_URI), None),
+    };
     // netty validates the CONNECT target before asking this service to dial the proxy.
-    let hop = service_fn(move |proxy: Uri| {
-        let socket_request = socket_request(proxy.clone());
-        let mut tls = tls.clone();
-        tls.no_alpn();
-        dial_proxy(dialer.clone(), socket_request, tls, request.clone(), proxy)
+    let hop = service_fn(move |uri: Uri| {
+        let dialer = dialer.clone();
+        let dial = match route {
+            Intercepted::Proxy(_) => Dial::Tcp {
+                uri: uri.clone(),
+                bindings: bindings.clone(),
+                deadline,
+                nodelay: true,
+            },
+            #[cfg(unix)]
+            Intercepted::Unix(path) => Dial::Unix(path.clone()),
+        };
+        // netty requires a future that owns its inputs. Keep only the TLS options
+        // and the key used to scope tickets for this handshake.
+        let tls = (!uri.is_http()).then(|| {
+            let mut tls = tls.clone();
+            tls.no_alpn();
+            let options = HandshakeOptions::new(request.connect_config()).into_owned();
+            (tls, request.body().clone(), options)
+        });
+        async move {
+            let io = dialer.oneshot(dial).await?;
+            let Some((tls, key, options)) = tls else {
+                return Ok(MaybeHttpsStream::Http(io));
+            };
+            let remote_ip = io.peer_addr().map(|addr| addr.ip());
+            tls.handshake(io, &key, options.as_ref(), &uri, remote_ip)
+                .await
+                .map(MaybeHttpsStream::Https)
+        }
     });
     let mut tunnel = TunnelConnector::new(proxy_uri, hop);
     if let Some(proxy) = proxy {
@@ -48,18 +82,5 @@ pub(super) async fn connect(
             tunnel = tunnel.with_headers(headers.clone());
         }
     }
-    tunnel.oneshot(target).await
-}
-
-// The returned future owns the hop state because netty can drop the dial service after calling it.
-async fn dial_proxy(
-    dialer: Dialer,
-    socket_request: SocketRequest,
-    tls: TlsConnector,
-    request: ConnectRequest,
-    proxy: Uri,
-) -> Result<MaybeHttpsStream<BoxConnection>, BoxError> {
-    let io = dialer.dial(socket_request).await?;
-    let remote_ip = io.peer_addr().map(|addr| addr.ip());
-    tls.handshake(io, &request, &proxy, remote_ip).await
+    tunnel.oneshot(target)
 }

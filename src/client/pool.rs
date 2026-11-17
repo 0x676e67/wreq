@@ -44,6 +44,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use http::Request;
 use netty::{conn, http1::Http1Options};
 use tower::{BoxError, Layer, Service, ServiceBuilder};
 #[cfg(feature = "http2")]
@@ -72,13 +73,8 @@ use self::{
 };
 use super::proto::{Established, http1};
 use crate::{
-    config::connect::{
-        Cached, ConnectConfig, ConnectConfigValue, ConnectExtension, KeyScope, changed,
-    },
-    conn::{
-        Conn,
-        request::{ConnectRequest, ConnectionKey},
-    },
+    config::connect::{Cached, ConnectConfig},
+    conn::{Conn, ConnectRequestExt, ConnectionKey},
     protocol::Protocol,
     rt::DynRuntime,
     sync::Mutex,
@@ -174,8 +170,8 @@ impl Default for Config {
 ///
 /// Names the bounds shared by the client stack, the pool and the HTTP/3 connect
 /// service; every connector service with these bounds implements it.
-pub(super) trait TransportConnector:
-    Service<ConnectRequest, Response = Conn, Error = BoxError, Future: Send + 'static>
+pub(super) trait ConnectService:
+    Service<Request<ConnectionKey>, Response = Conn, Error = BoxError, Future: Send + 'static>
     + Clone
     + Send
     + Sync
@@ -183,8 +179,8 @@ pub(super) trait TransportConnector:
 {
 }
 
-impl<C> TransportConnector for C where
-    C: Service<ConnectRequest, Response = Conn, Error = BoxError, Future: Send + 'static>
+impl<C> ConnectService for C where
+    C: Service<Request<ConnectionKey>, Response = Conn, Error = BoxError, Future: Send + 'static>
         + Clone
         + Send
         + Sync
@@ -238,8 +234,9 @@ struct PoolInner<C> {
 /// `wait_for_reuse`, keeping cold starts free of the reuse-first delay.
 #[derive(Clone)]
 pub(super) struct PoolTarget {
-    /// Frozen connection request, moved into the connector by a new connection.
-    req: ConnectRequest,
+    pub(super) key: ConnectionKey,
+    request_config: ConnectConfig,
+    client_config: ConnectConfig,
 
     /// Whether this checkout can wait for existing pool state to become reusable.
     wait_for_reuse: bool,
@@ -277,13 +274,13 @@ struct PoolTargeter<C> {
 }
 
 /// Shares the client's builder unless the request overrides its protocol options.
-fn configure<B, O>(builder: &Arc<B>, req: &ConnectRequest, apply: fn(B, O) -> B) -> Arc<B>
-where
-    B: Clone,
-    O: ConnectExtension<Stored = Cached<O>> + ConnectConfigValue,
-{
-    match changed::<O>(req.config(), KeyScope::Full) {
-        Some(options) => Arc::new(apply(B::clone(builder), options.get().clone())),
+fn configure<B: Clone, O: Clone>(
+    builder: &Arc<B>,
+    options: Option<&O>,
+    apply: fn(B, O) -> B,
+) -> Arc<B> {
+    match options {
+        Some(options) => Arc::new(apply(B::clone(builder), options.clone())),
         None => builder.clone(),
     }
 }
@@ -292,7 +289,7 @@ where
 
 impl<C> Pool<C>
 where
-    C: TransportConnector,
+    C: ConnectService,
 {
     /// Builds the shared map and protocol-specific entry factory.
     ///
@@ -315,14 +312,14 @@ where
         };
 
         let mut http1 = conn::http1::Builder::default();
-        if let Some(options) = config.get_ref::<Http1Options>() {
+        if let Some(options) = config.get_ref::<Cached<Http1Options>>().map(Cached::get) {
             http1 = http1.options(options.clone());
         }
 
         #[cfg(feature = "http2")]
         let http2 = {
             let builder = conn::http2::Builder::new(runtime.clone()).timer(runtime.clone());
-            match config.get_ref::<Http2Options>() {
+            match config.get_ref::<Cached<Http2Options>>().map(Cached::get) {
                 Some(options) => builder.options(options.clone()),
                 None => builder,
             }
@@ -331,7 +328,7 @@ where
         #[cfg(feature = "http3")]
         let http3 = {
             let builder = conn::http3::Builder::new(runtime.clone());
-            match config.get_ref::<Http3Options>() {
+            match config.get_ref::<Cached<Http3Options>>().map(Cached::get) {
                 Some(options) => builder.options(options.clone()),
                 None => builder,
             }
@@ -371,14 +368,9 @@ where
     /// returns the sender, the call creates a temporary entry for this request.
     pub(super) async fn checkout(
         &self,
-        req: ConnectRequest,
+        target: PoolTarget,
         dedicated: bool,
     ) -> Result<Pooled, BoxError> {
-        let target = PoolTarget {
-            req,
-            wait_for_reuse: false,
-        };
-
         if !self.inner.enabled || dedicated {
             return self
                 .inner
@@ -438,9 +430,23 @@ impl<C> Clone for Pool<C> {
 // ===== impl PoolTarget =====
 
 impl PoolTarget {
-    /// Extracts the underlying [`ConnectRequest`] when a cache miss opens a new connection.
-    pub(super) fn into_request(self) -> ConnectRequest {
-        self.req
+    /// Freezes the key and configuration before a pool lookup.
+    pub(super) fn new(
+        key: ConnectionKey,
+        request_config: ConnectConfig,
+        client_config: ConnectConfig,
+    ) -> Self {
+        Self {
+            key,
+            request_config,
+            client_config,
+            wait_for_reuse: false,
+        }
+    }
+
+    /// Builds the connector request when a cache miss opens a new connection.
+    pub(super) fn into_request(self) -> Request<ConnectionKey> {
+        Request::from_key(self.key, self.request_config, self.client_config)
     }
 }
 
@@ -448,7 +454,7 @@ impl PoolTarget {
 
 impl<C> PoolInner<C>
 where
-    C: TransportConnector,
+    C: ConnectService,
 {
     /// Reads the configured runtime clock.
     fn now(&self) -> Instant {
@@ -523,7 +529,7 @@ where
 
 impl<C> Retain for PoolInner<C>
 where
-    C: TransportConnector,
+    C: ConnectService,
 {
     fn retain(&self, now: Instant) -> Option<Duration> {
         let mut services = self.services.lock();
@@ -561,7 +567,7 @@ impl<C> PoolTargeter<C> {
     fn http1_layer<S>(
         &self,
         state: &Arc<EntryState>,
-        req: &ConnectRequest,
+        key: &ConnectionKey,
     ) -> impl Layer<S, Service = Cache<http1::Connect<S>, PoolTarget, cache::events::WithRuntime>>
     where
         S: Service<PoolTarget, Response = Established, Error = BoxError> + Clone,
@@ -577,7 +583,11 @@ impl<C> PoolTargeter<C> {
                     .build(service)
             })
             .layer(http1::ConnectLayer::new(
-                configure(&self.http1, req, conn::http1::Builder::options),
+                configure(
+                    &self.http1,
+                    key.http1_options(),
+                    conn::http1::Builder::options,
+                ),
                 self.runtime.clone(),
                 self.set_host,
             ))
@@ -586,9 +596,13 @@ impl<C> PoolTargeter<C> {
 
     /// Creates the HTTP/2 handshake layer with the entry's builder.
     #[cfg(feature = "http2")]
-    fn http2_layer(&self, req: &ConnectRequest) -> http2::ConnectLayer {
+    fn http2_layer(&self, key: &ConnectionKey) -> http2::ConnectLayer {
         http2::ConnectLayer::new(
-            configure(&self.http2, req, conn::http2::Builder::options),
+            configure(
+                &self.http2,
+                key.http2_options(),
+                conn::http2::Builder::options,
+            ),
             self.runtime.clone(),
         )
     }
@@ -596,29 +610,29 @@ impl<C> PoolTargeter<C> {
 
 impl<C> Target<PoolTarget> for PoolTargeter<C>
 where
-    C: TransportConnector,
+    C: ConnectService,
 {
     type Key = ConnectionKey;
     type Service = Box<dyn Entry>;
 
     fn key(&self, target: &PoolTarget) -> Self::Key {
-        target.req.key().clone()
+        target.key.clone()
     }
 
     /// Builds only the pool components required by the target's protocol mode.
     ///
     /// A pool entry's builders use the effective HTTP options of that protocol.
     fn service(&self, target: &PoolTarget) -> Self::Service {
-        let req = &target.req;
+        let key = &target.key;
         let pool = self.pool.clone();
-        let key = req.key().clone();
+        let entry_key = key.clone();
         let state = Arc::new(EntryState {
             uses: AtomicUsize::new(0),
             maintain: Box::new(move |identity| {
                 let Some(pool) = pool.upgrade() else {
                     return;
                 };
-                pool.maintain_entry(&key, identity);
+                pool.maintain_entry(&entry_key, identity);
             }),
         });
 
@@ -630,16 +644,20 @@ where
 
         // Fixed protocol modes use smaller service graphs; only Auto needs both
         // pools and negotiation: https://github.com/hyperium/hyper/issues/3948
-        match req.protocol() {
+        match key.protocol() {
             Protocol::Http1 => {
-                let service = self.http1_layer(&state, req).layer(connect);
+                let service = self.http1_layer(&state, key).layer(connect);
                 Box::new(Http1Entry { service, state })
             }
             #[cfg(feature = "http3")]
             Protocol::Http3 => Box::new(MuxEntry {
                 service: Singleton::new(http3::Connect::new(
                     connect.connector,
-                    configure(&self.http3, req, conn::http3::Builder::options),
+                    configure(
+                        &self.http3,
+                        key.http3_options(),
+                        conn::http3::Builder::options,
+                    ),
                     connect.runtime,
                 )),
                 state,
@@ -650,7 +668,7 @@ where
             Protocol::Http2 => Box::new(MuxEntry {
                 service: ServiceBuilder::new()
                     .layer_fn(Singleton::new)
-                    .layer(self.http2_layer(req))
+                    .layer(self.http2_layer(key))
                     .service(connect),
                 state,
                 #[cfg(test)]
@@ -658,7 +676,7 @@ where
             }),
             #[cfg(not(feature = "http2"))]
             Protocol::Auto => {
-                let service = self.http1_layer(&state, req).layer(connect);
+                let service = self.http1_layer(&state, key).layer(connect);
                 Box::new(Http1Entry { service, state })
             }
             #[cfg(feature = "http2")]
@@ -667,9 +685,9 @@ where
                     |established| established.connected().is_negotiated_h2();
                 let upgrade = ServiceBuilder::new()
                     .layer_fn(Singleton::new)
-                    .layer(self.http2_layer(req));
+                    .layer(self.http2_layer(key));
                 let service =
-                    Negotiate::new(connect, inspect, self.http1_layer(&state, req), upgrade);
+                    Negotiate::new(connect, inspect, self.http1_layer(&state, key), upgrade);
 
                 Box::new(NegotiatedEntry { service, state })
             }

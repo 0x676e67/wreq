@@ -32,10 +32,9 @@ use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{
-        connect::ConnectConfig,
+        connect::{Cached, ConnectConfig},
         request::{RequestConfig, RequestConfigValue, impl_request_config_value},
     },
-    conn::dialer,
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -691,7 +690,8 @@ impl RequestBuilder {
     /// Set the proxy for this request.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.connect_config_mut().insert(proxy.into_matcher());
+            req.connect_config_mut()
+                .insert(Cached::new(proxy.into_matcher()));
         }
         self
     }
@@ -702,8 +702,14 @@ impl RequestBuilder {
     where
         V: Into<Option<IpAddr>>,
     {
-        if let Ok(ref mut req) = self.request {
-            dialer::set_local_address(req.connect_config_mut(), local_address.into());
+        if let Ok(ref mut req) = self.request
+            && let Some(address) = local_address.into()
+        {
+            let config = req.connect_config_mut();
+            match address {
+                IpAddr::V4(address) => config.insert(address),
+                IpAddr::V6(address) => config.insert(address),
+            };
         }
         self
     }
@@ -716,11 +722,12 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            dialer::set_local_addresses(
-                req.connect_config_mut(),
-                ipv4_address.into(),
-                ipv6_address.into(),
-            );
+            let (ipv4, ipv6) = (ipv4_address.into(), ipv6_address.into());
+            if ipv4.is_some() || ipv6.is_some() {
+                req.connect_config_mut()
+                    .insert_if_some(ipv4)
+                    .insert_if_some(ipv6);
+            }
         }
         self
     }
@@ -791,7 +798,8 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            dialer::set_interface(req.connect_config_mut(), interface.into());
+            req.connect_config_mut()
+                .insert(std::sync::Arc::<str>::from(interface.into()));
         }
         self
     }

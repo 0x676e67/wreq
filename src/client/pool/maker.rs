@@ -14,7 +14,7 @@ use std::{
 use futures_util::future::BoxFuture;
 use tower::{BoxError, Service, util::Oneshot};
 
-use super::{PoolTarget, TransportConnector, cache::Started};
+use super::{ConnectService, PoolTarget, cache::Started};
 use crate::{
     client::proto::Established,
     conn::Conn,
@@ -59,7 +59,7 @@ pub(super) struct MakeFuture<T> {
 
 impl<C> Service<PoolTarget> for ConnectionMaker<C>
 where
-    C: TransportConnector,
+    C: ConnectService,
 {
     type Response = Established;
     type Error = BoxError;

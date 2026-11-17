@@ -1,3 +1,12 @@
+/// Implements the default connection-key comparison for a type.
+macro_rules! impl_connect_config_value {
+    ($type:ty) => {
+        impl $crate::config::connect::ConnectConfigValue for $type {}
+    };
+}
+
+pub(crate) use impl_connect_config_value;
+
 derive_deftly::define_derive_deftly! {
     /// Derives full and scoped equality and hashing, requiring one group per field.
     /// Context fields also belong to sessions; connection fields also belong to pools.
@@ -155,47 +164,5 @@ derive_deftly::define_derive_deftly! {
     }}
 }
 
-/// Implements [`ConnectExtension`](crate::config::connect::ConnectExtension) for option types
-/// stored directly (`Self`) or with precomputed identity hashes (`Cached<Self>`).
-macro_rules! impl_connect_extension {
-    ($($(#[$meta:meta])* $ty:ty),+ $(,)?) => {
-        $(
-            $(#[$meta])*
-            impl $crate::config::connect::ConnectExtension for $ty {
-                type Stored = Self;
-
-                #[inline]
-                fn store(value: Self) -> Self::Stored {
-                    value
-                }
-
-                #[inline]
-                fn borrow(stored: &Self::Stored) -> &Self {
-                    stored
-                }
-            }
-        )+
-    };
-    (cached: $($(#[$meta:meta])* $ty:ty),+ $(,)?) => {
-        $(
-            $(#[$meta])*
-            impl $crate::config::connect::ConnectExtension for $ty {
-                type Stored = $crate::config::connect::Cached<Self>;
-
-                #[inline]
-                fn store(value: Self) -> Self::Stored {
-                    $crate::config::connect::Cached::new(value)
-                }
-
-                #[inline]
-                fn borrow(stored: &Self::Stored) -> &Self {
-                    stored.get()
-                }
-            }
-        )+
-    };
-}
-
 #[allow(clippy::single_component_path_imports)]
 pub(crate) use derive_deftly_template_ConfigKey;
-pub(crate) use impl_connect_extension;

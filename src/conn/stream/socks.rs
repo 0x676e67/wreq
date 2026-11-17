@@ -4,11 +4,11 @@ use std::time::Instant;
 
 use http::Uri;
 use netty::proxy::socks::{DnsResolve, SocksConnector, SocksError, Version};
-use tower::{ServiceExt, service_fn};
+use tower::ServiceExt;
 
 use crate::{
-    conn::dialer::{Dialer, SocketBindings, SocketRequest},
-    dns::Name,
+    conn::dialer::{Dial, Dialer, SocketBindings},
+    dns::{DynResolver, Name},
     ext::UriExt,
     proxy::matcher::Intercept,
     rt::BoxConnection,
@@ -19,25 +19,21 @@ use crate::{
 /// The dialer resolves the proxy address. The DNS mode controls whether netty
 /// resolves the origin locally or passes its hostname to the proxy.
 pub(super) async fn connect(
-    dialer: &Dialer,
+    dialer: Dialer,
+    resolver: DynResolver,
     target: &Uri,
     bindings: SocketBindings,
     deadline: Option<Instant>,
     proxy: &Intercept,
-    version: Version,
-    dns: DnsResolve,
+    (version, dns): (Version, DnsResolve),
 ) -> Result<BoxConnection, SocksError> {
     let is_https = target.is_https();
-    let resolver = dialer.resolver().clone().map_request(Name::new);
-    let dialer = dialer.clone();
-    let connect_proxy = service_fn(move |uri: Uri| {
-        let secure = is_https || uri.is_https();
-        dialer.dial(SocketRequest::Tcp {
-            secure,
-            uri,
-            bindings: bindings.clone(),
-            deadline,
-        })
+    let resolver = resolver.map_request(Name::new);
+    let connect_proxy = dialer.map_request(move |uri: Uri| Dial::Tcp {
+        nodelay: is_https || uri.is_https(),
+        uri,
+        bindings: bindings.clone(),
+        deadline,
     });
     let mut connector = SocksConnector::new(proxy.uri().clone(), connect_proxy, resolver);
     connector.set_auth(proxy.raw_auth());

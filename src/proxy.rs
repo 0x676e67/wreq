@@ -13,14 +13,14 @@ use std::{path::Path, sync::Arc};
 
 use http::{HeaderMap, Uri, header::HeaderValue};
 
-use crate::{IntoUri, ext::UriExt};
+use crate::{IntoUri, config::connect::impl_connect_config_value, ext::UriExt};
 
 // # Internals
 //
 // This module is a couple pieces:
 //
 // - The public builder API
-// - The internal built types that our Connector knows how to use.
+// - The proxy rules used to route connection attempts.
 //
 // The user creates a builder (`wreq::Proxy`), and configures any extras.
 // Once that type is passed to the `ClientBuilder`, we convert it into the
@@ -469,8 +469,7 @@ impl Matcher {
     }
 }
 
-impl crate::config::connect::ConnectConfigValue for Matcher {}
-crate::config::connect::impl_connect_extension!(cached: Matcher);
+impl_connect_config_value!(Matcher);
 
 // ===== impl Extra =====
 

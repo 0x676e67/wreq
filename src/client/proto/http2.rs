@@ -13,7 +13,9 @@ use super::{
     Established,
     mux::{Connection, Sender},
 };
-use crate::rt::DynRuntime;
+use crate::{config::connect::impl_connect_config_value, rt::DynRuntime};
+
+impl_connect_config_value!(netty::http2::Http2Options);
 
 /// Layers HTTP/2 handshaking over an established-transport service.
 ///
@@ -87,7 +89,6 @@ where
                 }
             }));
             tx.ready().await?;
-
             Ok(Connection::new(Sender::Http2(tx), connected, runtime))
         })
     }

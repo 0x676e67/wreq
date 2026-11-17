@@ -1,36 +1,46 @@
-//! The connector's terminal service: the stream and QUIC paths behind [`TransportConnector`],
-//! which selects each request's route and dispatches it down the path its protocol runs over, and
-//! the [`Transport`] a path returns.
+//! [`Connect`] selects a route and sends the attempt to the stream or QUIC service.
 
 use std::{
     sync::Arc,
     task::{Context, Poll, ready},
 };
 
+use futures_util::future::{self, Either, Ready};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Service, ServiceBuilder};
-#[cfg(feature = "http3")]
-use {super::quic::QuicConnector, crate::protocol::TransportKind, futures_util::future::Either};
 
 use super::{
-    Conn,
+    Config, Conn, ConnectAttempt, ConnectRequestExt,
     dialer::Dialer,
     layer::verbose::{self, Verbose},
-    request::ConnectAttempt,
-    route::Route,
-    stream::StreamConnector,
+    stream,
 };
-use crate::{config::connect::ConnectConfig, proxy::Matcher, tls};
+#[cfg(feature = "http3")]
+use super::{dialer::SocketBindings, quic};
+use crate::{
+    config::connect::{Cached, ConnectConfig},
+    dns::DynResolver,
+    ext::UriExt,
+    protocol::TransportKind,
+    proxy::Matcher,
+    rt::DynRuntime,
+};
 
-/// Connects every transport behind one service. Each request resolves its route from the client's
-/// proxy rules and goes to the stream or QUIC path its protocol runs over; how a path is
-/// composed stays private. Clones share each path's state and proxy rules.
+type StreamFuture = <Verbose<stream::Connect> as Service<ConnectAttempt<stream::Route>>>::Future;
+#[cfg(feature = "http3")]
+type RoutedFuture =
+    Either<StreamFuture, <quic::Connect as Service<ConnectAttempt<quic::Route>>>::Future>;
+#[cfg(not(feature = "http3"))]
+type RoutedFuture = StreamFuture;
+
+/// Selects a route using the client's proxy rules and the request's transport.
+/// Clones share the proxy rules and the state of both connection services.
 #[derive(Clone)]
-pub(crate) struct TransportConnector {
+pub(crate) struct Connect {
     proxies: Arc<Vec<Matcher>>,
-    stream: Verbose<StreamConnector>,
+    stream: Verbose<stream::Connect>,
     #[cfg(feature = "http3")]
-    quic: QuicConnector,
+    quic: quic::Connect,
 }
 
 /// Transport carried by a [`Conn`]: a byte stream for HTTP/1 and HTTP/2, or QUIC for HTTP/3.
@@ -53,39 +63,64 @@ pub(crate) trait Io: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
 
 impl<T> Io for T where T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
 
-// ===== impl TransportConnector =====
+// ===== impl Connect =====
 
-impl TransportConnector {
-    /// Compiles client TLS and composes both paths over `dialer` with the client's proxy rules.
-    /// QUIC endpoints remain lazy until a connection future is polled.
-    pub(crate) fn new(
-        dialer: Dialer,
-        tls: tls::Config,
-        proxies: Vec<Matcher>,
-        verbose: bool,
+impl Connect {
+    /// Builds the available transports with the client's proxy rules.
+    pub(super) fn new(
+        runtime: &DynRuntime,
+        resolver: DynResolver,
+        Config {
+            tcp,
+            tls,
+            proxies,
+            happy_eyeballs_timeout,
+            verbose,
+        }: Config,
         config: &ConnectConfig,
     ) -> crate::Result<Self> {
+        let tcp_nodelay = tcp.nodelay;
+        let dialer = Dialer::new(
+            runtime.clone(),
+            resolver.clone(),
+            tcp,
+            happy_eyeballs_timeout,
+        );
+
+        #[cfg(feature = "http3")]
+        let quic = quic::Connect::new(
+            runtime.clone(),
+            resolver.clone(),
+            SocketBindings::from_config(config.into()),
+            happy_eyeballs_timeout,
+            tls.clone().quic(config)?,
+            #[cfg(feature = "socks")]
+            dialer.clone(),
+        )?;
+
+        let stream = stream::Connect::new(
+            dialer,
+            tls.stream(config)?,
+            tcp_nodelay,
+            #[cfg(feature = "socks")]
+            resolver,
+        );
+
         Ok(Self {
             proxies: Arc::new(proxies),
             #[cfg(feature = "http3")]
-            quic: QuicConnector::new(dialer.clone(), tls.clone().quic(config)?)?,
+            quic,
             stream: ServiceBuilder::new()
                 .option_layer(verbose::layer(verbose))
-                .service(StreamConnector::new(dialer, tls.stream(config)?)),
+                .service(stream),
         })
     }
 }
 
-impl Service<ConnectAttempt> for TransportConnector {
+impl Service<ConnectAttempt> for Connect {
     type Response = Conn;
     type Error = BoxError;
-    #[cfg(feature = "http3")]
-    type Future = Either<
-        <Verbose<StreamConnector> as Service<(ConnectAttempt, Route)>>::Future,
-        <QuicConnector as Service<(ConnectAttempt, Route)>>::Future,
-    >;
-    #[cfg(not(feature = "http3"))]
-    type Future = <Verbose<StreamConnector> as Service<(ConnectAttempt, Route)>>::Future;
+    type Future = Either<RoutedFuture, Ready<Result<Conn, BoxError>>>;
 
     #[inline]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -95,14 +130,50 @@ impl Service<ConnectAttempt> for TransportConnector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, attempt: ConnectAttempt) -> Self::Future {
-        let route = Route::select(attempt.request(), &self.proxies);
-        cfg_select! {
-            feature = "http3" => match attempt.request().protocol().transport() {
-                TransportKind::Stream => Either::Left(self.stream.call((attempt, route))),
-                TransportKind::Quic => Either::Right(self.quic.call((attempt, route))),
-            },
-            _ => self.stream.call((attempt, route)),
+    fn call(
+        &mut self,
+        ConnectAttempt {
+            request, deadline, ..
+        }: ConnectAttempt,
+    ) -> Self::Future {
+        let uri = request.uri();
+        // A request proxy takes precedence only when it intercepts this origin.
+        let proxy = request
+            .connect_config()
+            .get_ref::<Cached<Matcher>>()
+            .map(Cached::get)
+            .and_then(|proxy| proxy.intercept(uri))
+            .or_else(|| self.proxies.iter().find_map(|proxy| proxy.intercept(uri)));
+        let transport = cfg_select! {
+            feature = "http3" => request.body().protocol().transport(),
+            _ => TransportKind::Stream,
+        };
+        let future = match transport {
+            TransportKind::Stream => stream::Route::new(proxy, uri.is_https())
+                .map(|route| {
+                    let future = self.stream.call(ConnectAttempt {
+                        request,
+                        deadline,
+                        route,
+                    });
+                    cfg_select! {
+                        feature = "http3" => Either::Left(future),
+                        _ => future,
+                    }
+                })
+                .map_err(Into::into),
+            #[cfg(feature = "http3")]
+            TransportKind::Quic => quic::Route::new(proxy).map(|route| {
+                Either::Right(self.quic.call(ConnectAttempt {
+                    request,
+                    deadline,
+                    route,
+                }))
+            }),
+        };
+        match future {
+            Ok(future) => Either::Left(future),
+            Err(error) => Either::Right(future::err(error)),
         }
     }
 }

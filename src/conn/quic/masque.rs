@@ -24,7 +24,7 @@ use futures_util::{
     StreamExt,
     stream::{self, BoxStream},
 };
-use http::Uri;
+use http::{Request, Uri};
 use netty::{
     conn::http3,
     proxy::masque::{ConnectUdp, SendError, Template, UdpTunnel},
@@ -39,7 +39,7 @@ use tower::{BoxError, ServiceExt, service_fn};
 use super::endpoint::{Endpoints, TUNNEL_MTU};
 use crate::{
     Body,
-    conn::{Conn, request::ConnectRequest},
+    conn::{Conn, ConnectionKey},
     error::ProxyConnect,
     ext::UriExt,
     proxy::matcher::Intercept,
@@ -101,7 +101,7 @@ struct Receiver(BoxStream<'static, Result<Bytes, ::quic::ConnectionError>>);
 /// Opens CONNECT-UDP and authenticates the target; its endpoint retains the outer connection.
 pub(super) async fn connect(
     endpoints: &Endpoints,
-    request: ConnectRequest,
+    request: Request<ConnectionKey>,
     deadline: Option<Instant>,
     proxy: Intercept,
 ) -> Result<Conn, BoxError> {
@@ -118,7 +118,7 @@ pub(super) async fn connect(
             .connect_proxy(&request, template.proxy(), deadline)
             .await?;
         let remote = connection.remote_address();
-        let (sender, driver) = http3::Builder::new(endpoints.dialer().runtime().clone())
+        let (sender, driver) = http3::Builder::new(endpoints.runtime().clone())
             .handshake_with_datagrams::<_, Body>(OuterConnection::new(connection))
             .await?;
 

@@ -7,11 +7,12 @@ use std::{
     time::Duration,
 };
 
+use http::Request;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 
 use crate::{
-    conn::request::{ConnectAttempt, ConnectRequest},
+    conn::{ConnectAttempt, ConnectionKey},
     error::TimedOut,
     rt::{BoxSleep, DynRuntime, Timer as _, deadline_after},
 };
@@ -71,7 +72,7 @@ impl<S> Layer<S> for DeadlineLayer {
 
 // ===== impl Deadline =====
 
-impl<S> Service<ConnectRequest> for Deadline<S>
+impl<S> Service<Request<ConnectionKey>> for Deadline<S>
 where
     S: Service<ConnectAttempt>,
     S::Error: Into<BoxError>,
@@ -85,12 +86,16 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, request: ConnectRequest) -> Self::Future {
+    fn call(&mut self, request: Request<ConnectionKey>) -> Self::Future {
         let deadline = self
             .timeout
             .map(|timeout| deadline_after(self.runtime.now(), timeout));
         ResponseFuture {
-            future: self.inner.call(ConnectAttempt::new(request, deadline)),
+            future: self.inner.call(ConnectAttempt {
+                request,
+                deadline,
+                route: (),
+            }),
             sleep: deadline.map(|deadline| self.runtime.sleep_until(deadline)),
         }
     }

@@ -13,7 +13,7 @@ use btls::{
     ex_data::Index,
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode, SslVersion},
 };
-use http::Uri;
+use http::{Request, Uri};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::BoxError;
@@ -24,10 +24,9 @@ use super::{
 };
 use crate::{
     Error,
-    config::connect::{Cached, ConnectConfig, KeyScope, changed},
-    conn::request::ConnectRequest,
-    ext::UriExt,
-    protocol::{Protocol, TransportKind},
+    config::connect::{Cached, ConnectConfig, ConnectConfigRef, KeyScope, changed},
+    conn::{ConnectRequestExt, ConnectionKey},
+    protocol::Protocol,
     tls::{AlpnProtocol, TlsOptions, session::SessionTarget},
 };
 
@@ -58,6 +57,12 @@ pub struct TlsConnector {
     alpn_enabled: bool,
 }
 
+/// Request TLS overrides for handshake settings and ticket lookup.
+pub(crate) struct HandshakeOptions<T> {
+    full: Option<T>,
+    session_changed: bool,
+}
+
 /// A stream which may be wrapped with TLS.
 pub enum MaybeHttpsStream<T> {
     /// A raw HTTP stream.
@@ -71,7 +76,7 @@ pub enum MaybeHttpsStream<T> {
 impl StreamTls {
     /// Compiles the client's TLS context while preserving the shared session scope.
     pub(super) fn new(tls: Config, config: &ConnectConfig) -> crate::Result<Self> {
-        let options = config.get_arc::<TlsOptions>();
+        let options = config.get_ref::<Cached<TlsOptions>>().map(Cached::arc);
         let contexts = ContextCache::new(compile(&tls, options.as_deref())?);
         Ok(Self {
             inner: Arc::new(Inner {
@@ -84,9 +89,9 @@ impl StreamTls {
 
     /// Selects the context for the request's TLS options before dialing.
     /// Requests without different context options keep the client's context.
-    pub(crate) fn for_request(self, req: &ConnectRequest) -> crate::Result<TlsConnector> {
+    pub(crate) fn for_request(self, req: &Request<ConnectionKey>) -> crate::Result<TlsConnector> {
         let inner = &*self.inner;
-        let options = changed::<TlsOptions>(req.config(), KeyScope::Context);
+        let options = changed::<TlsOptions>(req.connect_config(), KeyScope::Context);
         let context = inner
             .contexts
             .get(options, |options| compile(&inner.tls, Some(options)))?;
@@ -96,22 +101,57 @@ impl StreamTls {
             alpn_enabled: true,
         })
     }
+}
 
+// ===== impl HandshakeOptions =====
+
+impl<'a> HandshakeOptions<&'a Cached<TlsOptions>> {
+    /// Selects the request TLS overrides relative to the client's options.
+    pub(crate) fn new(config: ConnectConfigRef<'a>) -> Self {
+        let full = changed::<TlsOptions>(config, KeyScope::Full);
+        Self {
+            full,
+            session_changed: full.is_some_and(|options| options.get().pre_shared_key)
+                && changed::<TlsOptions>(config, KeyScope::Session).is_some(),
+        }
+    }
+
+    /// Retains the TLS overrides across a proxy dial without retaining the request.
+    pub(crate) fn into_owned(self) -> HandshakeOptions<Cached<TlsOptions>> {
+        HandshakeOptions {
+            full: self.full.cloned(),
+            session_changed: self.session_changed,
+        }
+    }
+}
+
+impl HandshakeOptions<Cached<TlsOptions>> {
+    /// Borrows the options retained for the proxy handshake.
+    pub(crate) fn as_ref(&self) -> HandshakeOptions<&Cached<TlsOptions>> {
+        HandshakeOptions {
+            full: self.full.as_ref(),
+            session_changed: self.session_changed,
+        }
+    }
+}
+
+// ===== impl TlsConnector =====
+
+impl TlsConnector {
     /// Prepares a connection using its request-specific or shared TLS context.
     /// Unset or empty request ALPN inherits the client's list during handshake setup.
     /// `remote_ip` is the dialed socket's peer, which keys session resumption.
     fn ssl_for_connection(
         &self,
-        req: &ConnectRequest,
+        key: &ConnectionKey,
+        overrides: HandshakeOptions<&Cached<TlsOptions>>,
         route: &Uri,
         remote_ip: Option<IpAddr>,
-        context: &SslConnector,
-        alpn_enabled: bool,
     ) -> Result<Ssl, BoxError> {
-        let inner = &*self.inner;
-        let request_options = changed::<TlsOptions>(req.config(), KeyScope::Full).map(Cached::get);
+        let inner = &*self.tls.inner;
+        let request_options = overrides.full.map(Cached::get);
         let options = request_options.or(inner.options.as_deref());
-        let mut cfg = context.configure()?;
+        let mut cfg = self.context.configure()?;
 
         cfg.set_use_server_name_indication(inner.tls.sni);
         cfg.set_verify_hostname(inner.tls.verify_hostname);
@@ -124,8 +164,8 @@ impl StreamTls {
 
         // Disabled proxy ALPN also skips ALPS. An advertised ALPN list must be nonempty:
         // https://www.rfc-editor.org/rfc/rfc7301#section-3.1
-        if alpn_enabled {
-            let protocols: &[AlpnProtocol] = match req.protocol() {
+        if self.alpn_enabled {
+            let protocols: &[AlpnProtocol] = match key.protocol() {
                 Protocol::Http1 => &[AlpnProtocol::HTTP1],
                 #[cfg(feature = "http2")]
                 Protocol::Http2 => &[AlpnProtocol::HTTP2],
@@ -176,10 +216,10 @@ impl StreamTls {
 
         if options.is_some_and(|options| options.pre_shared_key) {
             let tickets = &inner.tls.tickets;
-            let target = SessionTarget::new(
-                req,
+            let target = SessionTarget::stream(
+                key,
                 route,
-                TransportKind::Stream,
+                overrides.full.filter(|_| overrides.session_changed),
                 remote_ip,
                 tickets.session_id_context()?,
             );
@@ -224,11 +264,7 @@ impl StreamTls {
 
         host
     }
-}
 
-// ===== impl TlsConnector =====
-
-impl TlsConnector {
     /// Disables ALPN negotiation.
     #[inline]
     pub fn no_alpn(&mut self) -> &mut Self {
@@ -242,30 +278,23 @@ impl TlsConnector {
         self.tls.inner.tls.tls_info
     }
 
-    /// Runs the TLS handshake with `route` over an established transport, or returns it
-    /// unchanged for an `http` route. `route` is the origin or the proxy hop that carries it.
-    /// The transport may already carry a proxy's TLS; `remote_ip` is the peer of the socket
-    /// beneath it.
+    /// Authenticates the origin or proxy at `route` with the selected TLS options.
+    /// `remote_ip` is the peer of the underlying socket, even inside a CONNECT tunnel.
     pub(crate) async fn handshake<IO>(
         &self,
         io: IO,
-        req: &ConnectRequest,
+        key: &ConnectionKey,
+        options: HandshakeOptions<&Cached<TlsOptions>>,
         route: &Uri,
         remote_ip: Option<IpAddr>,
-    ) -> Result<MaybeHttpsStream<IO>, BoxError>
+    ) -> Result<SslStream<IO>, BoxError>
     where
         IO: AsyncRead + AsyncWrite + Unpin,
     {
-        if route.is_http() {
-            return Ok(MaybeHttpsStream::Http(io));
-        }
-
-        let ssl =
-            self.tls
-                .ssl_for_connection(req, route, remote_ip, &self.context, self.alpn_enabled)?;
+        let ssl = self.ssl_for_connection(key, options, route, remote_ip)?;
         let mut stream = SslStream::new(ssl, io)?;
         Pin::new(&mut stream).connect().await?;
-        Ok(MaybeHttpsStream::Https(stream))
+        Ok(stream)
     }
 }
 

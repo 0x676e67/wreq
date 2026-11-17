@@ -7,7 +7,7 @@ use std::{
 
 use lru::DefaultHasher;
 
-use super::{ConnectConfig, ConnectConfigRef, ConnectExtension};
+use super::{ConnectConfig, ConnectConfigRef};
 
 /// Shares one process-wide seed across configuration, pool and session identity hashes.
 pub(crate) static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
@@ -71,14 +71,6 @@ pub(crate) struct Full<T> {
     hash: u64,
 }
 
-// ===== impl ConnectConfigValue =====
-
-impl ConnectConfigValue for crate::http1::Http1Options {}
-#[cfg(feature = "http2")]
-impl ConnectConfigValue for crate::http2::Http2Options {}
-#[cfg(feature = "http3")]
-impl ConnectConfigValue for crate::http3::Http3Options {}
-
 // ===== impl Cached =====
 
 impl<T> Cached<T> {
@@ -125,6 +117,11 @@ impl<T> Full<T> {
             hash: value.hash(KeyScope::Full),
         }
     }
+
+    /// Borrows the selected option shared with the pool key.
+    pub(crate) fn get(&self) -> &T {
+        &self.value
+    }
 }
 
 impl<T: ConnectConfigValue> PartialEq for Full<T> {
@@ -144,20 +141,20 @@ impl<T> Hash for Full<T> {
 }
 
 /// Borrows a request option if it differs from the client default within `scope`.
-pub(crate) fn changed<T>(config: ConnectConfigRef<'_>, scope: KeyScope) -> Option<&Cached<T>>
-where
-    T: ConnectExtension<Stored = Cached<T>> + ConnectConfigValue,
-{
-    let value = config.local().get::<T>()?;
+pub(crate) fn changed<T: ConnectConfigValue>(
+    config: ConnectConfigRef<'_>,
+    scope: KeyScope,
+) -> Option<&Cached<T>> {
+    let value = config.local().get_ref::<Cached<T>>()?;
     (!config
         .base
-        .and_then(ConnectConfig::get::<T>)
+        .and_then(ConnectConfig::get_ref::<Cached<T>>)
         .is_some_and(|other| value.same(other, scope)))
     .then_some(value)
 }
 
 /// Clones a request value if it differs from the client default.
-pub(crate) fn changed_value<T: ConnectExtension + Clone + Eq>(
+pub(crate) fn changed_value<T: Clone + Eq + Send + Sync + 'static>(
     config: ConnectConfigRef<'_>,
 ) -> Option<T> {
     let value = config.local().get_ref::<T>()?;

@@ -12,10 +12,13 @@ use tower::{BoxError, Service, ServiceExt};
 use super::mux::{Connection, Sender};
 use crate::{
     Body,
-    client::pool::{PoolTarget, TransportConnector},
+    client::pool::{ConnectService, PoolTarget},
+    config::connect::impl_connect_config_value,
     conn::Conn,
     rt::DynRuntime,
 };
+
+impl_connect_config_value!(netty::http3::Http3Options);
 
 /// Establishes HTTP/3 connections for the pool's shared singleton.
 /// Handshakes use the entry's builder and do not wait for the peer, so, as for HTTP/2,
@@ -46,7 +49,7 @@ impl<C> Connect<C> {
 
 impl<C> Service<PoolTarget> for Connect<C>
 where
-    C: TransportConnector,
+    C: ConnectService,
 {
     type Response = Connection;
     type Error = BoxError;

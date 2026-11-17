@@ -32,9 +32,12 @@ use crate::{
         error::{Error, ErrorKind},
         pool::cache::Started,
     },
+    config::connect::impl_connect_config_value,
     conn::Connected,
     rt::{DynRuntime, Timer as _},
 };
+
+impl_connect_config_value!(netty::http1::Http1Options);
 
 /// Prepares and sends requests over one reusable HTTP/1 connection.
 ///

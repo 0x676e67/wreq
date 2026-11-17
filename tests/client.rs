@@ -29,7 +29,7 @@ use wreq::{Client, PoolStrategy, header::OrigHeaderMap, http1::Http1Options};
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn socket_bindings_inherit_and_partition_the_pool() {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());
@@ -52,18 +52,26 @@ async fn socket_bindings_inherit_and_partition_the_pool() {
     let client = Client::builder_tokio()
         .no_proxy()
         .local_address(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        .local_addresses(None, Ipv6Addr::LOCALHOST)
+        .local_address(None)
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
-    for (address, expected) in [
-        (None, "0 127.0.0.1"),
-        (Some(Ipv4Addr::LOCALHOST), "0 127.0.0.1"),
-        (Some(Ipv4Addr::new(127, 0, 0, 2)), "1 127.0.0.2"),
-        (None, "0 127.0.0.1"),
+    for (ipv4, ipv6, expected) in [
+        (None, None, "0 127.0.0.1"),
+        (
+            Some(Ipv4Addr::LOCALHOST),
+            Some(Ipv6Addr::LOCALHOST),
+            "0 127.0.0.1",
+        ),
+        (Some(Ipv4Addr::new(127, 0, 0, 2)), None, "1 127.0.0.2"),
+        (None, None, "0 127.0.0.1"),
     ] {
         let response = client
             .get(&url)
-            .local_address(address.map(IpAddr::V4))
+            .local_address(ipv4.map(IpAddr::V4))
+            .local_addresses(None, ipv6)
+            .local_address(None)
             .send()
             .await
             .unwrap();
