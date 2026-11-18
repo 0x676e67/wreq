@@ -5,11 +5,12 @@
 use std::{
     collections::VecDeque,
     future::Future,
+    hash::{BuildHasher, Hash, Hasher},
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroUsize,
     ops::Deref,
     pin::pin,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 
@@ -21,7 +22,7 @@ use btls::x509::X509;
 use bytes::Bytes;
 use futures_util::future::{self, BoxFuture, Either};
 use http::{Request, Uri};
-use lru::LruCache;
+use lru::{DefaultHasher, LruCache};
 use tokio::sync::Notify;
 use tower::BoxError;
 
@@ -97,8 +98,9 @@ struct ScopedTokens {
 }
 
 /// The target origin and its normalized HTTP/3 overrides.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq)]
 struct TokenKey {
+    hash: u64,
     origin: Uri,
     options: Options,
 }
@@ -420,10 +422,7 @@ impl Endpoints {
         let tokens = (!matches!(path, Path::Proxy)).then(|| {
             Arc::new(ScopedTokens {
                 tokens: self.tokens.clone(),
-                key: TokenKey {
-                    origin: origin.clone(),
-                    options: Options::new(Protocol::Http3, overrides, &self.client_config),
-                },
+                key: TokenKey::new(origin, overrides, &self.client_config),
             })
         });
         Ok(QuicConfig {
@@ -582,6 +581,29 @@ impl Path {
             }
         }
         Ok(transport)
+    }
+}
+
+// ===== impl TokenKey =====
+
+impl TokenKey {
+    /// Hashes the normalized options before token cache access acquires its lock.
+    #[must_use]
+    fn new(origin: &Uri, overrides: &ConnectConfig, client_config: &ConnectConfig) -> Self {
+        static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
+        let options = Options::new(Protocol::Http3, overrides, client_config);
+        let hash = HASHER.hash_one((origin, &options));
+        Self {
+            hash,
+            origin: origin.clone(),
+            options,
+        }
+    }
+}
+
+impl Hash for TokenKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash);
     }
 }
 
@@ -1165,10 +1187,7 @@ mod tests {
         };
 
         let first = request("first", None);
-        let key = TokenKey {
-            origin: first.uri().clone(),
-            options: Options::new(Protocol::Http3, first.body(), &endpoints.client_config),
-        };
+        let key = TokenKey::new(first.uri(), first.body(), &endpoints.client_config);
         let received = |endpoints: &Endpoints| {
             endpoints
                 .tokens
