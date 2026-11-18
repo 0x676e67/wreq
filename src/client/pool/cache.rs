@@ -429,30 +429,29 @@ where
                     )),
                 };
             }
-            Ready::None => {
-                if let Some(id) = self.ready_waiter.take() {
-                    let reserved = {
-                        let mut shared = self.shared.lock();
-                        match shared.take_reserved(id) {
-                            Some(service) => Ok(service),
-                            None => Err(shared.cancel_waiter(id)),
-                        }
-                    };
-                    match reserved {
-                        Ok(service) => {
-                            return CacheFuture::Cached {
-                                service: Some(Cached::new(
-                                    service,
-                                    Arc::downgrade(&self.shared),
-                                    self.active.clone(),
-                                    true,
-                                )),
-                            };
-                        }
-                        Err(result) => finish_cancel(result),
+            Ready::None if let Some(id) = self.ready_waiter.take() => {
+                let reserved = {
+                    let mut shared = self.shared.lock();
+                    match shared.take_reserved(id) {
+                        Some(service) => Ok(service),
+                        None => Err(shared.cancel_waiter(id)),
                     }
+                };
+                match reserved {
+                    Ok(service) => {
+                        return CacheFuture::Cached {
+                            service: Some(Cached::new(
+                                service,
+                                Arc::downgrade(&self.shared),
+                                self.active.clone(),
+                                true,
+                            )),
+                        };
+                    }
+                    Err(result) => finish_cancel(result),
                 }
             }
+            Ready::None => {}
         }
 
         let available = {
@@ -952,7 +951,6 @@ fn cache_shutdown(mut receiver: watch::Receiver<()>) -> BoxFuture<'static, ()> {
 #[cfg(test)]
 mod tests {
     use std::{
-        convert::Infallible,
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -988,10 +986,10 @@ mod tests {
 
     impl Service<usize> for QueueConnector {
         type Response = usize;
-        type Error = Infallible;
+        type Error = !;
         type Future = futures_util::future::Either<
-            std::future::Ready<Result<usize, Infallible>>,
-            std::future::Pending<Result<usize, Infallible>>,
+            std::future::Ready<Result<usize, Self::Error>>,
+            std::future::Pending<Result<usize, Self::Error>>,
         >;
 
         fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -1050,8 +1048,8 @@ mod tests {
 
     impl Service<usize> for StrictConnector {
         type Response = usize;
-        type Error = Infallible;
-        type Future = std::future::Ready<Result<usize, Infallible>>;
+        type Error = !;
+        type Future = std::future::Ready<Result<usize, Self::Error>>;
 
         fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             self.ready = true;
@@ -1256,7 +1254,7 @@ mod tests {
             let mut visited = Vec::new();
             let discarded = shared.retain_idle(|value| {
                 visited.push(*value);
-                *value % 3 == 0
+                value.is_multiple_of(3)
             });
             assert_eq!(visited, (0..64).collect::<Vec<_>>());
             assert_eq!(

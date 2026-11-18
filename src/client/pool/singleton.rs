@@ -742,11 +742,8 @@ impl<F, S> Batch<F, S> {
     /// Takes the maker only for the participant currently acting as driver.
     #[must_use]
     fn take_future(&mut self, id: ParticipantId) -> Option<Pin<Box<F>>> {
-        self.driver
-            .as_ref()
-            .is_some_and(|driver| driver.id == id)
-            .then(|| self.future.take())
-            .flatten()
+        self.future
+            .take_if(|_| self.driver.as_ref().is_some_and(|driver| driver.id == id))
     }
 
     /// Restores a pending maker when the same participant remains the driver.

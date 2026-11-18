@@ -254,7 +254,7 @@ mod tests {
                 Arc::downgrade(&target),
                 DynRuntime::new(crate::rt::tokio::TokioRuntime),
             );
-            expire.schedule(Some(Duration::from_secs(60)));
+            expire.schedule(Some(Duration::from_mins(1)));
             // Only a polled task claims the watcher, so one a runtime hands back never
             // turns away a concurrent schedule.
             assert!(!expire.is_running());

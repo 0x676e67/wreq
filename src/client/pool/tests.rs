@@ -468,7 +468,7 @@ async fn idle_task_waits_for_a_runtime_after_off_runtime_drop() {
         TestConnector::KeepsAlive,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
         Config {
-            idle_timeout: Some(Duration::from_secs(60)),
+            idle_timeout: Some(Duration::from_mins(1)),
             ..Config::default()
         },
         &ConnectConfig::default(),
@@ -549,7 +549,7 @@ async fn checkouts_remove_empty_map_entries() {
     ] {
         let pool = test_pool(TestConnector::Fails);
         let result = pool.test_checkout(connect_key(protocol)).await;
-        assert!(result.is_err());
+        std::assert_matches!(&result, Err(_));
         assert!(pool.inner.entries.lock().is_empty());
         assert!(!pool.inner.expire.is_running());
 
