@@ -3,7 +3,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{self, Poll},
     time::{Duration, Instant},
@@ -105,6 +105,12 @@ impl Connection {
         }
     }
 
+    /// Returns whether the shared sender is open and unpoisoned.
+    #[must_use]
+    pub(in crate::client) fn is_open(&self) -> bool {
+        !self.connected.poisoned() && !self.is_closed()
+    }
+
     /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS.
     #[must_use]
     pub fn extended_connect(&self) -> Option<bool> {
@@ -134,16 +140,34 @@ impl Connection {
         self.state.has_checkouts() || !self.is_idle()
     }
 
+    /// Sets `pending` and returns `true` if a checkout is active.
+    /// The final release shares the lock so it can observe the flag.
+    #[must_use]
+    pub(in crate::client) fn defer_until_idle(&self, pending: &AtomicBool) -> bool {
+        if !self.state.has_checkouts() {
+            return false;
+        }
+
+        // The last release may have finished before we acquired the lock.
+        let _idle_at = self.state.idle_at.lock();
+        let checked_out = self.state.has_checkouts();
+        if checked_out {
+            pending.store(true, Ordering::Release);
+        }
+        checked_out
+    }
+
     /// Marks the shared sender checked out until response headers are returned.
     #[inline(always)]
     pub fn begin_checkout(&self) {
         self.state.acquire();
     }
 
-    /// Ends response-header checkout and records when its count reaches zero.
+    /// Ends a checkout, returning `true` and recording the idle time on the last release.
+    #[must_use]
     #[inline(always)]
-    pub fn finish_checkout(&self) {
-        let _ = self.state.release(self.runtime.now());
+    pub fn finish_checkout(&self) -> bool {
+        self.state.release(self.runtime.now())
     }
 
     /// Returns whether the shared sender is healthy and reusable.
@@ -211,10 +235,9 @@ impl ConnectionState {
 
     /// Registers one sender checkout.
     fn acquire(&self) {
-        let _ = self
-            .checkouts
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                Some(count.saturating_add(1))
+        self.checkouts
+            .update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                count.saturating_add(1)
             });
     }
 

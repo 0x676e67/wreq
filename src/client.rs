@@ -913,9 +913,9 @@ impl ClientBuilder {
     ///
     /// A group shares an origin, a protocol selection, and connection settings, including
     /// any [`Group`](crate::Group). When a new group needs room, the pool evicts
-    /// the least recently used idle group. A checked-out HTTP/2 or HTTP/3 sender
-    /// or an open stream keeps the group in use.
-    /// The default and `0` are unlimited.
+    /// the least recently used idle group. A group skipped because its HTTP/2 or
+    /// HTTP/3 sender is checked out counts again when its last checkout ends.
+    /// Open streams can finish after eviction. The default and `0` are unlimited.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
         self.config.svc.pool.max_size = NonZeroUsize::new(max);

@@ -8,8 +8,8 @@
 //! handshake. Other successful transports go through the HTTP/1 handshake on the same stream.
 //!
 //! HTTP/1 returns exclusive senders when ready. HTTP/2 and HTTP/3 share senders, and their
-//! checkouts end at response headers, on error, or on cancellation. Open streams
-//! keep the shared sender in use after the checkout ends.
+//! checkouts end at response headers, on error, or on cancellation. Streams can finish
+//! after the pool evicts their sender.
 //!
 //! The map lock protects entry selection and bookkeeping. Checkout polling and destruction
 //! of detached senders happen after unlocking.
@@ -500,6 +500,8 @@ where
         let entry_key = key.clone();
         let state = Arc::new(EntryState {
             uses: AtomicUsize::new(0),
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            lru_pruned: AtomicBool::new(false),
             maintain: Box::new(move |identity| {
                 if let Some(pool) = pool.upgrade() {
                     pool.maintain_entry(&entry_key, identity);
@@ -540,29 +542,27 @@ where
             Some((true, _)) => removed.extend(services.remove_if(key, |_| true)),
             Some((false, true)) => {
                 schedule_expiration = true;
-                let (pruned, evicted) = services.mark_retained(key, |entry| entry.is_evictable());
-                // Pruning clears LRU records for dead or busy groups. Shared senders
-                // in use stay pooled and regain a record on a later checkout.
+                let (pruned, evicted) = services.mark_retained(key, |entry| entry.keep_lru());
+                // A later checkout may restore the record before the final release.
+                #[cfg(any(feature = "http2", feature = "http3"))]
+                if identity.lru_pruned.load(Ordering::Relaxed) {
+                    identity.lru_pruned.store(false, Ordering::Relaxed);
+                }
+                // Drop stale state. Busy senders stay pooled after losing their LRU record.
                 if !pruned.is_empty() {
                     let now = self.now();
                     for key in &pruned {
-                        let empty = services.get_mut(key).is_some_and(|entry| {
+                        removed.extend(services.remove_if(key, |entry| {
                             discarded.extend(entry.retain(now, self.idle_timeout));
                             entry.is_empty()
-                        });
-                        if empty {
-                            removed.extend(services.remove_if(key, |_| true));
-                        }
+                        }));
                     }
                 }
                 if let Some(evicted) = evicted {
-                    let empty = services.get_mut(&evicted).is_some_and(|entry| {
+                    removed.extend(services.remove_if(&evicted, |entry| {
                         discarded.extend(entry.evict_retained());
                         entry.is_empty()
-                    });
-                    if empty {
-                        removed.extend(services.remove_if(&evicted, |_| true));
-                    }
+                    }));
                 }
             }
             Some((false, false)) => services.unmark_retained(key),

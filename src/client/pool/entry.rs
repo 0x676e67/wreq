@@ -26,6 +26,7 @@ use {
 use {
     super::singleton::{Singled, Singleton, SingletonFuture},
     crate::client::proto::mux,
+    std::sync::atomic::AtomicBool,
 };
 
 use super::{
@@ -53,11 +54,10 @@ pub(super) trait Entry<T>: Send {
     /// Returns whether this entry retains reusable connection state.
     fn is_retained(&self) -> bool;
 
-    /// Returns whether LRU eviction would remove only idle state.
+    /// Returns whether the LRU should keep this entry as an eviction candidate.
     ///
-    /// HTTP/1 drains idle senders. Shared HTTP/2 and HTTP/3 senders become eligible
-    /// once all their checkouts and streams end.
-    fn is_evictable(&self) -> bool {
+    /// A checked-out shared sender requests a new record on its final return.
+    fn keep_lru(&self) -> bool {
         self.is_retained()
     }
 
@@ -182,14 +182,14 @@ pub(super) struct EntryUse {
     cleanup_on_drop: bool,
 }
 
-/// Deferred cleanup for a successful checkout that later discards its sender.
+/// Deferred maintenance when a checkout discards its sender or restores its LRU record.
 ///
 /// In [`Pooled`], this guard drops after the sender so cleanup sees the updated cache
 /// or singleton state.
 pub(super) struct EntryCleanupGuard {
     /// Entry identity and cleanup operation transferred from [`EntryUse`].
     state: Option<Arc<EntryState>>,
-    /// Whether sender disposal may have left the mapped entry empty.
+    /// Whether the entry needs maintenance after the sender is dropped.
     armed: bool,
 }
 
@@ -202,6 +202,9 @@ pub(super) struct EntryCleanupGuard {
 pub(super) struct EntryState {
     /// Number of checkout futures keeping the entry active.
     pub(super) uses: AtomicUsize,
+    /// Tracks an LRU record pruned because the shared sender was checked out.
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    pub(super) lru_pruned: AtomicBool,
     /// Reconciles this exact entry with cleanup and idle-group limits.
     pub(super) maintain: EntryMaintenance,
 }
@@ -331,14 +334,13 @@ where
     /// A peer can close an idle connection before the next sweep; a dead sender
     /// must not keep its idle-group LRU slot and displace live groups.
     fn is_retained(&self) -> bool {
-        self.service.has_service_and(|connection| {
-            !connection.connected().poisoned() && !connection.is_closed()
-        })
+        self.service.has_service_and(mux::Connection::is_open)
     }
 
-    /// Keeps the sender out of eviction while it is in use.
-    fn is_evictable(&self) -> bool {
-        self.is_retained() && !self.service.has_service_and(mux::Connection::is_in_use)
+    fn keep_lru(&self) -> bool {
+        self.service.has_service_and(|connection| {
+            connection.is_open() && !connection.defer_until_idle(&self.state.lru_pruned)
+        })
     }
 
     /// Detaches the completed sender selected by the global retained-group LRU.
@@ -426,20 +428,22 @@ where
             .then(|| defer_drop((pending, fallback, upgrade)))
     }
 
-    /// Reports queued HTTP/2 transports, cached HTTP/1 senders, or a shared HTTP/2 sender.
+    /// Reports queued HTTP/2 transports, cached HTTP/1 senders, or a healthy HTTP/2 sender.
     fn is_retained(&self) -> bool {
         !self.service.pending_is_empty()
             || self.service.fallback().has_idle()
-            || self.service.upgrade().has_service_and(|_| true)
+            || self
+                .service
+                .upgrade()
+                .has_service_and(mux::Connection::is_open)
     }
 
-    /// Keeps the group while its upgraded sender is in use.
-    fn is_evictable(&self) -> bool {
+    fn keep_lru(&self) -> bool {
         Entry::<T>::is_retained(self)
             && !self
                 .service
                 .upgrade()
-                .has_service_and(mux::Connection::is_in_use)
+                .has_service_and(|connection| connection.defer_until_idle(&self.state.lru_pruned))
     }
 
     /// Drains every reusable connection while preserving active HTTP/1 work.
@@ -593,7 +597,15 @@ impl EntryCleanupGuard {
         }
     }
 
-    /// Requests one identity-aware empty-entry check after sender destruction.
+    /// Returns whether this entry still needs its pruned LRU record restored.
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    pub(super) fn lru_pruned(&self) -> bool {
+        self.state
+            .as_ref()
+            .is_some_and(|state| state.lru_pruned.load(Ordering::Acquire))
+    }
+
+    /// Requests identity-aware maintenance after sender destruction.
     pub(super) fn arm(&mut self) {
         self.armed = true;
     }

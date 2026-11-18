@@ -154,13 +154,13 @@ where
         self.entries.iter_mut()
     }
 
-    /// Removes `key` when its current service satisfies `predicate`.
+    /// Gives `predicate` the current service and removes it if it returns `true`.
     #[must_use]
     pub(super) fn remove_if<F>(&mut self, key: &K, predicate: F) -> Option<S>
     where
-        F: FnOnce(&S) -> bool,
+        F: FnOnce(&mut S) -> bool,
     {
-        let remove = self.entries.get(key).is_some_and(predicate);
+        let remove = self.entries.get_mut(key).is_some_and(predicate);
         if remove {
             self.unmark_retained(key);
             self.entries.remove(key)

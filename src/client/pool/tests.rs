@@ -719,26 +719,36 @@ async fn pool_max_size_evicts_only_idle_groups() {
 #[tokio::test]
 #[cfg(any(feature = "http2", feature = "http3"))]
 async fn pool_max_size_skips_dead_and_busy_mux_groups() {
+    #[cfg(feature = "http2")]
+    let http2_connector = || {
+        use tokio::sync::Semaphore;
+        TestConnector::Http2(
+            Arc::default(),
+            Arc::new(Semaphore::new(Semaphore::MAX_PERMITS)),
+        )
+    };
     for (protocol, connector) in [
         #[cfg(feature = "http2")]
-        (
-            Protocol::Http2,
-            TestConnector::Http2(Arc::default(), Arc::new(tokio::sync::Semaphore::new(5))),
-        ),
+        (Protocol::Http2, http2_connector()),
+        #[cfg(feature = "http2")]
+        (Protocol::Auto, http2_connector()),
         #[cfg(feature = "http3")]
         (Protocol::Http3, http3_connector()),
     ] {
-        let pool = Pool::new(
-            connector,
-            DynRuntime::new(crate::rt::tokio::TokioRuntime),
-            Config {
-                idle_timeout: None,
-                max_size: NonZeroUsize::new(2),
-                ..Config::default()
-            },
-            &ConnectConfig::default(),
-            true,
-        );
+        let make_pool = |max_size| {
+            Pool::new(
+                connector.clone(),
+                DynRuntime::new(crate::rt::tokio::TokioRuntime),
+                Config {
+                    idle_timeout: None,
+                    max_size: NonZeroUsize::new(max_size),
+                    ..Config::default()
+                },
+                &ConnectConfig::default(),
+                true,
+            )
+        };
+        let pool = make_pool(2);
         let key = |name| grouped_key(Group::new(name), protocol);
         let [live_key, dead_key, next_key] = ["live", "dead", "next"].map(key);
         let checkout = |key| pool.checkout(key, false);
@@ -780,6 +790,33 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
         }
         assert!(retained(&live_key) && !retained(&next_key), "{protocol:?}");
         drop(busy);
+        drop(pool);
+
+        // An untracked group counts toward capacity again when its last checkout ends.
+        let pool = make_pool(1);
+        let checkout = |key| pool.checkout(key, false);
+        let first = checkout(&live_key).await.expect("first checkout");
+        let last = checkout(&live_key).await.expect("last checkout");
+        drop(checkout(&next_key).await.expect("next checkout"));
+
+        drop(first);
+        assert_eq!(
+            pool.inner.services.lock().iter_mut().count(),
+            2,
+            "{protocol:?}"
+        );
+        drop(last);
+        let mut services = pool.inner.services.lock();
+        assert!(
+            services
+                .get_mut(&live_key)
+                .is_some_and(|entry| entry.is_retained()),
+            "{protocol:?}: the returning sender must remain reusable"
+        );
+        assert!(
+            services.get_mut(&next_key).is_none(),
+            "{protocol:?}: retained two idle groups"
+        );
     }
 }
 

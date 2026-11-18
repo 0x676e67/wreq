@@ -37,7 +37,7 @@ pub(in crate::client) struct Pooled {
     /// Whether healthy senders should return to their pool.
     pool_enabled: bool,
 
-    /// Runs after `inner` is dropped when this checkout discarded its sender.
+    /// Runs pending entry maintenance after `inner` drops.
     cleanup: EntryCleanupGuard,
 }
 
@@ -188,15 +188,13 @@ impl Drop for Pooled {
             }
             #[cfg(any(feature = "http2", feature = "http3"))]
             PooledInner::Mux(service) => {
-                let discard = {
-                    let connection = service.inner();
-                    connection.finish_checkout();
-                    connection.connected().poisoned() || connection.is_closed()
-                };
+                let connection = service.inner();
+                let became_idle = connection.finish_checkout();
+                let discard = !connection.is_open();
                 if discard {
                     service.discard_shared();
                 }
-                if self.pool_enabled && discard {
+                if self.pool_enabled && (discard || became_idle && self.cleanup.lru_pruned()) {
                     self.cleanup.arm();
                 }
             }
