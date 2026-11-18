@@ -245,10 +245,10 @@ impl Error {
         false
     }
 
-    /// Returns `true` for proxy authentication errors during connection setup.
+    /// Returns `true` for a 407 response to HTTP CONNECT or a SOCKS5 authentication error.
     ///
-    /// This includes a 407 response to HTTP CONNECT, missing or rejected SOCKS5 credentials,
-    /// and SOCKS5 negotiation with no acceptable authentication method.
+    /// With the `socks` feature, the SOCKS5 cases are missing required credentials, rejected
+    /// credentials, and negotiation with no acceptable authentication method.
     /// A forwarding proxy's 407 is available through [`Response::status`](crate::Response::status).
     pub fn is_proxy_auth(&self) -> bool {
         #[cfg(feature = "socks")]
