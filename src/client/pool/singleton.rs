@@ -61,6 +61,7 @@ where
     M::Response: Clone,
 {
     /// Creates an empty singleton around `maker`.
+    #[must_use]
     pub(super) fn new(maker: M) -> Self {
         Self {
             maker,
@@ -72,6 +73,7 @@ where
     /// Retains the created service when it satisfies `predicate`.
     ///
     /// An in-progress creation is not interrupted.
+    #[must_use]
     pub(super) fn retain<F>(&mut self, mut predicate: F) -> Option<M::Response>
     where
         F: FnMut(&mut M::Response) -> bool,
@@ -92,6 +94,7 @@ where
     }
 
     /// Removes the completed service without interrupting an in-progress maker.
+    #[must_use]
     pub(super) fn take(&mut self) -> Option<M::Response> {
         let mut state = self.state.lock();
         match std::mem::replace(&mut *state, State::Empty) {
@@ -104,11 +107,13 @@ where
     }
 
     /// Returns whether no service exists and none is being created.
+    #[must_use]
     pub(super) fn is_empty(&self) -> bool {
         matches!(*self.state.lock(), State::Empty)
     }
 
     /// Returns whether a completed shared service exists and satisfies `predicate`.
+    #[must_use]
     pub(super) fn has_service_and<F>(&self, predicate: F) -> bool
     where
         F: FnOnce(&M::Response) -> bool,
@@ -122,6 +127,7 @@ where
     /// Clones the completed service without joining or starting creation.
     ///
     /// Returns `None` while the singleton is empty or still making its service.
+    #[must_use]
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
     pub(super) fn checkout_made(&self) -> Option<Singled<M::Future, M::Response>> {
         match &*self.state.lock() {
@@ -141,6 +147,7 @@ where
     /// Joins an existing service or in-progress creation.
     ///
     /// Returns `None` instead of starting the maker when the singleton is empty.
+    #[must_use]
     pub(super) fn checkout(&self) -> Option<SingletonFuture<M::Future, M::Response>> {
         let mut state = self.state.lock();
         match &mut *state {
@@ -602,6 +609,7 @@ impl<F, S> Drop for SingletonFuture<F, S> {
 
 impl<F, S> Singled<F, S> {
     /// Wraps a service clone with its generation and reuse status.
+    #[must_use]
     fn new(inner: S, state: Weak<Mutex<State<F, S>>>, generation: Arc<()>, reused: bool) -> Self {
         Self {
             inner,
@@ -612,16 +620,19 @@ impl<F, S> Singled<F, S> {
     }
 
     /// Borrows the checked-out service clone.
+    #[must_use]
     pub(super) fn inner(&self) -> &S {
         &self.inner
     }
 
     /// Returns whether this checkout joined an existing singleton operation.
+    #[must_use]
     pub(super) fn is_reused(&self) -> bool {
         self.reused
     }
 
     /// Clears the singleton only if it still contains this clone's generation.
+    #[inline]
     pub(super) fn discard_shared(&self) {
         discard_generation(&self.state, &self.generation);
     }
@@ -645,6 +656,7 @@ where
         }
     }
 
+    #[inline]
     fn call(&mut self, req: Req) -> Self::Future {
         self.inner.call(req)
     }
@@ -654,6 +666,7 @@ where
 
 impl<F, S> Batch<F, S> {
     /// Creates a generation before its maker is called outside the state lock.
+    #[must_use]
     fn new() -> Self {
         Self {
             future: None,
@@ -665,6 +678,7 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Allocates the next participant identifier.
+    #[must_use]
     fn next_id(&mut self) -> ParticipantId {
         let id = self.next_id;
         self.next_id.0 = self.next_id.0.wrapping_add(1);
@@ -672,6 +686,7 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Registers the first participant as the maker driver.
+    #[must_use]
     fn register_driver(&mut self) -> ParticipantId {
         let id = self.next_id();
         self.driver = Some(Driver { id });
@@ -679,6 +694,7 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Registers a participant waiting for the shared result.
+    #[must_use]
     fn register_waiter(&mut self) -> (ParticipantId, oneshot::Receiver<Result<S, SingletonError>>) {
         let id = self.next_id();
         let (sender, receiver) = oneshot::channel();
@@ -688,6 +704,7 @@ impl<F, S> Batch<F, S> {
 
     /// Removes a participant and reports whether the batch became empty.
     /// If the driver leaves, one remaining waiter takes over the same maker.
+    #[must_use]
     fn remove(&mut self, id: ParticipantId) -> ParticipantRemoval<F, S> {
         if let Some(index) = self.waiters.iter().position(|waiter| waiter.id == id) {
             return ParticipantRemoval {
@@ -723,6 +740,7 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Takes the maker only for the participant currently acting as driver.
+    #[must_use]
     fn take_future(&mut self, id: ParticipantId) -> Option<Pin<Box<F>>> {
         self.driver
             .as_ref()
@@ -732,6 +750,7 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Restores a pending maker when the same participant remains the driver.
+    #[must_use]
     fn restore_future(
         &mut self,
         id: ParticipantId,
@@ -746,6 +765,7 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Takes every non-driver participant before broadcasting outside the lock.
+    #[must_use]
     fn take_waiters(&mut self) -> Vec<Waiter<S>> {
         std::mem::take(&mut self.waiters)
     }
@@ -793,16 +813,19 @@ pub(super) struct SingletonError(Arc<dyn std::error::Error + Send + Sync>);
 
 impl SingletonError {
     /// Wraps an error produced before or while creating the service.
+    #[must_use]
     fn new(error: BoxError) -> Self {
         Self(Arc::from(error))
     }
 
     /// Creates the error returned when the participant's batch disappeared.
+    #[must_use]
     fn canceled() -> Self {
         Self(Arc::new(Canceled))
     }
 
     /// Returns whether this error asks the caller to start a new batch.
+    #[must_use]
     pub(super) fn is_canceled(error: &(dyn std::error::Error + 'static)) -> bool {
         let mut current = Some(error);
         while let Some(error) = current {

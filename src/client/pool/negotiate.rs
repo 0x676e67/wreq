@@ -139,6 +139,7 @@ impl<L, R, S> Negotiate<L, R, S> {
     ///
     /// `fallback` wraps `connect`, whose results `inspect` may divert to the
     /// pending queue; `upgrade` wraps the identity maker those results enter.
+    #[must_use]
     pub(super) fn new<C, I, LL, RR>(connect: C, inspect: I, fallback: LL, upgrade: RR) -> Self
     where
         I: Fn(&S) -> bool,
@@ -160,26 +161,31 @@ impl<L, R, S> Negotiate<L, R, S> {
     }
 
     /// Borrows the fallback pool.
+    #[must_use]
     pub(super) fn fallback(&self) -> &L {
         &self.fallback
     }
 
     /// Mutably borrows the fallback pool.
+    #[must_use]
     pub(super) fn fallback_mut(&mut self) -> &mut L {
         &mut self.fallback
     }
 
     /// Borrows the upgraded pool.
+    #[must_use]
     pub(super) fn upgrade(&self) -> &R {
         &self.upgrade
     }
 
     /// Mutably borrows the upgraded pool.
+    #[must_use]
     pub(super) fn upgrade_mut(&mut self) -> &mut R {
         &mut self.upgrade
     }
 
     /// Retains queued upgraded connections selected by `predicate`.
+    #[must_use]
     pub(super) fn retain_pending<F>(&mut self, predicate: F) -> VecDeque<S>
     where
         F: FnMut(&S) -> bool,
@@ -200,11 +206,13 @@ impl<L, R, S> Negotiate<L, R, S> {
     }
 
     /// Removes every queued upgraded connection for unlocked destruction.
+    #[must_use]
     pub(super) fn drain_pending(&mut self) -> VecDeque<S> {
         std::mem::take(&mut *self.pending.lock())
     }
 
     /// Returns whether no upgraded connection is waiting for handoff.
+    #[must_use]
     pub(super) fn pending_is_empty(&self) -> bool {
         self.pending.lock().is_empty()
     }
@@ -217,6 +225,7 @@ where
 {
     /// Joins existing upgraded work without invoking the fallback service.
     /// Returns redundant transports for destruction outside any caller-held lock.
+    #[must_use]
     pub(super) fn checkout_existing(&self) -> Option<(UpgradeFuture<M, S>, VecDeque<S>)> {
         checkout_existing(&self.upgrade, &mut self.pending.lock())
     }
@@ -236,6 +245,7 @@ where
     type Error = BoxError;
     type Future = Negotiating<Dst, L, Singleton<M, S>, S>;
 
+    #[inline]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.fallback.poll_ready(cx).map_err(Into::into)
     }
@@ -328,6 +338,7 @@ where
 }
 
 /// Selects upgraded work atomically and destroys redundant transports unlocked.
+#[must_use]
 fn select_upgrade<M, S>(
     upgrade: &Singleton<M, S>,
     pending: &Mutex<VecDeque<S>>,
@@ -352,6 +363,7 @@ where
 }
 
 /// Selects an existing generation and detaches transports made redundant by it.
+#[must_use]
 fn checkout_existing<M, S>(
     upgrade: &Singleton<M, S>,
     pending: &mut VecDeque<S>,
@@ -380,12 +392,14 @@ pub(super) struct UpgradeSignal {
 
 impl UpgradeSignal {
     /// Creates a signal at generation zero.
+    #[must_use]
     pub(super) fn new() -> Self {
         let (generation, _) = watch::channel(0);
         Self { generation }
     }
 
     /// Waits until a generation newer than this subscription is published.
+    #[must_use]
     fn notified(&self) -> BoxFuture<'static, ()> {
         let mut generation = self.generation.subscribe();
         let current = *generation.borrow_and_update();
@@ -480,6 +494,7 @@ where
     type Error = BoxError;
     type Future = InspectFuture<M::Future, S, I>;
 
+    #[inline]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx).map_err(Into::into)
     }
@@ -561,10 +576,12 @@ impl<S> Service<S> for Provided<S> {
     type Error = BoxError;
     type Future = std::future::Ready<Result<S, BoxError>>;
 
+    #[inline]
     fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
+    #[inline]
     fn call(&mut self, service: S) -> Self::Future {
         std::future::ready(Ok(service))
     }
@@ -589,6 +606,7 @@ impl std::error::Error for UseOther {}
 
 impl UseOther {
     /// Finds this control-flow marker anywhere in an error source chain.
+    #[must_use]
     fn is(error: &(dyn std::error::Error + 'static)) -> bool {
         let mut current = Some(error);
         while let Some(error) = current {

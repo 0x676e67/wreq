@@ -59,6 +59,7 @@ impl Pooled {
     ///
     /// HTTP/2 and HTTP/3 checkout accounting starts first; with pooling enabled the
     /// entry is then reconciled with empty cleanup and the idle-group LRU.
+    #[must_use]
     fn new(inner: PooledInner, pool_enabled: bool, usage: EntryUse) -> Self {
         #[cfg(any(feature = "http2", feature = "http3"))]
         if let PooledInner::Mux(service) = &inner {
@@ -76,6 +77,7 @@ impl Pooled {
     }
 
     /// Wraps an HTTP/1 sender, maintaining its entry when pooling is enabled.
+    #[must_use]
     pub(super) fn new_h1(
         service: Cached<http1::Connection>,
         pool_enabled: bool,
@@ -85,12 +87,14 @@ impl Pooled {
     }
 
     /// Wraps an HTTP/2 or HTTP/3 sender, maintaining its entry when pooling is enabled.
+    #[must_use]
     #[cfg(any(feature = "http2", feature = "http3"))]
     pub(super) fn new_mux(service: MuxPooled, pool_enabled: bool, usage: EntryUse) -> Self {
         Self::new(PooledInner::Mux(service), pool_enabled, usage)
     }
 
     /// Returns the HTTP version of this checkout's connection; HTTP/1 reports HTTP/1.1.
+    #[must_use]
     pub(in crate::client) fn version(&self) -> Version {
         match &self.inner {
             PooledInner::Http1(_) => Version::HTTP_11,
@@ -101,6 +105,7 @@ impl Pooled {
 
     /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS.
     /// HTTP/1 never supports it.
+    #[must_use]
     #[cfg(any(feature = "http2", feature = "http3"))]
     pub(in crate::client) fn extended_connect(&self) -> Option<bool> {
         match &self.inner {
@@ -110,6 +115,7 @@ impl Pooled {
     }
 
     /// Returns whether the sender came from an existing pooled connection.
+    #[must_use]
     pub(in crate::client) fn is_reused(&self) -> bool {
         match &self.inner {
             PooledInner::Http1(service) => service.is_reused(),
@@ -119,11 +125,13 @@ impl Pooled {
     }
 
     /// Returns whether completed senders may be retained for reuse.
+    #[must_use]
     pub(in crate::client) fn is_pool_enabled(&self) -> bool {
         self.pool_enabled
     }
 
     /// Returns whether the protocol sender can accept a request immediately.
+    #[must_use]
     pub(in crate::client) fn is_ready(&self) -> bool {
         match &self.inner {
             PooledInner::Http1(service) => service.inner().is_ready(),
@@ -133,6 +141,7 @@ impl Pooled {
     }
 
     /// Returns metadata for the underlying physical connection.
+    #[must_use]
     pub(in crate::client) fn connected(&self) -> &Connected {
         match &self.inner {
             PooledInner::Http1(service) => service.inner().connected(),

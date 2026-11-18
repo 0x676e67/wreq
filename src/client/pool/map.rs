@@ -35,6 +35,7 @@ where
     K: Eq + Hash,
 {
     /// Creates a lazy map with an optional retained-group LRU limit.
+    #[must_use]
     pub(super) fn new(max_retained: Option<NonZeroUsize>) -> Self {
         Self {
             entries: HashMap::new(),
@@ -54,6 +55,7 @@ where
     }
 
     /// Returns the service stored for `key` without changing idle LRU order.
+    #[must_use]
     pub(super) fn get_mut(&mut self, key: &K) -> Option<&mut S> {
         self.entries.get_mut(key)
     }
@@ -91,6 +93,7 @@ where
     /// A full LRU first removes markers rejected by `predicate` and returns their
     /// keys, then the remaining least recently used group displaced by the limit.
     /// An unbounded map returns neither.
+    #[must_use]
     pub(super) fn mark_retained<F>(&mut self, key: &K, predicate: F) -> (Vec<K>, Option<K>)
     where
         K: Clone,
@@ -128,6 +131,7 @@ where
     }
 
     /// Retains entries selected by `predicate` and returns removed services.
+    #[must_use]
     pub(super) fn retain<F>(&mut self, mut predicate: F) -> Vec<S>
     where
         F: FnMut(&K, &mut S) -> bool,
@@ -146,11 +150,13 @@ where
     }
 
     /// Iterates over mapped services without changing idle LRU order.
+    #[must_use]
     pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &mut S)> {
         self.entries.iter_mut()
     }
 
     /// Removes `key` when its current service satisfies `predicate`.
+    #[must_use]
     pub(super) fn remove_if<F>(&mut self, key: &K, predicate: F) -> Option<S>
     where
         F: FnOnce(&S) -> bool,

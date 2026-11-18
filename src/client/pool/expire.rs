@@ -59,6 +59,7 @@ pub(super) struct Expire<T> {
 
 impl<T> Expire<T> {
     /// Creates an expiration component around `target`.
+    #[must_use]
     pub(super) fn new(target: Weak<T>, runtime: DynRuntime) -> Self {
         let (shutdown, _) = watch::channel(());
 
@@ -71,6 +72,7 @@ impl<T> Expire<T> {
     }
 
     /// Reads the selected runtime clock.
+    #[must_use]
     pub(super) fn now(&self) -> Instant {
         self.runtime.now()
     }
@@ -175,6 +177,7 @@ impl Running {
     }
 
     /// Takes ownership unless another watcher already holds it.
+    #[must_use]
     fn claim(&mut self) -> bool {
         self.owned = self
             .flag
