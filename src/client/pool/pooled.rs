@@ -14,7 +14,7 @@ use netty::body::Incoming;
 use tower::Service;
 
 #[cfg(any(feature = "http2", feature = "http3"))]
-use super::entry::MuxPooled;
+use super::entry::MuxSingled;
 use super::{
     cache::Cached,
     entry::{EntryCleanupGuard, EntryUse},
@@ -45,7 +45,7 @@ pub(in crate::client) struct Pooled {
 enum PooledInner {
     Http1(Cached<http1::Connection>),
     #[cfg(any(feature = "http2", feature = "http3"))]
-    Mux(MuxPooled),
+    Mux(MuxSingled),
 }
 
 // ===== impl Pooled =====
@@ -74,7 +74,7 @@ impl Pooled {
 
     /// Wraps an HTTP/1 sender, maintaining its entry when pooling is enabled.
     #[must_use]
-    pub(super) fn new_h1(
+    pub(super) fn new_http1(
         service: Cached<http1::Connection>,
         pool_enabled: bool,
         usage: EntryUse,
@@ -85,7 +85,7 @@ impl Pooled {
     /// Wraps an HTTP/2 or HTTP/3 sender, maintaining its entry when pooling is enabled.
     #[must_use]
     #[cfg(any(feature = "http2", feature = "http3"))]
-    pub(super) fn new_mux(service: MuxPooled, pool_enabled: bool, usage: EntryUse) -> Self {
+    pub(super) fn new_mux(service: MuxSingled, pool_enabled: bool, usage: EntryUse) -> Self {
         Self::new(PooledInner::Mux(service), pool_enabled, usage)
     }
 
@@ -194,7 +194,7 @@ impl Drop for Pooled {
                 if discard {
                     service.discard_shared();
                 }
-                if self.pool_enabled && (discard || became_idle && self.cleanup.lru_pruned()) {
+                if self.pool_enabled && (discard || became_idle && self.cleanup.needs_tracking()) {
                     self.cleanup.arm();
                 }
             }

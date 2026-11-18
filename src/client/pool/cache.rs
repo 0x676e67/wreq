@@ -156,12 +156,16 @@ where
     Racing {
         /// Cache state inspected for a returned service.
         shared: Arc<Mutex<Shared<M::Response>>>,
+
         /// FIFO reservation assigned to this checkout.
         waiter: WaiterId,
+
         /// Maker future racing the reuse reservation.
         future: Option<M::Future>,
+
         /// Handler used when reuse wins after the maker started.
         events: Ev,
+
         /// Shared active-checkout counter.
         active: Arc<AtomicUsize>,
     },
@@ -183,7 +187,7 @@ where
 #[derive(Debug)]
 pub(super) struct Shared<S> {
     /// Idle services not reserved for a waiter.
-    services: Vec<S>,
+    idle: Vec<S>,
 
     /// Checkouts waiting for a returned service.
     waiters: VecDeque<Waiter>,
@@ -269,7 +273,7 @@ impl<Ev> Builder<Ev> {
             ready: Ready::None,
             ready_waiter: None,
             shared: Arc::new(Mutex::new(Shared {
-                services: Vec::new(),
+                idle: Vec::new(),
                 waiters: VecDeque::new(),
                 reservations: Vec::new(),
                 next_waiter: 0,
@@ -310,7 +314,7 @@ where
             Ready::Cached(service) => !predicate(service),
             Ready::None => false,
         };
-        let mut discarded = self.shared.lock().retain_services(predicate);
+        let mut discarded = self.shared.lock().retain_idle(predicate);
         if discard_ready
             && let Ready::Cached(service) = std::mem::replace(&mut self.ready, Ready::None)
         {
@@ -322,7 +326,7 @@ where
     /// Removes shared idle services and this clone's readiness reservation.
     /// Reservations held for other callers are untouched.
     pub(super) fn drain_idle(&mut self) -> Vec<M::Response> {
-        let mut discarded = self.shared.lock().drain_services();
+        let mut discarded = self.shared.lock().drain_idle();
         if let Ready::Cached(service) = std::mem::replace(&mut self.ready, Ready::None) {
             discarded.push(service);
         }
@@ -331,16 +335,14 @@ where
 
     /// Returns whether shared idle state or this clone holds a ready service.
     pub(super) fn has_idle(&self) -> bool {
-        matches!(self.ready, Ready::Cached(_)) || !self.shared.lock().services.is_empty()
+        matches!(self.ready, Ready::Cached(_)) || !self.shared.lock().idle.is_empty()
     }
 
     /// Returns whether no ready, idle, reserved, waiting, or active work remains.
     pub(super) fn is_empty(&self) -> bool {
         matches!(self.ready, Ready::None) && self.active.load(Ordering::Acquire) == 0 && {
             let shared = self.shared.lock();
-            shared.services.is_empty()
-                && shared.reservations.is_empty()
-                && shared.waiters.is_empty()
+            shared.idle.is_empty() && shared.reservations.is_empty() && shared.waiters.is_empty()
         }
     }
 }
@@ -460,6 +462,7 @@ where
                 None => Err(shared.push_waiter()),
             }
         };
+
         let waiter = match available {
             Ok(service) => {
                 return CacheFuture::Cached {
@@ -654,6 +657,7 @@ impl<S> Cached<S> {
     }
 
     /// Borrows the checked-out service.
+    #[must_use]
     pub(super) fn inner(&self) -> &S {
         self.inner
             .as_ref()
@@ -661,6 +665,7 @@ impl<S> Cached<S> {
     }
 
     /// Mutably borrows the checked-out service.
+    #[must_use]
     pub(super) fn inner_mut(&mut self) -> &mut S {
         self.inner
             .as_mut()
@@ -721,13 +726,15 @@ where
     type Error = S::Error;
     type Future = S::Future;
 
+    #[inline]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner_mut().poll_ready(cx).map_err(|error| {
-            self.discard = true;
+            self.discard_on_drop();
             error
         })
     }
 
+    #[inline]
     fn call(&mut self, req: Req) -> Self::Future {
         self.inner_mut().call(req)
     }
@@ -760,27 +767,30 @@ impl<S> Drop for Cached<S> {
 
 impl<S> Shared<S> {
     /// Removes services rejected by `predicate` and returns them for unlocked drop.
-    fn retain_services<F>(&mut self, mut predicate: F) -> Vec<S>
+    #[must_use]
+    fn retain_idle<F>(&mut self, mut predicate: F) -> Vec<S>
     where
         F: FnMut(&mut S) -> bool,
     {
-        self.services
+        self.idle
             .extract_if(.., |service| !predicate(service))
             .collect()
     }
 
     /// Removes every unreserved idle service.
-    fn drain_services(&mut self) -> Vec<S> {
-        std::mem::take(&mut self.services)
+    #[must_use]
+    fn drain_idle(&mut self) -> Vec<S> {
+        std::mem::take(&mut self.idle)
     }
 
     /// Gives a returned service to the oldest waiter or stores it as idle.
+    #[must_use]
     fn put(&mut self, service: S) -> (Option<Waker>, Option<S>) {
         if let Some(mut waiter) = self.waiters.pop_front() {
             self.reservations.push((waiter.id, service));
             (waiter.waker.take(), None)
-        } else if self.services.len() < self.max_idle {
-            self.services.push(service);
+        } else if self.idle.len() < self.max_idle {
+            self.idle.push(service);
             (None, None)
         } else {
             (None, Some(service))
@@ -788,15 +798,17 @@ impl<S> Shared<S> {
     }
 
     /// Takes the newest idle service when no waiter has priority.
+    #[must_use]
     fn take_available(&mut self) -> Option<S> {
         if self.waiters.is_empty() {
-            self.services.pop()
+            self.idle.pop()
         } else {
             None
         }
     }
 
     /// Appends a checkout to the FIFO waiter queue.
+    #[must_use]
     fn push_waiter(&mut self) -> WaiterId {
         let id = WaiterId(self.next_waiter);
         self.next_waiter = self.next_waiter.wrapping_add(1);
@@ -805,6 +817,7 @@ impl<S> Shared<S> {
     }
 
     /// Stores the latest waker and returns the replaced value for unlocked drop.
+    #[must_use]
     fn store_waker(&mut self, id: WaiterId, waker: &Waker) -> Option<Waker> {
         if let Some(waiter) = self.waiters.iter_mut().find(|waiter| waiter.id == id)
             && waiter
@@ -818,6 +831,7 @@ impl<S> Shared<S> {
     }
 
     /// Takes the service reserved for `id`.
+    #[must_use]
     fn take_reserved(&mut self, id: WaiterId) -> Option<S> {
         let index = self
             .reservations
@@ -827,6 +841,7 @@ impl<S> Shared<S> {
     }
 
     /// Removes a waiter and reassigns any service already reserved for it.
+    #[must_use]
     fn cancel_waiter(&mut self, id: WaiterId) -> CancelResult<S> {
         if let Some(index) = self.waiters.iter().position(|waiter| waiter.id == id) {
             CancelResult {
@@ -875,10 +890,13 @@ fn finish_cancel<S>(result: CancelResult<S>) {
 pub(super) struct BackgroundConnect<F, S> {
     /// Maker future that already began useful work.
     future: F,
+
     /// Destination cache, if it still exists when work completes.
     shared: Weak<Mutex<Shared<S>>>,
+
     /// Wakes the task when the destination cache is dropped.
     shutdown: BoxFuture<'static, ()>,
+
     /// Active-work counter released on drop.
     active: Arc<AtomicUsize>,
 }
@@ -1053,7 +1071,7 @@ mod tests {
     fn background_connect_stops_after_cache_is_dropped() {
         let polls = Arc::new(AtomicUsize::new(0));
         let shared = Arc::new(Mutex::new(Shared {
-            services: Vec::new(),
+            idle: Vec::new(),
             waiters: VecDeque::new(),
             reservations: Vec::new(),
             next_waiter: 0,
@@ -1088,7 +1106,7 @@ mod tests {
         for max_idle in [0, 1, 2] {
             let active = Arc::new(AtomicUsize::new(0));
             let shared = Arc::new(Mutex::new(Shared {
-                services: Vec::new(),
+                idle: Vec::new(),
                 waiters: VecDeque::new(),
                 reservations: Vec::new(),
                 next_waiter: 0,
@@ -1111,7 +1129,7 @@ mod tests {
                     false,
                 ));
             }
-            assert_eq!(shared.lock().services.len(), max_idle);
+            assert_eq!(shared.lock().idle.len(), max_idle);
             assert_eq!(active.load(Ordering::Acquire), 0);
         }
     }
@@ -1234,15 +1252,15 @@ mod tests {
         // Bulk pruning must preserve the order used by subsequent LIFO reuse.
         let discarded = {
             let mut shared = cache.shared.lock();
-            shared.services.extend(0..64);
+            shared.idle.extend(0..64);
             let mut visited = Vec::new();
-            let discarded = shared.retain_services(|value| {
+            let discarded = shared.retain_idle(|value| {
                 visited.push(*value);
                 *value % 3 == 0
             });
             assert_eq!(visited, (0..64).collect::<Vec<_>>());
             assert_eq!(
-                shared.services,
+                shared.idle,
                 (0..64).filter(|value| value % 3 == 0).collect::<Vec<_>>()
             );
             discarded

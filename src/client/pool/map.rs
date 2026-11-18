@@ -36,10 +36,10 @@ where
 {
     /// Creates a lazy map with an optional retained-group LRU limit.
     #[must_use]
-    pub(super) fn new(max_retained: Option<NonZeroUsize>) -> Self {
+    pub(super) fn new(max_size: Option<NonZeroUsize>) -> Self {
         Self {
             entries: HashMap::new(),
-            retained: max_retained.map(LruCache::new),
+            retained: max_size.map(LruCache::new),
         }
     }
 

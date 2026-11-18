@@ -74,7 +74,7 @@ use crate::{
     conn::{Conn, ConnectRequestExt, options::Options},
     protocol::Protocol,
     rt::{DynRuntime, Timer as _},
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
 };
 
 /// Returns whether an internal singleton batch asks the client to retry.
@@ -172,9 +172,9 @@ pub(super) struct Pool<C> {
     inner: Arc<PoolInner<C>>,
 }
 
-/// Shared coordinator for mapped pool services and idle maintenance.
+/// Shared coordinator for mapped pool entries and idle maintenance.
 ///
-/// `services` is the only outer routing lock. Entry services contain their own
+/// `entries` is the only outer routing lock. Each entry's service has its own
 /// finer-grained synchronization, so no network future is polled while this lock
 /// is held. The coordinator also owns the weak back-reference used by failed
 /// checkout cleanup.
@@ -194,14 +194,16 @@ struct PoolInner<C> {
     /// Factory used when pooling is disabled or a map entry is missing.
     targeter: PoolTargeter<C>,
 
-    /// Services keyed by complete connection compatibility.
-    services: Mutex<Map<PoolKey<PoolTarget>, Box<dyn Entry<PoolTarget>>>>,
+    /// Entries keyed by complete connection compatibility.
+    entries: Mutex<EntryMap>,
 }
+
+type EntryMap = Map<PoolKey<PoolTarget>, Box<dyn Entry<PoolTarget>>>;
 
 /// Compatibility key for pool entries and extended CONNECT lookups.
 #[derive(Clone, Debug)]
 pub(super) struct PoolKey<K> {
-    key: K,
+    inner: K,
     hash: u64,
 }
 
@@ -300,7 +302,7 @@ where
         connector: C,
         runtime: DynRuntime,
         pool_config: Config,
-        config: &ConnectConfig,
+        connect_config: &ConnectConfig,
         set_host: bool,
     ) -> Self {
         let reuse_delay = match pool_config.strategy {
@@ -313,14 +315,14 @@ where
         };
 
         let mut http1 = conn::http1::Builder::default();
-        if let Some(options) = config.get_ref::<Http1Options>() {
+        if let Some(options) = connect_config.get_ref::<Http1Options>() {
             http1 = http1.options(options.clone());
         }
 
         #[cfg(feature = "http2")]
         let http2 = {
             let builder = conn::http2::Builder::new(runtime.clone()).timer(runtime.clone());
-            match config.get_ref::<Http2Options>() {
+            match connect_config.get_ref::<Http2Options>() {
                 Some(options) => builder.options(options.clone()),
                 None => builder,
             }
@@ -329,7 +331,7 @@ where
         #[cfg(feature = "http3")]
         let http3 = {
             let builder = conn::http3::Builder::new(runtime.clone());
-            match config.get_ref::<Http3Options>() {
+            match connect_config.get_ref::<Http3Options>() {
                 Some(options) => builder.options(options.clone()),
                 None => builder,
             }
@@ -353,7 +355,7 @@ where
                 enabled: pool_config.is_enabled(),
                 idle_timeout: pool_config.idle_timeout,
                 expire: Expire::new(pool.clone(), runtime),
-                services: Mutex::new(Map::new(pool_config.max_size)),
+                entries: Mutex::new(Map::new(pool_config.max_size)),
                 targeter,
             }
         });
@@ -382,13 +384,13 @@ where
         // The guard needs a lexical scope outside await for this future to remain Send.
         let future = {
             let now = self.inner.now();
-            let mut services = self.inner.services.lock();
-            // Inspect only this group on checkout. A global retained-group scan
+            let mut entries = self.inner.entries.lock();
+            // Prune only this group on checkout. A global retained-group scan
             // would add O(group count) work and nested locking to every pool hit.
-            let service = services.get_or_insert_with(key, || self.inner.new_entry(key));
-            let discarded = service.retain(now, self.inner.idle_timeout);
-            let future = service.checkout(key.as_ref(), true);
-            drop(services);
+            let entry = entries.get_or_insert_with(key, || self.inner.new_entry(key));
+            let discarded = entry.prune(now, self.inner.idle_timeout);
+            let future = entry.checkout(key.as_ref(), true);
+            drop(entries);
             drop(discarded);
             future
         };
@@ -405,7 +407,7 @@ where
         if !self.inner.enabled {
             return None;
         }
-        let (service, state) = self.inner.services.lock().get_mut(key)?.checkout_made()?;
+        let (service, state) = self.inner.entries.lock().get_mut(key)?.checkout_made()?;
         // Pooled::new runs map maintenance, so it must stay outside the map lock.
         let connection = service.inner();
         let usable = connection.extended_connect() == Some(true)
@@ -427,27 +429,27 @@ impl<C> Clone for Pool<C> {
 impl<K> PoolKey<K> {
     /// Builds a pool key and precomputes its lookup hash.
     #[must_use]
-    pub(super) fn new(key: K) -> Self
+    pub(super) fn new(inner: K) -> Self
     where
         K: Eq + Hash,
     {
         static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
-        let hash = HASHER.hash_one(&key);
-        Self { key, hash }
+        let hash = HASHER.hash_one(&inner);
+        Self { inner, hash }
     }
 }
 
 impl<K> AsRef<K> for PoolKey<K> {
     #[inline]
     fn as_ref(&self) -> &K {
-        &self.key
+        &self.inner
     }
 }
 
 impl<K: Eq> PartialEq for PoolKey<K> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash && self.key == other.key
+        self.hash == other.hash && self.inner == other.inner
     }
 }
 
@@ -501,10 +503,10 @@ where
         let state = Arc::new(EntryState {
             uses: AtomicUsize::new(0),
             #[cfg(any(feature = "http2", feature = "http3"))]
-            lru_pruned: AtomicBool::new(false),
-            maintain: Box::new(move |identity| {
+            track_on_idle: AtomicBool::new(false),
+            maintain: Box::new(move |state| {
                 if let Some(pool) = pool.upgrade() {
-                    pool.maintain_entry(&entry_key, identity);
+                    pool.update_entry(&entry_key, state);
                 }
             }),
         });
@@ -523,58 +525,84 @@ where
             .map(|timeout| timeout.max(Duration::from_millis(90)))
     }
 
-    /// Reconciles one entry with empty cleanup and the global idle-group LRU.
-    fn maintain_entry(self: &Arc<Self>, key: &PoolKey<PoolTarget>, identity: &Arc<EntryState>) {
-        let mut services = self.services.lock();
-        // Keep per-entry maintenance independent of the retained-group count.
-        // mark_retained checks other markers only before capacity eviction;
-        // periodic expiration still performs the global sweep.
-        let state = services.get_mut(key).and_then(|entry| {
-            entry
-                .matches_identity(identity)
-                .then(|| (entry.is_empty(), entry.is_retained()))
-        });
-        let mut removed = Vec::new();
-        let mut discarded = Vec::new();
-        let mut schedule_expiration = false;
+    /// Cleans the entry map under the held lock, then drops staged resources.
+    /// The guard's scope releases the lock before those resources drop, even on
+    /// unwind. The staging value's field order determines their drop order.
+    fn with_entries<R, D>(
+        guard: MutexGuard<'_, EntryMap>,
+        mut detached: D,
+        clean: impl FnOnce(&mut EntryMap, &mut D) -> R,
+    ) -> R {
+        let result = {
+            let mut guard = guard;
+            clean(&mut guard, &mut detached)
+        };
+        drop(detached);
+        result
+    }
 
-        match state {
-            Some((true, _)) => removed.extend(services.remove_if(key, |_| true)),
-            Some((false, true)) => {
-                schedule_expiration = true;
-                let (pruned, evicted) = services.mark_retained(key, |entry| entry.keep_lru());
-                // A later checkout may restore the record before the final release.
-                #[cfg(any(feature = "http2", feature = "http3"))]
-                if identity.lru_pruned.load(Ordering::Relaxed) {
-                    identity.lru_pruned.store(false, Ordering::Relaxed);
-                }
-                // Drop stale state. Busy senders stay pooled after losing their LRU record.
-                if !pruned.is_empty() {
-                    let now = self.now();
-                    for key in &pruned {
-                        removed.extend(services.remove_if(key, |entry| {
-                            discarded.extend(entry.retain(now, self.idle_timeout));
-                            entry.is_empty()
-                        }));
-                    }
-                }
-                if let Some(evicted) = evicted {
-                    removed.extend(services.remove_if(&evicted, |entry| {
-                        discarded.extend(entry.evict_retained());
-                        entry.is_empty()
-                    }));
-                }
-            }
-            Some((false, false)) => services.unmark_retained(key),
-            None => {}
+    /// Removes an empty entry or reconciles its idle-group capacity tracking.
+    fn update_entry(self: &Arc<Self>, key: &PoolKey<PoolTarget>, state: &Arc<EntryState>) {
+        let mut entries = self.entries.lock();
+        let Some((empty, retained)) = entries
+            .get_mut(key)
+            .filter(|entry| entry.has_state(state))
+            .map(|entry| (entry.is_empty(), entry.has_retained()))
+        else {
+            return;
+        };
+
+        if empty {
+            Self::with_entries(entries, None, |entries, removed| {
+                *removed = entries.remove_if(key, |_| true);
+            });
+            return;
         }
 
-        drop(services);
-        drop(removed);
-        drop(discarded);
+        if !retained {
+            entries.unmark_retained(key);
+            return;
+        }
 
-        self.expire
-            .schedule(self.expiration_interval(schedule_expiration));
+        // Check other entries only when making room for this retained group.
+        let (pruned, evicted) = entries.mark_retained(key, |entry| entry.prepare_eviction());
+        // A later checkout may restore the record before the final release.
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        if state.track_on_idle.load(Ordering::Relaxed) {
+            state.track_on_idle.store(false, Ordering::Relaxed);
+        }
+
+        if pruned.is_empty() && evicted.is_none() {
+            drop(entries);
+        } else {
+            // Drop removed entries before detached connections. Capacity can
+            // evict a single group after any number of stale markers are pruned.
+            Self::with_entries(
+                entries,
+                (Vec::new(), None, Vec::new(), None),
+                move |entries, (removed, evicted_entry, discarded, evicted_state)| {
+                    // Busy senders stay pooled and resume tracking when idle.
+                    if !pruned.is_empty() {
+                        let now = self.now();
+                        for key in &pruned {
+                            removed.extend(entries.remove_if(key, |entry| {
+                                discarded.extend(entry.prune(now, self.idle_timeout));
+                                entry.is_empty()
+                            }));
+                        }
+                    }
+
+                    *evicted_entry = evicted.and_then(|key| {
+                        entries.remove_if(&key, |entry| {
+                            *evicted_state = entry.evict();
+                            entry.is_empty()
+                        })
+                    });
+                },
+            );
+        }
+
+        self.expire.schedule(self.expiration_interval(true));
     }
 }
 
@@ -583,28 +611,30 @@ where
     C: Send + Sync + 'static,
 {
     fn retain(&self, now: Instant) -> Option<Duration> {
-        let mut services = self.services.lock();
-        let mut discarded = Vec::new();
-        let mut has_retained = false;
-        let removed = services.retain(|_, entry| {
-            discarded.extend(entry.retain(now, self.idle_timeout));
-            let keep = !entry.is_empty();
-            has_retained |= keep && entry.is_retained();
-            keep
-        });
-        services.prune_retained(|entry| entry.is_retained());
-        drop(services);
-        drop(removed);
-        drop(discarded);
+        let has_retained = Self::with_entries(
+            self.entries.lock(),
+            (Vec::new(), Vec::new()),
+            |entries, (removed, discarded)| {
+                let mut has_retained = false;
+                *removed = entries.retain(|_, entry| {
+                    discarded.extend(entry.prune(now, self.idle_timeout));
+                    let keep = !entry.is_empty();
+                    has_retained |= keep && entry.has_retained();
+                    keep
+                });
+                entries.prune_retained(|entry| entry.has_retained());
+                has_retained
+            },
+        );
         self.expiration_interval(has_retained)
     }
 
     fn next(&self) -> Option<Duration> {
         let has_retained = self
-            .services
+            .entries
             .lock()
             .iter_mut()
-            .any(|(_, entry)| entry.is_retained());
+            .any(|(_, entry)| entry.has_retained());
 
         self.expiration_interval(has_retained)
     }

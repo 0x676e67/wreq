@@ -312,8 +312,8 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         let equivalent_key = pool_key(protocol, &request_config, &client_config);
         assert_eq!(equivalent_key, key);
         let checkout = || {
-            let mut services = pool.inner.services.lock();
-            let entry = services
+            let mut entries = pool.inner.entries.lock();
+            let entry = entries
                 .get_or_insert_with(&equivalent_key, || pool.inner.new_entry(&equivalent_key));
             entry.checkout(equivalent_key.as_ref(), true)
         };
@@ -366,11 +366,11 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         connected.poison();
         let discarded = pool
             .inner
-            .services
+            .entries
             .lock()
             .get_mut(&key)
             .unwrap()
-            .retain(pool.inner.now(), None);
+            .prune(pool.inner.now(), None);
         assert!(
             discarded.is_some(),
             "{protocol:?}: poisoned sender was retained"
@@ -386,7 +386,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         drop(held);
         assert!(checkout().await.unwrap().is_reused());
         assert_eq!(calls.load(Ordering::Relaxed), 2);
-        assert_eq!(pool.inner.services.lock().iter_mut().count(), 1);
+        assert_eq!(pool.inner.entries.lock().iter_mut().count(), 1);
 
         let response = Oneshot::new(
             &mut replacement,
@@ -400,14 +400,14 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         assert_eq!(response.version(), http::Version::HTTP_2);
         replacement.connected().poison();
         drop(replacement);
-        assert!(pool.inner.services.lock().is_empty());
+        assert!(pool.inner.entries.lock().is_empty());
 
         let mut driver = tokio_test::task::spawn(checkout());
         assert!(driver.poll().is_pending());
         let waiter = checkout();
         drop(driver);
         drop(waiter);
-        assert!(pool.inner.services.lock().is_empty());
+        assert!(pool.inner.entries.lock().is_empty());
     }
 }
 
@@ -436,7 +436,7 @@ async fn idle_task_tracks_reusable_state() {
     tokio::time::advance(Duration::from_millis(100)).await;
     tokio::task::yield_now().await;
 
-    assert!(pool.inner.services.lock().is_empty());
+    assert!(pool.inner.entries.lock().is_empty());
     assert!(!pool.inner.expire.is_running());
 
     let pool = Pool::new(
@@ -458,7 +458,7 @@ async fn idle_task_tracks_reusable_state() {
     tokio::time::advance(Duration::from_millis(100)).await;
     tokio::task::yield_now().await;
 
-    assert!(!pool.inner.services.lock().is_empty());
+    assert!(!pool.inner.entries.lock().is_empty());
     assert!(!pool.inner.expire.is_running());
 }
 
@@ -504,7 +504,7 @@ async fn extended_connect_checkout_only_clones_established_senders() {
 
         // A miss neither connects nor leaves an entry behind.
         assert!(pool.checkout_extended_connect(&key).is_none());
-        assert!(pool.inner.services.lock().get_mut(&key).is_none());
+        assert!(pool.inner.entries.lock().get_mut(&key).is_none());
 
         // A generation still being made is not joined.
         let mut making = tokio_test::task::spawn(pool.checkout(&key, false));
@@ -530,10 +530,10 @@ async fn extended_connect_checkout_only_clones_established_senders() {
         // Unusable senders are skipped without the probe evicting them.
         probed.connected().poison();
         assert!(pool.checkout_extended_connect(&key).is_none());
-        assert!(pool.inner.services.lock().get_mut(&key).is_some());
+        assert!(pool.inner.entries.lock().get_mut(&key).is_some());
         // A probed checkout discards its sender like any other.
         drop(probed);
-        assert!(pool.inner.services.lock().get_mut(&key).is_none());
+        assert!(pool.inner.entries.lock().get_mut(&key).is_none());
     }
 }
 
@@ -550,7 +550,7 @@ async fn checkouts_remove_empty_map_entries() {
         let pool = test_pool(TestConnector::Fails);
         let result = pool.test_checkout(connect_key(protocol)).await;
         assert!(result.is_err());
-        assert!(pool.inner.services.lock().is_empty());
+        assert!(pool.inner.entries.lock().is_empty());
         assert!(!pool.inner.expire.is_running());
 
         let pool = test_pool(TestConnector::Pending);
@@ -559,9 +559,9 @@ async fn checkouts_remove_empty_map_entries() {
         assert!(first.poll().is_pending());
         assert!(second.poll().is_pending());
         drop(first);
-        assert!(!pool.inner.services.lock().is_empty());
+        assert!(!pool.inner.entries.lock().is_empty());
         drop(second);
-        assert!(pool.inner.services.lock().is_empty());
+        assert!(pool.inner.entries.lock().is_empty());
         assert!(!pool.inner.expire.is_running());
     }
 
@@ -590,7 +590,7 @@ async fn checkouts_remove_empty_map_entries() {
     );
     drop(pooled);
 
-    assert!(pool.inner.services.lock().is_empty());
+    assert!(pool.inner.entries.lock().is_empty());
     assert!(!pool.inner.expire.is_running());
 
     let request_read = Arc::new(tokio::sync::Notify::new());
@@ -617,7 +617,7 @@ async fn checkouts_remove_empty_map_entries() {
     drop(response);
     drop(pooled);
 
-    assert!(pool.inner.services.lock().is_empty());
+    assert!(pool.inner.entries.lock().is_empty());
     assert!(!pool.inner.expire.is_running());
 
     let pool = test_pool(TestConnector::KeepsAlive);
@@ -640,17 +640,17 @@ async fn checkouts_remove_empty_map_entries() {
     // still needing that cache for its return. This regression was found in:
     // https://github.com/smithy-lang/smithy-rs/commit/998e5fb9254bf972aa9c6f6e82e521afd627613e
     let (removed, discarded) = {
-        let mut services = pool.inner.services.lock();
+        let mut entries = pool.inner.entries.lock();
         let mut discarded = Vec::new();
-        let removed = services.retain(|_, entry| {
-            discarded.extend(entry.retain(pool.inner.now(), Some(Duration::ZERO)));
+        let removed = entries.retain(|_, entry| {
+            discarded.extend(entry.prune(pool.inner.now(), Some(Duration::ZERO)));
             !entry.is_empty()
         });
         (removed, discarded)
     };
     assert!(removed.is_empty());
     assert!(discarded.is_empty());
-    assert_eq!(pool.inner.services.lock().iter_mut().count(), 1);
+    assert_eq!(pool.inner.entries.lock().iter_mut().count(), 1);
 
     std::future::poll_fn(|cx| first.poll_ready(cx))
         .await
@@ -660,7 +660,7 @@ async fn checkouts_remove_empty_map_entries() {
     let second = pool.checkout(&key, false).await.expect("second checkout");
 
     assert!(second.is_reused());
-    assert_eq!(pool.inner.services.lock().iter_mut().count(), 1);
+    assert_eq!(pool.inner.entries.lock().iter_mut().count(), 1);
     drop(second);
 }
 
@@ -707,13 +707,13 @@ async fn pool_max_size_evicts_only_idle_groups() {
     send(&mut second).await;
     drop(second);
 
-    assert_eq!(pool.inner.services.lock().iter_mut().count(), 2);
+    assert_eq!(pool.inner.entries.lock().iter_mut().count(), 2);
 
     drop(first);
 
-    let mut services = pool.inner.services.lock();
-    assert!(services.get_mut(&first_key).is_some());
-    assert!(services.get_mut(&second_key).is_none());
+    let mut entries = pool.inner.entries.lock();
+    assert!(entries.get_mut(&first_key).is_some());
+    assert!(entries.get_mut(&second_key).is_none());
 }
 
 #[tokio::test]
@@ -754,10 +754,10 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
         let checkout = |key| pool.checkout(key, false);
         let retained = |key| {
             pool.inner
-                .services
+                .entries
                 .lock()
                 .get_mut(key)
-                .is_some_and(|entry| entry.is_retained())
+                .is_some_and(|entry| entry.has_retained())
         };
 
         // Established senders stay retained after their checkouts end.
@@ -775,8 +775,8 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
         // even though idle sweeps are disabled.
         drop(checkout(&next_key).await.expect("next checkout"));
         assert!(retained(&live_key) && retained(&next_key), "{protocol:?}");
-        assert!(pool.inner.services.lock().get_mut(&dead_key).is_none());
-        assert_eq!(pool.inner.services.lock().iter_mut().count(), 2);
+        assert!(pool.inner.entries.lock().get_mut(&dead_key).is_none());
+        assert_eq!(pool.inner.entries.lock().iter_mut().count(), 2);
 
         // A group in use is pruned, not evicted, even once it is the least recent group:
         // the full LRU displaces the idle `next` instead.
@@ -801,20 +801,20 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
 
         drop(first);
         assert_eq!(
-            pool.inner.services.lock().iter_mut().count(),
+            pool.inner.entries.lock().iter_mut().count(),
             2,
             "{protocol:?}"
         );
         drop(last);
-        let mut services = pool.inner.services.lock();
+        let mut entries = pool.inner.entries.lock();
         assert!(
-            services
+            entries
                 .get_mut(&live_key)
-                .is_some_and(|entry| entry.is_retained()),
+                .is_some_and(|entry| entry.has_retained()),
             "{protocol:?}: the returning sender must remain reusable"
         );
         assert!(
-            services.get_mut(&next_key).is_none(),
+            entries.get_mut(&next_key).is_none(),
             "{protocol:?}: retained two idle groups"
         );
     }

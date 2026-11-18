@@ -21,6 +21,7 @@ use tower::{BoxError, Service, util::Oneshot};
 use {
     super::negotiate::{Negotiate, Negotiated},
     crate::client::proto::{Established, is_expired},
+    std::collections::VecDeque,
 };
 #[cfg(any(feature = "http2", feature = "http3"))]
 use {
@@ -45,27 +46,28 @@ pub(super) trait Entry<T>: Send {
     /// Clones an established shared sender without creating, joining, or draining
     /// work. HTTP/1 entries and generations still being made return `None`.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-    fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)>;
+    fn checkout_made(&self) -> Option<(MuxSingled, Arc<EntryState>)>;
 
-    /// Detaches closed, poisoned, or idle-expired state for destruction after unlocking.
+    /// Prunes stale state and returns it for destruction after unlocking.
     /// Pending or active multiplexed checkouts defer idle expiry.
-    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop>;
+    fn prune(&mut self, now: Instant, timeout: Option<Duration>) -> Option<Discarded>;
 
-    /// Returns whether this entry retains reusable connection state.
-    fn is_retained(&self) -> bool;
+    /// Returns whether the entry holds connection state for reuse.
+    fn has_retained(&self) -> bool;
 
-    /// Returns whether the LRU should keep this entry as an eviction candidate.
+    /// Returns whether the entry can stay tracked as an eviction candidate.
     ///
-    /// A checked-out shared sender requests a new record on its final return.
-    fn keep_lru(&self) -> bool {
-        self.is_retained()
+    /// If a shared checkout prevents eviction, marks the entry to track again on final return.
+    fn prepare_eviction(&self) -> bool {
+        self.has_retained()
     }
 
-    /// Removes reusable state selected by the global idle-group LRU.
-    fn evict_retained(&mut self) -> Option<DeferredDrop>;
+    /// Detaches reusable state to enforce pool capacity.
+    /// The caller drops the returned state after releasing the map lock.
+    fn evict(&mut self) -> Option<Discarded>;
 
-    /// Returns whether this is the entry identified by `state`.
-    fn matches_identity(&self, state: &Arc<EntryState>) -> bool;
+    /// Returns whether this entry holds the given state instance.
+    fn has_state(&self, state: &Arc<EntryState>) -> bool;
 
     /// Returns whether the entry has no active, pending, or idle work.
     fn is_empty(&self) -> bool;
@@ -74,9 +76,9 @@ pub(super) trait Entry<T>: Send {
 /// Fixed HTTP/1 entry owning the cache and its checkout-cleanup identity.
 /// Each checkout takes an exclusive sender from the cache or a new handshake.
 /// Ready senders return to the cache; pending uses keep the entry from removal.
-pub(super) struct Http1Entry<L> {
+pub(super) struct Http1Entry<S> {
     /// Exclusive HTTP/1 sender cache.
-    pub(super) service: L,
+    pub(super) service: S,
     /// Checkout count and identity-aware cleanup for this entry.
     pub(super) state: Arc<EntryState>,
 }
@@ -85,9 +87,9 @@ pub(super) struct Http1Entry<L> {
 /// Once established, the sender is cloned for concurrent requests.
 /// Pending uses keep the entry alive; `state` identifies it during cleanup.
 #[cfg(any(feature = "http2", feature = "http3"))]
-pub(super) struct MuxEntry<R> {
+pub(super) struct MuxEntry<S> {
     /// Shared sender singleton.
-    pub(super) service: R,
+    pub(super) service: S,
     /// Checkout count and identity-aware cleanup for this entry.
     pub(super) state: Arc<EntryState>,
 }
@@ -136,7 +138,7 @@ type MuxCheckout = SingletonFuture<MuxMake, mux::Connection>;
 
 /// Shared sender clone checked out from a singleton.
 #[cfg(any(feature = "http2", feature = "http3"))]
-pub(super) type MuxPooled = Singled<MuxMake, mux::Connection>;
+pub(super) type MuxSingled = Singled<MuxMake, mux::Connection>;
 
 /// Defers checkout completion and resource destruction until the map is unlocked.
 ///
@@ -149,10 +151,14 @@ pub(super) enum CheckoutFuture {
     Mux {
         /// Owns the sender clone or pending-generation participation.
         future: MuxCheckout,
+
         /// Redundant negotiated transports released on the first poll or drop.
-        discarded: Option<DeferredDrop>,
+        #[cfg(feature = "http2")]
+        discarded: VecDeque<Established>,
+
         /// Drops after the singleton participant so cleanup sees its final state.
         usage: Option<EntryUse>,
+
         /// Whether the resulting sender belongs to a shared pool.
         pool_enabled: bool,
     },
@@ -160,11 +166,23 @@ pub(super) enum CheckoutFuture {
     Service(BoxFuture<'static, Result<Pooled, BoxError>>),
 }
 
-/// Type-erased connection state held until the outer map lock is released.
-///
-/// One value may aggregate several concrete senders from the same entry. This
-/// keeps cleanup type-erased without allocating one box per removed connection.
-pub(super) type DeferredDrop = Box<dyn Send>;
+/// Connection state detached from one entry for destruction after the map unlocks.
+pub(super) enum Discarded {
+    /// Idle senders detached from the HTTP/1 cache.
+    Http1 { _senders: Vec<http1::Connection> },
+
+    /// Completed sender detached from a shared connection.
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    Mux { _sender: mux::Connection },
+
+    /// Queued transports and senders detached from the negotiated entry.
+    #[cfg(feature = "http2")]
+    Negotiated {
+        _pending: VecDeque<Established>,
+        _fallback: Vec<http1::Connection>,
+        _upgrade: Option<mux::Connection>,
+    },
+}
 
 /// Identity-aware maintenance operation for one mapped entry.
 type EntryMaintenance = Box<dyn Fn(&Arc<EntryState>) + Send + Sync>;
@@ -179,10 +197,10 @@ pub(super) struct EntryUse {
     /// Shared state of the map entry being used.
     state: Option<Arc<EntryState>>,
     /// Whether cancellation or failure should remove an empty entry.
-    cleanup_on_drop: bool,
+    armed: bool,
 }
 
-/// Deferred maintenance when a checkout discards its sender or restores its LRU record.
+/// Deferred entry maintenance for sender disposal or resumed capacity tracking.
 ///
 /// In [`Pooled`], this guard drops after the sender so cleanup sees the updated cache
 /// or singleton state.
@@ -202,27 +220,36 @@ pub(super) struct EntryCleanupGuard {
 pub(super) struct EntryState {
     /// Number of checkout futures keeping the entry active.
     pub(super) uses: AtomicUsize,
-    /// Tracks an LRU record pruned because the shared sender was checked out.
+    /// Whether to track the entry again when the last checkout returns.
     #[cfg(any(feature = "http2", feature = "http3"))]
-    pub(super) lru_pruned: AtomicBool,
+    pub(super) track_on_idle: AtomicBool,
     /// Reconciles this exact entry with cleanup and idle-group limits.
     pub(super) maintain: EntryMaintenance,
 }
 
-/// Type-erases one aggregate resource for destruction after unlocking.
-fn defer_drop<T>(value: T) -> DeferredDrop
-where
-    T: Send + 'static,
-{
-    Box::new(value)
-}
+// ===== impl Discarded =====
 
-/// Defers a vector only when it owns at least one resource.
-fn defer_drop_vec<T>(value: Vec<T>) -> Option<DeferredDrop>
-where
-    T: Send + 'static,
-{
-    (!value.is_empty()).then(|| defer_drop(value))
+impl Discarded {
+    /// Returns a batch when the HTTP/1 cache detached at least one sender.
+    fn http1(senders: Vec<http1::Connection>) -> Option<Self> {
+        (!senders.is_empty()).then_some(Self::Http1 { _senders: senders })
+    }
+
+    /// Groups resources detached from either side of negotiation into one batch.
+    #[cfg(feature = "http2")]
+    fn negotiated(
+        pending: VecDeque<Established>,
+        fallback: Vec<http1::Connection>,
+        upgrade: Option<mux::Connection>,
+    ) -> Option<Self> {
+        (!pending.is_empty() || !fallback.is_empty() || upgrade.is_some()).then_some(
+            Self::Negotiated {
+                _pending: pending,
+                _fallback: fallback,
+                _upgrade: upgrade,
+            },
+        )
+    }
 }
 
 // ===== impl Http1Entry =====
@@ -245,36 +272,36 @@ where
         CheckoutFuture::Service(Box::pin(async move {
             Oneshot::new(service, target)
                 .await
-                .map(|service| Pooled::new_h1(service, pool_enabled, usage))
+                .map(|service| Pooled::new_http1(service, pool_enabled, usage))
         }))
     }
 
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-    fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)> {
+    fn checkout_made(&self) -> Option<(MuxSingled, Arc<EntryState>)> {
         None
     }
 
     /// Removes closed or expired idle senders for unlocked destruction.
     ///
     /// Active checkouts and FIFO waiters remain owned by the cache.
-    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
-        defer_drop_vec(self.service.retain_idle(now, timeout))
+    fn prune(&mut self, now: Instant, timeout: Option<Duration>) -> Option<Discarded> {
+        Discarded::http1(self.service.retain_idle(now, timeout))
     }
 
-    /// Returns whether this entry contributes an idle sender to the global LRU.
-    fn is_retained(&self) -> bool {
+    /// Reports whether the cache holds an idle or locally reserved sender.
+    fn has_retained(&self) -> bool {
         self.service.has_idle()
     }
 
-    /// Drains idle senders selected by the global retained-group LRU.
+    /// Detaches idle senders when the group is evicted for capacity.
     ///
     /// Checked-out senders remain valid and can finish their requests.
-    fn evict_retained(&mut self) -> Option<DeferredDrop> {
-        defer_drop_vec(self.service.drain_idle())
+    fn evict(&mut self) -> Option<Discarded> {
+        Discarded::http1(self.service.drain_idle())
     }
 
     /// Compares cleanup state with this exact mapped entry.
-    fn matches_identity(&self, state: &Arc<EntryState>) -> bool {
+    fn has_state(&self, state: &Arc<EntryState>) -> bool {
         Arc::ptr_eq(&self.state, state)
     }
 
@@ -303,7 +330,8 @@ where
         if let Some(future) = self.service.checkout() {
             return CheckoutFuture::Mux {
                 future,
-                discarded: None,
+                #[cfg(feature = "http2")]
+                discarded: VecDeque::new(),
                 usage: Some(usage),
                 pool_enabled,
             };
@@ -317,42 +345,44 @@ where
     }
 
     #[cfg(feature = "ws")]
-    fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)> {
+    fn checkout_made(&self) -> Option<(MuxSingled, Arc<EntryState>)> {
         Some((self.service.checkout_made()?, self.state.clone()))
     }
 
-    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
+    fn prune(&mut self, now: Instant, timeout: Option<Duration>) -> Option<Discarded> {
         // A checkout waiting on the singleton may not hold a sender yet.
         let timeout = timeout.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
         self.service
             .retain(|connection| connection.is_reusable(now, timeout))
-            .map(defer_drop)
+            .map(|sender| Discarded::Mux { _sender: sender })
     }
 
     /// Returns whether the singleton owns an open, unpoisoned sender.
     ///
-    /// A peer can close an idle connection before the next sweep; a dead sender
-    /// must not keep its idle-group LRU slot and displace live groups.
-    fn is_retained(&self) -> bool {
+    /// A peer can close an idle connection between sweeps, so check its health
+    /// before counting the entry toward capacity.
+    fn has_retained(&self) -> bool {
         self.service.has_service_and(mux::Connection::is_open)
     }
 
-    fn keep_lru(&self) -> bool {
+    fn prepare_eviction(&self) -> bool {
         self.service.has_service_and(|connection| {
-            connection.is_open() && !connection.defer_until_idle(&self.state.lru_pruned)
+            connection.is_open() && !connection.defer_until_idle(&self.state.track_on_idle)
         })
     }
 
-    /// Detaches the completed sender selected by the global retained-group LRU.
+    /// Detaches the completed sender when the group is evicted for capacity.
     ///
     /// Existing sender clones remain valid, while later checkouts create or join
     /// a new singleton generation.
-    fn evict_retained(&mut self) -> Option<DeferredDrop> {
-        self.service.take().map(defer_drop)
+    fn evict(&mut self) -> Option<Discarded> {
+        self.service
+            .take()
+            .map(|sender| Discarded::Mux { _sender: sender })
     }
 
     /// Compares cleanup state with this exact mapped entry.
-    fn matches_identity(&self, state: &Arc<EntryState>) -> bool {
+    fn has_state(&self, state: &Arc<EntryState>) -> bool {
         Arc::ptr_eq(&self.state, state)
     }
 
@@ -382,7 +412,7 @@ where
         if let Some((future, discarded)) = self.service.checkout_existing() {
             return CheckoutFuture::Mux {
                 future,
-                discarded: (!discarded.is_empty()).then(|| defer_drop(discarded)),
+                discarded,
                 usage: Some(usage),
                 pool_enabled,
             };
@@ -393,7 +423,7 @@ where
             Oneshot::new(service, target)
                 .await
                 .map(|service| match service {
-                    Negotiated::Left(service) => Pooled::new_h1(service, pool_enabled, usage),
+                    Negotiated::Left(service) => Pooled::new_http1(service, pool_enabled, usage),
                     Negotiated::Right(service) => Pooled::new_mux(service, pool_enabled, usage),
                 })
         }))
@@ -401,12 +431,12 @@ where
 
     /// Uses only the upgraded side; HTTP/1 fallback and pending transports stay untouched.
     #[cfg(feature = "ws")]
-    fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)> {
+    fn checkout_made(&self) -> Option<(MuxSingled, Arc<EntryState>)> {
         Some((self.service.upgrade().checkout_made()?, self.state.clone()))
     }
 
-    /// Cleans pending negotiation results and both protocol pools.
-    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
+    /// Prunes both protocol pools and clears stale or redundant negotiation results.
+    fn prune(&mut self, now: Instant, timeout: Option<Duration>) -> Option<Discarded> {
         let entry_in_use = self.state.uses.load(Ordering::Acquire) != 0;
         let pending = if self.service.upgrade().has_service_and(|_| true) {
             self.service.drain_pending()
@@ -424,12 +454,11 @@ where
             .upgrade_mut()
             .retain(|connection| connection.is_reusable(now, timeout));
 
-        (!pending.is_empty() || !fallback.is_empty() || upgrade.is_some())
-            .then(|| defer_drop((pending, fallback, upgrade)))
+        Discarded::negotiated(pending, fallback, upgrade)
     }
 
     /// Reports queued HTTP/2 transports, cached HTTP/1 senders, or a healthy HTTP/2 sender.
-    fn is_retained(&self) -> bool {
+    fn has_retained(&self) -> bool {
         !self.service.pending_is_empty()
             || self.service.fallback().has_idle()
             || self
@@ -438,26 +467,23 @@ where
                 .has_service_and(mux::Connection::is_open)
     }
 
-    fn keep_lru(&self) -> bool {
-        Entry::<T>::is_retained(self)
-            && !self
-                .service
-                .upgrade()
-                .has_service_and(|connection| connection.defer_until_idle(&self.state.lru_pruned))
+    fn prepare_eviction(&self) -> bool {
+        Entry::<T>::has_retained(self)
+            && !self.service.upgrade().has_service_and(|connection| {
+                connection.defer_until_idle(&self.state.track_on_idle)
+            })
     }
 
     /// Drains every reusable connection while preserving active HTTP/1 work.
-    fn evict_retained(&mut self) -> Option<DeferredDrop> {
+    fn evict(&mut self) -> Option<Discarded> {
         let pending = self.service.drain_pending();
         let fallback = self.service.fallback_mut().drain_idle();
         let upgrade = self.service.upgrade_mut().take();
-
-        (!pending.is_empty() || !fallback.is_empty() || upgrade.is_some())
-            .then(|| defer_drop((pending, fallback, upgrade)))
+        Discarded::negotiated(pending, fallback, upgrade)
     }
 
     /// Compares shared checkout state with this exact entry instance.
-    fn matches_identity(&self, state: &Arc<EntryState>) -> bool {
+    fn has_state(&self, state: &Arc<EntryState>) -> bool {
         Arc::ptr_eq(&self.state, state)
     }
 
@@ -480,11 +506,13 @@ impl Future for CheckoutFuture {
             #[cfg(any(feature = "http2", feature = "http3"))]
             Self::Mux {
                 future,
+                #[cfg(feature = "http2")]
                 discarded,
                 usage,
                 pool_enabled,
             } => {
-                drop(discarded.take());
+                #[cfg(feature = "http2")]
+                drop(std::mem::take(discarded));
                 let result = std::task::ready!(Pin::new(&mut *future).poll(cx));
                 let Some(usage) = usage.take() else {
                     return Poll::Pending;
@@ -549,13 +577,13 @@ impl EntryUse {
             });
         Self {
             state: Some(state),
-            cleanup_on_drop: true,
+            armed: true,
         }
     }
 
     /// Transfers successful-checkout cleanup to the returned pooled sender.
     pub(super) fn into_cleanup(mut self) -> EntryCleanupGuard {
-        self.cleanup_on_drop = false;
+        self.armed = false;
         let state = self.state.take();
         if let Some(state) = &state {
             state
@@ -581,7 +609,7 @@ impl Drop for EntryUse {
             .update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 count.saturating_sub(1)
             });
-        if self.cleanup_on_drop && previous == 1 {
+        if self.armed && previous == 1 {
             (state.maintain)(state);
         }
     }
@@ -597,12 +625,12 @@ impl EntryCleanupGuard {
         }
     }
 
-    /// Returns whether this entry still needs its pruned LRU record restored.
+    /// Returns whether this entry needs to be tracked again.
     #[cfg(any(feature = "http2", feature = "http3"))]
-    pub(super) fn lru_pruned(&self) -> bool {
+    pub(super) fn needs_tracking(&self) -> bool {
         self.state
             .as_ref()
-            .is_some_and(|state| state.lru_pruned.load(Ordering::Acquire))
+            .is_some_and(|state| state.track_on_idle.load(Ordering::Acquire))
     }
 
     /// Requests identity-aware maintenance after sender destruction.
