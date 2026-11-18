@@ -20,7 +20,7 @@ use http::{
 use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST, uri::Authority};
 use netty::body::Incoming;
 use pin_project_lite::pin_project;
-use tower::{BoxError, Layer, Service, ServiceExt, layer::layer_fn, util::Oneshot};
+use tower::{BoxError, Service, ServiceExt, util::Oneshot};
 #[cfg(feature = "cookies")]
 use {
     crate::cookie::{CookieStore, Cookies},
@@ -36,21 +36,29 @@ use super::{
 use crate::{
     Body,
     config::{connect::ConnectConfig, request::RequestConfig},
-    conn::{Conn, options::Options},
+    conn::{self, BoxedConnectLayer, Conn, options::Options},
+    dns::DynResolver,
     ext::UriExt,
     protocol::Protocol,
     rt::DynRuntime,
 };
 
-/// Low-level Tower client service beneath [`crate::Client`].
-/// Applies request validation, unsent retries, pool checkout and protocol dispatch.
-pub(super) type Client<C> = Stack<Dispatch<C>>;
+/// Settings used to assemble the shared HTTP request service.
+pub(super) struct Config {
+    pub(super) connect: conn::Config,
+    pub(super) connect_config: ConnectConfig,
+    pub(super) connector_layers: Vec<BoxedConnectLayer>,
+    pub(super) pool: pool::Config,
+    pub(super) protocol: Protocol,
+    #[cfg(feature = "cookies")]
+    pub(super) cookie_store: Option<Arc<dyn CookieStore>>,
+}
 
-/// Checks and configures requests, then drives unsent retries and terminal error mapping.
-/// Client values are shared; request-local options are captured once before any attempt,
-/// without cloning the body.
+/// Internal HTTP service beneath [`crate::Client`].
+/// Checks and configures each request before dispatch and retries unsent requests
+/// without cloning their bodies.
 #[derive(Clone)]
-pub(super) struct Stack<S> {
+pub(super) struct Client<S = Dispatch<conn::Connect>> {
     inner: S,
     protocol: Protocol,
     config: ConnectConfig,
@@ -158,28 +166,56 @@ struct CheckedOut {
     upgrade: Option<Http1Upgrade>,
 }
 
-/// Creates the configuration and unsent-retry layer for a dispatch service.
-///
-/// Configuration runs once and shares the client's values across service clones.
-/// Terminal dispatch errors are mapped only after retry classification, preserving
-/// ownership of any request returned before encoding.
-#[must_use]
-pub(super) fn layer<S>(
-    protocol: Protocol,
-    config: ConnectConfig,
-    retry_unsent: bool,
-) -> impl Layer<S, Service = Stack<S>> + Clone {
-    layer_fn(move |inner| Stack {
-        inner,
-        protocol,
-        config: config.clone(),
-        retry_unsent,
-    })
+// ===== impl Config =====
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            connect: conn::Config::default(),
+            connect_config: ConnectConfig::default(),
+            connector_layers: Vec::new(),
+            pool: pool::Config::default(),
+            protocol: Protocol::Auto,
+            #[cfg(feature = "cookies")]
+            cookie_store: None,
+        }
+    }
 }
 
-// ===== impl Stack =====
+// ===== impl Client =====
 
-impl<S> Stack<S> {
+impl Client {
+    /// Builds the shared connector, pool, and HTTP request service.
+    pub(super) fn new(
+        runtime: DynRuntime,
+        resolver: DynResolver,
+        config: Config,
+    ) -> crate::Result<Self> {
+        let connector = conn::Connect::new(
+            runtime.clone(),
+            resolver,
+            config.connect,
+            &config.connect_config,
+            config.connector_layers,
+        )?;
+        let dispatch = Dispatch::new(
+            connector,
+            runtime,
+            config.pool,
+            &config.connect_config,
+            #[cfg(feature = "cookies")]
+            config.cookie_store,
+        );
+        Ok(Self {
+            inner: dispatch,
+            protocol: config.protocol,
+            config: config.connect_config,
+            retry_unsent: true,
+        })
+    }
+}
+
+impl<S> Client<S> {
     /// Checks the request, then freezes connection settings before checkout and unsent
     /// retries. Every redirect hop and public retry passes here again.
     fn prepare<B>(&self, mut request: Request<B>) -> Result<DispatchRequest<B>, Error> {
@@ -211,7 +247,7 @@ impl<S> Stack<S> {
         }
 
         let extensions = request.extensions_mut();
-        let request_config = extensions.remove::<ConnectConfig>().unwrap_or_default();
+        let connect_config = extensions.remove::<ConnectConfig>().unwrap_or_default();
         #[cfg(feature = "ws")]
         let dedicated = extensions.remove::<DedicatedConnection>();
 
@@ -264,11 +300,11 @@ impl<S> Stack<S> {
                 Protocol::Http3 => uri.is_https(),
                 _ => false,
             })
-        .then(|| self.pool_key(origin.clone(), self.protocol, &request_config));
+        .then(|| self.pool_key(origin.clone(), self.protocol, &connect_config));
 
         Ok(DispatchRequest {
             request,
-            pool_key: self.pool_key(origin, protocol, &request_config),
+            pool_key: self.pool_key(origin, protocol, &connect_config),
             #[cfg(feature = "ws")]
             dedicated: dedicated.is_some(),
             negotiable,
@@ -282,17 +318,17 @@ impl<S> Stack<S> {
         &self,
         origin: Uri,
         protocol: Protocol,
-        request: &ConnectConfig,
+        config: &ConnectConfig,
     ) -> PoolKey<PoolTarget> {
         PoolKey::new(PoolTarget {
             origin,
             protocol,
-            options: Options::new(protocol, request, &self.config),
+            options: Options::new(protocol, config, &self.config),
         })
     }
 }
 
-impl<S, B> Service<Request<B>> for Stack<S>
+impl<S, B> Service<Request<B>> for Client<S>
 where
     S: Service<DispatchRequest<B>, Error = DispatchError<B>> + Clone,
 {
@@ -396,15 +432,21 @@ where
     /// Handshakes start from the client's connection settings, and HTTP/1 generates
     /// any missing `Host` header.
     #[must_use]
-    pub(super) fn new(
-        pool_config: pool::Config,
+    fn new(
         connector: C,
-        config: &ConnectConfig,
-        #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn CookieStore>>,
         runtime: DynRuntime,
+        pool_config: pool::Config,
+        connect_config: &ConnectConfig,
+        #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn CookieStore>>,
     ) -> Self {
         Self {
-            pool: pool::Pool::new(pool_config, connector, runtime.clone(), config, true),
+            pool: pool::Pool::new(
+                connector,
+                runtime.clone(),
+                pool_config,
+                connect_config,
+                true,
+            ),
             #[cfg(feature = "cookies")]
             cookie_store: RequestConfig::new(cookie_store),
             runtime,
@@ -867,13 +909,18 @@ mod tests {
 
     use super::*;
 
-    fn stack<S>(service: S, protocol: Protocol, retry_unsent: bool) -> Stack<S> {
-        layer(protocol, ConnectConfig::default(), retry_unsent).layer(service)
+    fn client<S>(service: S, protocol: Protocol, retry_unsent: bool) -> Client<S> {
+        Client {
+            inner: service,
+            protocol,
+            config: ConnectConfig::default(),
+            retry_unsent,
+        }
     }
 
     #[test]
     fn entry_checks_reject_requests_and_strip_userinfo_before_keying() {
-        let stack = stack((), Protocol::Auto, false);
+        let client = client((), Protocol::Auto, false);
         for (method, version, uri, kind) in [
             (
                 Method::CONNECT,
@@ -900,13 +947,13 @@ mod tests {
                 .uri(uri)
                 .body(())
                 .unwrap();
-            let Err(error) = stack.prepare(request) else {
+            let Err(error) = client.prepare(request) else {
                 panic!("{kind} must reject the request");
             };
             assert_eq!(error.to_string(), format!("client error ({kind})"));
         }
 
-        let prepare = |uri| stack.prepare(Request::get(uri).body(()).unwrap()).unwrap();
+        let prepare = |uri| client.prepare(Request::get(uri).body(()).unwrap()).unwrap();
         let plain = prepare("http://localhost/");
         let userinfo = prepare("http://user:pw@localhost/");
         assert_eq!(userinfo.request.uri(), "http://localhost/");
@@ -949,7 +996,7 @@ mod tests {
                 future::ready(result)
             });
 
-            let result = stack(service, Protocol::Auto, enabled)
+            let result = client(service, Protocol::Auto, enabled)
                 .oneshot(
                     Request::builder()
                         .version(Version::HTTP_10)
@@ -987,7 +1034,7 @@ mod tests {
                     Ok(())
                 })
             });
-            stack(service, Protocol::Auto, true)
+            client(service, Protocol::Auto, true)
                 .oneshot(
                     Request::builder()
                         .uri("https://localhost/")
@@ -1043,13 +1090,13 @@ mod tests {
         });
         let store = Arc::new(Recorder::default());
         let dispatch = Dispatch::new(
-            pool::Config::default(),
             connector,
+            DynRuntime::new(crate::rt::tokio::TokioRuntime),
+            pool::Config::default(),
             &ConnectConfig::default(),
             Some(store.clone()),
-            DynRuntime::new(crate::rt::tokio::TokioRuntime),
         );
-        let response = stack(dispatch, Protocol::Auto, true)
+        let response = client(dispatch, Protocol::Auto, true)
             .oneshot(
                 Request::connect("http://localhost/")
                     .body(Body::default())

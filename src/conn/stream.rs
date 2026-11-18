@@ -89,11 +89,17 @@ impl Service<Request<ConnectConfig>> for Connect {
 
     #[inline]
     fn call(&mut self, request: Request<ConnectConfig>) -> Self::Future {
-        let proxy = Matcher::select(
-            request.body().get_ref::<Matcher>(),
-            &self.state.proxies,
-            request.uri(),
-        );
+        let proxy = request
+            .body()
+            .get_ref::<Matcher>()
+            .and_then(|proxy| proxy.intercept(request.uri()))
+            .or_else(|| {
+                self.state
+                    .proxies
+                    .iter()
+                    .find_map(|proxy| proxy.intercept(request.uri()))
+            });
+
         if let Some(Intercepted::Proxy(proxy)) = &proxy
             && proxy.uri().scheme_str() == Some("quic")
         {
@@ -101,6 +107,7 @@ impl Service<Request<ConnectConfig>> for Connect {
                 ProxyMismatch("QUIC proxies require HTTP/3").into(),
             ));
         }
+
         Either::Left(Box::pin(self.state.clone().connect(request, proxy)))
     }
 }

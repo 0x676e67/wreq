@@ -399,7 +399,6 @@ impl UpgradeSignal {
     }
 
     /// Waits until a generation newer than this subscription is published.
-    #[must_use]
     fn notified(&self) -> BoxFuture<'static, ()> {
         let mut generation = self.generation.subscribe();
         let current = *generation.borrow_and_update();

@@ -89,14 +89,18 @@ where
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
         Box::pin(async move {
+            // Await the underlying service to establish the transport.
             let Established { io, connected, .. } = future.await?;
             let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
+
+            // Spawn a task to drive the HTTP/2 connection in the background.
             runtime.execute(Box::pin(async move {
                 if let Err(_error) = connection.await {
                     debug!("client connection error: {_error}");
                 }
             }));
             tx.ready().await?;
+
             Ok(Connection::new(Sender::Http2(tx), connected, runtime))
         })
     }

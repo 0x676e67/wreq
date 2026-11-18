@@ -1,4 +1,4 @@
-//! [`ConnectStack`] applies connector layers and a deadline to [`svc::Connect`].
+//! [`Connect`] applies connector layers and a deadline to [`svc::Connect`].
 //! It dispatches each connection request to the [`stream`] or QUIC service, which returns a
 //! [`Conn`] with the established [`Transport`] and its [`Connected`] metadata.
 
@@ -45,7 +45,7 @@ type LayeredConnect = MapRequest<
 /// Establishes stream and QUIC transports under one connection deadline.
 /// Without user layers [`svc::Connect`] is called directly; user layers see the request
 /// behind [`Unnameable`]. Clones share the transports' state.
-pub(crate) type ConnectStack = Deadline<Either<svc::Connect, LayeredConnect>>;
+pub(crate) type Connect = Deadline<Either<svc::Connect, LayeredConnect>>;
 
 /// Client-wide transport settings, fixed at build.
 pub(crate) struct Config {
@@ -105,9 +105,9 @@ impl Default for Config {
     }
 }
 
-// ===== impl ConnectStack =====
+// ===== impl Connect =====
 
-impl ConnectStack {
+impl Connect {
     /// Stacks the user's layers and the connection deadline over the transport router.
     pub(crate) fn new(
         runtime: DynRuntime,
@@ -254,7 +254,7 @@ mod tests {
                 happy_eyeballs_timeout: delay,
                 ..Default::default()
             };
-            let connector = ConnectStack::new(
+            let connector = Connect::new(
                 runtime.clone(),
                 resolver.clone(),
                 config,
@@ -313,7 +313,7 @@ mod tests {
                 proxies,
                 ..Default::default()
             };
-            let connector = ConnectStack::new(
+            let connector = Connect::new(
                 runtime.clone(),
                 DynResolver::new(Arc::new(NoDns)),
                 config,

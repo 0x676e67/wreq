@@ -157,7 +157,6 @@ fn early_response_is_read_while_upload_is_blocked() {
 
 #[test]
 fn split_upgrade_keeps_reader_and_writer_wakeups() {
-    // Larger than the loopback socket buffers, so a flush blocks until the server reads.
     const UPLOAD: usize = 16 << 20;
     let read_upload = Arc::new(tokio::sync::Notify::new());
     let server = support::server::http({
@@ -188,8 +187,11 @@ fn split_upgrade_keeps_reader_and_writer_wakeups() {
     let url = format!("http://{}/", server.addr());
 
     compio::runtime::Runtime::new().unwrap().block_on(async {
-        let response = Client::builder_compio()
-            .no_proxy()
+        let builder = Client::builder_compio().no_proxy();
+        // With send buffering, Winsock can complete the flush before the peer reads.
+        #[cfg(windows)]
+        let builder = builder.tcp_send_buffer_size(0);
+        let response = builder
             .build()
             .unwrap()
             .get(&url)

@@ -150,7 +150,6 @@ where
     }
 
     /// Iterates over mapped services without changing idle LRU order.
-    #[must_use]
     pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &mut S)> {
         self.entries.iter_mut()
     }

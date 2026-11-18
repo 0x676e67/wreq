@@ -34,11 +34,6 @@ use tokio_btls::SslStream;
 pub(crate) use self::handle::DynRuntime;
 use crate::dns::Resolve;
 
-#[cfg(unix)]
-const UNSUPPORTED_UNIX_SOCKETS: &str = "runtime does not support Unix domain sockets";
-#[cfg(feature = "http3")]
-const UNSUPPORTED_UDP_SOCKETS: &str = "runtime does not support UDP sockets";
-
 /// Longest delay [`deadline_after`] adds: about 30 years, Tokio's far-future deadline.
 const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
 
@@ -66,6 +61,7 @@ pub trait Runtime: Timer + Debug + 'static {
     }
 
     /// Returns the resolver used unless the client builder overrides DNS.
+    #[must_use]
     fn resolver(&self) -> Arc<dyn Resolve>;
 
     /// Connects an unconnected, nonblocking socket to `address`.
@@ -76,6 +72,7 @@ pub trait Runtime: Timer + Debug + 'static {
     /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error.
     #[cfg(unix)]
     fn connect_unix(&self, _path: Arc<std::path::Path>) -> Connecting {
+        const UNSUPPORTED_UNIX_SOCKETS: &str = "runtime does not support Unix domain sockets";
         Box::pin(std::future::ready(Err(io::Error::new(
             io::ErrorKind::Unsupported,
             UNSUPPORTED_UNIX_SOCKETS,
@@ -91,6 +88,7 @@ pub trait Runtime: Timer + Debug + 'static {
     /// is in use.
     #[cfg(feature = "http3")]
     fn udp_socket(&self, _socket: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
+        const UNSUPPORTED_UDP_SOCKETS: &str = "runtime does not support UDP sockets";
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             UNSUPPORTED_UDP_SOCKETS,

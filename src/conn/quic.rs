@@ -101,17 +101,22 @@ impl Service<Request<ConnectConfig>> for Connect {
 
     fn call(&mut self, request: Request<ConnectConfig>) -> Self::Future {
         let endpoints = self.endpoints.clone();
-        match Matcher::select(
-            request.body().get_ref::<Matcher>(),
-            &self.proxies,
-            request.uri(),
-        ) {
-            None => Either::Left(Box::pin(async move { endpoints.connect(&request).await })),
-            #[cfg(unix)]
-            Some(Intercepted::Unix(_)) => {
-                Either::Right(future::err(ProxyMismatch(QUIC_PROXY_REQUIRED).into()))
-            }
-            Some(Intercepted::Proxy(proxy)) => match proxy.uri().scheme_str() {
+
+        let Some(intercepted) = request
+            .body()
+            .get_ref::<Matcher>()
+            .and_then(|proxy| proxy.intercept(request.uri()))
+            .or_else(|| {
+                self.proxies
+                    .iter()
+                    .find_map(|proxy| proxy.intercept(request.uri()))
+            })
+        else {
+            return Either::Left(Box::pin(async move { endpoints.connect(&request).await }));
+        };
+
+        match intercepted {
+            Intercepted::Proxy(proxy) => match proxy.uri().scheme_str() {
                 // Keep the proxy error for invalid authorities from environment rules.
                 Some("quic") if let Err(error) = quic_port(proxy.uri()) => {
                     Either::Right(future::err(ProxyConnect::Message(error).into()))
@@ -133,6 +138,10 @@ impl Service<Request<ConnectConfig>> for Connect {
                 }
                 _ => Either::Right(future::err(ProxyMismatch(QUIC_PROXY_REQUIRED).into())),
             },
+            #[cfg(unix)]
+            Intercepted::Unix(_) => {
+                Either::Right(future::err(ProxyMismatch(QUIC_PROXY_REQUIRED).into()))
+            }
         }
     }
 }

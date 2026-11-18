@@ -32,13 +32,13 @@ pub(super) async fn connect(
     let config = request.body().clone();
     let is_https = target.is_https();
     let resolver = resolver.map_request(Name::new);
-    let connect_proxy = dialer.map_request(move |uri: Uri| Dial::Tcp {
+    let svc = dialer.map_request(move |uri: Uri| Dial::Tcp {
         nodelay: is_https || uri.is_https(),
         uri,
         config: config.clone(),
         deadline,
     });
-    let mut connector = SocksConnector::new(proxy.uri().clone(), connect_proxy, resolver);
+    let mut connector = SocksConnector::new(proxy.uri().clone(), svc, resolver);
     connector.set_auth(proxy.raw_auth());
     connector.set_version(version);
     connector.set_dns_mode(dns);

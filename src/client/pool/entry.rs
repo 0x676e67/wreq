@@ -108,15 +108,19 @@ trait Http1Cache<R>:
     Service<R, Response = Cached<http1::Connection>, Error = BoxError> + Clone + Send + 'static
 {
     /// Removes closed or expired idle HTTP/1 senders.
+    #[must_use]
     fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Vec<http1::Connection>;
 
     /// Removes all unreserved idle HTTP/1 senders.
+    #[must_use]
     fn drain_idle(&mut self) -> Vec<http1::Connection>;
 
     /// Returns whether at least one unreserved idle HTTP/1 sender exists.
+    #[must_use]
     fn has_idle(&self) -> bool;
 
     /// Returns whether the HTTP/1 cache owns no services.
+    #[must_use]
     fn is_empty(&self) -> bool;
 }
 

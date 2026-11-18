@@ -750,7 +750,6 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Restores a pending maker when the same participant remains the driver.
-    #[must_use]
     fn restore_future(
         &mut self,
         id: ParticipantId,

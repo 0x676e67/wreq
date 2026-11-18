@@ -166,7 +166,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            idle_timeout: None,
+            idle_timeout: Some(Duration::from_secs(90)),
             max_idle_per_host: usize::MAX,
             max_size: None,
             strategy: PoolStrategy::default(),
@@ -315,9 +315,9 @@ where
     /// remains dormant until an entry retains reusable state.
     #[must_use]
     pub(super) fn new(
-        pool_config: Config,
         connector: C,
         runtime: DynRuntime,
+        pool_config: Config,
         config: &ConnectConfig,
         set_host: bool,
     ) -> Self {
@@ -481,11 +481,9 @@ impl<K> Hash for PoolKey<K> {
 
 // ===== impl PoolTarget =====
 
-impl PoolTarget {
-    /// Builds the connector request when a cache miss opens a new connection.
-    #[must_use]
-    pub(super) fn into_request(self) -> Request<ConnectConfig> {
-        Request::new_connect(self.origin, self.protocol, self.options.into_config())
+impl From<PoolTarget> for Request<ConnectConfig> {
+    fn from(target: PoolTarget) -> Self {
+        Request::new_connect(target.origin, target.protocol, target.options.into_config())
     }
 }
 
@@ -800,7 +798,7 @@ where
             let Conn {
                 transport,
                 connected,
-            } = Oneshot::new(connector, checkout.target.into_request()).await?;
+            } = Oneshot::new(connector, checkout.target.into()).await?;
 
             Ok(Established::new(
                 transport.into_stream()?,

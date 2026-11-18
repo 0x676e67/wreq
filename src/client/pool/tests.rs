@@ -173,12 +173,12 @@ fn grouped_key(group: Group, protocol: Protocol) -> PoolKey<PoolTarget> {
 /// Creates a pool without periodic cleanup so empty-entry removal is explicit.
 fn test_pool(connector: TestConnector) -> Pool<TestConnector> {
     Pool::new(
+        connector,
+        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         Config {
             idle_timeout: None,
             ..Config::default()
         },
-        connector,
-        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         &ConnectConfig::default(),
         true,
     )
@@ -259,9 +259,9 @@ fn protocol_modes_clone_connector_once() {
         std::future::pending::<Result<Conn, BoxError>>()
     });
     let pool = Pool::new(
-        Config::default(),
         connector,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
+        Config::default(),
         &ConnectConfig::default(),
         true,
     );
@@ -296,12 +296,12 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         let calls = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let pool = Pool::new(
+            TestConnector::Http2(calls.clone(), gate.clone()),
+            DynRuntime::new(crate::rt::tokio::TokioRuntime),
             Config {
                 idle_timeout: None,
                 ..Config::default()
             },
-            TestConnector::Http2(calls.clone(), gate.clone()),
-            DynRuntime::new(crate::rt::tokio::TokioRuntime),
             &client_config,
             true,
         );
@@ -414,12 +414,12 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
 #[tokio::test(start_paused = true)]
 async fn idle_task_tracks_reusable_state() {
     let pool = Pool::new(
+        TestConnector::KeepsAlive,
+        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         Config {
             idle_timeout: Some(Duration::from_millis(10)),
             ..Config::default()
         },
-        TestConnector::KeepsAlive,
-        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         &ConnectConfig::default(),
         true,
     );
@@ -440,12 +440,12 @@ async fn idle_task_tracks_reusable_state() {
     assert!(!pool.inner.expire.is_running());
 
     let pool = Pool::new(
+        TestConnector::KeepsAlive,
+        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         Config {
             idle_timeout: Some(Duration::ZERO),
             ..Config::default()
         },
-        TestConnector::KeepsAlive,
-        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         &ConnectConfig::default(),
         true,
     );
@@ -465,12 +465,12 @@ async fn idle_task_tracks_reusable_state() {
 #[tokio::test]
 async fn idle_task_waits_for_a_runtime_after_off_runtime_drop() {
     let pool = Pool::new(
+        TestConnector::KeepsAlive,
+        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         Config {
             idle_timeout: Some(Duration::from_secs(60)),
             ..Config::default()
         },
-        TestConnector::KeepsAlive,
-        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         &ConnectConfig::default(),
         true,
     );
@@ -682,12 +682,12 @@ async fn pool_max_size_evicts_only_idle_groups() {
     }
 
     let pool = Pool::new(
+        TestConnector::KeepsAlive,
+        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         Config {
             max_size: NonZeroUsize::new(1),
             ..Config::default()
         },
-        TestConnector::KeepsAlive,
-        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         &ConnectConfig::default(),
         true,
     );
@@ -729,13 +729,13 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
         (Protocol::Http3, http3_connector()),
     ] {
         let pool = Pool::new(
+            connector,
+            DynRuntime::new(crate::rt::tokio::TokioRuntime),
             Config {
                 idle_timeout: None,
                 max_size: NonZeroUsize::new(2),
                 ..Config::default()
             },
-            connector,
-            DynRuntime::new(crate::rt::tokio::TokioRuntime),
             &ConnectConfig::default(),
             true,
         );

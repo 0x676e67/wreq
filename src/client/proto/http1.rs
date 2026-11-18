@@ -214,6 +214,7 @@ impl Connection {
         runtime: DynRuntime,
         set_host: bool,
     ) -> Result<Self, BoxError> {
+        // Extract the established transport and connection metadata.
         let Established { io, connected, .. } = established;
         let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
         let (error_tx, error_rx) = oneshot::channel();
@@ -224,6 +225,7 @@ impl Connection {
             }
         }));
 
+        // Wait for the sender to become ready, handling any connection errors.
         match tx.ready().await {
             Ok(()) => drop(error_rx),
             Err(error) if error.is_closed() => match error_rx.await {
@@ -294,6 +296,7 @@ impl Service<Request<Body>> for Connection {
             req.headers_mut().insert(HOST, host);
         }
 
+        // Adjust the request URI based on the connection type and HTTP method.
         let result = if req.method() == Method::CONNECT {
             authority_form(req.uri_mut())
         } else if self.connected.is_proxied() {

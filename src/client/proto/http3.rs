@@ -97,12 +97,16 @@ where
             let Conn {
                 transport,
                 connected,
-            } = connector.call(checkout.target.into_request()).await?;
+            } = connector.call(checkout.target.into()).await?;
+
+            // Convert the transport into a QUIC connection and endpoint.
             let (quic, endpoint) = transport.into_quic()?;
             let quic = Compat::new(http3_quic::Connection::new(quic));
             let (mut tx, connection) = Arc::unwrap_or_clone(builder)
                 .handshake::<_, Body>(quic)
                 .await?;
+
+            // Spawn a task to drive the QUIC connection in the background.
             runtime.execute(Box::pin(async move {
                 let _endpoint = endpoint;
                 if let Err(_error) = connection.await {

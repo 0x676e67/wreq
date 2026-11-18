@@ -171,22 +171,28 @@ impl Service<Request<Body>> for Connection {
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         let ready = match &mut self.tx {
             #[cfg(feature = "http2")]
-            Sender::Http2(tx) => tx.poll_ready(cx),
+            Sender::Http2(sender) => sender.poll_ready(cx),
             #[cfg(feature = "http3")]
-            Sender::Http3(tx) => tx.poll_ready(cx),
+            Sender::Http3(sender) => sender.poll_ready(cx),
         };
+
         if matches!(ready, Poll::Ready(Err(_))) {
             self.connected.poison();
         }
+
         ready.map_err(|error| SendError::Request(Error::closed(error)))
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         match &mut self.tx {
             #[cfg(feature = "http2")]
-            Sender::Http2(tx) => Box::pin(tx.try_send_request(req).map_err(SendError::protocol)),
+            Sender::Http2(sender) => {
+                Box::pin(sender.try_send_request(req).map_err(SendError::protocol))
+            }
             #[cfg(feature = "http3")]
-            Sender::Http3(tx) => Box::pin(tx.try_send_request(req).map_err(SendError::protocol)),
+            Sender::Http3(sender) => {
+                Box::pin(sender.try_send_request(req).map_err(SendError::protocol))
+            }
         }
     }
 }
