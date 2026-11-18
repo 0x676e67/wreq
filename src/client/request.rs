@@ -610,7 +610,8 @@ impl RequestBuilder {
     /// Cleartext HTTP/2 uses prior knowledge without an HTTP/1 Upgrade.
     /// Negotiation does not rewrite an HTTP/2 WebSocket handshake into HTTP/1 Upgrade.
     /// HTTP/3 requires an explicit `Version::HTTP_3` or an HTTP/3-only client.
-    /// Requests with an explicit version are pooled apart from requests without one.
+    /// An explicit version can share a pool group with the client's default when
+    /// both resolve to the same protocol selection and connection settings.
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.version_mut().replace(version);

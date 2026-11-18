@@ -1,28 +1,18 @@
 //! Composable client connection pooling, adapted from [hyper-util].
-//! Connections are isolated by configuration and managed by acquisition and idle policies.
 //!
-//! [hyper-util]: https://github.com/hyperium/hyper-util/blob/master/src/client/pool/mod.rs
+//! [hyper-util]: https://docs.rs/hyper-util/latest/src/hyper_util/client/legacy/pool.rs.html
 //!
-//! [`Map`] groups connections by [`PoolKey`], including request-local
-//! configuration and an optional [`crate::Group`] partition. Fixed modes use
-//! an HTTP/1 [`Cache`] or an HTTP/2 or HTTP/3 [`Singleton`]. Auto negotiates
-//! between HTTP/1 and HTTP/2 through [`Negotiate`].
+//! [`PoolKey`] groups connections by origin, protocol selection, and connection settings,
+//! including an optional [`crate::Group`]. Auto prefers existing or queued HTTP/2 work
+//! before checking the HTTP/1 cache. A new transport reporting `h2` goes to the HTTP/2
+//! handshake. Other successful transports go through the HTTP/1 handshake on the same stream.
 //!
-//! HTTP/1 senders are exclusive and return only when ready. HTTP/2 and HTTP/3
-//! senders are shared; checkout accounting ends at response headers, while streams netty
-//! reports live keep the connection out of idle expiry and eviction.
+//! HTTP/1 returns exclusive senders when ready. HTTP/2 and HTTP/3 share senders, and their
+//! checkouts end at response headers, on error, or on cancellation. Open streams
+//! keep the shared sender in use after the checkout ends.
 //!
-//! # Checkout flow
-//!
-//! 1. Find or create the entry for the connection key.
-//! 2. Check the fixed protocol pool, or try HTTP/2 then HTTP/1 reuse in Auto mode before allowing a
-//!    new connection.
-//! 3. Handshake with the entry's builders, which apply the key's protocol options.
-//! 4. Transfer cleanup to [`Pooled`] on success; on cancellation, remove the same entry only when
-//!    no shared work remains.
-//!
-//! Locks protect routing and bookkeeping. Sender destruction, user service
-//! polling, and task wakeups run after releasing them.
+//! The map lock protects entry selection and bookkeeping. Checkout polling and destruction
+//! of detached senders happen after unlocking.
 
 mod entry;
 #[cfg(test)]
@@ -98,12 +88,10 @@ pub(super) fn is_canceled(error: &(dyn std::error::Error + 'static)) -> bool {
     }
 }
 
-/// Selects when the pool starts a new connection while reuse is unavailable.
+/// Controls how long to wait for HTTP/1 reuse before opening a new connection.
 ///
-/// This changes acquisition timing only. Idle timeouts and retention limits are
-/// configured separately on [`ClientBuilder`](crate::ClientBuilder).
-/// Existing HTTP/2 or HTTP/3 creation is shared under either strategy, without a competing
-/// connection attempt; the reuse delay does not limit that wait.
+/// Auto also uses this strategy while choosing a protocol. Requests join an existing
+/// HTTP/2 or HTTP/3 connection attempt under either strategy.
 ///
 /// # Examples
 ///
@@ -119,18 +107,14 @@ pub(super) fn is_canceled(error: &(dyn std::error::Error + 'static)) -> bool {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum PoolStrategy {
-    /// Starts a new connection as soon as no reusable connection is ready.
-    ///
-    /// Existing work can still win the resulting race. This is the default and
-    /// favors low latency.
+    /// Dials immediately on a reuse miss and races the dial against reuse. This is the default.
     #[default]
     Race,
 
-    /// Gives existing pool state this long to become reusable before connecting.
+    /// Lets an existing HTTP/1 checkout or connection attempt supply a sender before dialing.
     ///
-    /// A cold compatibility group connects immediately. The delay applies only
-    /// when idle, checked-out, or connecting state may become reusable. A zero
-    /// duration behaves like [`PoolStrategy::Race`].
+    /// A group with no existing work dials immediately. A zero delay behaves
+    /// like [`PoolStrategy::Race`].
     ReuseFirst(Duration),
 }
 
@@ -146,7 +130,7 @@ pub struct Config {
     /// Maximum HTTP/1 connections retained per compatibility group.
     pub(super) max_idle_per_host: usize,
 
-    /// Maximum number of compatibility groups allowed to retain idle state.
+    /// Capacity of the least-recently-used group index.
     pub(super) max_size: Option<NonZeroUsize>,
 
     /// Delay policy applied before starting a new connection.
@@ -237,11 +221,9 @@ pub(super) struct Checkout<T> {
     wait_for_reuse: bool,
 }
 
-/// Factory that creates one protocol-specific service graph per destination group.
+/// Builds a protocol service stack for each connection group.
 ///
-/// Fixed protocols receive their matching pool. Auto combines HTTP/1 and HTTP/2
-/// through [`Negotiate`], and unpooled checkouts create a temporary entry.
-/// Entries hold only a weak reference to [`PoolInner`].
+/// Entries hold a weak reference to [`PoolInner`]. Unpooled checkouts use a temporary entry.
 struct PoolTargeter<C> {
     /// Physical connection service.
     connector: C,
@@ -416,8 +398,7 @@ where
 
     /// Checks out an established HTTP/2 or HTTP/3 sender whose peer enabled extended CONNECT.
     ///
-    /// Never creates entries or connections, joins pending handshakes, or touches
-    /// HTTP/1 state, so a miss costs one map lookup.
+    /// Probes completed senders only. A miss leaves pool entries intact.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
     #[must_use]
     pub(super) fn checkout_extended_connect(&self, key: &PoolKey<PoolTarget>) -> Option<Pooled> {
@@ -560,10 +541,8 @@ where
             Some((false, true)) => {
                 schedule_expiration = true;
                 let (pruned, evicted) = services.mark_retained(key, |entry| entry.is_evictable());
-                // Pruned groups lost reusable state between sweeps, such as a closed QUIC
-                // connection, or are in use and so not evicted, as HTTP/1 evicts only idle
-                // senders. Idle sweeps may be disabled, so clean them up here; groups in use
-                // are marked again on their next checkout.
+                // Pruning clears LRU records for dead or busy groups. Shared senders
+                // in use stay pooled and regain a record on a later checkout.
                 if !pruned.is_empty() {
                     let now = self.now();
                     for key in &pruned {

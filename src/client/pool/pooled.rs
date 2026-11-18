@@ -25,15 +25,11 @@ use crate::{
     conn::Connected,
 };
 
-/// Protocol-agnostic sender checked out from one pool entry.
+/// A sender checked out from a pool entry.
 ///
-/// HTTP/1 owns an exclusive [`Cached`] sender that returns to its cache on drop.
-/// HTTP/2 and HTTP/3 own a [`Singled`](super::singleton::Singled) clone and count
-/// checkouts until response headers. The wrapper presents one request interface to
-/// the client and records whether a healthy sender may be retained after dispatch.
-///
-/// Dropping this value marks HTTP/1 idle or ends the HTTP/2 or HTTP/3 checkout.
-/// Poisoned or closed senders are removed instead of being reused.
+/// HTTP/1 returns a healthy, ready sender to its cache. HTTP/2 and HTTP/3 release
+/// a shared checkout at response headers, on error, or on cancellation. The protocol
+/// driver keeps open streams running after the checkout ends.
 pub(in crate::client) struct Pooled {
     /// HTTP/1 cache checkout or HTTP/2 or HTTP/3 singleton checkout.
     inner: PooledInner,

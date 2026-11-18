@@ -46,7 +46,8 @@ pub(super) trait Entry<T>: Send {
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
     fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)>;
 
-    /// Removes expired or closed idle connections for destruction after unlocking.
+    /// Detaches closed, poisoned, or idle-expired state for destruction after unlocking.
+    /// Pending checkouts and shared senders in use defer idle expiry.
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop>;
 
     /// Returns whether this entry retains reusable connection state.
@@ -54,7 +55,8 @@ pub(super) trait Entry<T>: Send {
 
     /// Returns whether LRU eviction would remove only idle state.
     ///
-    /// HTTP/1 drains only idle senders; a shared HTTP/2 or HTTP/3 sender in use is never evicted.
+    /// HTTP/1 drains idle senders. Shared HTTP/2 and HTTP/3 senders become eligible
+    /// once all their checkouts and streams end.
     fn is_evictable(&self) -> bool {
         self.is_retained()
     }
@@ -182,10 +184,8 @@ pub(super) struct EntryUse {
 
 /// Deferred cleanup for a successful checkout that later discards its sender.
 ///
-/// This field is declared after [`Pooled::inner`], so Rust drops the negotiated
-/// sender and updates cache checkout accounting before this guard inspects the
-/// mapped entry. A disarmed guard takes no lock on drop; successful return paths
-/// perform their own maintenance before this guard is dropped.
+/// In [`Pooled`], this guard drops after the sender so cleanup sees the updated cache
+/// or singleton state.
 pub(super) struct EntryCleanupGuard {
     /// Entry identity and cleanup operation transferred from [`EntryUse`].
     state: Option<Arc<EntryState>>,
@@ -318,12 +318,8 @@ where
         Some((self.service.checkout_made()?, self.state.clone()))
     }
 
-    /// Removes a completed sender when poisoned, closed, or expired idle.
-    ///
-    /// Pending singleton creation is left untouched. Connections in use are
-    /// kept by [`mux::Connection::is_reusable`].
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
-        // Pending checkouts defer idle expiry, never poison or closure checks.
+        // A checkout waiting on the singleton may not hold a sender yet.
         let timeout = timeout.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
         self.service
             .retain(|connection| connection.is_reusable(now, timeout))
@@ -340,7 +336,7 @@ where
         })
     }
 
-    /// Keeps a sender in use out of eviction, which would split its origin's traffic.
+    /// Keeps the sender out of eviction while it is in use.
     fn is_evictable(&self) -> bool {
         self.is_retained() && !self.service.has_service_and(mux::Connection::is_in_use)
     }
@@ -430,7 +426,7 @@ where
             .then(|| defer_drop((pending, fallback, upgrade)))
     }
 
-    /// Reports reusable connections owned by any negotiated path.
+    /// Reports queued HTTP/2 transports, cached HTTP/1 senders, or a shared HTTP/2 sender.
     fn is_retained(&self) -> bool {
         !self.service.pending_is_empty()
             || self.service.fallback().has_idle()

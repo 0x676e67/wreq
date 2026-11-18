@@ -885,9 +885,12 @@ impl ClientBuilder {
 
     // HTTP options
 
-    /// Sets how long an idle pooled connection remains eligible for reuse.
+    /// Sets how long an idle sender remains eligible for reuse.
     ///
-    /// Pass `None` to disable time-based eviction. The default is 90 seconds.
+    /// HTTP/1 idle time starts when the sender returns to the pool. For HTTP/2
+    /// and HTTP/3, checked-out senders and open streams defer expiry.
+    /// The default is 90 seconds. `None` disables time-based eviction.
+    /// [`Duration::ZERO`] checks expiry on checkout without a periodic sweep.
     #[inline]
     pub fn pool_idle_timeout<D>(mut self, val: D) -> ClientBuilder
     where
@@ -897,29 +900,29 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the maximum idle HTTP/1 connections retained per compatibility group.
+    /// Limits idle HTTP/1 connections per connection group.
     ///
-    /// This does not limit active physical connections. Passing `0` disables
-    /// connection reuse.
+    /// The default is unlimited. Set `0` to disable pooling for all protocols.
     #[inline]
     pub fn pool_max_idle_per_host(mut self, max: usize) -> ClientBuilder {
         self.config.svc.pool.max_idle_per_host = max;
         self
     }
 
-    /// Sets the maximum number of compatibility groups retaining reusable connections.
+    /// Sets how many connection groups the pool tracks for least-recently-used eviction.
     ///
-    /// Idle HTTP/1 senders and shared HTTP/2 and HTTP/3 senders count toward this limit.
-    /// A full limit evicts the least recently used idle group; a shared sender with a live
-    /// request, body or tunnel is not evicted. This does not limit physical connections;
-    /// `0` means unlimited.
+    /// A group shares an origin, a protocol selection, and connection settings, including
+    /// any [`Group`](crate::Group). When a new group needs room, the pool evicts
+    /// the least recently used idle group. A checked-out HTTP/2 or HTTP/3 sender
+    /// or an open stream keeps the group in use.
+    /// The default and `0` are unlimited.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
         self.config.svc.pool.max_size = NonZeroUsize::new(max);
         self
     }
 
-    /// Selects whether a reuse miss immediately connects or briefly waits for reuse.
+    /// Sets when the pool dials on a reuse miss. Defaults to [`PoolStrategy::Race`].
     #[inline]
     pub fn pool_strategy(mut self, strategy: PoolStrategy) -> ClientBuilder {
         self.config.svc.pool.strategy = strategy;

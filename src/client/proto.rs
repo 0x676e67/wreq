@@ -43,11 +43,7 @@ pub(super) fn configure<B: Clone, O: Clone>(
     }
 }
 
-/// Physical byte stream and its transport metadata.
-///
-/// Connection making creates this value before protocol negotiation. The
-/// selected handshake consumes it exactly once and transfers the stream to
-/// the resulting protocol driver.
+/// Established byte stream and transport metadata passed to an HTTP handshake.
 pub(super) struct Established {
     io: Box<dyn Io>,
     connected: Connected,
