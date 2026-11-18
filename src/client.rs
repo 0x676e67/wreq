@@ -888,7 +888,7 @@ impl ClientBuilder {
     /// Sets how long an idle sender remains eligible for reuse.
     ///
     /// HTTP/1 idle time starts when the sender returns to the pool. For HTTP/2
-    /// and HTTP/3, checked-out senders and open streams defer expiry.
+    /// and HTTP/3, it starts when the last checkout ends, even if a stream is open.
     /// The default is 90 seconds. `None` disables time-based eviction.
     /// [`Duration::ZERO`] checks expiry on checkout without a periodic sweep.
     #[inline]

@@ -34,9 +34,8 @@ pub enum Sender {
 
 /// Cloneable request-side handle for one HTTP/2 or HTTP/3 connection.
 ///
-/// The pool singleton stores one instance and gives each checkout a sender
-/// clone. Protocol stream availability remains owned by netty; the local
-/// state counts sender checkouts, and netty reports which exchanges are live.
+/// The pool singleton stores one instance and gives each checkout a sender clone.
+/// Netty drives the protocol streams independently of the checkout.
 #[derive(Clone)]
 pub struct Connection {
     tx: Sender,
@@ -46,8 +45,7 @@ pub struct Connection {
 }
 
 /// Checkout state shared by every clone of one [`Connection`].
-/// A checkout ends at response headers or cancellation; bodies and extended `CONNECT`
-/// tunnels are tracked by netty instead. `idle_at` is when the connection was last in use.
+/// `idle_at` records when the last checkout ended, even if streams remain open.
 struct ConnectionState {
     checkouts: AtomicUsize,
     idle_at: Mutex<Instant>,
@@ -122,35 +120,23 @@ impl Connection {
         }
     }
 
-    /// Returns whether netty reports no live exchange: no response awaited, body unread,
-    /// request body sending or `CONNECT` tunnel open.
+    /// Returns whether any checkout still holds the shared sender.
     #[must_use]
-    pub fn is_idle(&self) -> bool {
-        match &self.tx {
-            #[cfg(feature = "http2")]
-            Sender::Http2(tx) => tx.is_idle(),
-            #[cfg(feature = "http3")]
-            Sender::Http3(tx) => tx.is_idle(),
-        }
-    }
-
-    /// Returns whether a checkout is active or netty reports a live exchange.
-    #[must_use]
-    pub fn is_in_use(&self) -> bool {
-        self.state.has_checkouts() || !self.is_idle()
+    fn has_checkouts(&self) -> bool {
+        self.state.checkouts.load(Ordering::Acquire) != 0
     }
 
     /// Sets `pending` and returns `true` if a checkout is active.
     /// The final release shares the lock so it can observe the flag.
     #[must_use]
     pub(in crate::client) fn defer_until_idle(&self, pending: &AtomicBool) -> bool {
-        if !self.state.has_checkouts() {
+        if !self.has_checkouts() {
             return false;
         }
 
         // The last release may have finished before we acquired the lock.
         let _idle_at = self.state.idle_at.lock();
-        let checked_out = self.state.has_checkouts();
+        let checked_out = self.has_checkouts();
         if checked_out {
             pending.store(true, Ordering::Release);
         }
@@ -172,18 +158,10 @@ impl Connection {
 
     /// Returns whether the shared sender is healthy and reusable.
     ///
-    /// A connection in use never idle-expires. With no busy-to-idle signal, seeing it in use
-    /// moves `idle_at` to `now`, so idle time counts from when it was last seen in use.
+    /// Idle expiry starts when the final checkout ends.
     #[must_use]
     pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
-        if self.connected.poisoned() || self.is_closed() {
-            return false;
-        }
-        if self.is_in_use() {
-            self.state.touch(now);
-            return true;
-        }
-        !is_expired(self.state.idle_at(), now, timeout)
+        self.is_open() && (self.has_checkouts() || !is_expired(self.state.idle_at(), now, timeout))
     }
 }
 
@@ -280,20 +258,7 @@ impl ConnectionState {
         }
     }
 
-    /// Returns whether a sender checkout is active.
-    #[must_use]
-    fn has_checkouts(&self) -> bool {
-        self.checkouts.load(Ordering::Acquire) != 0
-    }
-
-    /// Moves the idle start to `now` for a connection seen in use, never backwards.
-    #[inline(always)]
-    fn touch(&self, now: Instant) {
-        let mut idle_at = self.idle_at.lock();
-        *idle_at = (*idle_at).max(now);
-    }
-
-    /// Returns when the connection was last released or seen in use.
+    /// Returns when the last checkout ended.
     #[must_use]
     fn idle_at(&self) -> Instant {
         *self.idle_at.lock()

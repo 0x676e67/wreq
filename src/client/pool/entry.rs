@@ -48,7 +48,7 @@ pub(super) trait Entry<T>: Send {
     fn checkout_made(&self) -> Option<(MuxPooled, Arc<EntryState>)>;
 
     /// Detaches closed, poisoned, or idle-expired state for destruction after unlocking.
-    /// Pending checkouts and shared senders in use defer idle expiry.
+    /// Pending or active multiplexed checkouts defer idle expiry.
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop>;
 
     /// Returns whether this entry retains reusable connection state.

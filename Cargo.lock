@@ -233,7 +233,7 @@ dependencies = [
 [[package]]
 name = "btls"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?rev=5ec1c113a03626a5877b34dd6d2ea8d440897a91#5ec1c113a03626a5877b34dd6d2ea8d440897a91"
+source = "git+https://github.com/0x676e67/btls?branch=main#2acfbfe3240d799112eed51637cf9b01eec5ad25"
 dependencies = [
  "bitflags",
  "btls-sys",
@@ -245,7 +245,7 @@ dependencies = [
 [[package]]
 name = "btls-sys"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?rev=5ec1c113a03626a5877b34dd6d2ea8d440897a91#5ec1c113a03626a5877b34dd6d2ea8d440897a91"
+source = "git+https://github.com/0x676e67/btls?branch=main#2acfbfe3240d799112eed51637cf9b01eec5ad25"
 dependencies = [
  "bindgen",
  "cmake",
@@ -1396,7 +1396,7 @@ dependencies = [
 [[package]]
 name = "http2"
 version = "0.5.20"
-source = "git+https://github.com/0x676e67/http2?rev=ce505e52ce9c25fb055412cb39b1caaa7a1f70a8#ce505e52ce9c25fb055412cb39b1caaa7a1f70a8"
+source = "git+https://github.com/0x676e67/http2?branch=master#ddb99c6db7222b1c3b9c72d1286b22b1dfb32918"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1416,7 +1416,7 @@ dependencies = [
 [[package]]
 name = "http3"
 version = "0.2.0"
-source = "git+https://github.com/0x676e67/http3?rev=5bd394f3dfb8bc63591627a229c34c02caadc3af#5bd394f3dfb8bc63591627a229c34c02caadc3af"
+source = "git+https://github.com/0x676e67/http3?branch=main#88baa6558fb873352b9a0398f0dbe41663c37e91"
 dependencies = [
  "bytes",
  "fastrand",
@@ -1431,7 +1431,7 @@ dependencies = [
 [[package]]
 name = "http3-datagram"
 version = "0.2.0"
-source = "git+https://github.com/0x676e67/http3?rev=5bd394f3dfb8bc63591627a229c34c02caadc3af#5bd394f3dfb8bc63591627a229c34c02caadc3af"
+source = "git+https://github.com/0x676e67/http3?branch=main#88baa6558fb873352b9a0398f0dbe41663c37e91"
 dependencies = [
  "bytes",
  "http3",
@@ -1440,7 +1440,7 @@ dependencies = [
 [[package]]
 name = "http3-quic"
 version = "0.2.0"
-source = "git+https://github.com/0x676e67/http3?rev=5bd394f3dfb8bc63591627a229c34c02caadc3af#5bd394f3dfb8bc63591627a229c34c02caadc3af"
+source = "git+https://github.com/0x676e67/http3?branch=main#88baa6558fb873352b9a0398f0dbe41663c37e91"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1966,7 +1966,7 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 [[package]]
 name = "netty"
 version = "0.2.5"
-source = "git+https://github.com/0x676e67/netty?rev=0e1e53c0d9e500b253361cf6997559c44d7717b5#0e1e53c0d9e500b253361cf6997559c44d7717b5"
+source = "git+https://github.com/0x676e67/netty?branch=main#d2a210e1e77b66f7ff1d90de5f71405418234590"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -2314,7 +2314,7 @@ dependencies = [
 [[package]]
 name = "quic"
 version = "0.12.2"
-source = "git+https://github.com/0x676e67/quic?rev=b3d74044e874c5e785f462e3032faaf021cb6958#b3d74044e874c5e785f462e3032faaf021cb6958"
+source = "git+https://github.com/0x676e67/quic?branch=main#b3d74044e874c5e785f462e3032faaf021cb6958"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2330,13 +2330,13 @@ dependencies = [
  "tokio",
  "tracing",
  "web-time",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
 name = "quic-proto"
 version = "0.12.2"
-source = "git+https://github.com/0x676e67/quic?rev=b3d74044e874c5e785f462e3032faaf021cb6958#b3d74044e874c5e785f462e3032faaf021cb6958"
+source = "git+https://github.com/0x676e67/quic?branch=main#b3d74044e874c5e785f462e3032faaf021cb6958"
 dependencies = [
  "aws-lc-rs",
  "btls",
@@ -3267,7 +3267,7 @@ dependencies = [
 [[package]]
 name = "tokio-btls"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?rev=5ec1c113a03626a5877b34dd6d2ea8d440897a91#5ec1c113a03626a5877b34dd6d2ea8d440897a91"
+source = "git+https://github.com/0x676e67/btls?branch=main#2acfbfe3240d799112eed51637cf9b01eec5ad25"
 dependencies = [
  "btls",
  "btls-sys",

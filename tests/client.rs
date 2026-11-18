@@ -1953,7 +1953,7 @@ async fn connection_pool_preserves_upload_after_response_headers() {
 
 #[cfg(feature = "http2")]
 #[tokio::test]
-async fn connection_pool_keeps_http2_connection_with_live_body_past_idle_timeout() {
+async fn connection_pool_finishes_http2_body_after_idle_eviction() {
     let release = Arc::new(tokio::sync::Notify::new());
     let mut server = server::http({
         let release = release.clone();
@@ -1972,13 +1972,6 @@ async fn connection_pool_keeps_http2_connection_with_live_body_past_idle_timeout
         }
     });
     let url = format!("http://{}/", server.addr());
-    let mut new_connections = || {
-        server
-            .events()
-            .iter()
-            .filter(|event| matches!(event, server::Event::ConnectionAccepted))
-            .count()
-    };
     let client = Client::builder_tokio()
         .no_proxy()
         .http2_only()
@@ -1986,20 +1979,20 @@ async fn connection_pool_keeps_http2_connection_with_live_body_past_idle_timeout
         .timeout(Duration::from_secs(10))
         .build()
         .unwrap();
-    let get = async || client.get(&url).send().await.unwrap().text().await.unwrap();
 
-    // A body outliving the idle timeout and a sweep keeps its connection reusable.
     let slow = client.get(format!("{url}slow")).send().await.unwrap();
     tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(get().await, "ok");
-    assert_eq!(new_connections(), 1);
+    let fast = client.get(&url).send().await.unwrap();
+    assert_eq!(fast.text().await.unwrap(), "ok");
+    let connections = server
+        .events()
+        .iter()
+        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+        .count();
+    assert_eq!(connections, 2);
 
-    // Once the body ends, the connection idles out again.
     release.notify_one();
     assert_eq!(slow.text().await.unwrap(), "ok");
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(get().await, "ok");
-    assert_eq!(new_connections(), 1);
 }
 
 #[tokio::test]

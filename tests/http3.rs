@@ -207,7 +207,7 @@ async fn http3_redials_after_the_idle_timeout() {
 }
 
 #[tokio::test]
-async fn http3_keeps_a_connection_with_a_live_body_past_the_idle_timeout() {
+async fn http3_finishes_body_after_idle_eviction() {
     let certificate = h3::Certificate::new("localhost");
     let release = Arc::new(Notify::new());
     let server = h3::Server::serve(h3::endpoint(&certificate, None), false, {
@@ -229,20 +229,15 @@ async fn http3_keeps_a_connection_with_a_live_body_past_the_idle_timeout() {
         .build()
         .unwrap();
     let url = url(&server);
-    let get = async || client.get(&url).send().await.unwrap().text().await.unwrap();
 
-    // A body outliving the idle timeout and a sweep keeps its connection reusable.
     let slow = client.get(format!("{url}slow")).send().await.unwrap();
     tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(get().await, "ok");
-    assert_eq!(server.connections(), 1);
+    let fast = client.get(&url).send().await.unwrap();
+    assert_eq!(fast.text().await.unwrap(), "ok");
+    assert_eq!(server.connections(), 2);
 
-    // Once the body ends, the connection idles out again.
     release.notify_one();
     assert_eq!(slow.text().await.unwrap(), "ok");
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(get().await, "ok");
-    assert_eq!(server.connections(), 2);
 }
 
 #[tokio::test]
