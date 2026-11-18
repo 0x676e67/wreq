@@ -586,7 +586,9 @@ mod tests {
         let err = Error::request(ProxyConnect(Box::new(TunnelError::ProxyAuthRequired)));
         assert!(err.is_proxy_auth());
 
-        let err = Error::request(ProxyConnect(Box::new(TunnelError::TunnelUnsuccessful)));
+        let err = Error::request(ProxyConnect(Box::new(TunnelError::TunnelUnsuccessful(
+            Some(503),
+        ))));
         assert!(!err.is_proxy_auth());
     }
 
