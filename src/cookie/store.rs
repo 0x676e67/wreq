@@ -11,6 +11,9 @@ use crate::ext::UriExt;
 
 pub const DEFAULT_PATH: &str = "/";
 
+/// Minimum interval between expiration sweeps of the store.
+const EVICTION_INTERVAL: Duration = Duration::seconds(60);
+
 /// Canonical immutable host used as a cookie domain key.
 type CanonicalHost = Host<Box<str>>;
 type NameMap = HashMap<Box<str>, CookieEntry>;
@@ -85,6 +88,11 @@ impl CookieScopeMap {
     pub fn is_empty(&self) -> bool {
         self.host_only.is_empty() && self.domain.is_empty()
     }
+
+    fn retain(&mut self, mut keep: impl FnMut(&CookieEntry) -> bool) {
+        self.host_only.retain(|_, entry| keep(entry));
+        self.domain.retain(|_, entry| keep(entry));
+    }
 }
 
 /// Stores cookies by domain, path, host-only scope, and name.
@@ -92,21 +100,58 @@ impl CookieScopeMap {
 pub struct Store {
     pub cookies: DomainMap,
     next_creation_index: u64,
+    /// Earliest known deadline. Removing a cookie can leave it earlier than necessary.
+    next_expiry: Option<OffsetDateTime>,
+    last_eviction: Option<OffsetDateTime>,
 }
 
 impl Store {
+    /// Prunes expired cookies and empty scopes at most once per eviction interval.
+    pub fn evict_expired(&mut self, now: OffsetDateTime) {
+        let due = self.next_expiry.is_some_and(|expiry| expiry <= now)
+            && self
+                .last_eviction
+                .is_none_or(|last| now - last >= EVICTION_INTERVAL);
+        if !due {
+            return;
+        }
+        self.last_eviction = Some(now);
+
+        let mut next_expiry = None;
+        self.cookies.retain(|_, path_map| {
+            path_map.retain(|_, cookie_map| {
+                cookie_map.retain(|entry| {
+                    if cookie_is_expired(&entry.cookie, now) {
+                        return false;
+                    }
+                    track_expiry(&mut next_expiry, &entry.cookie);
+                    true
+                });
+                !cookie_map.is_empty()
+            });
+            !path_map.is_empty()
+        });
+        self.next_expiry = next_expiry;
+
+        let capacity = self.cookies.capacity();
+        if capacity > 16 && self.cookies.len() <= capacity / 4 {
+            self.cookies.shrink_to_fit();
+        }
+    }
+
     /// Inserts or replaces a cookie in its domain and path scope.
     pub fn insert_stored_cookie(
         &mut self,
         domain: CanonicalHost,
         path: String,
         cookie: RawCookie<'static>,
+        now: OffsetDateTime,
     ) {
         let host_only = cookie.domain().is_none();
+        track_expiry(&mut self.next_expiry, &cookie);
 
-        // Chromium inherits the creation time only when the replacement keeps the same value. A
-        // value change receives a new creation time and therefore moves later among equal-length
-        // paths.
+        // During the interval between sweeps an expired entry can still occupy this slot.
+        // Chromium inherits the creation time for a live replacement with an unchanged value.
         // https://chromium.googlesource.com/chromium/src/+/main/net/cookies/cookie_monster.cc
         if let Some(entry) = self
             .cookies
@@ -114,7 +159,7 @@ impl Store {
             .and_then(|path_map| path_map.get_mut(path.as_str()))
             .and_then(|cookie_map| cookie_map.get_mut(cookie.name(), host_only))
         {
-            if entry.cookie.value() != cookie.value() {
+            if cookie_is_expired(&entry.cookie, now) || entry.cookie.value() != cookie.value() {
                 entry.creation_index = self.next_creation_index;
                 self.next_creation_index = self.next_creation_index.saturating_add(1);
             }
@@ -228,6 +273,12 @@ impl Store {
                         })
                 })
         })
+    }
+}
+
+fn track_expiry(next_expiry: &mut Option<OffsetDateTime>, cookie: &RawCookie<'_>) {
+    if let Some(expiry) = cookie.expires_datetime() {
+        *next_expiry = Some(next_expiry.map_or(expiry, |current| current.min(expiry)));
     }
 }
 
