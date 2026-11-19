@@ -8,7 +8,7 @@ async fn main() -> wreq::Result<()> {
         .build()?;
 
     let response = client
-        .get("https://pingly.us.kg/api/tls")
+        .get("https://cloudflare.com/cdn-cgi/trace")
         .header("User-Agent", env!("CARGO_PKG_NAME"))
         .send()
         .await?;
