@@ -2,110 +2,94 @@
 
 use std::sync::{Arc, OnceLock};
 
+use ::quic::crypto::btls::{NoSessionCache, QuicClientConfig};
 use btls::{
-    asn1::{Asn1Time, TimeDiff},
     error::ErrorStack,
-    ssl::{SslContextBuilder, SslMethod, SslRef, SslSession, SslVerifyMode},
-    x509::{X509Ref, X509StoreContextRef},
+    ssl::{SslContextBuilder, SslMethod, SslRef, SslVerifyMode},
 };
-use bytes::Bytes;
 use http::Uri;
-use quic::crypto::btls::{NoSessionCache, QuicClientConfig, SessionCache, Zeroizing};
 
 use super::{
-    AlpnProtocol, AlpsProtocol, Config, TlsVersion,
-    context::TlsContext,
-    ext::{SslContextBuilderExt as _, set_ech_grease_host},
-    session::{Key, SessionTarget, Tickets, Transport},
+    QuicOptions,
+    session::{Attempt, Resumption},
 };
-use crate::{Error, Result, config::connect::ConnectConfig, quic::QuicOptions, sync::Mutex};
+use crate::{
+    Error, Result,
+    config::ConnectConfig,
+    tls::{
+        self, AlpnProtocol, AlpsProtocol, KeyIdentity, TlsContext, TlsVersion,
+        macros::set_hello_options, set_ech_grease_host,
+    },
+};
 
-/// Builds per-connection QUIC TLS configurations from shared client TLS policy.
-/// Different request context options are compiled once and cached.
-#[derive(Clone)]
-pub(crate) struct QuicTls(Arc<TlsContext<QuicOptions, QuicClientConfig>>);
+/// Shared TLS settings and compiled context cache for QUIC connections.
+///
+/// Owned by the QUIC endpoint manager; [`Context::config`] resolves a per-connection
+/// [`Config`] using either the base context or a cached override.
+pub(crate) struct Context {
+    config: tls::Config,
+    context: TlsContext<QuicOptions, QuicClientConfig>,
+}
 
-/// TLS configuration shared by the address attempts of one QUIC connection.
-pub(crate) struct QuicTlsConfig {
+/// Per-connection QUIC TLS configuration shared across address attempts.
+///
+/// Carries the connection's SSL callback state and optional [`Resumption`] handle; each
+/// address attempt calls [`Config::attempt`] to obtain its own [`QuicClientConfig`].
+pub(crate) struct Config {
     crypto: Arc<QuicClientConfig>,
     handshake: Arc<Handshake>,
     resumption: Option<Arc<Resumption>>,
 }
 
-/// The settings the SSL callback applies to each handshake of one connection.
+/// Per-connection state applied inside BoringSSL's handshake callback.
 ///
-/// The QUIC stack reports a session its SSL callback rejected as `EndpointStopping`, as it does
-/// for a stopped endpoint driver, so the callback's first error is kept to tell them apart.
+/// The QUIC stack reports a callback rejection as `EndpointStopping` (the same error as a
+/// stopped endpoint driver), so the first callback error is saved here to tell them apart.
 struct Handshake {
     verify_peer: bool,
     options: Option<Arc<QuicOptions>>,
     rejected: OnceLock<ErrorStack>,
 }
 
-/// The client's tickets and the session key of one connection.
-struct Resumption {
-    tickets: Arc<Tickets>,
-    key: Key,
-}
+// ===== impl Context =====
 
-/// Adapts one handshake attempt to the QUIC stack's hostname-keyed cache.
-///
-/// It holds the ticket taken for this attempt until the handshake takes it, so concurrent
-/// attempts never offer the same one
-/// ([RFC 8446 Appendix C.4](https://www.rfc-editor.org/rfc/rfc8446#appendix-C.4)). New tickets
-/// go to the store with the expiry of the certificate path the handshake verified.
-struct Attempt {
-    resumption: Arc<Resumption>,
-    ticket: Mutex<Option<Zeroizing<Vec<u8>>>>,
-    not_after: OnceLock<i64>,
-}
-
-// ===== impl QuicTls =====
-
-impl QuicTls {
-    /// Compiles the client's QUIC TLS context and retains its initial QUIC options.
-    pub(super) fn new(tls: Config, connect_config: &ConnectConfig) -> Result<Self> {
-        Ok(Self(Arc::new(TlsContext::new(
-            tls,
-            connect_config,
-            compile,
-        )?)))
+impl Context {
+    /// Compiles the base QUIC TLS context from client settings and default options.
+    pub(crate) fn new(config: tls::Config, connect: &ConnectConfig) -> Result<Self> {
+        compile(&config, connect.get_ref()).map(|inner| Self {
+            config,
+            context: TlsContext::new(inner),
+        })
     }
 
-    /// Returns whether responses carry the peer's [`TlsInfo`](crate::tls::TlsInfo).
-    #[inline]
-    pub(crate) fn tls_info(&self) -> bool {
-        self.0.tls.tls_info
-    }
-
-    /// Returns the QUIC TLS configuration for an origin and its TLS peer.
+    /// Builds the QUIC TLS configuration for `origin` and its TLS `peer`.
     ///
-    /// QUIC always negotiates TLS 1.3, so a client capped below it fails here rather than
-    /// when it is built. Contexts are shared, so each connection installs its SSL callback on
-    /// its own copy.
+    /// QUIC requires TLS 1.3, so a client capped below TLS 1.3 fails here rather than at
+    /// build time. Each connection clones the cached context to install its own SSL callback.
     pub(crate) fn config(
         &self,
         origin: &Uri,
-        route: &Uri,
-        connect_config: &ConnectConfig,
-    ) -> Result<QuicTlsConfig> {
-        let contexts = &self.0;
-        if contexts
-            .tls
+        peer: &Uri,
+        config: &ConnectConfig,
+    ) -> Result<Config> {
+        if self
+            .config
             .max_version
             .is_some_and(|version| version != TlsVersion::TLS_1_3)
         {
             return Err(Error::tls("HTTP/3 requires TLS 1.3"));
         }
 
-        let mut crypto = contexts.for_config(connect_config, compile)?;
-
-        let options = connect_config.get_arc::<QuicOptions>();
+        let overrides = config.override_if_different(KeyIdentity::same);
+        let mut crypto = self
+            .context
+            .get_or_compile(overrides, |options| compile(&self.config, Some(options)))?;
+        let options = config.get_arc::<QuicOptions>();
         let resumption = options
             .as_ref()
             .is_some_and(|options| options.pre_shared_key);
         let handshake = Arc::new(Handshake {
-            verify_peer: contexts.tls.cert_verification,
+            verify_peer: self.config.cert_verification,
             options,
             rejected: OnceLock::new(),
         });
@@ -114,25 +98,12 @@ impl QuicTls {
             move |ssl, server_name| handshake.configure(ssl, server_name)
         });
 
-        let resumption = if resumption {
-            let tickets = contexts.tls.tickets.clone();
-            let target = SessionTarget::new(
-                origin,
-                connect_config,
-                route,
-                Transport::Quic,
-                None,
-                tickets.session_id_context().map_err(Error::tls)?,
-            );
-            Some(Arc::new(Resumption {
-                tickets,
-                key: target.into_key(),
-            }))
-        } else {
-            None
-        };
+        let resumption = resumption
+            .then(|| Resumption::new(&self.config.tickets, origin, peer, config))
+            .transpose()?
+            .map(Arc::new);
 
-        Ok(QuicTlsConfig {
+        Ok(Config {
             crypto: Arc::new(crypto),
             handshake,
             resumption,
@@ -140,13 +111,13 @@ impl QuicTls {
     }
 }
 
-// ===== impl QuicTlsConfig =====
+// ===== impl Config =====
 
-impl QuicTlsConfig {
-    /// Returns the configuration of one handshake attempt.
+impl Config {
+    /// Returns the TLS config for a single address attempt.
     ///
-    /// With resumption, the attempt takes its own ticket here, before the QUIC endpoint's lock
-    /// is held, so a slow session store stalls only this connection.
+    /// When resumption is enabled, pops a ticket upfront before the endpoint lock is acquired.
+    #[must_use]
     pub(crate) fn attempt(&self) -> Arc<QuicClientConfig> {
         match &self.resumption {
             Some(resumption) => Arc::new(self.resuming_attempt(resumption)),
@@ -154,21 +125,18 @@ impl QuicTlsConfig {
         }
     }
 
-    /// Returns the SSL callback's error once it rejected a session.
-    #[inline]
+    /// Returns the first error recorded by the SSL callback, if it rejected a handshake.
+    #[must_use]
     pub(crate) fn rejected(&self) -> Option<&ErrorStack> {
         self.handshake.rejected.get()
     }
 
-    /// Builds the TLS configuration of one attempt around a ticket of its own. A verifying
-    /// handshake also reports the expiry of the path it verified.
+    /// Clones the TLS config for an attempt with its own ticket and (when verifying peers)
+    /// a verify callback that records certificate expiry.
+    #[must_use]
     fn resuming_attempt(&self, resumption: &Arc<Resumption>) -> QuicClientConfig {
         let verify_peer = self.handshake.verify_peer;
-        let attempt = Arc::new(Attempt {
-            resumption: resumption.clone(),
-            ticket: Mutex::new(resumption.tickets.pop_quic(&resumption.key, verify_peer)),
-            not_after: OnceLock::new(),
-        });
+        let attempt = Arc::new(Attempt::new(resumption, verify_peer));
         let mut crypto = (*self.crypto).clone();
         crypto.set_ssl_callback({
             let handshake = self.handshake.clone();
@@ -193,26 +161,52 @@ impl QuicTlsConfig {
 // ===== impl Handshake =====
 
 impl Handshake {
-    /// Configures one handshake, keeping the first error.
+    /// Applies per-connection options to `ssl`, recording the first error.
     fn configure(
         &self,
         ssl: &mut SslRef,
         server_name: &str,
     ) -> std::result::Result<(), ErrorStack> {
-        configure_connection(ssl, server_name, self.verify_peer, self.options.as_deref())
-            .inspect_err(|error| {
-                let _ = self.rejected.set(error.clone());
-            })
+        // The backend enables chain verification by default, even when the
+        // context disabled it. Restore the client policy before selecting PSK.
+        if !self.verify_peer {
+            ssl.set_verify(SslVerifyMode::NONE);
+        }
+        let Some(options) = &self.options else {
+            return Ok(());
+        };
+
+        let record_error = |error: &ErrorStack| {
+            let _ = self.rejected.set(error.clone());
+        };
+
+        if options.ech_grease.is_some() {
+            set_ech_grease_host(ssl, server_name.len()).inspect_err(record_error)?;
+        }
+
+        if let Some(key_shares) = &options.key_shares {
+            ssl.set_client_key_shares(key_shares)
+                .inspect_err(record_error)?;
+        }
+
+        // Offer ALPS for h3, the only protocol QUIC negotiates.
+        if options.enable_alps_protocol {
+            ssl.add_application_settings(AlpsProtocol::HTTP3.as_bytes(), None)
+                .inspect_err(record_error)?;
+            ssl.set_alps_use_new_codepoint(options.alps_use_new_codepoint);
+        }
+        Ok(())
     }
 }
 
-/// Compiles a QUIC context from the client policy and the context options of `options`.
-/// Callbacks and the session cache are configured for each connection attempt.
-fn compile(config: &Config, options: Option<&QuicOptions>) -> Result<QuicClientConfig> {
+/// Compiles a reusable [`QuicClientConfig`].
+///
+/// Per-connection SSL callbacks and per-attempt session caches are attached later.
+fn compile(config: &tls::Config, options: Option<&QuicOptions>) -> Result<QuicClientConfig> {
     let mut builder = SslContextBuilder::new(SslMethod::tls()).map_err(Error::tls)?;
     config.configure(&mut builder)?;
     if let Some(options) = options {
-        builder.set_quic_options(options)?;
+        set_hello_options!(common, options, &mut builder);
 
         if options.pre_shared_key {
             config.enable_resumption(&mut builder)?;
@@ -230,105 +224,22 @@ fn compile(config: &Config, options: Option<&QuicOptions>) -> Result<QuicClientC
     Ok(tls)
 }
 
-/// Applies the client's verification policy and per-connection [`QuicOptions`] to one handshake.
-fn configure_connection(
-    ssl: &mut SslRef,
-    server_name: &str,
-    verify_peer: bool,
-    options: Option<&QuicOptions>,
-) -> std::result::Result<(), ErrorStack> {
-    // The backend enables chain verification by default, even when the
-    // context disabled it. Restore the client policy before selecting PSK.
-    if !verify_peer {
-        ssl.set_verify(SslVerifyMode::NONE);
-    }
-    let Some(options) = options else {
-        return Ok(());
-    };
-
-    if options.ech_grease.is_some() {
-        set_ech_grease_host(ssl, server_name.len())?;
-    }
-
-    set_option_ref_try!(
-        options,
-        key_shares,
-        ssl,
-        set_client_key_shares,
-        std::convert::identity
-    );
-
-    // Offer ALPS for h3, the only protocol QUIC negotiates.
-    if options.enable_alps_protocol {
-        ssl.add_application_settings(AlpsProtocol::HTTP3.0, None)?;
-        ssl.set_alps_use_new_codepoint(options.alps_use_new_codepoint);
-    }
-    Ok(())
-}
-
-/// Returns the earliest expiry among `certs`, as POSIX time.
-fn earliest_not_after<'a>(certs: impl IntoIterator<Item = &'a X509Ref>) -> Option<i64> {
-    let epoch = Asn1Time::from_unix(0).ok()?;
-    certs
-        .into_iter()
-        .filter_map(|cert| {
-            let TimeDiff { days, secs } = epoch.diff(cert.not_after()).ok()?;
-            Some(i64::from(days) * 86_400 + i64::from(secs))
-        })
-        .min()
-}
-
-// ===== impl Attempt =====
-
-impl Attempt {
-    /// Records the expiry of the path BoringSSL verified once it accepts the leaf, which it
-    /// checks last. Certificates the server sent off that path do not count.
-    fn verified(&self, ok: bool, ctx: &X509StoreContextRef) {
-        if ok
-            && ctx.error_depth() == 0
-            && let Some(not_after) = ctx.chain().and_then(earliest_not_after)
-        {
-            let _ = self.not_after.set(not_after);
-        }
-    }
-}
-
-impl SessionCache for Attempt {
-    fn put(&self, _key: Bytes, value: Zeroizing<Vec<u8>>, session: SslSession) {
-        // Without a verified path every certificate the server sent counts.
-        let not_after = self
-            .not_after
-            .get()
-            .copied()
-            .or_else(|| session.peer_chain_not_after());
-        let Resumption { tickets, key } = &*self.resumption;
-        tickets.insert_quic(key.clone(), session, value, not_after);
-    }
-
-    fn take(&self, _key: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
-        self.ticket.lock().take()
-    }
-
-    fn remove(&self, _key: &[u8]) {
-        // `take` already consumed the ticket of a failed handshake; the others stay in the
-        // client's store.
-    }
-
-    fn clear(&self) {
-        // The adapter holds at most this attempt's ticket; new tickets go straight to the
-        // client's store.
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use btls::ssl::{SslContextBuilder, SslMethod};
+    use http::Uri;
+
+    use super::{Config, Context, QuicOptions};
+    use crate::{config::ConnectConfig, tls};
+
     #[tokio::test]
     async fn cached_contexts_take_a_callback_per_connection() {
         use std::net::Ipv4Addr;
 
         use btls::ssl::SslContextRef;
 
-        use super::*;
         use crate::{group::Group, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
@@ -352,7 +263,7 @@ mod tests {
             connect_config
         };
         let uri = Uri::from_static("https://localhost/");
-        let tls = Config::default().quic(&ConnectConfig::default()).unwrap();
+        let tls = Context::new(tls::Config::default(), &ConnectConfig::default()).unwrap();
         let [client, first, second, other] = [
             (None, None),
             (Some(false), None),
@@ -360,7 +271,7 @@ mod tests {
             (Some(true), None),
         ]
         .map(|(grease, group)| tls.config(&uri, &uri, &overrides(grease, group)).unwrap());
-        let context = |config: &QuicTlsConfig| -> *const SslContextRef { &**config.crypto.ctx() };
+        let context = |config: &Config| -> *const SslContextRef { &**config.attempt().ctx() };
         // Equal context options hit the cache; others compile their own context.
         assert_eq!(context(&first), context(&second));
         assert_ne!(context(&first), context(&other));
@@ -391,7 +302,6 @@ mod tests {
         use btls::ssl::{ExtensionType, SelectCertError};
         use quic::crypto::btls::QuicServerConfig;
 
-        use super::*;
         use crate::tls::{EchGrease, EchGreaseAead};
 
         let h3 = b"\x00\x03\x02h3".to_vec();
@@ -501,7 +411,6 @@ mod tests {
         use btls::ssl::{ClientHello, ExtensionType, SelectCertError, Ssl};
         use quic::crypto::btls::QuicServerConfig;
 
-        use super::*;
         use crate::tls::{
             EchGrease, EchGreaseAead, Tls13Cipher, TlsOptions,
             compress::{CertificateCompressionAlgorithm, CertificateCompressor, Codec},

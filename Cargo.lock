@@ -4132,6 +4132,7 @@ dependencies = [
  "url",
  "webpki-root-certs",
  "windows-registry 0.100.0",
+ "zeroize",
  "zstd",
 ]
 

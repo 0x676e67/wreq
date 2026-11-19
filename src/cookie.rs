@@ -17,7 +17,7 @@ use http::{Uri, Version};
 use url::Host;
 
 pub use self::jar::Jar;
-use crate::{config::request::impl_request_config_value, error::Error, header::HeaderValue};
+use crate::{config::impl_request_config_value, error::Error, header::HeaderValue};
 
 /// A parsed HTTP cookie with optional [`Jar`] storage metadata.
 #[derive(Debug, Clone)]

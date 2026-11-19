@@ -1,6 +1,7 @@
-//! [`Connect`] applies connector layers and a deadline to [`svc::Connect`].
-//! It dispatches each connection request to the [`stream`] or QUIC service, which returns a
-//! [`Conn`] with the established [`Transport`] and its [`Connected`] metadata.
+//! Outbound connection establishment for TCP, Unix, and QUIC transports.
+//!
+//! [`ConnectService`] applies user-supplied connector layers and a connection timeout, returning
+//! a [`Conn`] with the established [`Transport`] and [`Connected`] metadata.
 
 mod connected;
 mod dialer;
@@ -9,26 +10,39 @@ mod layer;
 #[cfg(feature = "http3")]
 mod quic;
 mod stream;
-mod svc;
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    task::{Context, Poll, ready},
+    time::Duration,
+};
 
-use dialer::tcp;
-use http::{Method, Request, Uri};
-use layer::deadline::{Deadline, DeadlineLayer};
+use dialer::{Dialer, tcp};
+#[cfg(feature = "http3")]
+use futures_util::future;
+use http::{Method, Uri};
+use layer::{
+    timeout::{Timeout, TimeoutLayer},
+    verbose::{self, Verbose},
+};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{
-    BoxError, Layer, ServiceBuilder, ServiceExt,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapErr, MapRequest},
+    BoxError, Layer, Service, ServiceBuilder, ServiceExt,
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapErr},
 };
 
 pub(crate) use self::{
     connected::{Connected, HttpInfo},
     identity::{CommonIdentity, Identity},
-    svc::{Io, Transport},
 };
 use crate::{
-    config::connect::ConnectConfig, dns::DynResolver, error::map_timeout_to_connector_error,
-    protocol::Protocol, proxy::Matcher as ProxyMatcher, rt::DynRuntime, tls,
+    config::ConnectConfig,
+    dns::DynResolver,
+    error::map_timeout_to_connector_error,
+    protocol::Protocol,
+    proxy::{Intercepted, Matcher as ProxyMatcher},
+    rt::DynRuntime,
+    tls,
 };
 
 /// Type-erased connection service passed through user-supplied layers.
@@ -38,69 +52,93 @@ pub type BoxedConnectService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
 pub type BoxedConnectLayer =
     BoxCloneSyncServiceLayer<BoxedConnectService, Unnameable, Conn, BoxError>;
 
-/// Establishes stream and QUIC transports under one connection deadline.
-/// Without user layers [`svc::Connect`] is called directly; user layers see the request
-/// behind [`Unnameable`]. Clones share the transports' state.
-pub(crate) type Connect = Deadline<
-    Either<
-        svc::Connect,
-        MapRequest<
-            MapErr<BoxedConnectService, fn(BoxError) -> BoxError>,
-            fn(Request<ConnectConfig>) -> Unnameable,
-        >,
-    >,
->;
+/// Connection service with optional user middleware and a total connection timeout.
+pub(crate) type ConnectService =
+    Timeout<Either<Connect, MapErr<BoxedConnectService, fn(BoxError) -> BoxError>>>;
 
-/// Client-wide transport settings, fixed at build.
+/// Matches proxy rules and dispatches connection requests to the stream or QUIC service.
+///
+/// Request-level proxy overrides take precedence over the client's shared proxy list.
+/// Clones share the proxy list and both transport services.
+#[derive(Clone)]
+pub(crate) struct Connect {
+    proxies: Arc<Vec<ProxyMatcher>>,
+    stream: Verbose<stream::Connect>,
+    #[cfg(feature = "http3")]
+    quic: quic::Connect,
+}
+
+/// Client-wide transport, TLS, proxy, and timeout settings assembled at client build time.
+///
+/// Consumed by [`Connect::new`] to initialize the shared TCP dialer, TLS contexts, and
+/// outer timeout layer.
 pub(crate) struct Config {
-    pub(crate) tcp: tcp::Config,
-    pub(crate) tls: tls::Config,
+    pub(crate) tcp_config: tcp::Config,
+    pub(crate) tls_config: tls::Config,
     pub(crate) proxies: Vec<ProxyMatcher>,
     pub(crate) connect_timeout: Option<Duration>,
     pub(crate) happy_eyeballs_timeout: Option<Duration>,
     pub(crate) verbose: bool,
 }
 
-/// Deadline attached to a connection request by [`Deadline`].
-#[derive(Clone, Copy)]
-struct ConnectDeadline(Instant);
+/// Internal connection request carrying the target origin, selected [`Protocol`], and
+/// [`ConnectConfig`].
+///
+/// Wraps an [`http::Request`] with method `CONNECT` and stores non-default protocol selection
+/// in HTTP extensions.
+pub(crate) struct Request<T>(http::Request<T>);
 
-/// Connection-specific operations on the internal request passed through the connector.
-pub(crate) trait ConnectRequestExt {
-    /// Builds an internal CONNECT request with the selected protocol and connection overrides.
-    #[must_use]
-    fn new_connect(origin: Uri, protocol: Protocol, config: ConnectConfig) -> Self
-    where
-        Self: Sized;
-
-    /// Returns the selected HTTP protocol mode for this connection attempt.
-    #[must_use]
-    fn protocol(&self) -> Protocol;
-
-    /// Returns the outer connection deadline, if any.
-    #[must_use]
-    fn deadline(&self) -> Option<Instant>;
-}
-
-/// Opaque request passed through user-supplied connector layers.
-/// Keeps transport selection, connection configuration and the connect deadline internal.
+/// Opaque connection request passed through user-supplied connector layers.
+///
+/// Wraps the internal [`Request`] so protocol selection and connection options stay private.
 pub struct Unnameable(pub(super) Request<ConnectConfig>);
 
-/// Established connection and metadata returned through connector middleware.
-/// Protocol handshakes take the transport through `into_stream` or `into_quic`,
-/// together with its metadata.
+/// Connection request paired with the proxy rule matched for its target URI, if any.
+///
+/// Handed off from [`Connect`] to the selected stream or QUIC connector.
+pub(crate) struct Routed {
+    request: Request<ConnectConfig>,
+    proxy: Option<Intercepted>,
+}
+
+/// Established transport paired with its [`Connected`] metadata.
+///
+/// Returned by [`ConnectService`] and passed through any user-supplied connector layers
+/// before handing the transport to the HTTP/1, HTTP/2, or HTTP/3 handshake.
 pub struct Conn {
     pub(crate) transport: Transport,
     pub(crate) connected: Connected,
 }
+
+/// Established transport carried by a [`Conn`].
+///
+/// For QUIC, the `Endpoint` stays attached until ownership moves into the HTTP/3 driver.
+pub(crate) enum Transport {
+    /// A TCP or Unix stream after any proxy handshake and TLS.
+    Stream(Box<dyn Io>),
+    /// A QUIC connection and the endpoint that drives it.
+    #[cfg(feature = "http3")]
+    Quic {
+        connection: ::quic::Connection,
+        endpoint: ::quic::Endpoint,
+    },
+}
+
+/// Type-erased byte stream handed to HTTP/1 or HTTP/2 after proxy and TLS handshakes.
+///
+/// Socket controls stay on [`rt::Connection`](crate::rt::Connection); local and remote
+/// addresses are captured in [`Connected`] before boxing.
+pub(crate) trait Io: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
+
+impl<T> Io for T where T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
 
 // ===== impl Config =====
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            tcp: tcp::Config::default(),
-            tls: tls::Config::default(),
+            tcp_config: tcp::Config::default(),
+            tls_config: tls::Config::default(),
             proxies: Vec::new(),
             connect_timeout: None,
             happy_eyeballs_timeout: Some(Duration::from_millis(300)),
@@ -112,68 +150,198 @@ impl Default for Config {
 // ===== impl Connect =====
 
 impl Connect {
-    /// Stacks the user's layers and the connection deadline over the transport router.
+    /// Builds the connection service with user layers and the total timeout.
     pub(crate) fn new(
         runtime: DynRuntime,
         resolver: DynResolver,
-        config: Config,
+        Config {
+            tcp_config,
+            tls_config,
+            proxies,
+            connect_timeout,
+            happy_eyeballs_timeout,
+            verbose,
+        }: Config,
         connect_config: &ConnectConfig,
         layers: Vec<BoxedConnectLayer>,
-    ) -> Result<Self, crate::Error> {
-        let connect_timeout = config.connect_timeout;
-        let connect = svc::Connect::new(&runtime, resolver, config, connect_config)?;
+    ) -> crate::Result<ConnectService> {
+        let dialer = Dialer::new(
+            runtime.clone(),
+            resolver.clone(),
+            tcp_config,
+            connect_timeout,
+            happy_eyeballs_timeout,
+        );
+
+        let connect = Self {
+            proxies: Arc::new(proxies),
+            #[cfg(feature = "http3")]
+            quic: quic::Connect::new(
+                runtime.clone(),
+                resolver.clone(),
+                tls_config.clone(),
+                connect_config,
+                #[cfg(feature = "socks")]
+                dialer.clone(),
+                happy_eyeballs_timeout,
+            )?,
+            stream: ServiceBuilder::new()
+                .option_layer(verbose::layer(verbose))
+                .service(stream::Connect::new(
+                    dialer,
+                    tls_config,
+                    connect_config,
+                    #[cfg(feature = "socks")]
+                    resolver,
+                )?),
+        };
+
         let service = if layers.is_empty() {
             Either::Left(connect)
         } else {
-            let service = layers.iter().fold(
-                BoxCloneSyncService::new(connect.map_request(|Unnameable(request)| request)),
-                |service, layer| layer.layer(service),
-            );
-            Either::Right(
-                service
-                    .map_err(map_timeout_to_connector_error as _)
-                    .map_request(Unnameable as _),
-            )
+            let service = layers
+                .iter()
+                .fold(BoxCloneSyncService::new(connect), |service, layer| {
+                    layer.layer(service)
+                });
+            Either::Right(service.map_err(map_timeout_to_connector_error as _))
         };
 
         Ok(ServiceBuilder::new()
-            .layer(DeadlineLayer::new(connect_timeout, runtime))
+            .layer(TimeoutLayer::new(connect_timeout, runtime))
             .service(service))
     }
 }
 
-// ===== impl ConnectRequestExt =====
+impl Service<Unnameable> for Connect {
+    type Response = Conn;
+    type Error = BoxError;
+    type Future = cfg_select! {
+        feature = "http3" => {
+            future::Either<
+                <Verbose<stream::Connect> as Service<Routed>>::Future,
+                <quic::Connect as Service<Routed>>::Future,
+            >
+        }
+        _ => { <Verbose<stream::Connect> as Service<Routed>>::Future }
+    };
 
-impl ConnectRequestExt for Request<ConnectConfig> {
-    fn new_connect(origin: Uri, protocol: Protocol, config: ConnectConfig) -> Self {
-        let mut request = Self::new(config);
+    #[inline]
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        ready!(self.stream.poll_ready(cx))?;
+        #[cfg(feature = "http3")]
+        ready!(self.quic.poll_ready(cx))?;
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, Unnameable(request): Unnameable) -> Self::Future {
+        let proxy = request
+            .body()
+            .get_ref::<ProxyMatcher>()
+            .and_then(|proxy| proxy.intercept(request.uri()))
+            .or_else(|| {
+                self.proxies
+                    .iter()
+                    .find_map(|proxy| proxy.intercept(request.uri()))
+            });
+        let routed = Routed { request, proxy };
+
+        cfg_select! {
+            feature = "http3" => {
+                if routed.request.protocol() == Protocol::Http3 {
+                    future::Either::Right(self.quic.call(routed))
+                } else {
+                    future::Either::Left(self.stream.call(routed))
+                }
+            }
+            _ => self.stream.call(routed),
+        }
+    }
+}
+
+// ===== impl Request =====
+
+impl<T> Request<T> {
+    /// Builds an internal CONNECT request with the selected protocol and body.
+    #[must_use]
+    pub(crate) fn new(origin: Uri, protocol: Protocol, body: T) -> Self {
+        let mut request = http::Request::new(body);
         *request.method_mut() = Method::CONNECT;
         *request.uri_mut() = origin;
         if protocol != Protocol::Auto {
             request.extensions_mut().insert(protocol);
         }
-        request
+        Self(request)
     }
 
-    #[inline]
+    /// Returns the origin URI for this connection.
+    #[must_use]
+    fn uri(&self) -> &Uri {
+        self.0.uri()
+    }
+
+    /// Borrows the request body.
+    #[must_use]
+    pub(crate) fn body(&self) -> &T {
+        self.0.body()
+    }
+
+    /// Returns the protocol selected for this connection attempt.
+    #[must_use]
     fn protocol(&self) -> Protocol {
-        self.extensions()
+        self.0
+            .extensions()
             .get::<Protocol>()
             .copied()
             .unwrap_or(Protocol::Auto)
     }
+}
 
-    #[inline]
-    fn deadline(&self) -> Option<Instant> {
-        self.extensions().get::<ConnectDeadline>().map(|d| d.0)
+// ===== impl Transport =====
+
+impl Transport {
+    /// Extracts the byte stream for HTTP/1 or HTTP/2.
+    ///
+    /// Only fails if a connector layer returned a QUIC connection for a stream protocol.
+    pub(crate) fn into_stream(self) -> Result<Box<dyn Io>, BoxError> {
+        match self {
+            Self::Stream(io) => Ok(io),
+            #[cfg(feature = "http3")]
+            Self::Quic { .. } => Err("stream connection returned QUIC".into()),
+        }
+    }
+
+    /// Extracts the QUIC connection and endpoint for HTTP/3.
+    ///
+    /// Only fails if a connector layer returned a byte stream for HTTP/3.
+    #[cfg(feature = "http3")]
+    pub(crate) fn into_quic(self) -> Result<(::quic::Connection, ::quic::Endpoint), BoxError> {
+        match self {
+            Self::Quic {
+                connection,
+                endpoint,
+            } => Ok((connection, endpoint)),
+            Self::Stream(_) => Err("QUIC connection returned a stream".into()),
+        }
+    }
+}
+
+/// Builds a TCP dial request from `request`'s socket bindings.
+fn tcp_dial(request: &Request<ConnectConfig>, uri: Uri, nodelay: bool) -> dialer::Dial {
+    let connect_config = request.body();
+    dialer::Dial::Tcp {
+        uri,
+        addresses: (
+            connect_config.get_ref().copied(),
+            connect_config.get_ref().copied(),
+        ),
+        interface: connect_config.get_ref().cloned(),
+        nodelay,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "http3")]
-    use std::sync::Arc;
-
     use super::*;
     #[cfg(feature = "http3")]
     use crate::ext::UriExt;
@@ -183,9 +351,13 @@ mod tests {
         uri: Uri,
         protocol: Option<Protocol>,
         connect_config: ConnectConfig,
-    ) -> Request<ConnectConfig> {
+    ) -> Unnameable {
         let protocol = protocol.unwrap_or(Protocol::Auto);
-        Request::new_connect(uri.origin().unwrap(), protocol, connect_config)
+        Unnameable(Request::new(
+            uri.origin().unwrap(),
+            protocol,
+            connect_config,
+        ))
     }
 
     impl Conn {
@@ -246,7 +418,7 @@ mod tests {
         let runtime = DynRuntime::new(crate::rt::tokio::TokioRuntime);
         for delay in [Some(Duration::from_millis(10)), None] {
             let config = Config {
-                tls: tls::Config {
+                tls_config: tls::Config {
                     cert_store: Some(
                         crate::tls::trust::CertStore::from_der_certs([&cert]).unwrap(),
                     ),

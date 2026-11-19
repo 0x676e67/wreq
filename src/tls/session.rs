@@ -7,38 +7,34 @@ pub(super) mod entry;
 pub(super) mod store;
 
 use std::{
+    any::{Any, TypeId},
     borrow::Borrow,
     hash::{BuildHasher, Hash, Hasher},
-    mem,
     net::IpAddr,
     num::NonZeroUsize,
     sync::{Arc, LazyLock},
 };
 
-use btls::{
-    nid::Nid,
-    ssl::{ClientSession, SslSessionRef},
-};
+use btls::ssl::{ClientSession, SslSession, SslSessionRef};
 use http::Uri;
 use lru::{DefaultHasher, LruCache};
 pub(crate) use store::Tickets;
-#[cfg(feature = "http3")]
-use {crate::quic::QuicOptions, btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 
-use super::{TlsOptions, TlsVersion};
-use crate::{config::connect::ConnectConfig, conn::CommonIdentity, sync::Mutex};
+use super::{KeyIdentity, TlsVersion};
+use crate::{config::ConnectConfig, conn::CommonIdentity, sync::Mutex};
 
-const SESSION_ID_CONTEXT_LENGTH: usize = 32;
-// Bounds the session keys kept by the built-in and default LRU stores.
 const SESSION_ENTRY_CAPACITY: usize = 1024;
+const SESSION_ID_CONTEXT_LENGTH: usize = 32;
 static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
+
+/// Type-erased [`KeyIdentity`] used by [`SessionKey`] to store stream or QUIC options.
+type ErasedIdentity = dyn for<'h> KeyIdentity<dyn Any, dyn Hasher + 'h>;
 
 /// An opaque key identifying a TLS session store entry.
 ///
-/// It contains the client session scope and the connection's TLS identity. This
-/// prevents a store shared by multiple clients from returning a foreign ticket.
-/// Sessions using TLS 1.2 RSA key exchange also carry the remote socket's IP address, which is
-/// the proxy's for tunneled connections.
+/// Keys are scoped to the client, transport, and TLS identity so a client only resumes
+/// tickets stored under the same key, even when multiple clients share a store. TLS 1.2
+/// RSA sessions also include the remote socket's IP (the proxy's IP for tunneled connections).
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Key {
     session: SessionKey,
@@ -46,87 +42,69 @@ pub struct Key {
     session_id_context: [u8; SESSION_ID_CONTEXT_LENGTH],
 }
 
-/// Session identity for a TLS connection and its optional remote IP.
-/// TCP handshakes retain it in `Ssl` ex data; QUIC uses its address-independent key.
+/// Connection identity for session resumption: transport, origin, TLS peer, and any
+/// request-level options that differ from the client's defaults.
 ///
-/// A session using RSA key exchange is cached under the remote IP as well, and is not cached
-/// when the IP is unknown.
-pub(super) struct SessionTarget {
-    key: Key,
-    remote_ip: Option<IpAddr>,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum Transport {
-    Stream,
-    #[cfg(feature = "http3")]
-    Quic,
-}
-
-/// TLS identity of one connection: transport, origin, TLS peer, and the request
-/// configuration that differs from the client's.
-///
-/// Connections with different ALPN, ALPS or HTTP framing options can share tickets.
-/// The transport, proxy, socket bindings and group partition the session cache.
+/// Differences in ALPN, ALPS, or HTTP framing share tickets; transport, proxy, socket
+/// bindings, and pool group partition the cache.
 #[derive(Clone)]
 struct SessionKey {
     origin: Uri,
     route: Uri,
     common: CommonIdentity,
-    options: SessionOptions,
+    namespace: &'static TypeId,
+    options: Option<Arc<ErasedIdentity>>,
     hash: u64,
 }
 
-#[derive(Clone)]
-enum SessionOptions {
-    Stream(Option<Arc<TlsOptions>>),
-    #[cfg(feature = "http3")]
-    Quic(Option<Arc<QuicOptions>>),
-}
-
-/// A TLS session that can be stored and retrieved from a session store.
+/// A stored TLS session used for ticket-based resumption.
 ///
-/// The originating key is retained so sessions returned by configured stores can
-/// be validated before resumption.
+/// Carries its originating [`Key`] so sessions returned by custom stores can be validated
+/// before being offered.
 #[derive(Clone)]
 pub struct TlsSession {
     ticket: Ticket,
     key: Key,
 }
 
-/// Resumption state of a stored session.
+/// Underlying resumption state stored inside a [`TlsSession`].
+///
+/// Stream connections store a native BoringSSL [`ClientSession`], while QUIC stores
+/// decoded metadata alongside an opaque serialized session payload.
 #[derive(Clone)]
-pub(super) enum Ticket {
-    /// Checked by btls against each TCP connection before it is offered.
-    Stream(ClientSession),
-    /// A QUIC session, kept decoded for its metadata.
-    #[cfg(feature = "http3")]
-    Quic {
+pub(crate) enum Ticket {
+    /// Native BoringSSL session for TCP/Unix connections.
+    Native(ClientSession),
+    /// Decoded session metadata paired with a transport-specific resumption payload.
+    #[allow(
+        dead_code,
+        reason = "Not every transport uses an opaque resumption payload"
+    )]
+    Opaque {
         session: SslSession,
-        /// Encoded state the QUIC stack resumes from, with the server's transport parameters.
-        state: Arc<Zeroizing<Vec<u8>>>,
-        /// Earliest expiry on the verified certificate path, as POSIX time.
-        not_after: Option<i64>,
+        payload: Arc<dyn Any + Send + Sync>,
     },
 }
 
-/// Stores sessions used for ticket-based TLS resumption.
+/// Custom storage backend for TLS session tickets used in ticket-based resumption.
+///
+/// Installed via [`ClientBuilder::tls_session_store`](crate::ClientBuilder::tls_session_store)
+/// to replace the built-in in-memory LRU store.
 pub trait TlsSessionStore: Send + Sync {
-    /// Store a TLS session associated with the given key.
+    /// Stores a TLS session under the given key.
     ///
-    /// This method runs from BoringSSL's new-session callback. Implementations
-    /// should return quickly and must not rely on a panic propagating to the
-    /// caller. Panics are caught before they can cross the FFI boundary.
+    /// Runs inside BoringSSL's new-session callback. Implementations should return quickly
+    /// and must not rely on panics propagating; panics are caught before crossing FFI.
     fn put(&self, key: Key, session: TlsSession);
 
-    /// Retrieve the newest TLS session for the given key.
+    /// Retrieves the newest TLS session for the given key.
     ///
-    /// Implementations should remove a session when
-    /// [`TlsSession::should_be_single_use`] returns `true`. This prevents one
-    /// TLS 1.3 ticket from being used by concurrent handshakes, as recommended
-    /// by [RFC 8446 Appendix C.4](https://datatracker.ietf.org/doc/html/rfc8446#appendix-C.4).
-    /// Called during handshake setup when resumption is enabled, once for each QUIC connection
-    /// attempt. Return quickly; a panic counts as a miss.
+    /// Implementations should remove the session when [`TlsSession::should_be_single_use`]
+    /// returns `true`, preventing concurrent handshakes from reusing the same TLS 1.3 ticket
+    /// ([RFC 8446 Appendix C.4](https://datatracker.ietf.org/doc/html/rfc8446#appendix-C.4)).
+    ///
+    /// Runs during handshake setup (each QUIC address attempt performs its own lookup).
+    /// Implementations should return quickly; panics are caught and treated as a miss.
     fn pop(&self, key: &Key) -> Option<TlsSession>;
 }
 
@@ -135,36 +113,54 @@ impl_into_shared!(
     pub trait IntoTlsSessionStore => TlsSessionStore
 );
 
-/// Stores up to the configured number of tickets for each session key, keeping 1024 keys by
-/// default (see [`with_key_capacity`](Self::with_key_capacity)). The least recently used key is
-/// evicted first. Single-use tickets are consumed on lookup, while reusable tickets remain stored.
+/// In-memory LRU session store.
+///
+/// Keeps up to `per_key_capacity` tickets for each of 1024 keys by default (configurable via
+/// [`with_key_capacity`](Self::with_key_capacity)), evicting least recently used keys first.
+/// Single-use tickets are removed on lookup; reusable tickets stay cached.
 pub struct LruTlsSessionStore {
     inner: Mutex<LruCache<Key, LruCache<TlsSession, ()>>>,
     key_capacity: Option<NonZeroUsize>,
     per_key_capacity: Option<NonZeroUsize>,
 }
 
+// ===== impl Key =====
+
+impl Key {
+    /// Restricts a copy of this session key to the remote socket's IP.
+    pub(super) fn with_remote_ip(&self, remote_ip: IpAddr) -> Self {
+        Self {
+            remote_ip: Some(remote_ip),
+            ..self.clone()
+        }
+    }
+}
+
 // ===== impl SessionKey =====
 
 impl SessionKey {
-    /// Derives the TLS identity of a connection request, authenticating
-    /// `route`: the origin itself, or the proxy hop that carries it.
+    /// Derives the session identity for a connection, where `route` is the authenticated
+    /// TLS peer (the origin itself or a proxy hop).
     #[must_use]
-    fn new(
+    fn new<O: for<'h> KeyIdentity<dyn Any, dyn Hasher + 'h>, T: 'static>(
         origin: &Uri,
         connect_config: &ConnectConfig,
         route: &Uri,
-        transport: Transport,
     ) -> Self {
         let common = CommonIdentity::new(connect_config);
-        let options = SessionOptions::new(transport, connect_config);
+        let namespace = const { &TypeId::of::<T>() };
+        let options = connect_config
+            .override_if_different::<O>(|options, base| options.same(base))
+            .cloned()
+            .map(|options| options as Arc<ErasedIdentity>);
         let origin = origin.clone();
         let route = route.clone();
-        let hash = HASHER.hash_one((&origin, &route, &common, &options));
+        let hash = HASHER.hash_one((&origin, &route, &common, namespace, &options));
         Self {
             origin,
             route,
             common,
+            namespace,
             options,
             hash,
         }
@@ -177,6 +173,7 @@ impl PartialEq for SessionKey {
             && self.origin == other.origin
             && self.route == other.route
             && self.common == other.common
+            && self.namespace == other.namespace
             && self.options == other.options
     }
 }
@@ -189,109 +186,19 @@ impl Hash for SessionKey {
     }
 }
 
-// ===== impl SessionOptions =====
+// ===== impl ErasedIdentity =====
 
-impl SessionOptions {
-    fn new(transport: Transport, connect_config: &ConnectConfig) -> Self {
-        match transport {
-            Transport::Stream => Self::Stream(
-                connect_config
-                    .override_if_different(TlsOptions::same_session)
-                    .cloned(),
-            ),
-            #[cfg(feature = "http3")]
-            Transport::Quic => Self::Quic(
-                connect_config
-                    .override_if_different(QuicOptions::same_session)
-                    .cloned(),
-            ),
-        }
-    }
-}
-
-impl PartialEq for SessionOptions {
+impl PartialEq for ErasedIdentity {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Stream(None), Self::Stream(None)) => true,
-            (Self::Stream(Some(left)), Self::Stream(Some(right))) => left.same_session(right),
-            #[cfg(feature = "http3")]
-            (Self::Quic(None), Self::Quic(None)) => true,
-            #[cfg(feature = "http3")]
-            (Self::Quic(Some(left)), Self::Quic(Some(right))) => left.same_session(right),
-            _ => false,
-        }
+        self.same(other)
     }
 }
 
-impl Eq for SessionOptions {}
+impl Eq for ErasedIdentity {}
 
-impl Hash for SessionOptions {
+impl Hash for ErasedIdentity {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        mem::discriminant(self).hash(state);
-        match self {
-            Self::Stream(options) => {
-                options.is_some().hash(state);
-                if let Some(options) = options {
-                    options.hash_session(state);
-                }
-            }
-            #[cfg(feature = "http3")]
-            Self::Quic(options) => {
-                options.is_some().hash(state);
-                if let Some(options) = options {
-                    options.hash_session(state);
-                }
-            }
-        }
-    }
-}
-
-// ===== impl SessionTarget =====
-
-impl SessionTarget {
-    /// Identifies a connection for `origin` that authenticates `route` at `remote_ip`, within a
-    /// client's session scope.
-    #[must_use]
-    pub(super) fn new(
-        origin: &Uri,
-        connect_config: &ConnectConfig,
-        route: &Uri,
-        transport: Transport,
-        remote_ip: Option<IpAddr>,
-        session_id_context: [u8; SESSION_ID_CONTEXT_LENGTH],
-    ) -> Self {
-        Self {
-            key: Key {
-                session: SessionKey::new(origin, connect_config, route, transport),
-                remote_ip: None,
-                session_id_context,
-            },
-            remote_ip,
-        }
-    }
-
-    /// Returns the key shared by every remote address.
-    #[cfg(feature = "http3")]
-    pub(super) fn into_key(self) -> Key {
-        self.key
-    }
-
-    /// Returns the key that also binds the remote IP, if it is known.
-    fn rsa_key(&self) -> Option<Key> {
-        self.remote_ip.map(|ip| Key {
-            remote_ip: Some(ip),
-            ..self.key.clone()
-        })
-    }
-
-    /// Returns the store key for a session using key exchange `kx`, or `None` when the session
-    /// must not be cached.
-    fn key_for(&self, kx: Option<Nid>) -> Option<Key> {
-        if kx == Some(Nid::KX_RSA) {
-            self.rsa_key()
-        } else {
-            Some(self.key.clone())
-        }
+        self.hash_key(state);
     }
 }
 
@@ -356,12 +263,11 @@ impl Borrow<[u8]> for TlsSession {
 // ===== impl Ticket =====
 
 impl Ticket {
-    /// Returns the decoded session, for its lifetime and single-use policy.
+    /// Returns the decoded session metadata (lifetime and single-use flag).
     fn session(&self) -> &SslSessionRef {
         match self {
-            Ticket::Stream(session) => session.session(),
-            #[cfg(feature = "http3")]
-            Ticket::Quic { session, .. } => session,
+            Ticket::Native(session) => session.session(),
+            Ticket::Opaque { session, .. } => session,
         }
     }
 }
@@ -369,8 +275,9 @@ impl Ticket {
 // ===== impl LruTlsSessionStore =====
 
 impl LruTlsSessionStore {
-    /// Creates a store retaining up to `per_key_capacity` sessions for each key.
-    /// A zero capacity disables storage. Storage grows as sessions arrive.
+    /// Creates a store keeping up to `per_key_capacity` tickets per key.
+    ///
+    /// A capacity of `0` disables storage. Backing storage grows lazily as sessions arrive.
     pub fn new(per_key_capacity: usize) -> Self {
         Self {
             inner: Mutex::new(LruCache::sparse(NonZeroUsize::MIN)),
@@ -380,8 +287,9 @@ impl LruTlsSessionStore {
         .with_key_capacity(SESSION_ENTRY_CAPACITY)
     }
 
-    /// Sets how many session keys are kept, 1024 by default.
-    /// A zero capacity disables storage.
+    /// Sets the maximum number of session keys to keep (default: 1024).
+    ///
+    /// A capacity of `0` disables storage.
     #[must_use]
     pub fn with_key_capacity(self, key_capacity: usize) -> Self {
         let key_capacity = NonZeroUsize::new(key_capacity);
@@ -451,40 +359,14 @@ mod tests {
     }
 
     #[test]
-    fn rsa_key_exchange_sessions_are_keyed_by_remote_ip() {
-        let connect_config = ConnectConfig::default();
-        let origin = Uri::from_static("https://example.com/");
-        let context = [1; SESSION_ID_CONTEXT_LENGTH];
-        let target = |ip| {
-            SessionTarget::new(
-                &origin,
-                &connect_config,
-                &origin,
-                Transport::Stream,
-                ip,
-                context,
-            )
-        };
-        let known = target(Some(IpAddr::from([192, 0, 2, 1])));
-
-        let rsa = known.key_for(Some(Nid::KX_RSA)).unwrap();
-        assert!(rsa != known.key);
-        for kx in [Some(Nid::KX_ECDHE), Some(Nid::KX_ANY), None] {
-            assert!(known.key_for(kx).is_some_and(|key| key == known.key));
-        }
-        assert!(target(None).key_for(Some(Nid::KX_RSA)).is_none());
-    }
-
-    #[test]
     fn session_keys_ignore_negotiation_and_inherit_client_options() {
         let connect_config = tls(TlsOptions::builder());
         let origin = Uri::from_static("https://example.com/");
         let key = |overrides: ConnectConfig| {
-            SessionKey::new(
+            SessionKey::new::<TlsOptions, ClientSession>(
                 &origin,
                 &overrides.with_base(&connect_config),
                 &origin,
-                Transport::Stream,
             )
         };
         let inherited = ConnectConfig::default().with_base(&connect_config);
@@ -515,53 +397,17 @@ mod tests {
             key(tls(TlsOptions::builder().key_shares(Vec::new()))),
             key(grouped),
             key(proxied),
-            SessionKey::new(
+            SessionKey::new::<TlsOptions, ClientSession>(
                 &origin,
                 &inherited,
                 &Uri::from_static("https://proxy:8443"),
-                Transport::Stream,
             ),
-            #[cfg(feature = "http3")]
-            SessionKey::new(&origin, &inherited, &origin, Transport::Quic),
+            SessionKey::new::<TlsOptions, ()>(&origin, &inherited, &origin),
         ];
-        for other in others {
+        for mut other in others {
             assert!(plain != other);
-        }
-
-        #[cfg(feature = "http3")]
-        {
-            let quic_key = |overrides: ConnectConfig| {
-                SessionKey::new(
-                    &origin,
-                    &overrides.with_base(&connect_config),
-                    &origin,
-                    Transport::Quic,
-                )
-            };
-            let quic_origin = quic_key(ConnectConfig::default());
-            let stream_config = tls(TlsOptions::builder().key_shares(Vec::new()));
-            assert!(quic_origin == quic_key(stream_config));
-
-            let mut quic_config = ConnectConfig::default();
-            let options = QuicOptions::builder().pre_shared_key(true);
-            quic_config.insert(options.clone().build());
-            assert!(plain == key(quic_config.clone()));
-            let resumed = quic_key(quic_config);
-            assert!(quic_origin != resumed);
-
-            let mut quic_config = ConnectConfig::default();
-            quic_config.insert(
-                options
-                    .clone()
-                    .initial_mtu(1280)
-                    .enable_alps_protocol(true)
-                    .build(),
-            );
-            assert!(resumed == quic_key(quic_config));
-
-            let mut quic_config = ConnectConfig::default();
-            quic_config.insert(options.key_shares(Vec::new()).build());
-            assert!(resumed != quic_key(quic_config));
+            other.hash = plain.hash;
+            assert!(plain != other);
         }
 
         let mut connect_config = connect_config;
@@ -572,14 +418,11 @@ mod tests {
         partial.insert(Ipv4Addr::LOCALHOST);
         let mut changed = inherited.clone();
         changed.insert(Ipv4Addr::UNSPECIFIED);
-        let assert_bindings = |transport| {
-            let key = |connect_config| SessionKey::new(&origin, connect_config, &origin, transport);
-            let inherited_key = key(&inherited);
-            assert!(inherited_key == key(&partial));
-            assert!(inherited_key != key(&changed));
+        let key = |connect_config| {
+            SessionKey::new::<TlsOptions, ClientSession>(&origin, connect_config, &origin)
         };
-        assert_bindings(Transport::Stream);
-        #[cfg(feature = "http3")]
-        assert_bindings(Transport::Quic);
+        let inherited_key = key(&inherited);
+        assert!(inherited_key == key(&partial));
+        assert!(inherited_key != key(&changed));
     }
 }

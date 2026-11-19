@@ -1,11 +1,12 @@
-//! Establishes SOCKS5 UDP associations and carries target QUIC datagrams through them.
-//! The control stream remains open for the socket and its senders, as required by
-//! [RFC 1928 Section 7](https://www.rfc-editor.org/rfc/rfc1928#section-7).
+//! SOCKS5 UDP association adapter for QUIC endpoints.
+//!
+//! Keeps the TCP control stream open for the lifetime of the socket and its senders
+//! ([RFC 1928 Section 7](https://www.rfc-editor.org/rfc/rfc1928#section-7)).
 
 use std::{
     future::{Future, poll_fn},
     io::{self, IoSliceMut},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     ops::Range,
     pin::{Pin, pin},
     sync::{
@@ -19,38 +20,25 @@ use ::quic::{
     AsyncUdpSocket, UdpSender,
     udp::{RecvMeta, Transmit},
 };
-use futures_util::future::BoxFuture;
-use http::Request;
-use netty::proxy::socks::{
-    DnsResolve,
-    udp::{self, Address, AddressRef, AssociateError, UdpAssociation},
-};
+use netty::proxy::socks::udp::{self, Address, AddressRef, AssociateError, UdpAssociation};
 use pin_project_lite::pin_project;
 use tokio::sync::{Notify, futures::OwnedNotified};
-use tower::{BoxError, ServiceExt};
+use tower::BoxError;
 
-use super::{
-    TUNNEL_MTU, bind_udp,
-    endpoint::{Endpoints, QuicConfig, handshake_error},
-};
+use super::{TUNNEL_MTU, Tunnel};
 use crate::{
-    config::connect::ConnectConfig,
-    conn::{
-        Conn,
-        dialer::{ConnectError, Dial, Dialer},
-    },
+    conn::dialer::{ConnectError, resolve},
+    dns::DynResolver,
     error::ProxyConnect,
     proxy::matcher::Intercept,
     rt::Connection,
     sync::Mutex,
 };
 
-static URI_MISSING_HOST: &str = "HTTP/3 URI has no host";
 static PROXY_CONNECT_ERROR: &str = "SOCKS5 proxy connect error";
 static AUTH_ERROR: &str = "SOCKS5 authentication error";
 static ASSOCIATE_ERROR: &str = "SOCKS5 UDP ASSOCIATE error";
 static RELAY_ERROR: &str = "SOCKS5 UDP relay error";
-static TARGET_HANDSHAKE_ERROR: &str = "SOCKS5 target handshake error";
 static PEER_ADDR_REQUIRED: &str = "SOCKS5 UDP requires the control connection's peer address";
 static ASSOCIATION_CLOSED: &str = "SOCKS5 UDP association closed during relay resolution";
 static NO_RELAY_ADDRESSES: &str = "SOCKS5 UDP relay resolved to no addresses";
@@ -59,13 +47,13 @@ static RECV_SIZE_OVERFLOW: &str = "UDP receive size overflow";
 static SEND_TARGET_MISMATCH: &str =
     "SOCKS5 UDP socket requires one datagram of at most 1200 bytes for its target";
 
-/// One association exposed as a fixed-peer socket to the inner QUIC endpoint.
-/// Only the receive driver polls the control stream, so senders cannot replace its waker.
+/// Adapts a SOCKS5 UDP association into a fixed-peer [`AsyncUdpSocket`] for QUIC.
 ///
-/// `scratch` holds the last receive: its datagrams before `framed` are unframed, and
-/// `payloads` is what remains of the current run of payloads, `stride` bytes apart.
+/// Only `poll_recv` polls the TCP control stream, avoiding waker contention with senders.
+/// `scratch` buffers the latest UDP receive batch: bytes before `framed` have been unframed,
+/// and `payloads` tracks the remaining unframed run of `stride`-spaced datagrams.
 #[derive(Debug)]
-struct Socket {
+pub(super) struct Socket {
     inner: Box<dyn AsyncUdpSocket>,
     shared: Arc<Shared>,
     local: SocketAddr,
@@ -77,7 +65,10 @@ struct Socket {
     stride: usize,
 }
 
-/// `notify` wakes senders once `closed` is set; `ended` signals the endpoint's watcher once.
+/// Shared SOCKS5 UDP association state held by [`Socket`] and its [`SocketSender`] handles.
+///
+/// Keeps the TCP control stream and pre-encoded target header alive; `notify` wakes blocked
+/// senders when `closed` flips, and `ended` signals the endpoint watcher once.
 #[derive(Debug)]
 struct Shared {
     association: Mutex<Option<UdpAssociation<Box<dyn Connection>>>>,
@@ -89,7 +80,10 @@ struct Shared {
 }
 
 pin_project! {
-    /// Retains one reusable frame and independent UDP readiness and closure registrations.
+    /// [`UdpSender`] handle created by [`Socket::create_sender`].
+    ///
+    /// Reuses a pre-allocated framing buffer (`packet`) prefixed with the SOCKS5 UDP header
+    /// and holds its own close notification so senders do not compete over a shared waker.
     #[derive(Debug)]
     struct SocketSender {
         inner: Pin<Box<dyn UdpSender>>,
@@ -101,65 +95,15 @@ pin_project! {
     }
 }
 
-/// Resolves SOCKS5 targets locally or delegates SOCKS5h target names to the proxy.
-pub(super) async fn connect(
-    endpoints: Arc<Endpoints>,
-    dialer: Dialer,
-    request: Request<ConnectConfig>,
-    proxy: Intercept,
-    dns: DnsResolve,
-) -> Result<Conn, BoxError> {
-    // A local configuration error must not cost, or be reported as, a proxy setup.
-    let config = endpoints.tunnel_config(&request)?;
-    let uri = request.uri();
-    let host = crate::util::strip_ipv6_brackets(uri.host().ok_or(URI_MISSING_HOST)?);
-    let port = uri.port_u16().unwrap_or(443);
-    // The control connection takes the request's bindings, like the relay socket.
-    let dial = || {
-        dialer
-            .clone()
-            .oneshot(Dial::tcp(&request, proxy.uri().clone(), false))
-    };
-
-    if dns == DnsResolve::Remote {
-        let target = match host.parse::<IpAddr>() {
-            Ok(ip) => Address::Ip((ip, port).into()),
-            Err(_) => Address::Domain(host.into(), port),
-        };
-        return Ok(connect_target(&endpoints, &request, dial(), &proxy, &config, target).await?);
-    }
-
-    let addresses = endpoints.resolve(host, port, uri.port().is_some()).await?;
-
-    // Target families are independent of the physical proxy's bindings.
-    Ok(endpoints
-        .race(addresses, (None, None), |address| {
-            let target = Address::Ip(address);
-            let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
-                &endpoints,
-                &request,
-                dial(),
-                &proxy,
-                &config,
-                target,
-            ));
-            Ok(attempt)
-        })
-        .await?)
-}
-
-/// Each candidate owns its association; cancellation closes the control stream and UDP socket.
-/// Errors name the stage that failed; those of the proxy's stages are proxy connect errors.
-async fn connect_target(
-    endpoints: &Endpoints,
-    request: &Request<ConnectConfig>,
+/// Establishes a SOCKS5 UDP association and returns a [`Tunnel`] backed by its relay socket.
+pub(super) async fn open(
     dial: impl Future<Output = Result<Box<dyn Connection>, BoxError>>,
     proxy: &Intercept,
-    config: &QuicConfig,
     target: Address,
-) -> Result<Conn, ConnectError> {
+    resolver: &DynResolver,
+    bind_relay: impl Fn(SocketAddr) -> Result<Box<dyn AsyncUdpSocket>, BoxError>,
+) -> Result<Tunnel<Socket>, ConnectError> {
     let io = dial.await.map_err(proxy_error(PROXY_CONNECT_ERROR))?;
-
     let peer = io.peer_addr();
 
     // The relay's address family is not known until the ASSOCIATE reply.
@@ -200,10 +144,10 @@ async fn connect_target(
             Address::Ip(relay) if relay.ip().is_unspecified() => {
                 return Err(PEER_ADDR_REQUIRED.into());
             }
-            Address::Ip(relay) => (relay_socket(endpoints, request, relay)?, relay),
+            Address::Ip(relay) => (bind_relay(relay)?, relay),
             Address::Domain(host, port) => {
                 // BND.PORT is authoritative even when the resolver returns another port.
-                let mut resolving = pin!(endpoints.resolve(&host, port, true));
+                let mut resolving = pin!(resolve(&host, port, true, |name| resolver.resolve(name)));
                 let addresses = poll_fn(|cx| {
                     // The association can close while DNS is pending; stop that lookup too.
                     if let Poll::Ready(result) = association.poll_closed(cx) {
@@ -235,7 +179,7 @@ async fn connect_target(
                     .filter(preferred)
                     .chain(addresses.iter().filter(|addr| !preferred(addr)))
                 {
-                    match relay_socket(endpoints, request, relay) {
+                    match bind_relay(relay) {
                         Ok(socket) => {
                             selected = Some((socket, relay));
                             break;
@@ -257,35 +201,14 @@ async fn connect_target(
     let (socket, relay) = open_relay.await.map_err(proxy_error(RELAY_ERROR))?;
     let ended = socket.shared.ended.clone();
 
-    endpoints
-        .finish_tunnel(request.uri(), config, socket, relay, ended)
-        .await
-        .map_err(handshake_error(TARGET_HANDSHAKE_ERROR))
+    Ok(Tunnel {
+        socket,
+        remote: relay,
+        ended,
+    })
 }
 
-/// Opens a relay socket with the same binding policy as direct QUIC.
-fn relay_socket(
-    endpoints: &Endpoints,
-    request: &Request<ConnectConfig>,
-    remote: SocketAddr,
-) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-    let connect_config = request.body();
-    if matches!(
-        (
-            connect_config.get_ref::<Ipv4Addr>(),
-            connect_config.get_ref::<Ipv6Addr>(),
-            remote
-        ),
-        (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
-    ) {
-        return Err("relay address does not match local bindings".into());
-    }
-    Ok(endpoints
-        .runtime()
-        .udp_socket(bind_udp(connect_config, remote)?)?)
-}
-
-/// Labels a failed proxy stage, keeping it a proxy connect error.
+/// Wraps a proxy stage failure as a [`ConnectError`] carrying [`ProxyConnect`].
 fn proxy_error<E: Into<BoxError>>(stage: &'static str) -> impl FnOnce(E) -> ConnectError {
     move |error| ConnectError::new(stage, ProxyConnect::Source(error.into()))
 }
@@ -361,13 +284,13 @@ impl AsyncUdpSocket for Socket {
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, RECV_SIZE_OVERFLOW))?
             .max(65_536);
 
+        // Ensure the scratch buffer has enough capacity for the receive operation.
         if capacity > self.scratch.len() {
             self.scratch
                 .try_reserve_exact(capacity - self.scratch.len())
                 .map_err(io::Error::other)?;
             self.scratch.resize(capacity, 0);
         }
-
         let mut association = self.shared.association.lock();
 
         // The watcher closes the endpoint once the association ends.
@@ -511,7 +434,8 @@ impl UdpSender for SocketSender {
     }
 }
 
-/// Checks the target identity while allowing proxy-resolved names to reply from any IP.
+/// Matches a received SOCKS5 source address against the target, allowing proxy-resolved domains
+/// to reply from any IP.
 fn matches_target(target: &Address, source: AddressRef<'_>) -> bool {
     if target.port() != source.port() {
         return false;

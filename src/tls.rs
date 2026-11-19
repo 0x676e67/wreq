@@ -1,16 +1,13 @@
-//! TLS handshake options, trust roots, client identities and session storage.
+//! TLS configuration, trust roots, client identities, and session storage.
 //!
-//! [`TlsOptions`] customizes TLS over TCP and Unix sockets. [`ClientBuilder`](crate::ClientBuilder)
-//! configures the client's verification, identity, version limits and session store.
+//! Use [`TlsOptions`] to customize TLS over TCP and Unix sockets, and
+//! [`ClientBuilder`](crate::ClientBuilder) for client-wide verification, identity,
+//! version limits, and session storage.
 
-#[macro_use]
-mod macros;
+pub(crate) mod macros;
 
 pub(super) mod connector;
 mod context;
-mod ext;
-#[cfg(feature = "http3")]
-pub(super) mod quic;
 
 pub mod compress;
 pub mod keylog;
@@ -18,27 +15,45 @@ pub mod session;
 pub mod trust;
 
 use std::{
+    any::Any,
     borrow::Cow,
-    hash::{Hash, Hasher},
-    sync::Arc,
+    hash::{BuildHasher, Hash, Hasher},
+    sync::{Arc, LazyLock},
 };
 
 /// Re-exports of TLS-related types from `btls` for public use.
 pub use btls::ssl::{EchGreaseAead, ExtensionType, KeyShare, Tls13Cipher};
-use btls::ssl::{SslContextBuilder, SslVerifyMode};
+use btls::{
+    error::ErrorStack,
+    ex_data::Index,
+    ssl::{EchGreaseRounding, Ssl, SslContextBuilder, SslRef, SslVerifyMode},
+};
 use bytes::{BufMut, Bytes, BytesMut};
 use compress::{CertificateCompressor, Compressors};
-use connector::StreamTls;
 use derive_deftly::Deftly;
 use educe::Educe;
-use ext::SslContextBuilderExt;
 use keylog::KeyLog;
-#[cfg(feature = "http3")]
-use quic::QuicTls;
 use session::Tickets;
 use trust::{CertStore, Identity};
 
-use crate::{Error, config::connect::ConnectConfig};
+pub(crate) use self::context::TlsContext;
+use crate::Error;
+
+/// Compares and hashes the subset of TLS options that define a cache or session key.
+///
+/// Used with the default `Rhs = Self` for compiled context caching in [`TlsContext`], and
+/// with `Rhs = dyn Any` / `H = dyn Hasher` for type-erased session keys in [`session`].
+pub(crate) trait KeyIdentity<
+    Rhs: ?Sized = Self,
+    H: Hasher + ?Sized = <lru::DefaultHasher as BuildHasher>::Hasher,
+>: Any + Send + Sync
+{
+    /// Returns `true` if `self` and `other` share the same key.
+    fn same(&self, other: &Rhs) -> bool;
+
+    /// Hashes the fields compared by [`Self::same`].
+    fn hash_key(&self, state: &mut H);
+}
 
 /// Peer certificate information attached to response extensions when
 /// [`ClientBuilder::tls_info`](crate::ClientBuilder::tls_info) is enabled.
@@ -66,7 +81,10 @@ impl TlsInfo {
     }
 }
 
-/// A TLS protocol version.
+/// A TLS protocol version supported by the backend.
+///
+/// Used to set minimum and maximum version bounds on [`ClientBuilder`](crate::ClientBuilder)
+/// or per-connection [`TlsOptions`].
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct TlsVersion(btls::ssl::SslVersion);
 
@@ -86,9 +104,10 @@ impl TlsVersion {
     pub const TLS_1_3: TlsVersion = TlsVersion(btls::ssl::SslVersion::TLS1_3);
 }
 
-/// An application protocol identifier for TLS ALPN negotiation.
-/// Lists of these identifiers define the offer and its preference order.
-/// Identifiers borrow static bytes and can be reused across TLS configurations.
+/// An application protocol identifier for TLS ALPN negotiation
+/// ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
+///
+/// Passed in preference order via [`TlsOptions::alpn_protocols`].
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct AlpnProtocol(&'static [u8]);
 
@@ -104,7 +123,7 @@ impl AlpnProtocol {
     /// Prefer HTTP/3
     pub const HTTP3: AlpnProtocol = AlpnProtocol(b"h3");
 
-    fn encode_sequence(items: &[AlpnProtocol]) -> Bytes {
+    pub(crate) fn encode_sequence(items: &[AlpnProtocol]) -> Bytes {
         // RFC 7301 section 3.1 uses length-prefixed identifiers in preference order.
         // https://www.rfc-editor.org/rfc/rfc7301.html#section-3.1
         let mut buf = BytesMut::new();
@@ -123,7 +142,10 @@ impl PartialEq<[u8]> for AlpnProtocol {
     }
 }
 
-/// A TLS ALPS protocol.
+/// An application protocol identifier for TLS ALPS (Application-Layer Protocol Settings).
+///
+/// Passed via [`TlsOptions::alps_protocols`] to exchange settings during the handshake for
+/// protocols also offered in ALPN.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct AlpsProtocol(&'static [u8]);
 
@@ -138,6 +160,11 @@ impl AlpsProtocol {
 
     /// Prefer HTTP/3
     pub const HTTP3: AlpsProtocol = AlpsProtocol(b"h3");
+
+    /// Returns the identifier passed to BoringSSL.
+    pub(crate) fn as_bytes(self) -> &'static [u8] {
+        self.0
+    }
 }
 
 impl PartialEq<[u8]> for AlpsProtocol {
@@ -179,20 +206,56 @@ impl Hash for EchGrease {
     }
 }
 
+fn host_length_index() -> Result<Index<Ssl, usize>, ErrorStack> {
+    static INDEX: LazyLock<Result<Index<Ssl, usize>, ErrorStack>> =
+        LazyLock::new(Ssl::new_ex_index);
+    INDEX.clone()
+}
+
+/// Enables ECH GREASE and stores the target host length for NSS padding, even without SNI.
+pub(crate) fn set_ech_grease_host(ssl: &mut SslRef, host_length: usize) -> Result<(), ErrorStack> {
+    ssl.set_enable_ech_grease(true);
+    ssl.set_ex_data(host_length_index()?, host_length);
+    Ok(())
+}
+
+/// Installs the configured ECH GREASE callback on `builder`.
+pub(crate) fn set_ech_grease_policy(builder: &mut SslContextBuilder, policy: Option<EchGrease>) {
+    if let Some(policy) = policy
+        && policy != EchGrease::Default
+    {
+        builder.set_ech_grease_callback(move |ssl, info| {
+            let nss = |rounding| {
+                let host_length = ssl.ex_data(host_length_index()?).copied().unwrap_or(0);
+                info.nss_parameters(100, host_length, rounding)
+            };
+            match policy {
+                EchGrease::Default => info.boringssl_parameters(info.default_aead()),
+                EchGrease::Aead(aead) => info.boringssl_parameters(aead),
+                EchGrease::NssPre3127 => nss(EchGreaseRounding::NssPre3127),
+                EchGrease::Nss3127 => nss(EchGreaseRounding::Nss3127),
+            }
+        });
+    }
+}
+
 /// Builder for [`TlsOptions`].
+///
+/// Created via [`TlsOptions::builder`] to configure TLS handshake options for TCP and Unix
+/// connections.
 #[must_use]
 #[derive(Debug, Clone)]
 pub struct TlsOptionsBuilder {
     config: TlsOptions,
 }
 
-/// TLS handshake options for TCP and Unix connections; HTTP/3 uses `QuicOptions`.
-/// Configures protocol negotiation, session resumption and the ClientHello.
-/// See each field for its default and inheritance rules.
+/// TLS handshake options for TCP and Unix connections.
+///
+/// For HTTP/3 connections, use `QuicOptions` instead.
 #[non_exhaustive]
 #[derive(Debug, Clone, Educe, Deftly)]
 #[educe(Default)]
-#[derive_deftly(TlsKey)]
+#[derive_deftly(macros::TlsKey)]
 pub struct TlsOptions {
     /// Protocols offered through ALPN, in preference order ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
     ///
@@ -354,7 +417,8 @@ pub struct TlsOptions {
     pub cipher_list: Option<Cow<'static, str>>,
 
     /// TLS 1.3 cipher suites in the order offered to the server.
-    /// An empty list uses the backend defaults. Duplicate suites fail TLS setup.
+    ///
+    /// An empty list uses backend defaults; duplicate suites fail TLS setup.
     ///
     /// **Default:** `None` (backend defaults).
     pub tls13_cipher_list: Option<Cow<'static, [Tls13Cipher]>>,
@@ -370,9 +434,10 @@ pub struct TlsOptions {
     pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
 }
 
-/// Client-wide TLS policy, fixed at build and compiled into TCP/Unix and QUIC contexts.
-/// The minimum version applies to TCP/Unix. QUIC checks the maximum version against TLS 1.3
-/// and uses its own ALPN. Clones share one session store across both transports.
+/// Client-wide TLS settings shared across TCP/Unix and QUIC contexts.
+///
+/// `min_version` applies only to TCP/Unix; QUIC always requires TLS 1.3 and sets its own ALPN.
+/// Clones share the same session ticket store across both transports.
 #[derive(Clone)]
 pub(crate) struct Config {
     pub(crate) min_version: Option<TlsVersion>,
@@ -605,6 +670,7 @@ impl TlsOptionsBuilder {
     }
 
     /// Sets the TLS 1.3 cipher suites in offer order.
+    ///
     /// An empty list restores backend defaults; duplicate suites fail TLS setup.
     #[inline]
     pub fn tls13_cipher_list<T>(mut self, ciphers: T) -> Self
@@ -656,11 +722,17 @@ impl TlsOptions {
 // ===== impl Config =====
 
 impl Config {
-    /// Applies the client's identity, trust roots, verification and key log to a context.
-    fn configure(&self, builder: &mut SslContextBuilder) -> crate::Result<()> {
-        builder.set_identity(self.identity.as_ref())?;
-        builder.set_root_store(self.cert_store.as_ref())?;
-        builder.set_cert_verification(self.cert_verification);
+    /// Applies client identity, trust roots, verification, and key logging to `builder`.
+    pub(crate) fn configure(&self, builder: &mut SslContextBuilder) -> crate::Result<()> {
+        if let Some(identity) = &self.identity {
+            identity.configure(builder)?;
+        }
+        CertStore::configure(self.cert_store.as_ref(), builder)?;
+        builder.set_verify(if self.cert_verification {
+            SslVerifyMode::PEER
+        } else {
+            SslVerifyMode::NONE
+        });
 
         if let Some(policy) = self.keylog.clone()
             && let Some(handle) = policy.handle().map_err(Error::tls)?
@@ -673,12 +745,11 @@ impl Config {
         Ok(())
     }
 
-    /// Shares this client's session scope across contexts and, when verification is enabled,
-    /// re-verifies the server certificate chain on resumption.
-    fn enable_resumption(&self, builder: &mut SslContextBuilder) -> crate::Result<()> {
-        // Resumption skips certificate checks unless a custom verifier runs them again; this
-        // one keeps the built-in X.509 checks. Verification off uses VERIFY_NONE, which
-        // re-verification does not support.
+    /// Configures the shared session scope and re-verifies peer certificates on resumption
+    /// when verification is enabled.
+    pub(crate) fn enable_resumption(&self, builder: &mut SslContextBuilder) -> crate::Result<()> {
+        // BoringSSL skips certificate checks on resumption unless a custom verifier re-runs them.
+        // Skip when verification is off, since VERIFY_NONE does not support re-verification.
         if self.cert_verification {
             builder.set_custom_verify_callback(SslVerifyMode::PEER, |ssl| {
                 Ok(ssl.verify_peer_cert_chain()?)
@@ -687,22 +758,9 @@ impl Config {
         }
         let scope = self.tickets.session_id_context().map_err(Error::tls)?;
         builder.set_session_id_context(&scope).map_err(Error::tls)?;
-        // This limits TLS 1.2 sessions; TLS 1.3 also obeys the server's ticket lifetime.
+        // Limits TLS 1.2 sessions; TLS 1.3 also honors the server's ticket lifetime.
         builder.set_session_timeout(60 * 60);
         Ok(())
-    }
-
-    /// Compiles the client's TCP/Unix context from its TLS options.
-    /// Missing options leave TLS customization to the backend's defaults; the client-wide
-    /// trust, version, and ALPN policy still applies.
-    pub(crate) fn stream(self, config: &ConnectConfig) -> crate::Result<StreamTls> {
-        StreamTls::new(self, config)
-    }
-
-    /// Compiles the client's QUIC context from its QUIC options.
-    #[cfg(feature = "http3")]
-    pub(crate) fn quic(self, config: &ConnectConfig) -> crate::Result<QuicTls> {
-        QuicTls::new(self, config)
     }
 }
 

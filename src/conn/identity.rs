@@ -1,4 +1,4 @@
-//! Connection identities projected from client and request configuration.
+//! Connection pool and TLS session reuse identities.
 
 use std::{
     net::{Ipv4Addr, Ipv6Addr},
@@ -11,14 +11,14 @@ use http::Uri;
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
-    config::connect::ConnectConfig, group::Group, http1::Http1Options, protocol::Protocol,
-    proxy::Matcher, tls::TlsOptions,
+    config::ConnectConfig, group::Group, http1::Http1Options, protocol::Protocol, proxy::Matcher,
+    tls::TlsOptions,
 };
 #[cfg(feature = "http3")]
 use crate::{http3::Http3Options, quic::QuicOptions};
 
 define_derive_deftly! {
-    /// Generates reuse identities from their shared field list.
+    /// Generates `CommonIdentity` and `Identity` from the shared field list.
     ConnectIdentities for struct:
     ${defcond PROTOCOL_FIELD fmeta(identity)}
     ${define FIELD {
@@ -41,10 +41,18 @@ define_derive_deftly! {
         connect_config.override_if_different(PartialEq::eq)
             .cloned()
     }}
+    /// Non-protocol connection overrides (group, proxy, local bindings) shared across pool
+    /// keys and TLS session keys.
+    ///
+    /// Only stores request overrides that differ from the client's defaults.
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
     pub(crate) struct CommonIdentity {
         ${for fields { ${when not(PROTOCOL_FIELD)} $FIELD }}
     }
+    /// Full connection compatibility identity used to key pool entries and QUIC address tokens.
+    ///
+    /// Combines the target origin, selected [`Protocol`], [`CommonIdentity`], and only the
+    /// protocol-specific option overrides applicable to `protocol`.
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
     pub(crate) struct Identity {
         pub(crate) origin: Uri,
@@ -78,7 +86,10 @@ define_derive_deftly! {
     }
 }
 
-// Unmarked fields are shared by the connection pool and TLS session keys.
+/// Schema struct driving `ConnectIdentities` to generate [`CommonIdentity`] and [`Identity`].
+///
+/// Unmarked fields belong to both pool and TLS session keys; `#[deftly(identity(...))]`
+/// fields participate only when the corresponding protocol mode applies.
 #[allow(dead_code)]
 #[derive(Deftly)]
 #[derive_deftly(ConnectIdentities)]

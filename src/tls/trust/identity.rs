@@ -1,17 +1,20 @@
 use btls::{
     pkcs12::Pkcs12,
     pkey::{PKey, Private},
+    ssl::SslContextBuilder,
     x509::X509,
 };
 
 use crate::Error;
 
-/// Represents a private key and X509 cert as a client certificate.
+/// Client TLS identity consisting of a private key, leaf X.509 certificate, and chain.
+///
+/// Use [`ClientBuilder::tls_identity`](crate::ClientBuilder::tls_identity) for mutual TLS.
 #[derive(Debug, Clone)]
 pub struct Identity {
-    pub(in crate::tls) pkey: PKey<Private>,
-    pub(in crate::tls) cert: X509,
-    pub(in crate::tls) chain: Vec<X509>,
+    pkey: PKey<Private>,
+    cert: X509,
+    chain: Vec<X509>,
 }
 
 impl Identity {
@@ -90,6 +93,18 @@ impl Identity {
         })?;
         let chain = cert_chain.collect();
         Ok(Identity { pkey, cert, chain })
+    }
+
+    /// Installs the client certificate, private key, and chain in leaf-to-root order.
+    pub(in crate::tls) fn configure(&self, builder: &mut SslContextBuilder) -> crate::Result<()> {
+        builder.set_certificate(&self.cert).map_err(Error::tls)?;
+        builder.set_private_key(&self.pkey).map_err(Error::tls)?;
+        for cert in self.chain.iter() {
+            builder
+                .add_extra_chain_cert(cert.clone())
+                .map_err(Error::tls)?;
+        }
+        Ok(())
     }
 }
 

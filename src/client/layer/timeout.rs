@@ -13,7 +13,7 @@ use tower::{BoxError, Layer, Service};
 
 use self::{body::TimeoutBody, future::ResponseFuture};
 use crate::{
-    config::request::{RequestConfig, impl_request_config_value},
+    config::{RequestConfig, impl_request_config_value},
     rt::{DynRuntime, Timer as _},
 };
 

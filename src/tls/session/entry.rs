@@ -1,70 +1,62 @@
-//! Ticket state for one TLS session-store key.
+//! Per-key ticket slots for the built-in TLS session store.
 //!
-//! [`SessionEntry`] owns the two ticket slots for one full session key. The
-//! parent store serializes state changes and drops retired values outside its lock.
+//! [`SessionEntry`] holds up to two tickets per key. The parent store handles locking and
+//! drops retired tickets after releasing its lock.
 
 use btls::ssl::SslSessionRef;
 
 use super::Ticket;
 
-/// Tickets retained for one compatible connection identity.
+/// Ordered ticket slots stored under a single session key in the built-in LRU store.
 ///
-/// The parent LRU key supplies the endpoint and configuration relevant to session resumption.
-/// This entry owns only the ordered ticket state.
+/// Holds up to two tickets (primary and fallback) and returns displaced or expired tickets
+/// so the store can drop them outside its lock.
 pub(in crate::tls) struct SessionEntry {
-    /// Preferred and fallback tickets issued for the parent key.
     tickets: TicketSlots<Ticket>,
 }
 
-/// Two ordered TLS session tickets belonging to one store entry.
+/// Primary and optional fallback ticket slots.
 ///
-/// The first slot is preferred. The second only holds a former primary already
-/// classified as single-use, and cannot exist without the first. Reusable
-/// tickets stay in the first slot and are cloned on lookup.
-///
-/// TLS 1.3 servers may treat a ticket as single-use. Consuming such tickets on
-/// lookup follows the client-tracking guidance in
-/// [RFC 8446 Appendix C.4](https://datatracker.ietf.org/doc/html/rfc8446#appendix-C.4).
+/// Slot `0` is preferred. Slot `1` only holds a demoted single-use ticket and is never
+/// occupied while slot `0` is empty. Single-use tickets are consumed on lookup
+/// ([RFC 8446 Appendix C.4](https://datatracker.ietf.org/doc/html/rfc8446#appendix-C.4)),
+/// while reusable tickets stay in slot `0` and are cloned.
 struct TicketSlots<T> {
-    /// Preferred ticket at index `0` and fallback at index `1`.
     slots: [Option<T>; 2],
 }
 
 // ===== impl SessionEntry =====
 
 impl SessionEntry {
-    /// Creates an entry with `ticket` as the preferred session.
+    /// Creates an entry with `ticket` in the primary slot.
     pub(in crate::tls) fn new(ticket: Ticket) -> Self {
         Self {
             tickets: TicketSlots::with_primary(ticket),
         }
     }
 
-    /// Inserts a newly issued ticket and returns any displaced ticket.
-    /// The parent store drops the returned value after releasing its lock.
+    /// Inserts a new ticket and returns any displaced ticket to drop outside the store lock.
     pub(in crate::tls) fn push(&mut self, ticket: Ticket) -> Option<Ticket> {
         self.tickets
             .push(ticket, |ticket| ticket.session().should_be_single_use())
     }
 
-    /// Retrieves the preferred ticket according to its single-use policy.
-    /// Single-use tickets are consumed while reusable tickets are up-referenced.
+    /// Returns the preferred ticket, removing it if single-use or cloning it if reusable.
     pub(in crate::tls) fn pop(&mut self) -> Option<Ticket> {
         self.tickets
             .pop(|ticket| ticket.session().should_be_single_use())
     }
 
-    /// Removes expired tickets and returns them for destruction outside the
-    /// parent store lock.
+    /// Removes expired tickets and returns them to drop outside the store lock.
     ///
-    /// A missing time or expired primary clears both slots. Otherwise only the
-    /// fallback is checked; expiration never promotes it.
+    /// A missing `now` or an expired primary clears both slots; otherwise only the fallback
+    /// is checked, and expiration never promotes the fallback.
     pub(in crate::tls) fn expire(&mut self, now: Option<u64>) -> [Option<Ticket>; 2] {
         self.tickets
             .expire(|ticket| is_expired(ticket.session(), now))
     }
 
-    /// Returns whether the entry no longer owns a ticket.
+    /// Returns `true` when no tickets remain in this entry.
     pub(in crate::tls) fn is_empty(&self) -> bool {
         self.tickets.is_empty()
     }
@@ -73,18 +65,16 @@ impl SessionEntry {
 // ===== impl TicketSlots =====
 
 impl<T> TicketSlots<T> {
-    /// Creates slots with `ticket` as the preferred value and no fallback.
     fn with_primary(ticket: T) -> Self {
         Self {
             slots: [Some(ticket), None],
         }
     }
 
-    /// Inserts the newest ticket and returns a ticket that is no longer kept.
+    /// Inserts `ticket` into slot `0`, returning any evicted ticket.
     ///
-    /// A single-use primary moves to fallback and displaces the older fallback.
-    /// A reusable primary is displaced directly, leaving the fallback intact.
-    /// The callback examines only the current primary.
+    /// If the current primary is single-use, it moves to slot `1` (evicting the previous
+    /// fallback); otherwise the primary is replaced directly and slot `1` stays untouched.
     fn push<F>(&mut self, ticket: T, should_be_single_use: F) -> Option<T>
     where
         F: FnOnce(&T) -> bool,
@@ -97,10 +87,7 @@ impl<T> TicketSlots<T> {
         }
     }
 
-    /// Retrieves the preferred ticket and applies its consumption rule.
-    ///
-    /// A single-use primary is removed and the fallback is promoted. A reusable
-    /// primary is cloned without changing either slot.
+    /// Pops a single-use primary (promoting slot `1`), or clones a reusable primary in place.
     fn pop<F>(&mut self, should_be_single_use: F) -> Option<T>
     where
         T: Clone,
@@ -115,11 +102,7 @@ impl<T> TicketSlots<T> {
         }
     }
 
-    /// Applies the store's expiration policy and returns removed tickets.
-    ///
-    /// A missing or expired primary clears both slots without checking the
-    /// fallback. Otherwise only an expired fallback is removed. Returned
-    /// positions mirror the slots; expiration never promotes a ticket.
+    /// Clears both slots if the primary is missing or expired; otherwise expires only slot `1`.
     fn expire<F>(&mut self, mut is_expired: F) -> [Option<T>; 2]
     where
         F: FnMut(&T) -> bool,
@@ -131,28 +114,23 @@ impl<T> TicketSlots<T> {
         [None, self.slots[1].take_if(|ticket| is_expired(ticket))]
     }
 
-    /// Returns whether neither slot contains a ticket.
-    ///
-    /// Checking the primary is enough because fallback cannot exist alone.
     fn is_empty(&self) -> bool {
+        // Slot 1 is never populated while slot 0 is empty.
         self.slots[0].is_none()
     }
 }
 
-/// Returns whether a cached session is unusable at `now`.
-/// A missing time expires it; BoringSSL expresses these values as Unix seconds.
+/// Returns `true` if `session` is expired at `now` (Unix seconds); `None` always expires.
 #[inline(always)]
 pub(in crate::tls) fn is_expired(session: &SslSessionRef, now: Option<u64>) -> bool {
     is_expired_at(now, session.time(), session.timeout())
 }
 
-/// Applies the session lifetime boundary and clock-rollback tolerance to raw
-/// timestamp values.
+/// Checks session expiry against `[established - 1, established + timeout)` using saturating math.
 ///
-/// Both bounds use saturating arithmetic; the lower bound allows one second of
-/// clock rollback, while the upper bound follows the TLS 1.3 lifetime in
-/// [RFC 8446 Section 4.6.1](https://datatracker.ietf.org/doc/html/rfc8446#section-4.6.1).
-/// A missing `now` expires the session.
+/// Allows 1 second of clock rollback and enforces the TLS 1.3 lifetime boundary
+/// ([RFC 8446 Section 4.6.1](https://datatracker.ietf.org/doc/html/rfc8446#section-4.6.1)).
+/// Missing `now` is treated as expired.
 fn is_expired_at(now: Option<u64>, established: u64, timeout: u32) -> bool {
     let Some(now) = now else {
         return true;
@@ -164,9 +142,6 @@ fn is_expired_at(now: Option<u64>, established: u64, timeout: u32) -> bool {
 mod tests {
     use super::*;
 
-    /// Models a ticket's identity and consumption policy without native TLS state.
-    /// Used to exercise the two-slot transitions independently of handshakes.
-    /// Owned values make discarded and retained tickets directly comparable.
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct TestTicket {
         id: usize,

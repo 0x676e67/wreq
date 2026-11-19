@@ -1,5 +1,5 @@
-//! Metadata of an established connection: addresses, negotiated protocol, proxy identity and
-//! values copied into every response. Each transport path builds it once after connecting.
+//! Connection metadata attached after transport setup (socket addresses, ALPN, proxy info,
+//! and response extras).
 
 use std::{
     any::{TypeId, type_name},
@@ -18,18 +18,18 @@ use bytes::Bytes;
 
 use crate::{proxy::matcher::Intercept, tls::TlsInfo};
 
-/// Local and remote socket addresses captured after connecting a transport.
-/// Stored in connection metadata and attached to response extensions.
-/// Custom transports may omit this information.
+/// Local and remote socket addresses for an established transport.
+///
+/// Attached to response extensions; custom transports may omit it.
 #[derive(Clone, Debug)]
 pub(crate) struct HttpInfo {
     pub(crate) remote_addr: SocketAddr,
     pub(crate) local_addr: SocketAddr,
 }
 
-/// Metadata describing the established transport and its negotiated protocol.
-/// Carries proxy details and extra values copied into response extensions.
-/// Clones share the poison flag so reuse can be disabled from any response.
+/// Metadata for an established transport (negotiated protocol, proxy info, and response extras).
+///
+/// Clones share the poison flag, so poisoning any copy prevents connection reuse.
 #[derive(Debug, Clone)]
 pub struct Connected {
     negotiated_h2: bool,
@@ -38,15 +38,16 @@ pub struct Connected {
     poisoned: PoisonPill,
 }
 
-/// Shared reuse status for an established connection.
-/// Poisoning any clone prevents the transport from returning to the pool.
-/// The flag stays alive while connection metadata still references it.
+/// Shared atomic flag marking whether an established connection is poisoned.
+///
+/// Setting it through any clone of [`Connected`] prevents the connection from returning to
+/// the pool.
 #[derive(Clone)]
 struct PoisonPill(Arc<AtomicBool>);
 
-/// Information about an HTTP proxy identity.
-/// Carries forward-proxy status, credentials, and headers for request preparation.
-/// Connection clones share it; updates use copy-on-write to preserve other clones.
+/// Forward-proxy state, authorization header, and custom headers for an HTTP proxy hop.
+///
+/// Shared behind an [`Arc`] and updated via copy-on-write so clones stay independent.
 #[derive(Debug, Default, Clone)]
 struct ProxyIdentity {
     is_proxied: bool,
@@ -54,12 +55,15 @@ struct ProxyIdentity {
     headers: Option<HeaderMap>,
 }
 
-/// Shared response metadata, ordered by concrete type.
-/// Edits copy shared handles; values are cloned only when exported to a response.
+/// Sorted type-keyed list of extra values copied into every response's [`Extensions`].
+///
+/// Stored behind an [`Arc`] slice; updates replace entries copy-on-write and values are
+/// cloned only when exported to a response.
 #[derive(Clone, Default)]
 #[expect(clippy::type_complexity)]
 struct Metadata(Option<Arc<[(TypeId, Arc<dyn MetadataValue>)]>>);
 
+/// Type-erased extra value stored inside [`Metadata`] and cloned into response [`Extensions`].
 trait MetadataValue: Send + Sync {
     fn copy_to(&self, extensions: &mut Extensions);
     fn type_name(&self) -> &'static str;
@@ -104,16 +108,14 @@ impl Connected {
         }
     }
 
-    /// Attaches metadata copied into the extensions of every response.
-    /// A later value replaces an earlier value of the same Rust type.
-    /// Other connection clones retain their existing metadata.
+    /// Attaches a value to be copied into every response's extensions, replacing any previous
+    /// value of the same type.
     pub fn extra<T: Clone + Send + Sync + 'static>(mut self, extra: T) -> Connected {
         self.metadata.insert(extra);
         self
     }
 
-    /// Copies attached metadata into response extensions by concrete Rust type.
-    /// Each stored metadata value is cloned once.
+    /// Copies all attached extra values into `extensions`.
     #[inline]
     pub fn set_extras(&self, extensions: &mut Extensions) {
         self.metadata.copy_to(extensions);

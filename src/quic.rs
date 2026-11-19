@@ -1,10 +1,13 @@
-//! QUIC connection options.
+//! QUIC transport and TLS 1.3 handshake options.
 //!
-//! [`QuicOptions`] configures QUIC transport parameters and its TLS 1.3 handshake.
-//! [`Http3Options`] configures HTTP/3 framing; [`TlsOptions`] configures TLS over TCP.
+//! Use [`QuicOptions`] to configure QUIC connections, [`Http3Options`] for HTTP/3 framing,
+//! and [`TlsOptions`] for TLS over TCP/Unix sockets.
 //!
 //! [`Http3Options`]: crate::http3::Http3Options
 //! [`TlsOptions`]: crate::tls::TlsOptions
+
+mod session;
+pub(crate) mod tls;
 
 use std::{borrow::Cow, time::Duration};
 
@@ -20,79 +23,84 @@ use crate::{
 };
 
 /// Builder for [`QuicOptions`].
+///
+/// Created via [`QuicOptions::builder`] to configure QUIC transport parameters and TLS 1.3
+/// handshake options for HTTP/3 connections.
 #[must_use]
 #[derive(Debug, Clone)]
 pub struct QuicOptionsBuilder {
     config: QuicOptions,
 }
 
-/// QUIC transport parameters and the TLS handshake of HTTP/3 connections.
+/// QUIC transport parameters and TLS 1.3 handshake options for HTTP/3 connections.
 ///
-/// Connections negotiate TLS 1.3 and `h3` ([RFC 9001 Section 4.2](https://www.rfc-editor.org/rfc/rfc9001.html#section-4.2)).
-/// Version bounds, ALPN lists and TLS 1.2 settings are omitted. TLS fields share their
-/// names and meaning with [`TlsOptions`](crate::tls::TlsOptions) but are configured independently;
-/// `None` keeps the backend default.
+/// QUIC always negotiates TLS 1.3 with ALPN `h3`
+/// ([RFC 9001 Section 4.2](https://www.rfc-editor.org/rfc/rfc9001.html#section-4.2)), so
+/// version bounds, ALPN lists, and TLS 1.2 settings are omitted. Shared TLS fields match
+/// [`TlsOptions`](crate::tls::TlsOptions) in name and behavior but are configured
+/// independently; `None` keeps the backend default.
 #[non_exhaustive]
 #[derive(Debug, Clone, Educe, Deftly)]
 #[educe(Default)]
-#[derive_deftly(TlsKey)]
+#[derive_deftly(crate::tls::macros::TlsKey)]
 #[deftly(tls_key(quic))]
 pub struct QuicOptions {
-    /// Closes the connection after this much inactivity, advertised as `max_idle_timeout`
+    /// Maximum idle timeout advertised as `max_idle_timeout`
     /// ([RFC 9000 Section 10.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-10.1)).
-    /// Zero omits the parameter, leaving only the server's limit. The handshake then has no idle
-    /// timeout before the server's parameters arrive, so only
-    /// [`connect_timeout`](crate::ClientBuilder::connect_timeout) ends one that gets no reply.
+    ///
+    /// Zero omits the parameter and leaves only the server's limit; in that case an
+    /// unanswered handshake is only bounded by [`connect_timeout`](crate::ClientBuilder::connect_timeout).
     ///
     /// **Default:** `None` (30 seconds).
     #[deftly(tls_key(transport))]
     pub max_idle_timeout: Option<Duration>,
 
-    /// Sends a PING after this much inactivity to keep the connection open; must not be zero.
+    /// Interval for sending PING frames during inactivity (must be non-zero).
     ///
     /// **Default:** `None` (disabled).
     #[deftly(tls_key(transport))]
     pub keep_alive_interval: Option<Duration>,
 
-    /// Connection flow control limit, advertised as `initial_max_data`; must not be zero.
+    /// Connection-level flow control limit, advertised as `initial_max_data` (must be non-zero).
     ///
     /// **Default:** `None` (backend default).
     #[deftly(tls_key(transport))]
     pub initial_max_data: Option<u64>,
 
-    /// Stream flow control limit, advertised as `initial_max_stream_data_bidi_local`,
-    /// `initial_max_stream_data_bidi_remote` and `initial_max_stream_data_uni`; at least 1024
-    /// ([RFC 9114 Section 6.2](https://www.rfc-editor.org/rfc/rfc9114.html#section-6.2)).
+    /// Per-stream flow control limit, advertised as `initial_max_stream_data_bidi_local`,
+    /// `initial_max_stream_data_bidi_remote`, and `initial_max_stream_data_uni` (at least 1024;
+    /// [RFC 9114 Section 6.2](https://www.rfc-editor.org/rfc/rfc9114.html#section-6.2)).
     ///
     /// **Default:** `None` (backend default).
     #[deftly(tls_key(transport))]
     pub initial_max_stream_data: Option<u64>,
 
-    /// Bidirectional streams the server may open, advertised as `initial_max_streams_bidi`,
-    /// at most 65535. Each allowed stream is reserved when the connection starts.
+    /// Maximum bidirectional streams the server may open (`initial_max_streams_bidi`, up to 65535).
+    ///
+    /// Each allowed stream slot is reserved when the connection starts.
     ///
     /// **Default:** `None` (100).
     #[deftly(tls_key(transport))]
     pub initial_max_streams_bidi: Option<u64>,
 
-    /// Unidirectional streams the server may open, advertised as `initial_max_streams_uni`,
-    /// from 3 ([RFC 9114 Section 6.2](https://www.rfc-editor.org/rfc/rfc9114.html#section-6.2))
-    /// to 65535.
+    /// Maximum unidirectional streams the server may open (`initial_max_streams_uni`, 3–65535;
+    /// [RFC 9114 Section 6.2](https://www.rfc-editor.org/rfc/rfc9114.html#section-6.2)).
     ///
     /// **Default:** `None` (100).
     #[deftly(tls_key(transport))]
     pub initial_max_streams_uni: Option<u64>,
 
-    /// Largest DATAGRAM frame the server may send, advertised as `max_datagram_frame_size`
-    /// ([RFC 9221 Section 3](https://www.rfc-editor.org/rfc/rfc9221.html#section-3)).
-    /// It also bounds buffered datagrams; zero disables them. A `quic://` proxy connection uses
-    /// the default instead of a value that buffers fewer than 16 tunneled packets (about 20 KB).
+    /// Largest DATAGRAM frame the server may send (`max_datagram_frame_size`,
+    /// [RFC 9221 Section 3](https://www.rfc-editor.org/rfc/rfc9221.html#section-3)).
+    ///
+    /// Also bounds buffered datagrams; zero disables them. `quic://` proxy connections ignore
+    /// values too small to buffer 16 tunneled packets (~20 KB) and use the default instead.
     ///
     /// **Default:** `None` (1,250,000).
     #[deftly(tls_key(transport))]
     pub max_datagram_frame_size: Option<u64>,
 
-    /// UDP payload size used before path MTU discovery. Values below 1200 are raised to 1200.
+    /// Initial UDP payload size before path MTU discovery (values below 1200 are clamped to 1200).
     ///
     /// **Default:** `None` (1200).
     #[deftly(tls_key(transport))]
@@ -122,9 +130,10 @@ pub struct QuicOptions {
     /// **Default:** `None`.
     pub sigalgs_list: Option<Cow<'static, str>>,
 
-    /// TLS 1.3 cipher suites in offer order, as
+    /// TLS 1.3 cipher suites in offer order, as in
     /// [`TlsOptions::tls13_cipher_list`](crate::tls::TlsOptions::tls13_cipher_list).
-    /// An empty list uses the backend defaults. Duplicate suites fail TLS setup.
+    ///
+    /// An empty list uses backend defaults; duplicate suites fail TLS setup.
     ///
     /// **Default:** `None` (backend defaults).
     pub tls13_cipher_list: Option<Cow<'static, [Tls13Cipher]>>,
@@ -144,9 +153,10 @@ pub struct QuicOptions {
     /// **Default:** `None` (backend policy unchanged).
     pub permute_extensions: Option<bool>,
 
-    /// ClientHello extension order, as
-    /// [`TlsOptions::extension_permutation`](crate::tls::TlsOptions::extension_permutation). QUIC
-    /// sends [`ExtensionType::QUIC_TRANSPORT_PARAMETERS_STANDARD`] and never sends padding.
+    /// ClientHello extension order, as in
+    /// [`TlsOptions::extension_permutation`](crate::tls::TlsOptions::extension_permutation).
+    ///
+    /// QUIC sends [`ExtensionType::QUIC_TRANSPORT_PARAMETERS_STANDARD`] and never sends padding.
     ///
     /// **Default:** `None`.
     pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
@@ -172,6 +182,7 @@ pub struct QuicOptions {
     pub enable_signed_cert_timestamps: bool,
 
     /// Sends the `record_size_limit` extension ([RFC 8449](https://www.rfc-editor.org/rfc/rfc8449.html)).
+    ///
     /// QUIC does not use TLS records, so this only shapes the ClientHello.
     ///
     /// **Default:** `None`.
@@ -301,6 +312,7 @@ impl QuicOptionsBuilder {
     }
 
     /// Sets the TLS 1.3 cipher suites in offer order.
+    ///
     /// An empty list restores backend defaults; duplicate suites fail TLS setup.
     #[inline]
     pub fn tls13_cipher_list<T: Into<Cow<'static, [Tls13Cipher]>>>(mut self, ciphers: T) -> Self {
@@ -436,9 +448,9 @@ impl QuicOptions {
         }
     }
 
-    /// Builds a transport with the datagram frame limit selected for its path.
+    /// Builds a [`TransportConfig`](::quic::TransportConfig) with the given datagram frame limit.
     ///
-    /// Returns an error when a value does not fit its transport parameter.
+    /// Returns an error if any option is out of range for its QUIC transport parameter.
     pub(crate) fn transport(
         &self,
         datagram_frame_size: Option<u64>,
@@ -519,5 +531,21 @@ impl QuicOptions {
             transport.allow_spin(enabled);
         }
         Ok(transport)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QuicOptions;
+
+    #[test]
+    fn options_compare_compressors_by_algorithm_in_order() {
+        use crate::tls::compress::tests::compare_options;
+
+        compare_options(QuicOptions::default(), |compressors| {
+            QuicOptions::builder()
+                .certificate_compressors(compressors)
+                .build()
+        });
     }
 }

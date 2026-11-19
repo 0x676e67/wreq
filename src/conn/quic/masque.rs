@@ -1,10 +1,8 @@
-//! Establishes a [CONNECT-UDP] tunnel and carries the target QUIC connection over it.
-//! The inner socket and its senders retain the tunnel, outer HTTP/3 driver and endpoint.
+//! MASQUE [CONNECT-UDP] tunnel adapter over an outer QUIC connection.
 //!
 //! [CONNECT-UDP]: https://www.rfc-editor.org/rfc/rfc9298.html#section-3
 
 use std::{
-    convert::Infallible,
     fmt,
     future::{Future, ready as ready_future},
     io::{self, IoSliceMut},
@@ -23,7 +21,7 @@ use futures_util::{
     StreamExt,
     stream::{self, BoxStream},
 };
-use http::{Request, Uri};
+use http::Uri;
 use netty::{
     conn::http3,
     proxy::masque::{ConnectUdp, SendError, Template, UdpTunnel},
@@ -35,12 +33,9 @@ use netty::{
 use tokio::sync::{Notify, futures::OwnedNotified};
 use tower::{BoxError, ServiceExt, service_fn};
 
-use super::{TUNNEL_MTU, endpoint::Endpoints};
+use super::{TUNNEL_MTU, Tunnel};
 use crate::{
     Body,
-    config::connect::ConnectConfig,
-    conn::Conn,
-    error::ProxyConnect,
     ext::UriExt,
     proxy::matcher::Intercept,
     rt::DynRuntime,
@@ -53,16 +48,20 @@ static TUNNEL_MTU_TOO_SMALL: &str = "MASQUE tunnel cannot carry a 1200-byte QUIC
 static RECV_BUFFER_MISSING: &str = "MASQUE receive requires a buffer and metadata slot";
 static SEND_TARGET_MISMATCH: &str = "MASQUE socket requires one datagram for its tunnel target";
 
-/// One CONNECT-UDP tunnel used as an inner QUIC endpoint's socket.
-/// The endpoint and its senders retain the outer connection until they are dropped.
-struct Socket {
+/// Adapts a CONNECT-UDP tunnel into an [`AsyncUdpSocket`] for the inner QUIC endpoint.
+///
+/// Keeps the outer HTTP/3 driver and endpoint alive through [`Shared`] until both the socket
+/// and all spawned [`SocketSender`] handles are dropped.
+pub(super) struct Socket {
     shared: Arc<Shared>,
     local: SocketAddr,
     remote: SocketAddr,
 }
 
-/// Send readiness is broadcast through `ready`; the end of the tunnel is signalled once
-/// through `ended`, which the inner endpoint's watcher waits on.
+/// Shared tunnel state synchronized between [`Socket`] and its [`SocketSender`] handles.
+///
+/// `ready` broadcasts send readiness to waiting senders; `ended` notifies the inner endpoint
+/// watcher once the tunnel closes.
 struct Shared {
     state: Mutex<State>,
     ready: Arc<Notify>,
@@ -70,87 +69,93 @@ struct Shared {
     waker: Waker,
 }
 
-/// Dropping the tunnel aborts CONNECT-UDP before the outer connection is closed.
+/// Inner state holding the active [`UdpTunnel`], outer HTTP/3 driver, and outer [`Endpoint`].
+///
+/// Field order ensures `tunnel` drops first to abort CONNECT-UDP cleanly before closing the
+/// outer connection.
 struct State {
     tunnel: Option<UdpTunnel>,
     _driver: netty::conn::http3::Connection<OuterConnection, Body, DynRuntime>,
     _endpoint: Endpoint,
 }
 
+/// [`UdpSender`] handle created by [`Socket::create_sender`].
+///
+/// Holds an independent notification slot (`waiting`) so concurrent QUIC send tasks can wait
+/// on tunnel capacity without overwriting each other's wakers.
 struct SocketSender {
     shared: Arc<Shared>,
     remote: SocketAddr,
     waiting: Option<Pin<Box<OwnedNotified>>>,
 }
 
-/// Broadcasts tunnel readiness to independently registered QUIC send tasks.
+/// Custom [`Wake`] implementation backed by a [`Notify`].
+///
+/// Broadcasts tunnel send readiness to every [`SocketSender`] task waiting on `ready`.
 struct SendWake(Arc<Notify>);
 
-/// Owns the outer connection's stream readers and hands out its datagram reader once.
+/// Adapts the outer QUIC [`Connection`](::quic::Connection) for HTTP/3 stream and datagram I/O.
+///
+/// Delegates stream traits to `http3_quic::Connection` and hands out datagram ownership once
+/// via [`DatagramConnection::take_datagrams`].
 struct OuterConnection {
     inner: Compat<http3_quic::Connection>,
     datagrams: Option<::quic::Connection>,
 }
 
-/// Admits complete payloads into QUIC's bounded unreliable send queue.
+/// [`SendDatagram`] wrapper over the outer QUIC connection.
+///
+/// Submits complete datagram payloads into QUIC's unreliable send queue and maps send errors.
 struct Sender(::quic::Connection);
 
-/// Retains the pending receive operation and its registered wakeup between polls.
+/// [`RecvDatagram`] stream adapter around `Connection::read_datagram`.
+///
+/// Keeps the in-flight receive future and its registered waker alive across repeated polls.
 struct Receiver(BoxStream<'static, Result<Bytes, ::quic::ConnectionError>>);
 
-/// Opens CONNECT-UDP and authenticates the target; its endpoint retains the outer connection.
-pub(super) async fn connect(
-    endpoints: Arc<Endpoints>,
-    request: Request<ConnectConfig>,
-    proxy: Intercept,
-) -> Result<Conn, BoxError> {
-    // A local configuration error must not cost, or be reported as, a proxy setup.
-    let config = endpoints.tunnel_config(&request)?;
-
-    // This scope classifies proxy setup failures separately from target TLS errors.
-    let connect_proxy = async {
-        // The configured quic:// URI becomes HTTPS on the CONNECT request.
-        let template =
-            Template::well_known(proxy.uri().authority().ok_or(PROXY_MISSING_AUTHORITY)?)?;
-
-        let (connection, endpoint) = endpoints.connect_proxy(&request, template.proxy()).await?;
-        let remote = connection.remote_address();
-        let (sender, driver) = http3::Builder::new(endpoints.runtime().clone())
-            .handshake_with_datagrams::<_, Body>(OuterConnection::new(connection))
-            .await?;
-
-        // ConnectUdp obtains its sender from a service; reuse this outer connection.
-        let mut connect_udp = ConnectUdp::new(
-            template,
-            service_fn(move |_| ready_future(Ok::<_, Infallible>(sender.clone()))),
-        );
-
-        // Apply proxy authentication if available.
-        if let Some(auth) = proxy.basic_auth() {
-            connect_udp = connect_udp.with_auth(auth.clone());
-        }
-
-        // Apply any custom headers specified by the proxy.
-        if let Some(headers) = proxy.custom_headers() {
-            connect_udp = connect_udp.with_headers(headers.clone());
-        }
-
-        // The proxy resolves the target; the original request retains its pool identity.
-        let tunnel = connect_udp.oneshot(udp_target(request.uri())?).await?;
-
-        // The inner endpoint's socket owns the tunnel and its outer connection resources.
-        let socket = Socket::new(tunnel, driver, endpoint, remote)?;
-        Ok::<_, BoxError>((socket, remote))
-    };
-
-    let (socket, remote) = connect_proxy.await.map_err(ProxyConnect::Source)?;
-    let ended = socket.shared.ended.clone();
-    endpoints
-        .finish_tunnel(request.uri(), &config, socket, remote, ended)
-        .await
+/// Builds the well-known CONNECT-UDP URI template from a `quic://` proxy URI.
+pub(super) fn template(proxy: &Intercept) -> Result<Template, BoxError> {
+    Ok(Template::well_known(
+        proxy.uri().authority().ok_or(PROXY_MISSING_AUTHORITY)?,
+    )?)
 }
 
-/// Names the UDP port a CONNECT-UDP target requires; an origin without one uses 443.
+/// Opens a CONNECT-UDP tunnel over the outer proxy connection and returns a [`Tunnel`].
+pub(super) async fn open(
+    (connection, endpoint): (::quic::Connection, Endpoint),
+    runtime: DynRuntime,
+    template: Template,
+    proxy: &Intercept,
+    target: &Uri,
+) -> Result<Tunnel<Socket>, BoxError> {
+    let remote = connection.remote_address();
+    let (sender, driver) = http3::Builder::new(runtime)
+        .handshake_with_datagrams::<_, Body>(OuterConnection::new(connection))
+        .await?;
+
+    // ConnectUdp obtains its sender from a service; reuse this outer connection.
+    let mut connect_udp = ConnectUdp::new(
+        template,
+        service_fn(move |_| ready_future(Ok::<_, !>(sender.clone()))),
+    );
+    if let Some(auth) = proxy.basic_auth() {
+        connect_udp = connect_udp.with_auth(auth.clone());
+    }
+    if let Some(headers) = proxy.custom_headers() {
+        connect_udp = connect_udp.with_headers(headers.clone());
+    }
+
+    let tunnel = connect_udp.oneshot(udp_target(target)?).await?;
+    let socket = Socket::new(tunnel, driver, endpoint, remote)?;
+    let ended = socket.shared.ended.clone();
+    Ok(Tunnel {
+        socket,
+        remote,
+        ended,
+    })
+}
+
+/// Ensures `uri` has an explicit port for CONNECT-UDP, defaulting to 443.
 fn udp_target(uri: &Uri) -> Result<Uri, BoxError> {
     if uri.port().is_some() {
         return Ok(uri.clone());
@@ -366,7 +371,7 @@ impl fmt::Debug for SocketSender {
 // ===== impl Shared =====
 
 impl Shared {
-    /// Ends the tunnel: senders drop packets from now on and the watcher closes the endpoint.
+    /// Closes the tunnel, waking any blocked senders and signaling the endpoint watcher.
     fn close(&self, mut state: MutexGuard<'_, State>) {
         state.tunnel = None;
         drop(state);

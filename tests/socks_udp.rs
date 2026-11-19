@@ -133,6 +133,28 @@ async fn read_address(stream: &mut TcpStream) {
     stream.read_exact(&mut bytes).await.unwrap();
 }
 
+async fn read_credentials(control: &mut TcpStream) {
+    assert_eq!(control.read_u8().await.unwrap(), 5);
+    let mut methods = vec![0; usize::from(control.read_u8().await.unwrap())];
+    control.read_exact(&mut methods).await.unwrap();
+    assert!(methods.contains(&2));
+    control.write_all(&[5, 2]).await.unwrap();
+    assert_eq!(control.read_u8().await.unwrap(), 1);
+    for expected in [b"user".as_slice(), b"pass".as_slice()] {
+        let mut value = vec![0; usize::from(control.read_u8().await.unwrap())];
+        control.read_exact(&mut value).await.unwrap();
+        assert_eq!(value, expected);
+    }
+}
+
+async fn read_association(control: &mut TcpStream) {
+    control.write_all(&[1, 0]).await.unwrap();
+    let mut head = [0; 3];
+    control.read_exact(&mut head).await.unwrap();
+    assert_eq!(head, [5, 3, 0]);
+    read_address(control).await;
+}
+
 // ===== impl Origin =====
 
 impl Origin {
@@ -183,25 +205,11 @@ impl SocksProxy {
         let (shutdown, mut stopped) = oneshot::channel();
         let task = tokio::spawn(async move {
             let (mut control, peer) = listener.accept().await.unwrap();
-            assert_eq!(control.read_u8().await.unwrap(), 5);
-            let mut methods = vec![0; usize::from(control.read_u8().await.unwrap())];
-            control.read_exact(&mut methods).await.unwrap();
-            assert!(methods.contains(&2));
-            control.write_all(&[5, 2]).await.unwrap();
-            assert_eq!(control.read_u8().await.unwrap(), 1);
-            for expected in [b"user".as_slice(), b"pass".as_slice()] {
-                let mut value = vec![0; usize::from(control.read_u8().await.unwrap())];
-                control.read_exact(&mut value).await.unwrap();
-                assert_eq!(value, expected);
-            }
+            read_credentials(&mut control).await;
             if matches!(mode, Mode::Reject) {
                 control.write_all(&[1, 1]).await.unwrap();
             } else {
-                control.write_all(&[1, 0]).await.unwrap();
-                let mut head = [0; 3];
-                control.read_exact(&mut head).await.unwrap();
-                assert_eq!(head, [5, 3, 0]);
-                read_address(&mut control).await;
+                read_association(&mut control).await;
                 associated_sender.send(()).unwrap();
             }
 
@@ -360,6 +368,103 @@ impl dns::Resolve for Resolver {
 }
 
 #[tokio::test]
+async fn socks_udp_races_complete_target_handshakes() {
+    struct Targets([SocketAddr; 2]);
+
+    impl dns::Resolve for Targets {
+        fn resolve(&self, name: dns::Name) -> dns::Resolving {
+            assert_eq!(name.as_str(), "origin.test");
+            let addrs: dns::Addrs = Box::new(self.0.into_iter());
+            Box::pin(std::future::ready(Ok(addrs)))
+        }
+    }
+
+    async fn associate(listener: &TcpListener) -> (TcpStream, UdpSocket) {
+        let (mut control, _) = listener.accept().await.unwrap();
+        read_credentials(&mut control).await;
+        read_association(&mut control).await;
+        let relay = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let mut reply = [5, 0, 0, 1, 127, 0, 0, 1, 0, 0];
+        reply[8..].copy_from_slice(&relay.local_addr().unwrap().port().to_be_bytes());
+        control.write_all(&reply).await.unwrap();
+        (control, relay)
+    }
+
+    let origin = Origin::new();
+    let origin_addr = origin.addr();
+    let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let silent_addr = silent.local_addr().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+    let (closed, first_closed) = oneshot::channel();
+    let (done, mut stop) = oneshot::channel();
+    let proxy = tokio::spawn(async move {
+        let (mut first, relay) = associate(&listener).await;
+        let mut packet = [0; 2048];
+        let (len, _) = relay.recv_from(&mut packet).await.unwrap();
+        let (host, port, _) = address(&packet[3..len]);
+        assert_eq!((host.as_str(), port), ("127.0.0.1", silent_addr.port()));
+
+        // The first association delivered a target packet; leave its handshake unanswered.
+        let (_second, relay) = associate(&listener).await;
+        let close_first = async move {
+            assert_eq!(first.read(&mut [0]).await.unwrap(), 0);
+            closed.send(()).unwrap();
+        };
+        let forward = async {
+            let mut client = None;
+            let mut header = [0; 10];
+            let capacity = packet.len() - header.len();
+            loop {
+                tokio::select! {
+                    _ = &mut stop => break,
+                    received = relay.recv_from(&mut packet[..capacity]) => {
+                        let (len, sender) = received.unwrap();
+                        if sender == origin_addr {
+                            packet.copy_within(..len, header.len());
+                            packet[..header.len()].copy_from_slice(&header);
+                            relay.send_to(&packet[..len + header.len()], client.unwrap()).await.unwrap();
+                        } else {
+                            let (host, port, _) = address(&packet[3..len]);
+                            assert_eq!((host.as_str(), port), ("127.0.0.1", origin_addr.port()));
+                            client = Some(sender);
+                            header.copy_from_slice(&packet[..10]);
+                            relay.send_to(&packet[header.len()..len], origin_addr).await.unwrap();
+                        }
+                    }
+                }
+            }
+        };
+        tokio::join!(close_first, forward);
+    });
+
+    let client = Client::builder_tokio()
+        .no_proxy()
+        .http3_only()
+        .retry(wreq::retry::Policy::never())
+        .dns_resolver(Targets([silent_addr, origin_addr]))
+        .tls_cert_store(origin.certificate.cert_store())
+        .proxy(
+            Proxy::all(format!("socks5://{proxy_addr}"))
+                .unwrap()
+                .basic_auth("user", "pass"),
+        )
+        .tcp_happy_eyeballs_timeout(Duration::from_millis(20))
+        .timeout(TIMEOUT)
+        .build()
+        .unwrap();
+    let response = client.get("https://origin.test/").send().await.unwrap();
+    assert_eq!(response.version(), Version::HTTP_3);
+    assert_eq!(response.text().await.unwrap(), "through socks udp");
+    tokio::time::timeout(TIMEOUT, first_closed)
+        .await
+        .unwrap()
+        .unwrap();
+    done.send(()).unwrap();
+    proxy.await.unwrap();
+}
+
+#[tokio::test]
 async fn socks_udp_authentication_dns_and_pool_reuse() {
     // A proxy closing the association is routine and must not be logged as an I/O error.
     let (errors, _logs) = count_errors();
@@ -460,19 +565,10 @@ async fn proxied_http3_errors_name_the_failed_stage() {
         .local_addr()
         .unwrap()
         .port();
-    // Never accepts a dial: the full accept queue drops SYNs, and the UDP socket stays silent.
-    #[cfg(target_os = "linux")]
-    let (stalled, _queued, _silent) = {
-        let socket =
-            socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
-        socket
-            .bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into())
-            .unwrap();
-        socket.listen(0).unwrap();
-        let addr = socket.local_addr().unwrap().as_socket().unwrap();
-        let queued = std::net::TcpStream::connect(addr).unwrap();
-        (socket, queued, std::net::UdpSocket::bind(addr).unwrap())
-    };
+    // Neither the TCP control connection nor the QUIC proxy replies.
+    let stalled = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stalled_addr = stalled.local_addr().unwrap();
+    let _silent_udp = std::net::UdpSocket::bind(stalled_addr).unwrap();
     for scheme in ["socks5", "socks5h", "quic"] {
         let lookups = Arc::new(Mutex::new(Vec::new()));
         let client = |builder: ClientBuilder, port: u16| {
@@ -526,25 +622,20 @@ async fn proxied_http3_errors_name_the_failed_stage() {
             );
         }
 
-        // A connect deadline that expires while the proxy is dialed fails that dial.
-        #[cfg(target_os = "linux")]
-        {
-            let port = stalled.local_addr().unwrap().as_socket().unwrap().port();
-            let builder = Client::builder_tokio().connect_timeout(Duration::from_millis(300));
-            let error = client(builder, port)
-                .get("https://origin.test/")
-                .send()
-                .await
-                .unwrap_err();
-            assert!(
-                error.is_proxy_connect() && error.is_timeout(),
-                "{scheme}: {error:?}"
-            );
-        }
+        let builder = Client::builder_tokio().connect_timeout(Duration::from_millis(300));
+        let error = client(builder, stalled_addr.port())
+            .get("https://origin.test/")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(
+            error.is_connect() && error.is_timeout() && !error.is_proxy_connect(),
+            "{scheme}: {error:?}"
+        );
     }
 }
 
-/// A connect deadline that expires once the proxy accepted the control connection, while UDP
+/// A connection timeout that expires once the proxy accepted the control connection, while UDP
 /// ASSOCIATE or the target handshake is unanswered, is not a failed proxy dial. Both close the
 /// control connection, as cancellation does.
 #[tokio::test]

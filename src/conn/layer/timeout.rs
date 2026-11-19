@@ -1,4 +1,4 @@
-//! Runtime-neutral deadline for one connector call.
+//! Runtime-neutral connection timeout middleware.
 
 use std::{
     future::Future,
@@ -7,39 +7,38 @@ use std::{
     time::Duration,
 };
 
-use http::Request;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 
 use crate::{
-    conn::ConnectDeadline,
     error::TimedOut,
     rt::{BoxSleep, DynRuntime, Timer as _, deadline_after},
 };
 
-/// Middleware layer to use [`Deadline`].
+/// Tower [`Layer`] that wraps a connector service in [`Timeout`].
+///
+/// Uses the configured runtime clock to bound each connection attempt when a timeout is set.
 #[derive(Clone)]
-pub(crate) struct DeadlineLayer {
+pub(crate) struct TimeoutLayer {
     timeout: Option<Duration>,
     runtime: DynRuntime,
 }
 
-/// Bounds each connector call by one deadline, started in `call` after readiness waits.
-/// It covers everything beneath: user layers, proxy setup and the transport handshakes.
-/// Dials that use the attached [`ConnectDeadline`] can report their own timeout before the
-/// outer timer ends the call.
+/// Enforces the total connection timeout starting after readiness.
+///
+/// Covers user connector layers, DNS, proxy setup, and transport handshakes.
 #[derive(Clone)]
-pub(crate) struct Deadline<S> {
+pub(crate) struct Timeout<S> {
     inner: S,
     timeout: Option<Duration>,
     runtime: DynRuntime,
 }
 
 pin_project! {
-    /// Owns one in-flight connection and its optional timeout sleep.
+    /// In-flight connection future paired with an optional timer.
     ///
-    /// The connection is polled first; while it remains pending, the sleep can end the attempt.
-    /// Dropping this future drops both operations.
+    /// Polls the inner future first; if it stays pending and the timer fires, fails with
+    /// [`TimedOut`]. Dropping cancels both.
     pub struct ResponseFuture<F> {
         #[pin]
         future: F,
@@ -47,23 +46,22 @@ pin_project! {
     }
 }
 
-// ===== impl DeadlineLayer =====
+// ===== impl TimeoutLayer =====
 
-impl DeadlineLayer {
-    /// Creates a layer that bounds each connector call by `timeout`, measured on `runtime`'s
-    /// clock. `None` leaves calls unbounded.
+impl TimeoutLayer {
+    /// Creates a timeout layer using `runtime`'s clock (`None` leaves calls unbounded).
     #[must_use]
     pub(crate) fn new(timeout: Option<Duration>, runtime: DynRuntime) -> Self {
         Self { timeout, runtime }
     }
 }
 
-impl<S> Layer<S> for DeadlineLayer {
-    type Service = Deadline<S>;
+impl<S> Layer<S> for TimeoutLayer {
+    type Service = Timeout<S>;
 
     #[inline(always)]
     fn layer(&self, inner: S) -> Self::Service {
-        Deadline {
+        Timeout {
             inner,
             timeout: self.timeout,
             runtime: self.runtime.clone(),
@@ -71,11 +69,11 @@ impl<S> Layer<S> for DeadlineLayer {
     }
 }
 
-// ===== impl Deadline =====
+// ===== impl Timeout =====
 
-impl<S, B> Service<Request<B>> for Deadline<S>
+impl<S, R> Service<R> for Timeout<S>
 where
-    S: Service<Request<B>>,
+    S: Service<R>,
     S::Error: Into<BoxError>,
 {
     type Response = S::Response;
@@ -87,18 +85,14 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, mut request: Request<B>) -> Self::Future {
-        let deadline = self
-            .timeout
-            .map(|timeout| deadline_after(self.runtime.now(), timeout));
-
-        if let Some(deadline) = deadline {
-            request.extensions_mut().insert(ConnectDeadline(deadline));
-        }
-
+    fn call(&mut self, request: R) -> Self::Future {
+        let sleep = self.timeout.map(|timeout| {
+            let deadline = deadline_after(self.runtime.now(), timeout);
+            self.runtime.sleep_until(deadline)
+        });
         ResponseFuture {
             future: self.inner.call(request),
-            sleep: deadline.map(|deadline| self.runtime.sleep_until(deadline)),
+            sleep,
         }
     }
 }

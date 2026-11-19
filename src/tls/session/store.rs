@@ -1,46 +1,45 @@
-//! Bounded TLS session-ticket storage for one client.
+//! Per-client TLS session ticket storage.
 //!
-//! The built-in store keeps two tickets per full session key. Caller store
-//! callbacks and native destruction remain outside its lock.
+//! The built-in store keeps up to two tickets per key. Custom store callbacks and native
+//! session destructors always run outside the internal lock.
 
 use std::{
+    any::Any,
+    hash::Hasher,
     num::NonZeroUsize,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{Arc, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use btls::{
-    error::ErrorStack,
-    rand::rand_bytes,
-    ssl::{ClientSession, SslCipherRef},
-};
+use btls::{error::ErrorStack, rand::rand_bytes};
+use http::Uri;
 use lru::LruCache;
-#[cfg(feature = "http3")]
-use {btls::ssl::SslSession, quic::crypto::btls::Zeroizing};
 
 use super::{
-    Key, SESSION_ENTRY_CAPACITY, SESSION_ID_CONTEXT_LENGTH, SessionTarget, Ticket, TlsSession,
+    Key, SESSION_ENTRY_CAPACITY, SESSION_ID_CONTEXT_LENGTH, SessionKey, Ticket, TlsSession,
     TlsSessionStore,
     entry::{self, SessionEntry},
 };
-use crate::sync::Mutex;
+use crate::{config::ConnectConfig, sync::Mutex, tls::KeyIdentity};
 
 const EXPIRATION_CHECK_INTERVAL: usize = 256;
 
-/// Stores session tickets for one client and an optional caller-provided store.
+/// Manages session tickets for a client, backed by either the built-in LRU or a custom store.
 ///
-/// Contexts with resumption enabled share this client's session ID context. Compatible tickets
-/// remain usable when a request context is rebuilt; tickets from other clients are rejected.
+/// All resuming contexts on a client share the same BoringSSL session ID context, so
+/// compatible tickets remain valid across per-request contexts while tickets from other
+/// clients are rejected.
 pub(crate) struct Tickets {
     state: Mutex<State>,
-    tls_session_store: Option<Arc<dyn TlsSessionStore>>,
+    store: Option<Arc<dyn TlsSessionStore>>,
     session_id_context: OnceLock<[u8; SESSION_ID_CONTEXT_LENGTH]>,
 }
 
-/// Lazily allocated ticket storage and its expiration counter.
-/// Allocated entries remain bounded by the client store's key capacity.
-/// The store lock serializes insertion, consumption, and expiration bookkeeping.
+/// Lazily allocated built-in LRU cache and periodic expiration counter.
+///
+/// Protected by [`Tickets::state`]; the LRU map is allocated on first insertion and swept
+/// every `EXPIRATION_CHECK_INTERVAL` lookups.
 #[derive(Default)]
 struct State {
     sessions: Option<LruCache<Key, SessionEntry>>,
@@ -50,18 +49,16 @@ struct State {
 // ===== impl Tickets =====
 
 impl Tickets {
-    /// Creates an empty store with an optional caller-provided store.
-    /// The built-in LRU is allocated on first insertion.
-    pub(crate) fn new(tls_session_store: Option<Arc<dyn TlsSessionStore>>) -> Self {
+    /// Creates a ticket store backed by `store`, or a lazily allocated built-in LRU if `None`.
+    pub(crate) fn new(store: Option<Arc<dyn TlsSessionStore>>) -> Self {
         Self {
             state: Mutex::new(State::default()),
-            tls_session_store,
+            store,
             session_id_context: OnceLock::new(),
         }
     }
 
-    /// Returns the stable BoringSSL session ID context for this store.
-    /// It is generated only when a connector first enables session resumption.
+    /// Returns this client's BoringSSL session ID context, generating it on first use.
     pub(in crate::tls) fn session_id_context(
         &self,
     ) -> Result<[u8; SESSION_ID_CONTEXT_LENGTH], ErrorStack> {
@@ -74,66 +71,24 @@ impl Tickets {
         Ok(*self.session_id_context.get_or_init(|| context))
     }
 
-    /// Stores a TCP session emitted by BoringSSL's new-session callback.
-    pub(in crate::tls) fn insert_stream(&self, target: &SessionTarget, session: ClientSession) {
-        let kx = session
-            .session()
-            .cipher()
-            .and_then(SslCipherRef::cipher_kx_nid);
-        if let Some(key) = target.key_for(kx) {
-            self.put(key, Ticket::Stream(session));
-        }
-    }
-
-    /// Retrieves a TCP session for the connection, then one bound to its remote IP.
-    pub(in crate::tls) fn pop_stream(&self, target: &SessionTarget) -> Option<ClientSession> {
-        let stream = |ticket| match ticket {
-            Ticket::Stream(session) => Some(session),
-            #[cfg(feature = "http3")]
-            Ticket::Quic { .. } => None,
-        };
-        self.pop(&target.key)
-            .and_then(stream)
-            .or_else(|| self.pop(&target.rsa_key()?).and_then(stream))
-    }
-
-    /// Stores a QUIC session with the encoded state the QUIC stack resumes from and the
-    /// expiry of its verified certificate path.
-    #[cfg(feature = "http3")]
-    pub(crate) fn insert_quic(
+    /// Builds a session key scoped to this client and ticket type `T`.
+    pub(crate) fn key<O: for<'h> KeyIdentity<dyn Any, dyn Hasher + 'h>, T: 'static>(
         &self,
-        key: Key,
-        session: SslSession,
-        state: Zeroizing<Vec<u8>>,
-        not_after: Option<i64>,
-    ) {
-        let ticket = Ticket::Quic {
-            session,
-            state: Arc::new(state),
-            not_after,
-        };
-        self.put(key, ticket);
+        origin: &Uri,
+        peer: &Uri,
+        connect_config: &ConnectConfig,
+    ) -> Result<Key, ErrorStack> {
+        let session_id_context = self.session_id_context()?;
+        Ok(Key {
+            session: SessionKey::new::<O, T>(origin, connect_config, peer),
+            remote_ip: None,
+            session_id_context,
+        })
     }
 
-    /// Takes the encoded state of a QUIC session for `key`.
-    ///
-    /// With `verify_peer`, a session whose verified certificate path has expired is dropped:
-    /// resumption re-verifies the path and would fail the handshake.
-    #[cfg(feature = "http3")]
-    pub(crate) fn pop_quic(&self, key: &Key, verify_peer: bool) -> Option<Zeroizing<Vec<u8>>> {
-        let Ticket::Quic {
-            state, not_after, ..
-        } = self.pop(key)?
-        else {
-            return None;
-        };
-        let now = unix_time().and_then(|now| i64::try_from(now).ok());
-        let expired = matches!((not_after, now), (Some(not_after), Some(now)) if now >= not_after);
-        (!(verify_peer && expired)).then(|| Arc::unwrap_or_clone(state))
-    }
-
-    fn put(&self, key: Key, ticket: Ticket) {
-        if let Some(tls_session_store) = &self.tls_session_store {
+    /// Stores a ticket under `key`.
+    pub(crate) fn put(&self, key: Key, ticket: Ticket) {
+        if let Some(tls_session_store) = &self.store {
             let session = TlsSession {
                 ticket,
                 key: key.clone(),
@@ -153,10 +108,9 @@ impl Tickets {
         drop(evicted_entry);
     }
 
-    /// Takes a ticket only for its complete connection identity; results with another key or
-    /// an expired lifetime are dropped.
-    fn pop(&self, key: &Key) -> Option<Ticket> {
-        if let Some(tls_session_store) = &self.tls_session_store {
+    /// Pops a non-expired ticket matching `key`, discarding mismatches or expired entries.
+    pub(crate) fn pop(&self, key: &Key) -> Option<Ticket> {
+        if let Some(tls_session_store) = &self.store {
             let session = guarded(|| tls_session_store.pop(key)).flatten()?;
             return (session.key == *key
                 && !entry::is_expired(session.ticket.session(), unix_time()))
@@ -205,7 +159,7 @@ impl Tickets {
 // ===== impl State =====
 
 impl State {
-    /// Requests a full expiration sweep every 256 built-in lookups.
+    /// Returns `true` every 256 lookups to trigger a full expiration sweep.
     fn note_lookup(&mut self) -> bool {
         self.lookups_since_sweep = self.lookups_since_sweep.saturating_add(1);
         if self.lookups_since_sweep < EXPIRATION_CHECK_INTERVAL {
@@ -240,7 +194,7 @@ fn sweep_expired(
     }
 }
 
-/// Runs a caller store callback; a panic counts as a miss and never unwinds further.
+/// Runs a custom store callback, catching panics so they never unwind across FFI.
 fn guarded<T>(callback: impl FnOnce() -> T) -> Option<T> {
     match catch_unwind(AssertUnwindSafe(callback)) {
         Ok(value) => Some(value),

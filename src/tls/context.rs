@@ -6,60 +6,58 @@ use std::{
 
 use lru::{DefaultHasher, LruCache};
 
-use super::Config;
-use crate::{Result, config::connect::ConnectConfig, sync::Mutex, tls_key::ContextOptions};
+use super::KeyIdentity;
+use crate::{Result, sync::Mutex};
 
 const REQUEST_CONTEXTS: NonZeroUsize =
     NonZeroUsize::new(16).expect("request context capacity must be non-zero");
 static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
 
-/// One transport's TLS policy, client configuration, and compiled contexts.
-/// A connection configures its own copy of a compiled context for the handshake.
-pub(super) struct TlsContext<O, T> {
-    pub(super) tls: Config,
-    context: T,
-    requests: Mutex<LruCache<u64, (Arc<O>, T)>>,
+/// Compiled base TLS context paired with a bounded LRU cache for per-request overrides.
+///
+/// Shared by both stream and QUIC TLS contexts so identical request overrides reuse a single
+/// compiled BoringSSL context instead of rebuilding it on every connection.
+pub(crate) struct TlsContext<O, T> {
+    inner: T,
+    cache: Mutex<LruCache<u64, (Arc<O>, T)>>,
 }
 
-impl<O: ContextOptions, T: Clone> TlsContext<O, T> {
-    pub(super) fn new(
-        tls: Config,
-        config: &ConnectConfig,
-        compile: impl FnOnce(&Config, Option<&O>) -> Result<T>,
-    ) -> Result<Self> {
-        let context = compile(&tls, config.get_ref())?;
-        Ok(Self {
-            tls,
-            context,
-            requests: Mutex::new(LruCache::sparse(REQUEST_CONTEXTS)),
-        })
+impl<O: KeyIdentity, T: Clone> TlsContext<O, T> {
+    /// Creates a cache around the compiled base context.
+    pub(crate) fn new(inner: T) -> Self {
+        Self {
+            inner,
+            cache: Mutex::new(LruCache::sparse(REQUEST_CONTEXTS)),
+        }
     }
 
-    /// Reuses the client's context when the request has equivalent context options.
-    /// Compilation runs outside the lock, so concurrent misses can compile the same context.
-    pub(super) fn for_config(
+    /// Returns the base context when `options` is `None`, or looks up (and compiles on miss)
+    /// a cached override context.
+    ///
+    /// Compilation runs outside the lock, so concurrent misses may compile redundantly.
+    pub(crate) fn get_or_compile(
         &self,
-        config: &ConnectConfig,
-        compile: impl FnOnce(&Config, Option<&O>) -> Result<T>,
+        options: Option<&Arc<O>>,
+        compile: impl FnOnce(&O) -> Result<T>,
     ) -> Result<T> {
-        let Some(value) = config.override_if_different(O::same_context) else {
-            return Ok(self.context.clone());
+        let Some(value) = options else {
+            return Ok(self.inner.clone());
         };
 
         let mut hasher = HASHER.build_hasher();
-        value.hash_context(&mut hasher);
+        value.hash_key(&mut hasher);
         let hash = hasher.finish();
-        // A fingerprint collision is a cache miss, so compare the compiled options on a hit.
-        if let Some((cached, context)) = self.requests.lock().get(&hash)
-            && cached.same_context(value)
+        // Guard against hash collisions by checking equality on hit.
+        if let Some((cached, context)) = self.cache.lock().get(&hash)
+            && cached.same(value)
         {
             return Ok(context.clone());
         }
 
-        let context = compile(&self.tls, Some(value))?;
+        let context = compile(value)?;
         let entry = (value.clone(), context.clone());
-        // An evicted context is freed after the lock is released.
-        let _evicted = self.requests.lock().push(hash, entry);
+        // Drop any evicted context after releasing the lock.
+        let _evicted = self.cache.lock().push(hash, entry);
         Ok(context)
     }
 }

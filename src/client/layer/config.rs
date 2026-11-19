@@ -9,16 +9,21 @@ use tower::{Layer, Service};
 
 use crate::{
     Error,
-    config::request::{RequestConfig, impl_request_config_value},
+    config::{RequestConfig, impl_request_config_value},
     ext::UriExt,
     header::OrigHeaderMap,
 };
 
-/// A marker type for the default headers configuration value.
+/// Marker key for the per-request toggle controlling whether client default headers apply.
+///
+/// Stored in [`http::Extensions`] via [`RequestConfig<DefaultHeaders>`] with value type `bool`.
 #[derive(Clone, Copy)]
 pub(crate) struct DefaultHeaders;
 
-/// Configuration for the [`ConfigService`].
+/// Shared configuration applied by [`ConfigService`] to every outgoing request.
+///
+/// Holds the `https_only` flag, client default headers, and [`RequestConfig`] defaults for
+/// original header preservation and default-header injection.
 struct Config {
     https_only: bool,
     headers: HeaderMap,
@@ -26,12 +31,17 @@ struct Config {
     default_headers: RequestConfig<DefaultHeaders>,
 }
 
-/// Middleware layer to use [`ConfigService`].
+/// Tower [`Layer`] that wraps an HTTP service in [`ConfigService`].
+///
+/// Shares the immutable [`Config`] across every wrapped service instance.
 pub struct ConfigServiceLayer {
     config: Arc<Config>,
 }
 
-/// Middleware service to use [`Config`].
+/// Middleware service that validates URI schemes and applies client default headers.
+///
+/// Also forwards any configured [`OrigHeaderMap`] into request extensions for wire-level
+/// header casing and ordering preservation.
 #[derive(Clone)]
 pub struct ConfigService<S> {
     inner: S,

@@ -1,11 +1,6 @@
-//! Stream routing for direct, proxy and Unix connections.
+//! Stream connection service for direct, proxied, and Unix domain socket routes.
 //!
-//! The outer service enforces the connection deadline across dialing and handshakes.
-//! TCP dials share that deadline so their timeout errors reach connector middleware.
-
-#[cfg(feature = "socks")]
-mod socks;
-mod tunnel;
+//! The outer service enforces the total timeout; TCP also times the address race after DNS.
 
 use std::{
     sync::Arc,
@@ -13,41 +8,52 @@ use std::{
 };
 
 use futures_util::future::{self, BoxFuture, Either, Ready};
-use http::Request;
+use http::Uri;
 #[cfg(feature = "socks")]
-use netty::proxy::socks::{DnsResolve, Version};
-use tower::{BoxError, Service, ServiceExt};
+use netty::proxy::socks::{DnsResolve, SocksConnector, Version};
+use netty::proxy::tunnel::{TunnelConnector, TunnelError};
+use tower::{BoxError, Service, ServiceExt, service_fn};
 
+#[cfg(unix)]
+use crate::conn::dialer::Dial;
 #[cfg(feature = "socks")]
-use crate::dns::DynResolver;
+use crate::dns::{DynResolver, Name};
 use crate::{
-    config::connect::ConnectConfig,
+    config::ConnectConfig,
     conn::{
-        Conn, ConnectRequestExt, Connected, HttpInfo, Io, Transport,
-        connected::tls_info,
-        dialer::{Dial, Dialer},
+        Conn, Connected, HttpInfo, Io, Request, Routed, Transport, connected::tls_info,
+        dialer::Dialer, tcp_dial,
     },
     error::{ProxyConnect, ProxyMismatch},
     ext::UriExt,
-    proxy::{Intercepted, Matcher, matcher::Intercept},
+    protocol::Protocol,
+    proxy::{Intercepted, matcher::Intercept},
     rt::Connection,
     tls::{
-        AlpnProtocol,
-        connector::{MaybeHttpsStream, StreamTls, TlsConnector},
+        self, AlpnProtocol,
+        connector::{self, MaybeHttpsStream, TlsConnector},
     },
 };
 
-/// Establishes the byte stream HTTP/1 or HTTP/2 uses, including proxy and TLS handshakes.
+// Unix sockets are addressed by path; this placeholder URI marks the hop as plain HTTP.
+#[cfg(unix)]
+const UNIX_PROXY_URI: &str = "http://localhost";
+
+/// Establishes byte streams for HTTP/1 and HTTP/2 over TCP or Unix domain sockets.
+///
+/// Handles direct dials, HTTP/HTTPS forward proxies, HTTP CONNECT tunnels, SOCKS4/SOCKS5
+/// proxies, and origin or proxy-hop TLS handshakes. Clones share the underlying [`State`].
 #[derive(Clone)]
 pub(crate) struct Connect {
     state: Arc<State>,
 }
 
+/// Shared dialer, stream TLS context cache, and optional DNS resolver for SOCKS proxies.
+///
+/// Owned by [`Connect`] behind an [`Arc`] so connection futures can run independently.
 struct State {
     dialer: Dialer,
-    proxies: Arc<Vec<Matcher>>,
-    tls: StreamTls,
-    tcp_nodelay: bool,
+    tls: Arc<connector::Context>,
     #[cfg(feature = "socks")]
     resolver: DynResolver,
 }
@@ -55,29 +61,25 @@ struct State {
 // ===== impl Connect =====
 
 impl Connect {
-    /// Combines the dial service with the client's proxy rules and stream TLS.
-    #[must_use]
+    /// Creates a stream connector from a dialer and TLS context.
     pub(super) fn new(
         dialer: Dialer,
-        proxies: Arc<Vec<Matcher>>,
-        tls: StreamTls,
-        tcp_nodelay: bool,
+        tls_config: tls::Config,
+        connect_config: &ConnectConfig,
         #[cfg(feature = "socks")] resolver: DynResolver,
-    ) -> Self {
-        Self {
+    ) -> crate::Result<Self> {
+        Ok(Self {
             state: Arc::new(State {
                 dialer,
-                proxies,
-                tls,
-                tcp_nodelay,
+                tls: Arc::new(connector::Context::new(tls_config, connect_config)?),
                 #[cfg(feature = "socks")]
                 resolver,
             }),
-        }
+        })
     }
 }
 
-impl Service<Request<ConnectConfig>> for Connect {
+impl Service<Routed> for Connect {
     type Response = Conn;
     type Error = BoxError;
     type Future = Either<BoxFuture<'static, Result<Conn, BoxError>>, Ready<Result<Conn, BoxError>>>;
@@ -88,18 +90,7 @@ impl Service<Request<ConnectConfig>> for Connect {
     }
 
     #[inline]
-    fn call(&mut self, request: Request<ConnectConfig>) -> Self::Future {
-        let proxy = request
-            .body()
-            .get_ref::<Matcher>()
-            .and_then(|proxy| proxy.intercept(request.uri()))
-            .or_else(|| {
-                self.state
-                    .proxies
-                    .iter()
-                    .find_map(|proxy| proxy.intercept(request.uri()))
-            });
-
+    fn call(&mut self, Routed { request, proxy }: Routed) -> Self::Future {
         if let Some(Intercepted::Proxy(proxy)) = &proxy
             && proxy.uri().scheme_str() == Some("quic")
         {
@@ -126,97 +117,134 @@ impl State {
             unix => !matches!(proxy, Some(Intercepted::Unix(_))),
             _ => true,
         };
-        let nodelay = (!self.tcp_nodelay && uses_tcp).then_some(false);
-        let dialer = self.dialer.clone();
-
+        let restore_nodelay = uses_tcp && !self.dialer.nodelay();
         let (io, tls) = match proxy {
             None => {
                 let tls = self.tls.clone().for_config(request.body())?;
                 // Disable Nagle through TLS when the target is secure.
                 // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-                let io = dialer
-                    .oneshot(Dial::tcp(&request, request.uri().clone(), is_https))
+                let io = self
+                    .dialer
+                    .clone()
+                    .oneshot(tcp_dial(&request, request.uri().clone(), is_https))
                     .await?;
                 (MaybeHttpsStream::Http(io), tls)
             }
-            #[cfg(unix)]
-            Some(proxy @ Intercepted::Unix(_)) if is_https => {
+            #[cfg(feature = "socks")]
+            Some(Intercepted::Proxy(ref proxy))
+                if let Some(scheme @ ("socks4" | "socks4a" | "socks5" | "socks5h")) =
+                    proxy.uri().scheme_str() =>
+            {
+                let version = match scheme {
+                    "socks4" | "socks4a" => Version::V4,
+                    _ => Version::V5,
+                };
+                let dns = match scheme {
+                    "socks4a" | "socks5h" => DnsResolve::Remote,
+                    _ => DnsResolve::Local,
+                };
                 let tls = self.tls.clone().for_config(request.body())?;
-                (tunnel::connect(dialer, &tls, &request, &proxy).await?, tls)
+                let hop = self.dialer.clone().map_request(|uri: Uri| {
+                    let nodelay = is_https || uri.is_https();
+                    tcp_dial(&request, uri, nodelay)
+                });
+                let resolver = self.resolver.clone().map_request(Name::new);
+                let io = socks_connector(proxy, hop, resolver, (version, dns))
+                    .oneshot(request.uri().clone())
+                    .await?;
+                (MaybeHttpsStream::Http(io), tls)
+            }
+            Some(proxy) if is_https => {
+                let tls = self.tls.clone().for_config(request.body())?;
+                let io = self.connect_tunnel(&request, &proxy, &tls).await?;
+                (io, tls)
             }
             #[cfg(unix)]
             Some(Intercepted::Unix(path)) => {
                 let tls = self.tls.clone().for_config(request.body())?;
                 (
-                    MaybeHttpsStream::Http(dialer.oneshot(Dial::Unix(path)).await?),
+                    MaybeHttpsStream::Http(self.dialer.clone().oneshot(Dial::Unix(path)).await?),
                     tls,
                 )
             }
-            Some(Intercepted::Proxy(proxy)) => match proxy.uri().scheme_str() {
-                #[cfg(feature = "socks")]
-                Some(scheme @ ("socks4" | "socks4a" | "socks5" | "socks5h")) => {
-                    let version = match scheme {
-                        "socks4" | "socks4a" => Version::V4,
-                        _ => Version::V5,
-                    };
-                    let dns = match scheme {
-                        "socks4a" | "socks5h" => DnsResolve::Remote,
-                        _ => DnsResolve::Local,
-                    };
-                    let tls = self.tls.clone().for_config(request.body())?;
-                    let io = socks::connect(
-                        dialer,
-                        self.resolver.clone(),
+            Some(Intercepted::Proxy(proxy)) => {
+                let mut tls = self
+                    .tls
+                    .clone()
+                    .for_config(request.body())
+                    .map_err(|error| ProxyConnect::Source(error.into()))?;
+                tls.no_alpn();
+                let io = self
+                    .dialer
+                    .clone()
+                    .oneshot(tcp_dial(
                         &request,
-                        &proxy,
-                        (version, dns),
-                    )
-                    .await?;
-                    (MaybeHttpsStream::Http(io), tls)
-                }
-                _ if is_https => {
-                    let tls = self.tls.clone().for_config(request.body())?;
-                    let io =
-                        tunnel::connect(dialer, &tls, &request, &Intercepted::Proxy(proxy)).await?;
-                    (io, tls)
-                }
-                _ => {
-                    let mut tls = self
-                        .tls
-                        .clone()
-                        .for_config(request.body())
-                        .map_err(|error| ProxyConnect::Source(error.into()))?;
-                    tls.no_alpn();
-                    let io = dialer
-                        .oneshot(Dial::tcp(
-                            &request,
-                            proxy.uri().clone(),
-                            proxy.uri().is_https(),
-                        ))
-                        .await
-                        .map_err(ProxyConnect::Source)?;
-                    return finish(io, request, tls, nodelay, Some(proxy))
-                        .await
-                        .map_err(|error| ProxyConnect::Source(error).into());
-                }
-            },
+                        proxy.uri().clone(),
+                        proxy.uri().is_https(),
+                    ))
+                    .await
+                    .map_err(ProxyConnect::Source)?;
+                return finish(io, request, tls, restore_nodelay, Some(proxy))
+                    .await
+                    .map_err(|error| ProxyConnect::Source(error).into());
+            }
         };
 
         // Unwrap the CONNECT result once, before the origin's TLS and subsequent I/O.
         match io {
-            MaybeHttpsStream::Http(io) => finish(io, request, tls, nodelay, None).await,
-            MaybeHttpsStream::Https(io) => finish(io, request, tls, nodelay, None).await,
+            MaybeHttpsStream::Http(io) => finish(io, request, tls, restore_nodelay, None).await,
+            MaybeHttpsStream::Https(io) => finish(io, request, tls, restore_nodelay, None).await,
         }
+    }
+
+    fn connect_tunnel(
+        &self,
+        request: &Request<ConnectConfig>,
+        route: &Intercepted,
+        tls: &TlsConnector,
+    ) -> impl Future<Output = Result<MaybeHttpsStream<Box<dyn Connection>>, TunnelError>> + Send
+    {
+        let hop = service_fn(move |uri: Uri| {
+            let dial = match route {
+                Intercepted::Proxy(_) => tcp_dial(request, uri.clone(), true),
+                #[cfg(unix)]
+                Intercepted::Unix(path) => Dial::Unix(path.clone()),
+            };
+            let dial = self.dialer.clone().oneshot(dial);
+            // The proxy hop must speak HTTP/1.1 CONNECT. Its TLS future owns the options
+            // and origin used to scope session tickets.
+            let tls = (!uri.is_http()).then(|| {
+                let mut tls = tls.clone();
+                tls.no_alpn();
+                (
+                    tls,
+                    request.uri().clone(),
+                    alpn(request.protocol()),
+                    request.body().clone(),
+                )
+            });
+            async move {
+                let io = dial.await?;
+                let Some((tls, origin, alpn, config)) = tls else {
+                    return Ok(MaybeHttpsStream::Http(io));
+                };
+                let remote_addr = io.peer_addr().map(|addr| addr.ip());
+                tls.handshake(io, &origin, &uri, alpn, remote_addr, &config)
+                    .await
+                    .map(MaybeHttpsStream::Https)
+            }
+        });
+
+        tunnel_connector(route, hop).oneshot(request.uri().clone())
     }
 }
 
-/// TLS authenticates the origin or the forward proxy. Socket addresses always describe the
-/// dialed hop, including when it carries a CONNECT tunnel.
+/// Completes the final TLS handshake, if needed, and records metadata for the dialed hop.
 async fn finish(
     io: impl Connection,
     request: Request<ConnectConfig>,
     tls: TlsConnector,
-    nodelay: Option<bool>,
+    restore_nodelay: bool,
     proxy: Option<Intercept>,
 ) -> Result<Conn, BoxError> {
     let (local_addr, remote_addr) = (io.local_addr(), io.peer_addr());
@@ -228,10 +256,10 @@ async fn finish(
             tls.handshake(
                 io,
                 request.uri(),
-                request.protocol(),
-                request.body(),
                 tls_peer,
+                alpn(request.protocol()),
                 remote_addr.map(|addr| addr.ip()),
+                request.body(),
             )
             .await?,
         )
@@ -252,9 +280,8 @@ async fn finish(
     let stream: Box<dyn Io> = match stream {
         MaybeHttpsStream::Http(stream) => Box::new(stream),
         MaybeHttpsStream::Https(stream) => {
-            if let Some(nodelay) = nodelay {
-                // Keep TCP_NODELAY on until the last TLS handshake on the socket completes.
-                stream.get_ref().set_nodelay(nodelay)?;
+            if restore_nodelay {
+                stream.get_ref().set_nodelay(false)?;
             }
             let ssl = stream.ssl();
             if ssl
@@ -276,4 +303,52 @@ async fn finish(
         transport: Transport::Stream(stream),
         connected,
     })
+}
+
+/// Returns the ALPN override for an explicit stream protocol.
+fn alpn(protocol: Protocol) -> Option<AlpnProtocol> {
+    match protocol {
+        Protocol::Http1 => Some(AlpnProtocol::HTTP1),
+        #[cfg(feature = "http2")]
+        Protocol::Http2 => Some(AlpnProtocol::HTTP2),
+        Protocol::Auto => None,
+        #[cfg(feature = "http3")]
+        Protocol::Http3 => None,
+    }
+}
+
+/// Builds a [`SocksConnector`] for `proxy` over `hop` and `resolver`.
+#[cfg(feature = "socks")]
+fn socks_connector<C, R>(
+    proxy: &Intercept,
+    hop: C,
+    resolver: R,
+    (version, dns): (Version, DnsResolve),
+) -> SocksConnector<C, R> {
+    let mut connector = SocksConnector::new(proxy.uri().clone(), hop, resolver);
+    connector.set_auth(proxy.raw_auth());
+    connector.set_version(version);
+    connector.set_dns_mode(dns);
+    connector
+}
+
+/// Builds an HTTP [CONNECT] tunnel connector over `hop`.
+///
+/// [CONNECT]: https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6
+fn tunnel_connector<C>(route: &Intercepted, hop: C) -> TunnelConnector<C> {
+    let (proxy_uri, proxy) = match route {
+        Intercepted::Proxy(proxy) => (proxy.uri().clone(), Some(proxy)),
+        #[cfg(unix)]
+        Intercepted::Unix(_) => (Uri::from_static(UNIX_PROXY_URI), None),
+    };
+    let mut tunnel = TunnelConnector::new(proxy_uri, hop);
+    if let Some(proxy) = proxy {
+        if let Some(auth) = proxy.basic_auth() {
+            tunnel = tunnel.with_auth(auth.clone());
+        }
+        if let Some(headers) = proxy.custom_headers() {
+            tunnel = tunnel.with_headers(headers.clone());
+        }
+    }
+    tunnel
 }

@@ -44,7 +44,7 @@ enum TestConnector {
     Http3(SocketAddr, ::quic::ClientConfig),
 }
 
-impl Service<Request<ConnectConfig>> for TestConnector {
+impl Service<Unnameable> for TestConnector {
     type Response = Conn;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -53,7 +53,7 @@ impl Service<Request<ConnectConfig>> for TestConnector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, _req: Request<ConnectConfig>) -> Self::Future {
+    fn call(&mut self, _req: Unnameable) -> Self::Future {
         match self {
             Self::Fails => Box::pin(std::future::ready(Err(io::Error::from(
                 io::ErrorKind::ConnectionRefused,
@@ -254,7 +254,7 @@ fn protocol_modes_clone_connector_once() {
 
     let clones = Arc::new(AtomicUsize::new(0));
     let counter = CloneCounter(clones.clone());
-    let connector = tower::service_fn(move |_: Request<ConnectConfig>| {
+    let connector = tower::service_fn(move |_: Unnameable| {
         let _counter = &counter;
         std::future::pending::<Result<Conn, BoxError>>()
     });
@@ -305,10 +305,10 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         let connector = ServiceBuilder::new()
             .map_request({
                 let observed = observed.clone();
-                move |request: Request<ConnectConfig>| {
+                move |request: Unnameable| {
                     observed
                         .lock()
-                        .push(request.body().get_ref::<DialOption>().copied());
+                        .push(request.0.body().get_ref::<DialOption>().copied());
                     request
                 }
             })

@@ -1,8 +1,7 @@
-//! Tower services used by the low-level client request path.
+//! Low-level Tower services for request preparation, pool checkout, and unsent retries.
 //!
-//! Configuration runs once before internal retries. Each attempt checks out a sender, fits the
-//! request to it, and dispatches it, handing a busy HTTP/1 sender to a readiness task. Only
-//! requests returned before encoding can be retried; bodies are never reconstructed.
+//! Each request is validated and keyed once; retries only occur when a reused connection
+//! fails before any request bytes are encoded (bodies are never cloned).
 
 use std::{
     future::Future,
@@ -35,15 +34,18 @@ use super::{
 };
 use crate::{
     Body,
-    config::{connect::ConnectConfig, request::RequestConfig},
-    conn::{self, BoxedConnectLayer, Conn},
+    config::{ConnectConfig, RequestConfig},
+    conn::{self, BoxedConnectLayer, Conn, Unnameable},
     dns::DynResolver,
     ext::UriExt,
     protocol::Protocol,
     rt::DynRuntime,
 };
 
-/// Settings used to assemble the shared HTTP request service.
+/// Client-wide settings assembled by [`ClientBuilder`](crate::ClientBuilder) to construct
+/// the low-level [`Client`] service.
+///
+/// Bundles connector, pool, default connection config, protocol mode, and optional cookie store.
 pub(super) struct Config {
     pub(super) connect: conn::Config,
     pub(super) connect_config: ConnectConfig,
@@ -55,20 +57,20 @@ pub(super) struct Config {
 }
 
 /// Internal HTTP service beneath [`crate::Client`].
-/// Checks and configures each request before dispatch and retries unsent requests
-/// without cloning their bodies.
+///
+/// Validates requests before dispatch and retries unsent failures without cloning bodies.
 #[derive(Clone)]
-pub(super) struct Client<S = Dispatch<conn::Connect>> {
+pub(super) struct Client<S = Dispatch<conn::ConnectService>> {
     inner: S,
     protocol: Protocol,
     connect_config: ConnectConfig,
     retry_unsent: bool,
 }
 
-/// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
+/// Requests a dedicated HTTP/1 connection that bypasses the pool.
 ///
-/// With `extended_connect`, dispatch first tries an established connection of the
-/// default request group whose peer enabled extended CONNECT (RFC 8441, RFC 9220).
+/// When `extended_connect` is set, dispatch first probes for an established HTTP/2 or HTTP/3
+/// connection in the default group whose peer enabled extended CONNECT (RFC 8441, RFC 9220).
 #[cfg(feature = "ws")]
 #[derive(Clone, Copy)]
 pub(super) struct DedicatedConnection {
@@ -77,9 +79,9 @@ pub(super) struct DedicatedConnection {
 }
 
 pin_project! {
-    /// Drives internal retries without cloning the request body.
-    /// The first call consumes the caller's readiness reservation; subsequent
-    /// attempts use `Oneshot` to pair readiness and dispatch on the same service.
+    /// Retries unsent requests without cloning their bodies.
+    ///
+    /// Uses the caller's readiness for the first attempt and `Oneshot` for retries.
     pub(super) struct RetryUnsentFuture<S, B>
     where
         S: Service<DispatchRequest<B>>,
@@ -92,41 +94,40 @@ pin_project! {
     }
 }
 
-/// Request state restored before each unsent retry.
-/// Kept outside `pin_project!`, whose fields cannot carry `cfg` attributes.
+/// Snapshot of request fields restored before each unsent retry.
+///
+/// Kept outside `pin_project!` because its conditional fields carry `#[cfg]` attributes.
 struct Original {
     uri: Uri,
-    /// Wire version before a connection fitted it; the next connection may differ.
+    /// Wire version before connection reconciliation.
     version: Version,
     /// Whether the caller set `Cookie`; otherwise each attempt regenerates it.
     #[cfg(feature = "cookies")]
     had_cookie: bool,
 }
 
-/// An HTTP request and the pool key it keeps across unsent retries.
-/// Dispatch returns this value only when the original body has not been sent.
+/// Prepared HTTP request paired with its frozen [`PoolKey`] and [`ConnectConfig`].
+///
+/// Handed to [`Dispatch`] and returned inside [`DispatchError`] only when no request bytes
+/// were encoded so [`RetryUnsentFuture`] can retry without cloning the body.
 pub(super) struct DispatchRequest<B> {
     request: Request<B>,
     pool_key: PoolKey<conn::Identity>,
     connect_config: ConnectConfig,
-    /// Whether checkout always connects and never returns the sender to the pool.
+    /// Whether checkout dials a fresh connection and never returns it to the pool.
     #[cfg(feature = "ws")]
     dedicated: bool,
-    /// Whether the wire version follows the connection, as an explicit `Protocol::Auto` asks.
+    /// Whether the wire version may adapt to the negotiated connection (`Protocol::Auto`).
     negotiable: bool,
-    /// Default-group key whose established sender may carry this WebSocket.
+    /// Default-group key to probe for an established extended CONNECT sender.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
     extended_connect_key: Option<PoolKey<conn::Identity>>,
 }
 
-/// Performs one connection-pool checkout and protocol send attempt.
+/// Checks out a pooled sender, dispatches the request, and attaches cookies and metadata.
 ///
-/// Each call checks out a compatible sender, fits the request to it, applies cookies,
-/// dispatches the request, and attaches connection metadata. HTTP/2 and HTTP/3 release their
-/// local checkout after response headers. HTTP/1 returns immediately only when
-/// its sender is ready again; otherwise a pool-owned task waits before returning
-/// it. Errors preserve an unsent request when the protocol dispatcher can prove
-/// encoding never began.
+/// Multiplexed senders release on response headers; busy HTTP/1 senders are returned by a
+/// background readiness task. Returns [`DispatchError::Unsent`] when encoding never started.
 pub(super) struct Dispatch<C> {
     pool: pool::Pool<C>,
     #[cfg(feature = "cookies")]
@@ -134,7 +135,10 @@ pub(super) struct Dispatch<C> {
     runtime: DynRuntime,
 }
 
-/// Failure from one pool checkout and send attempt.
+/// Failure returned by a [`Dispatch`] pool checkout or send attempt.
+///
+/// Distinguishes retryable unsent failures (which return the original [`DispatchRequest`]
+/// intact) from terminal checkout or transport errors.
 pub(super) enum DispatchError<B> {
     /// A shared HTTP/2 or HTTP/3 checkout batch was canceled before connecting.
     CheckoutCanceled {
@@ -151,15 +155,18 @@ pub(super) enum DispatchError<B> {
     Terminal(Error),
 }
 
-/// Original RFC 6455 header fields of a WebSocket handshake riding extended CONNECT.
-/// They are restored in order if the request returns unsent, so a retry can use HTTP/1.1.
+/// Original RFC 6455 headers of a WebSocket handshake rewritten for extended CONNECT.
+///
+/// Restored in order if the request returns unsent so a retry can fall back to HTTP/1.1.
 #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
 struct Http1Upgrade {
     headers: HeaderMap,
 }
 
-/// Sender checked out for one attempt.
-/// A struct rather than a tuple, since the upgrade field exists only with WebSocket + H2/H3.
+/// Checked-out pooled sender paired with any rewritten WebSocket upgrade headers.
+///
+/// Separated into a struct because the `upgrade` field exists only when WebSocket and
+/// HTTP/2 or HTTP/3 are both enabled.
 struct CheckedOut {
     pooled: pool::pooled::Pooled,
     /// WebSocket upgrade rewritten for an extended CONNECT sender, restored if unsent.
@@ -217,8 +224,9 @@ impl Client {
 }
 
 impl<S> Client<S> {
-    /// Checks the request, then freezes connection settings before checkout and unsent
-    /// retries. Every redirect hop and public retry passes here again.
+    /// Validates the request and freezes its pool key and connection config before dispatch.
+    ///
+    /// Redirect hops and user-level retries pass through here again.
     fn prepare<B>(&self, mut request: Request<B>) -> Result<DispatchRequest<B>, Error> {
         match request.version() {
             Version::HTTP_10 if request.method() == Method::CONNECT => {
@@ -421,15 +429,13 @@ where
 
 impl<C> Dispatch<C>
 where
-    C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError, Future: Send + 'static>
+    C: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>
         + Clone
         + Send
         + Sync
         + 'static,
 {
-    /// Creates the terminal request service and its shared connection pool.
-    /// Handshakes start from the client's connection settings, and HTTP/1 generates
-    /// any missing `Host` header.
+    /// Creates the dispatch service and its underlying connection pool.
     #[must_use]
     fn new(
         connector: C,
@@ -452,8 +458,9 @@ where
         }
     }
 
-    /// Checks out a sender for the request, first probing for an extended CONNECT sender.
-    /// A canceled singleton batch returns the request for an unsent retry.
+    /// Checks out a sender (probing extended CONNECT first when applicable).
+    ///
+    /// Returns [`DispatchError::CheckoutCanceled`] if a shared singleton batch was canceled.
     async fn checkout(
         &self,
         request: DispatchRequest<Body>,
@@ -508,8 +515,7 @@ where
         Ok((request, checked_out))
     }
 
-    /// Fits the request to the checked-out sender, dispatches it, then attaches cookies and
-    /// connection metadata. A request returned before encoding comes back unsent.
+    /// Reconciles `request` with `checked_out`, sends it, and attaches cookies and metadata.
     async fn send(
         &self,
         mut request: DispatchRequest<Body>,
@@ -628,7 +634,7 @@ impl<C> Clone for Dispatch<C> {
 
 impl<C> Service<DispatchRequest<Body>> for Dispatch<C>
 where
-    C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError, Future: Send + 'static>
+    C: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>
         + Clone
         + Send
         + Sync
@@ -727,11 +733,10 @@ fn with_h2_alpn_context(error: Error, unnegotiated_h2: bool) -> Error {
     }
 }
 
-/// Fits the request to the checked-out connection and returns whether it uses extended CONNECT.
+/// Adjusts `request` to match `pooled` and returns `true` if it uses extended CONNECT.
 ///
-/// Multiplexed connections set their own wire version. HTTP/1 sets HTTP/1.1 only for a
-/// `negotiable` request and otherwise requires HTTP/1.0 or HTTP/1.1. Extended CONNECT must
-/// match the connection, and a plain CONNECT target gains its default port.
+/// Sets the wire version for multiplexed or negotiable requests, rejects incompatible
+/// versions on HTTP/1, and fills in the default port for plain CONNECT targets.
 fn reconcile(
     request: &mut Request<Body>,
     pooled: &pool::pooled::Pooled,
@@ -767,10 +772,10 @@ fn reconcile(
     Ok(extended)
 }
 
-/// Returns whether the request uses extended CONNECT on this connection.
-/// HTTP/2 takes `:protocol` from `http2::ext::Protocol` ([RFC 8441 §4]) and HTTP/3 from
-/// `netty::http3::Protocol` ([RFC 9220 §3]); a marker the connection would ignore fails
-/// instead of sending a plain CONNECT tunnel.
+/// Returns `true` if `request` carries an extended CONNECT `:protocol` marker matching
+/// `pooled`'s HTTP version ([RFC 8441 §4], [RFC 9220 §3]).
+///
+/// Fails instead of falling back to plain CONNECT when the marker targets a different version.
 ///
 /// [RFC 8441 §4]: https://www.rfc-editor.org/rfc/rfc8441#section-4
 /// [RFC 9220 §3]: https://www.rfc-editor.org/rfc/rfc9220#section-3
@@ -812,13 +817,11 @@ fn extended_connect_disabled(pooled: &pool::pooled::Pooled) -> Error {
         .with_connect_info(pooled.connected().clone())
 }
 
-/// Adds the scheme's default port to a plain CONNECT target that elides it, since
-/// CONNECT has no default port and HTTP/1, HTTP/2 and HTTP/3 send the authority as is
+/// Fills in the scheme's default port on a plain CONNECT target when omitted
 /// ([RFC 9110 §9.3.6](https://www.rfc-editor.org/rfc/rfc9110#section-9.3.6)).
 ///
-/// On HTTP/2 and HTTP/3, a Host header equal to the old authority is updated with it,
-/// since Host must not differ from `:authority`
-/// ([RFC 9113 §8.3.1](https://www.rfc-editor.org/rfc/rfc9113#section-8.3.1),
+/// On HTTP/2 and HTTP/3, also updates a matching `Host` header so it stays consistent with
+/// `:authority` ([RFC 9113 §8.3.1](https://www.rfc-editor.org/rfc/rfc9113#section-8.3.1),
 /// [RFC 9114 §4.3.1](https://www.rfc-editor.org/rfc/rfc9114#section-4.3.1)).
 fn connect_target_port<B>(request: &mut Request<B>, multiplexed: bool) -> Result<(), Error> {
     let uri = request.uri();
@@ -1060,7 +1063,7 @@ mod tests {
         let attempts = Arc::new(crate::sync::Mutex::new(Vec::new()));
         let connector = tower::service_fn({
             let attempts = attempts.clone();
-            move |request: Request<ConnectConfig>| {
+            move |Unnameable(request)| {
                 attempts.lock().push(
                     request
                         .body()
@@ -1129,7 +1132,7 @@ mod tests {
             }
         }
 
-        let connector = tower::service_fn(|_: Request<ConnectConfig>| {
+        let connector = tower::service_fn(|_: Unnameable| {
             let (client, server) = tokio::io::duplex(16384);
             let service = hyper::service::service_fn(|request: Request<hyper::body::Incoming>| {
                 let target = format!("{} {:?}", request.uri(), request.headers()[COOKIE]);
