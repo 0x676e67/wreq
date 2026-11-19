@@ -52,7 +52,17 @@ impl std::fmt::Display for SocksError {
     }
 }
 
-impl std::error::Error for SocksError {}
+impl std::error::Error for SocksError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ConnectFailed(e) | Self::DnsResolveFailure(e) => Some(&**e),
+            Self::Socks(e) => Some(e),
+            Self::Io(e) => Some(e),
+            Self::Utf8(e) => Some(e),
+            Self::DnsFailure | Self::MissingHost => None,
+        }
+    }
+}
 
 impl From<std::io::Error> for SocksError {
     fn from(err: std::io::Error) -> Self {
