@@ -1588,8 +1588,8 @@ impl ClientBuilder {
     /// header names append. Does not create a connection group.
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> ClientBuilder {
-        let emulate::Emulation(headers, orig_headers, config) = emulation.into_emulation();
-        self.config.svc.connect_config.extend(config);
+        let emulate::Emulation(headers, orig_headers, connect_config) = emulation.into_emulation();
+        self.config.svc.connect_config.extend(connect_config);
         self.default_headers(headers).orig_headers(orig_headers)
     }
 }

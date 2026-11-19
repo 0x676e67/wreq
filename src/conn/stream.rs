@@ -121,7 +121,6 @@ impl State {
         proxy: Option<Intercepted>,
     ) -> Result<Conn, BoxError> {
         debug!("starting new connection: {:?}", request.uri());
-        let deadline = request.deadline();
         let is_https = request.uri().is_https();
         let uses_tcp = cfg_select! {
             unix => !matches!(proxy, Some(Intercepted::Unix(_))),
@@ -136,12 +135,7 @@ impl State {
                 // Disable Nagle through TLS when the target is secure.
                 // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
                 let io = dialer
-                    .oneshot(Dial::Tcp {
-                        uri: request.uri().clone(),
-                        config: request.body().clone(),
-                        deadline,
-                        nodelay: is_https,
-                    })
+                    .oneshot(Dial::tcp(&request, request.uri().clone(), is_https))
                     .await?;
                 (MaybeHttpsStream::Http(io), tls)
             }
@@ -194,12 +188,11 @@ impl State {
                         .map_err(|error| ProxyConnect::Source(error.into()))?;
                     tls.no_alpn();
                     let io = dialer
-                        .oneshot(Dial::Tcp {
-                            uri: proxy.uri().clone(),
-                            config: request.body().clone(),
-                            deadline,
-                            nodelay: proxy.uri().is_https(),
-                        })
+                        .oneshot(Dial::tcp(
+                            &request,
+                            proxy.uri().clone(),
+                            proxy.uri().is_https(),
+                        ))
                         .await
                         .map_err(ProxyConnect::Source)?;
                     return finish(io, request, tls, nodelay, Some(proxy))

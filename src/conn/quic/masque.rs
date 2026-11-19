@@ -39,7 +39,7 @@ use super::{TUNNEL_MTU, endpoint::Endpoints};
 use crate::{
     Body,
     config::connect::ConnectConfig,
-    conn::{Conn, ConnectRequestExt},
+    conn::Conn,
     error::ProxyConnect,
     ext::UriExt,
     proxy::matcher::Intercept,
@@ -100,13 +100,12 @@ struct Receiver(BoxStream<'static, Result<Bytes, ::quic::ConnectionError>>);
 
 /// Opens CONNECT-UDP and authenticates the target; its endpoint retains the outer connection.
 pub(super) async fn connect(
-    endpoints: &Endpoints,
+    endpoints: Arc<Endpoints>,
     request: Request<ConnectConfig>,
     proxy: Intercept,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
     let config = endpoints.tunnel_config(&request)?;
-    let deadline = request.deadline();
 
     // This scope classifies proxy setup failures separately from target TLS errors.
     let connect_proxy = async {
@@ -114,9 +113,7 @@ pub(super) async fn connect(
         let template =
             Template::well_known(proxy.uri().authority().ok_or(PROXY_MISSING_AUTHORITY)?)?;
 
-        let (connection, endpoint) = endpoints
-            .connect_proxy(&request, template.proxy(), deadline)
-            .await?;
+        let (connection, endpoint) = endpoints.connect_proxy(&request, template.proxy()).await?;
         let remote = connection.remote_address();
         let (sender, driver) = http3::Builder::new(endpoints.runtime().clone())
             .handshake_with_datagrams::<_, Body>(OuterConnection::new(connection))

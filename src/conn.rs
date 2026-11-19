@@ -4,8 +4,8 @@
 
 mod connected;
 mod dialer;
+mod identity;
 mod layer;
-pub(crate) mod options;
 #[cfg(feature = "http3")]
 mod quic;
 mod stream;
@@ -23,6 +23,7 @@ use tower::{
 
 pub(crate) use self::{
     connected::{Connected, HttpInfo},
+    identity::{CommonIdentity, Identity},
     svc::{Io, Transport},
 };
 use crate::{
@@ -37,15 +38,18 @@ pub type BoxedConnectService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
 pub type BoxedConnectLayer =
     BoxCloneSyncServiceLayer<BoxedConnectService, Unnameable, Conn, BoxError>;
 
-type LayeredConnect = MapRequest<
-    MapErr<BoxedConnectService, fn(BoxError) -> BoxError>,
-    fn(Request<ConnectConfig>) -> Unnameable,
->;
-
 /// Establishes stream and QUIC transports under one connection deadline.
 /// Without user layers [`svc::Connect`] is called directly; user layers see the request
 /// behind [`Unnameable`]. Clones share the transports' state.
-pub(crate) type Connect = Deadline<Either<svc::Connect, LayeredConnect>>;
+pub(crate) type Connect = Deadline<
+    Either<
+        svc::Connect,
+        MapRequest<
+            MapErr<BoxedConnectService, fn(BoxError) -> BoxError>,
+            fn(Request<ConnectConfig>) -> Unnameable,
+        >,
+    >,
+>;
 
 /// Client-wide transport settings, fixed at build.
 pub(crate) struct Config {
@@ -127,8 +131,8 @@ impl Connect {
             );
             Either::Right(
                 service
-                    .map_err(map_timeout_to_connector_error as fn(_) -> _)
-                    .map_request(Unnameable as fn(_) -> _),
+                    .map_err(map_timeout_to_connector_error as _)
+                    .map_request(Unnameable as _),
             )
         };
 
@@ -178,12 +182,10 @@ mod tests {
     fn test_connect_request(
         uri: Uri,
         protocol: Option<Protocol>,
-        config: ConnectConfig,
+        connect_config: ConnectConfig,
     ) -> Request<ConnectConfig> {
         let protocol = protocol.unwrap_or(Protocol::Auto);
-        let config =
-            options::Options::new(protocol, &config, &ConnectConfig::default()).into_config();
-        Request::new_connect(uri.origin().unwrap(), protocol, config)
+        Request::new_connect(uri.origin().unwrap(), protocol, connect_config)
     }
 
     impl Conn {
@@ -305,7 +307,7 @@ mod tests {
         };
         let mut overridden = ConnectConfig::default();
         overridden.insert(proxy());
-        for (proxies, request_config) in [
+        for (proxies, connect_config) in [
             (vec![proxy()], ConnectConfig::default()),
             (Vec::new(), overridden),
         ] {
@@ -324,7 +326,7 @@ mod tests {
             let request = test_connect_request(
                 Uri::from_static("https://localhost/"),
                 Some(Protocol::Http3),
-                request_config,
+                connect_config,
             );
             let error = connector
                 .oneshot(request)

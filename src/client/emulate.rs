@@ -43,8 +43,8 @@ impl EmulationBuilder {
     /// headers while appending original header names.
     #[inline]
     pub fn config<T: IntoEmulation>(mut self, value: T) -> Self {
-        let Emulation(headers, orig_headers, config) = value.into_emulation();
-        self.emulation.2.extend(config);
+        let Emulation(headers, orig_headers, connect_config) = value.into_emulation();
+        self.emulation.2.extend(connect_config);
         if !headers.is_empty() {
             crate::util::replace_headers(&mut self.emulation.0, headers);
         }
@@ -94,9 +94,9 @@ macro_rules! impl_from_option {
             impl From<$ty> for Emulation {
                 #[inline]
                 fn from(options: $ty) -> Self {
-                    let mut config = ConnectConfig::default();
-                    config.insert(options);
-                    Self(HeaderMap::new(), OrigHeaderMap::new(), config)
+                    let mut connect_config = ConnectConfig::default();
+                    connect_config.insert(options);
+                    Self(HeaderMap::new(), OrigHeaderMap::new(), connect_config)
                 }
             }
         )+

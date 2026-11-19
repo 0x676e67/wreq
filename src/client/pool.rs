@@ -43,8 +43,8 @@ use std::{
 use futures_util::future::BoxFuture;
 use http::{Request, Uri};
 use lru::DefaultHasher;
-use netty::{conn, http1::Http1Options};
-use tower::{BoxError, Layer, Service, ServiceBuilder, util::Oneshot};
+use netty::http1::Http1Options;
+use tower::{BoxError, Layer, Service, ServiceBuilder, ServiceExt, util::Oneshot};
 #[cfg(feature = "http2")]
 use {
     self::{entry::NegotiatedEntry, negotiate::Negotiate},
@@ -71,7 +71,7 @@ use self::{
 use super::proto::{Established, http1};
 use crate::{
     config::connect::ConnectConfig,
-    conn::{Conn, ConnectRequestExt, options::Options},
+    conn::{self, Conn, ConnectRequestExt},
     protocol::Protocol,
     rt::{DynRuntime, Timer as _},
     sync::{Mutex, MutexGuard},
@@ -198,7 +198,16 @@ struct PoolInner<C> {
     entries: Mutex<EntryMap>,
 }
 
-type EntryMap = Map<PoolKey<PoolTarget>, Box<dyn Entry<PoolTarget>>>;
+type BoxedEntry = Box<dyn for<'a> Entry<dyn Fn() -> ConnectTarget + 'a, ConnectTarget>>;
+type EntryMap = Map<PoolKey<conn::Identity>, BoxedEntry>;
+
+/// Inputs for a new connection, distinct from its reuse identity.
+#[derive(Clone)]
+pub(super) struct ConnectTarget {
+    origin: Uri,
+    protocol: Protocol,
+    config: ConnectConfig,
+}
 
 /// Compatibility key for pool entries and extended CONNECT lookups.
 #[derive(Clone, Debug)]
@@ -207,18 +216,10 @@ pub(super) struct PoolKey<K> {
     hash: u64,
 }
 
-/// Origin and normalized options shared by pool lookup and connection setup.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(super) struct PoolTarget {
-    pub(super) origin: Uri,
-    pub(super) protocol: Protocol,
-    pub(super) options: Options,
-}
-
 /// A checkout's owned connection input and reuse policy.
 #[derive(Clone)]
 pub(super) struct Checkout<T> {
-    pub(super) target: T,
+    target: T,
     /// Whether this checkout can wait for existing pool state to become reusable.
     wait_for_reuse: bool,
 }
@@ -242,11 +243,11 @@ struct PoolTargeter<C> {
     /// Whether HTTP/1 should generate a missing `Host` field.
     set_host: bool,
 
-    http1: Arc<conn::http1::Builder>,
+    http1: Arc<netty::conn::http1::Builder>,
     #[cfg(feature = "http2")]
-    http2: Arc<conn::http2::Builder<DynRuntime>>,
+    http2: Arc<netty::conn::http2::Builder<DynRuntime>>,
     #[cfg(feature = "http3")]
-    http3: Arc<conn::http3::Builder<DynRuntime>>,
+    http3: Arc<netty::conn::http3::Builder<DynRuntime>>,
 }
 
 /// Lazily creates physical connections under the configured reuse policy.
@@ -255,15 +256,13 @@ struct PoolTargeter<C> {
 /// for a reuse-first window, then runs a cloned connector through `Oneshot` so
 /// readiness and `call` use the same service instance.
 #[derive(Clone)]
-struct ConnectionMaker<C> {
-    /// Clock shared by reuse waits and transport timestamps.
-    runtime: DynRuntime,
-
+struct StreamMaker<C> {
     /// Physical transport connector.
     connector: C,
-
     /// Optional delay giving connection reuse time to win.
     reuse_delay: Option<Duration>,
+    /// Clock shared by reuse waits and transport timestamps.
+    runtime: DynRuntime,
 }
 
 /// Connection-maker future with explicit started-work tracking.
@@ -275,10 +274,8 @@ struct ConnectionMaker<C> {
 struct MakeFuture<T> {
     /// Deferred delay and physical connect work.
     future: BoxFuture<'static, Result<T, BoxError>>,
-
     /// Records whether the future has ever been polled.
     polled: bool,
-
     /// Separates waiting for policy from useful connection work.
     started: Option<Arc<AtomicBool>>,
 }
@@ -314,14 +311,14 @@ where
             _ => None,
         };
 
-        let mut http1 = conn::http1::Builder::default();
+        let mut http1 = netty::conn::http1::Builder::default();
         if let Some(options) = connect_config.get_ref::<Http1Options>() {
             http1 = http1.options(options.clone());
         }
 
         #[cfg(feature = "http2")]
         let http2 = {
-            let builder = conn::http2::Builder::new(runtime.clone()).timer(runtime.clone());
+            let builder = netty::conn::http2::Builder::new(runtime.clone()).timer(runtime.clone());
             match connect_config.get_ref::<Http2Options>() {
                 Some(options) => builder.options(options.clone()),
                 None => builder,
@@ -330,7 +327,7 @@ where
 
         #[cfg(feature = "http3")]
         let http3 = {
-            let builder = conn::http3::Builder::new(runtime.clone());
+            let builder = netty::conn::http3::Builder::new(runtime.clone());
             match connect_config.get_ref::<Http3Options>() {
                 Some(options) => builder.options(options.clone()),
                 None => builder,
@@ -365,20 +362,17 @@ where
 
     /// Checks out a sender for the request's origin and connection identity.
     ///
-    /// The map lock is released before the returned future is polled. When pooling
-    /// is disabled or the checkout is `dedicated`, which always connects and never
-    /// returns the sender, the call creates a temporary entry for this request.
+    /// The target factory may run under the map lock; the checkout is polled after unlocking.
+    /// With pooling disabled or a `dedicated` checkout, the sender uses a temporary entry
+    /// and is never returned to the pool.
     pub(super) async fn checkout(
         &self,
-        key: &PoolKey<PoolTarget>,
+        key: &PoolKey<conn::Identity>,
+        make: impl Fn() -> ConnectTarget + Send,
         dedicated: bool,
     ) -> Result<Pooled, BoxError> {
         if !self.inner.enabled || dedicated {
-            return self
-                .inner
-                .new_entry(key)
-                .checkout(key.as_ref(), false)
-                .await;
+            return self.inner.new_entry(key).checkout(&make, false).await;
         }
 
         // The guard needs a lexical scope outside await for this future to remain Send.
@@ -389,7 +383,7 @@ where
             // would add O(group count) work and nested locking to every pool hit.
             let entry = entries.get_or_insert_with(key, || self.inner.new_entry(key));
             let discarded = entry.prune(now, self.inner.idle_timeout);
-            let future = entry.checkout(key.as_ref(), true);
+            let future = entry.checkout(&make, true);
             drop(entries);
             drop(discarded);
             future
@@ -403,7 +397,10 @@ where
     /// Probes completed senders only. A miss leaves pool entries intact.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
     #[must_use]
-    pub(super) fn checkout_extended_connect(&self, key: &PoolKey<PoolTarget>) -> Option<Pooled> {
+    pub(super) fn checkout_extended_connect(
+        &self,
+        key: &PoolKey<conn::Identity>,
+    ) -> Option<Pooled> {
         if !self.inner.enabled {
             return None;
         }
@@ -462,23 +459,41 @@ impl<K> Hash for PoolKey<K> {
     }
 }
 
-// ===== impl PoolTarget =====
+// ===== impl Checkout =====
 
-impl From<PoolTarget> for Request<ConnectConfig> {
-    fn from(target: PoolTarget) -> Self {
-        Request::new_connect(target.origin, target.protocol, target.options.into_config())
+impl<T> Checkout<T> {
+    #[must_use]
+    fn new(target: T, wait_for_reuse: bool) -> Self {
+        Self {
+            target,
+            wait_for_reuse,
+        }
     }
 }
 
-// ===== impl Checkout =====
+// ===== impl ConnectTarget =====
 
-impl<T: Clone> Checkout<T> {
+impl ConnectTarget {
+    /// Combines the normalized destination with the configuration for this attempt.
     #[must_use]
-    fn new(target: &T, wait_for_reuse: bool) -> Self {
+    pub(super) fn new<I: AsRef<conn::Identity>>(identity: &I, config: &ConnectConfig) -> Self {
+        let identity = identity.as_ref();
         Self {
-            target: target.clone(),
-            wait_for_reuse,
+            origin: identity.origin.clone(),
+            protocol: identity.protocol,
+            config: config.clone(),
         }
+    }
+}
+
+impl From<Checkout<ConnectTarget>> for Request<ConnectConfig> {
+    fn from(checkout: Checkout<ConnectTarget>) -> Self {
+        let ConnectTarget {
+            origin,
+            protocol,
+            config,
+        } = checkout.target;
+        Request::new_connect(origin, protocol, config)
     }
 }
 
@@ -489,14 +504,11 @@ where
     C: Send + Sync + 'static,
 {
     /// Assembles an entry and binds its cleanup to the key and entry identity.
-    fn new_entry(self: &Arc<Self>, key: &PoolKey<PoolTarget>) -> Box<dyn Entry<PoolTarget>>
+    #[must_use]
+    fn new_entry(self: &Arc<Self>, key: &PoolKey<conn::Identity>) -> BoxedEntry
     where
-        C: Service<
-                Request<ConnectConfig>,
-                Response = Conn,
-                Error = BoxError,
-                Future: Send + 'static,
-            > + Clone,
+        C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError> + Clone,
+        C::Future: Send + 'static,
     {
         let pool = Arc::downgrade(self);
         let entry_key = key.clone();
@@ -514,11 +526,13 @@ where
     }
 
     /// Reads the configured runtime clock.
+    #[must_use]
     fn now(&self) -> Instant {
         self.expire.now()
     }
 
     /// Returns the proactive idle-check interval when retained state exists.
+    #[must_use]
     fn expiration_interval(&self, has_retained: bool) -> Option<Duration> {
         self.idle_timeout
             .filter(|timeout| self.enabled && has_retained && *timeout != Duration::ZERO)
@@ -542,7 +556,7 @@ where
     }
 
     /// Removes an empty entry or reconciles its idle-group capacity tracking.
-    fn update_entry(self: &Arc<Self>, key: &PoolKey<PoolTarget>, state: &Arc<EntryState>) {
+    fn update_entry(self: &Arc<Self>, key: &PoolKey<conn::Identity>, state: &Arc<EntryState>) {
         let mut entries = self.entries.lock();
         let Some((empty, retained)) = entries
             .get_mut(key)
@@ -648,13 +662,13 @@ impl<C> PoolTargeter<C> {
     fn http1_pool<'layer, S>(
         &'layer self,
         state: &'layer Arc<EntryState>,
-        options: &'layer Options,
+        options: Option<&'layer Http1Options>,
     ) -> impl Layer<
         S,
-        Service = Cache<http1::Connect<S>, Checkout<PoolTarget>, cache::events::WithRuntime>,
+        Service = Cache<http1::Connect<S>, Checkout<ConnectTarget>, cache::events::WithRuntime>,
     > + use<'layer, C, S>
     where
-        S: Service<Checkout<PoolTarget>, Response = Established, Error = BoxError> + Clone,
+        S: Service<Checkout<ConnectTarget>, Response = Established, Error = BoxError> + Clone,
         S::Future: Started + Unpin,
     {
         ServiceBuilder::new()
@@ -672,93 +686,101 @@ impl<C> PoolTargeter<C> {
 
     /// Creates the HTTP/1 handshake layer.
     #[must_use]
-    fn http1_layer<'layer>(&'layer self, options: &'layer Options) -> http1::ConnectLayer<'layer> {
-        http1::ConnectLayer::new(
-            &self.http1,
-            options.http1.as_deref(),
-            &self.runtime,
-            self.set_host,
-        )
+    fn http1_layer<'layer>(
+        &'layer self,
+        options: Option<&'layer Http1Options>,
+    ) -> http1::ConnectLayer<'layer> {
+        http1::ConnectLayer::new(&self.runtime, &self.http1, options, self.set_host)
     }
 
     /// Creates the HTTP/2 handshake layer.
     #[must_use]
     #[cfg(feature = "http2")]
-    fn http2_layer<'layer>(&'layer self, options: &'layer Options) -> http2::ConnectLayer<'layer> {
-        http2::ConnectLayer::new(&self.http2, options.http2.as_deref(), &self.runtime)
+    fn http2_layer<'layer>(
+        &'layer self,
+        options: Option<&'layer Http2Options>,
+    ) -> http2::ConnectLayer<'layer> {
+        http2::ConnectLayer::new(&self.runtime, &self.http2, options)
     }
 
     /// Creates the HTTP/3 handshake layer.
     #[must_use]
     #[cfg(feature = "http3")]
-    fn http3_layer<'layer>(&'layer self, options: &'layer Options) -> http3::ConnectLayer<'layer> {
-        http3::ConnectLayer::new(&self.http3, options.http3.as_deref(), &self.runtime)
+    fn http3_layer<'layer>(
+        &'layer self,
+        options: Option<&'layer Http3Options>,
+    ) -> http3::ConnectLayer<'layer> {
+        http3::ConnectLayer::new(&self.runtime, &self.http3, options)
     }
 
     /// Builds only the pool components required by the target's protocol mode.
     ///
     /// A pool entry's builders use the effective HTTP options of that protocol.
-    fn service(&self, target: &PoolTarget, state: Arc<EntryState>) -> Box<dyn Entry<PoolTarget>>
+    #[must_use]
+    fn service(&self, identity: &conn::Identity, state: Arc<EntryState>) -> BoxedEntry
     where
-        C: Service<
-                Request<ConnectConfig>,
-                Response = Conn,
-                Error = BoxError,
-                Future: Send + 'static,
-            > + Clone
+        C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError>
+            + Clone
             + Send
             + 'static,
+        C::Future: Send + 'static,
     {
-        let (protocol, options) = (target.protocol, &target.options);
-        let connect = || ConnectionMaker {
+        let connector = || {
+            self.connector
+                .clone()
+                .map_request(Request::<ConnectConfig>::from)
+        };
+        let connect = || StreamMaker {
             runtime: self.runtime.clone(),
-            connector: self.connector.clone(),
+            connector: connector(),
             reuse_delay: self.reuse_delay,
         };
 
         // Fixed protocol modes use smaller service graphs; only Auto needs both
         // pools and negotiation: https://github.com/hyperium/hyper/issues/3948
-        match protocol {
+        match identity.protocol {
             Protocol::Http1 => {
-                let service = self.http1_pool(&state, options).layer(connect());
+                let service = self
+                    .http1_pool(&state, identity.http1.as_deref())
+                    .layer(connect());
                 Box::new(Http1Entry { service, state })
             }
-            #[cfg(feature = "http3")]
-            Protocol::Http3 => Box::new(MuxEntry {
-                service: ServiceBuilder::new()
-                    .layer_fn(Singleton::new)
-                    .layer(self.http3_layer(options))
-                    .service(self.connector.clone()),
-                state,
-            }),
             #[cfg(feature = "http2")]
             Protocol::Http2 => Box::new(MuxEntry {
                 service: ServiceBuilder::new()
                     .layer_fn(Singleton::new)
-                    .layer(self.http2_layer(options))
+                    .layer(self.http2_layer(identity.http2.as_deref()))
                     .service(connect()),
+                state,
+            }),
+            #[cfg(feature = "http3")]
+            Protocol::Http3 => Box::new(MuxEntry {
+                service: ServiceBuilder::new()
+                    .layer_fn(Singleton::new)
+                    .layer(self.http3_layer(identity.http3.as_deref()))
+                    .service(connector()),
                 state,
             }),
             Protocol::Auto => cfg_select! {
                 feature = "http2" => Box::new({
                     let inspect: fn(&Established) -> bool =
                         |established| established.connected().is_negotiated_h2();
-
                     let upgrade = ServiceBuilder::new()
                         .layer_fn(Singleton::new)
-                        .layer(self.http2_layer(options));
-
+                        .layer(self.http2_layer(identity.http2.as_deref()));
                     let service = Negotiate::new(
                         connect(),
                         inspect,
-                        self.http1_pool(&state, options),
+                        self.http1_pool(&state, identity.http1.as_deref()),
                         upgrade,
                     );
 
                     NegotiatedEntry { service, state }
                 }),
                 _ => Box::new({
-                    let service = self.http1_pool(&state, options).layer(connect());
+                    let service = self
+                        .http1_pool(&state, identity.http1.as_deref())
+                        .layer(connect());
                     Http1Entry { service, state }
                 }),
             },
@@ -766,14 +788,15 @@ impl<C> PoolTargeter<C> {
     }
 }
 
-// ===== impl ConnectionMaker =====
+// ===== impl StreamMaker =====
 
-impl<C> Service<Checkout<PoolTarget>> for ConnectionMaker<C>
+impl<C, T> Service<Checkout<T>> for StreamMaker<C>
 where
-    C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError, Future: Send + 'static>
+    C: Service<Checkout<T>, Response = Conn, Error = BoxError, Future: Send + 'static>
         + Clone
         + Send
         + 'static,
+    T: Send + 'static,
 {
     type Response = Established;
     type Error = BoxError;
@@ -783,7 +806,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, checkout: Checkout<PoolTarget>) -> Self::Future {
+    fn call(&mut self, checkout: Checkout<T>) -> Self::Future {
         let reuse_delay = if checkout.wait_for_reuse {
             self.reuse_delay
         } else {
@@ -807,7 +830,7 @@ where
             let Conn {
                 transport,
                 connected,
-            } = Oneshot::new(connector, checkout.target.into()).await?;
+            } = Oneshot::new(connector, checkout).await?;
 
             Ok(Established::new(
                 transport.into_stream()?,

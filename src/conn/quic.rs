@@ -55,12 +55,6 @@ pub(crate) struct Connect {
     dialer: Dialer,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Bindings<'a> {
-    addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
-    interface: Option<&'a str>,
-}
-
 // ===== impl Connect =====
 
 impl Connect {
@@ -71,7 +65,7 @@ impl Connect {
         proxies: Arc<Vec<Matcher>>,
         happy_eyeballs_timeout: Option<Duration>,
         tls: QuicTls,
-        client_config: &ConnectConfig,
+        connect_config: &ConnectConfig,
         #[cfg(feature = "socks")] dialer: Dialer,
     ) -> crate::Result<Self> {
         Ok(Self {
@@ -80,7 +74,7 @@ impl Connect {
                 resolver,
                 happy_eyeballs_timeout,
                 tls,
-                client_config,
+                connect_config,
             )?),
             proxies,
             #[cfg(feature = "socks")]
@@ -100,8 +94,6 @@ impl Service<Request<ConnectConfig>> for Connect {
     }
 
     fn call(&mut self, request: Request<ConnectConfig>) -> Self::Future {
-        let endpoints = self.endpoints.clone();
-
         let Some(intercepted) = request
             .body()
             .get_ref::<Matcher>()
@@ -112,7 +104,7 @@ impl Service<Request<ConnectConfig>> for Connect {
                     .find_map(|proxy| proxy.intercept(request.uri()))
             })
         else {
-            return Either::Left(Box::pin(async move { endpoints.connect(&request).await }));
+            return Either::Left(Box::pin(self.endpoints.clone().connect(request)));
         };
 
         match intercepted {
@@ -121,9 +113,11 @@ impl Service<Request<ConnectConfig>> for Connect {
                 Some("quic") if let Err(error) = quic_port(proxy.uri()) => {
                     Either::Right(future::err(ProxyConnect::Message(error).into()))
                 }
-                Some("quic") => Either::Left(Box::pin(async move {
-                    masque::connect(&endpoints, request, proxy).await
-                })),
+                Some("quic") => Either::Left(Box::pin(masque::connect(
+                    self.endpoints.clone(),
+                    request,
+                    proxy,
+                ))),
                 #[cfg(feature = "socks")]
                 Some(scheme @ ("socks5" | "socks5h")) => {
                     let dns = if scheme == "socks5h" {
@@ -131,10 +125,13 @@ impl Service<Request<ConnectConfig>> for Connect {
                     } else {
                         DnsResolve::Local
                     };
-                    let dialer = self.dialer.clone();
-                    Either::Left(Box::pin(async move {
-                        socks::connect(&endpoints, dialer, request, proxy, dns).await
-                    }))
+                    Either::Left(Box::pin(socks::connect(
+                        self.endpoints.clone(),
+                        self.dialer.clone(),
+                        request,
+                        proxy,
+                        dns,
+                    )))
                 }
                 _ => Either::Right(future::err(ProxyMismatch(QUIC_PROXY_REQUIRED).into())),
             },
@@ -147,14 +144,22 @@ impl Service<Request<ConnectConfig>> for Connect {
 }
 
 /// Binds a UDP socket for the address family of `remote` before the runtime registers it.
-fn bind_udp(bindings: Bindings<'_>, remote: SocketAddr) -> Result<UdpSocket, ConnectError> {
+fn bind_udp(connect_config: &ConnectConfig, remote: SocketAddr) -> Result<UdpSocket, ConnectError> {
     let address = match remote {
-        SocketAddr::V4(_) => {
-            SocketAddr::from((bindings.addresses.0.unwrap_or(Ipv4Addr::UNSPECIFIED), 0))
-        }
-        SocketAddr::V6(_) => {
-            SocketAddr::from((bindings.addresses.1.unwrap_or(Ipv6Addr::UNSPECIFIED), 0))
-        }
+        SocketAddr::V4(_) => SocketAddr::from((
+            connect_config
+                .get_ref::<Ipv4Addr>()
+                .copied()
+                .unwrap_or(Ipv4Addr::UNSPECIFIED),
+            0,
+        )),
+        SocketAddr::V6(_) => SocketAddr::from((
+            connect_config
+                .get_ref::<Ipv6Addr>()
+                .copied()
+                .unwrap_or(Ipv6Addr::UNSPECIFIED),
+            0,
+        )),
     };
 
     // Create a new UDP socket for the appropriate address family.
@@ -178,7 +183,8 @@ fn bind_udp(bindings: Bindings<'_>, remote: SocketAddr) -> Result<UdpSocket, Con
     }
 
     // Bind the socket to the specified interface, if provided.
-    bind_interface(&socket, address, bindings.interface)
+    let interface = connect_config.get_ref::<Arc<str>>().map(Arc::as_ref);
+    bind_interface(&socket, address, interface)
         .map_err(ConnectError::m("quic bind interface error"))?;
 
     // Bind the socket to the local address.

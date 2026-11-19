@@ -65,16 +65,16 @@ pub enum MaybeHttpsStream<T> {
 
 impl StreamTls {
     /// Compiles the client's TLS context while preserving the shared session scope.
-    pub(super) fn new(tls: Config, config: &ConnectConfig) -> crate::Result<Self> {
+    pub(super) fn new(tls: Config, connect_config: &ConnectConfig) -> crate::Result<Self> {
         Ok(Self {
-            contexts: Arc::new(TlsContext::new(tls, config, compile)?),
+            contexts: Arc::new(TlsContext::new(tls, connect_config, compile)?),
         })
     }
 
     /// Selects the context for the request's TLS options before dialing.
     /// Requests without different context options keep the client's context.
-    pub(crate) fn for_config(self, overrides: &ConnectConfig) -> crate::Result<TlsConnector> {
-        let context = self.contexts.for_config(overrides, compile)?;
+    pub(crate) fn for_config(self, connect_config: &ConnectConfig) -> crate::Result<TlsConnector> {
+        let context = self.contexts.for_config(connect_config, compile)?;
         Ok(TlsConnector {
             tls: self,
             context,
@@ -93,13 +93,12 @@ impl TlsConnector {
         &self,
         origin: &Uri,
         protocol: Protocol,
-        overrides: &ConnectConfig,
+        connect_config: &ConnectConfig,
         route: &Uri,
         remote_ip: Option<IpAddr>,
     ) -> Result<Ssl, BoxError> {
         let contexts = &self.tls.contexts;
-        let options = overrides.get_ref::<TlsOptions>();
-        let options = options.or(contexts.options.as_deref());
+        let options = connect_config.get_ref::<TlsOptions>();
         let mut cfg = self.context.configure()?;
 
         cfg.set_use_server_name_indication(contexts.tls.sni);
@@ -117,7 +116,7 @@ impl TlsConnector {
             let auto = || {
                 options
                     .into_iter()
-                    .chain(contexts.options.as_deref())
+                    .chain(connect_config.base_ref::<TlsOptions>())
                     .filter_map(|options| options.alpn_protocols.as_deref())
                     .find(|protocols| !protocols.is_empty())
                     .unwrap_or(&[
@@ -172,8 +171,7 @@ impl TlsConnector {
             let tickets = &contexts.tls.tickets;
             let target = SessionTarget::new(
                 origin,
-                overrides,
-                &contexts.client_config,
+                connect_config,
                 route,
                 Transport::Stream,
                 remote_ip,
@@ -241,14 +239,14 @@ impl TlsConnector {
         io: IO,
         origin: &Uri,
         protocol: Protocol,
-        overrides: &ConnectConfig,
+        connect_config: &ConnectConfig,
         route: &Uri,
         remote_ip: Option<IpAddr>,
     ) -> Result<SslStream<IO>, BoxError>
     where
         IO: AsyncRead + AsyncWrite + Unpin,
     {
-        let ssl = self.ssl_for_connection(origin, protocol, overrides, route, remote_ip)?;
+        let ssl = self.ssl_for_connection(origin, protocol, connect_config, route, remote_ip)?;
         let mut stream = SslStream::new(ssl, io)?;
         Pin::new(&mut stream).connect().await?;
         Ok(stream)

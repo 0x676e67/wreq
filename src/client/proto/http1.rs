@@ -100,15 +100,15 @@ impl<'a> ConnectLayer<'a> {
     /// Borrows the builder and per-entry overrides until the service is assembled.
     #[must_use]
     pub fn new(
+        runtime: &'a DynRuntime,
         builder: &'a Arc<conn::http1::Builder>,
         options: Option<&'a Http1Options>,
-        runtime: &'a DynRuntime,
         set_host: bool,
     ) -> Self {
         Self {
+            runtime,
             builder,
             options,
-            runtime,
             set_host,
         }
     }

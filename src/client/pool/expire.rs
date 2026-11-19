@@ -112,12 +112,9 @@ where
         let runtime = self.runtime.clone();
         let mut shutdown = self.shutdown.subscribe();
 
-        // Off a runtime thread, as when a pooled value drops there, the task comes back
-        // and is dropped; checkouts still reject expired connections. Claiming `running`
-        // only once polled keeps such a task from hiding a concurrent schedule's request.
-        // Each schedule before the first task is polled spawns its own task; the extras
-        // exit on a failed claim.
-        let _ = self.runtime.try_execute(Box::pin(async move {
+        // Claim on first poll so a task queued on a paused runtime cannot block a
+        // watcher from starting on another runtime.
+        self.runtime.execute(Box::pin(async move {
             if !running.claim() {
                 return;
             }
@@ -255,8 +252,6 @@ mod tests {
                 DynRuntime::new(crate::rt::tokio::TokioRuntime),
             );
             expire.schedule(Some(Duration::from_mins(1)));
-            // Only a polled task claims the watcher, so one a runtime hands back never
-            // turns away a concurrent schedule.
             assert!(!expire.is_running());
             tokio::task::yield_now().await;
             expire

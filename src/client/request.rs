@@ -809,8 +809,8 @@ impl RequestBuilder {
     /// original header names append. Group, proxy, version, and socket settings stay.
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            let Emulation(headers, orig_headers, config) = emulation.into_emulation();
-            req.connect_config_mut().extend(config);
+            let Emulation(headers, orig_headers, connect_config) = emulation.into_emulation();
+            req.connect_config_mut().extend(connect_config);
             let builder = self.headers(headers);
             return if orig_headers.is_empty() {
                 builder

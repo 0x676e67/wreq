@@ -27,15 +27,16 @@ use futures_util::{
     TryFutureExt,
     future::{BoxFuture, Either, select},
 };
-use http::Uri;
+use http::{Request, Uri};
 use tower::Service;
 
 pub(super) use self::race::Race;
 use crate::{
     config::connect::ConnectConfig,
+    conn::ConnectRequestExt,
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
-    rt::{BoxConnection, DynRuntime, Timer as _},
+    rt::{Connection, DynRuntime, Timer as _},
 };
 
 const CONNECT_TIMEOUT: &str = "connect timeout";
@@ -44,10 +45,11 @@ const CONNECT_TIMEOUT: &str = "connect timeout";
 pub(super) enum Dial {
     Tcp {
         uri: Uri,
+        addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+        interface: Option<Arc<str>>,
         /// Disables Nagle for this dial even when the client leaves it enabled.
         nodelay: bool,
         deadline: Option<Instant>,
-        config: ConnectConfig,
     },
     #[cfg(unix)]
     Unix(Arc<Path>),
@@ -99,7 +101,6 @@ struct State {
     runtime: DynRuntime,
     resolver: DynResolver,
     tcp: tcp::Config,
-    client_config: ConnectConfig,
     happy_eyeballs_timeout: Option<Duration>,
 }
 
@@ -107,6 +108,25 @@ struct State {
 #[derive(Clone)]
 pub(super) struct Dialer {
     state: Arc<State>,
+}
+
+// ===== impl Dial =====
+
+impl Dial {
+    /// Prepares the socket dial for `uri`, which may be a proxy rather than the origin.
+    pub(super) fn tcp(request: &Request<ConnectConfig>, uri: Uri, nodelay: bool) -> Self {
+        let connect_config = request.body();
+        Self::Tcp {
+            uri,
+            addresses: (
+                connect_config.get_ref::<Ipv4Addr>().copied(),
+                connect_config.get_ref::<Ipv6Addr>().copied(),
+            ),
+            interface: connect_config.get_ref::<Arc<str>>().cloned(),
+            nodelay,
+            deadline: request.deadline(),
+        }
+    }
 }
 
 // ===== impl Dialer =====
@@ -117,7 +137,6 @@ impl Dialer {
         runtime: DynRuntime,
         resolver: DynResolver,
         tcp: tcp::Config,
-        client_config: ConnectConfig,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         Self {
@@ -125,7 +144,6 @@ impl Dialer {
                 runtime,
                 resolver,
                 tcp,
-                client_config,
                 happy_eyeballs_timeout,
             }),
         }
@@ -133,7 +151,7 @@ impl Dialer {
 }
 
 impl Service<Dial> for Dialer {
-    type Response = BoxConnection;
+    type Response = Box<dyn Connection>;
     type Error = BoxError;
     type Future = cfg_select! {
         unix => {
@@ -154,18 +172,13 @@ impl Service<Dial> for Dialer {
         match dial {
             Dial::Tcp {
                 uri,
-                config,
+                addresses,
+                interface,
                 deadline,
                 nodelay,
             } => {
                 let nodelay = nodelay || self.state.tcp.nodelay;
                 let state = self.state.clone();
-                let addresses = (
-                    config.get_or::<Ipv4Addr>(&state.client_config).copied(),
-                    config.get_or::<Ipv6Addr>(&state.client_config).copied(),
-                );
-                let interface = config.get_or::<Arc<str>>(&state.client_config).cloned();
-
                 // Start the TCP connection attempt with Happy Eyeballs and deadline handling.
                 let connect = async move {
                     let (host, port) = tcp::get_host_port(&uri)?;
@@ -173,6 +186,7 @@ impl Service<Dial> for Dialer {
                         state.resolver.resolve(name)
                     })
                     .await?;
+
                     Race::new(state.happy_eyeballs_timeout, |duration| {
                         state.runtime.sleep(duration)
                     })
@@ -406,50 +420,49 @@ mod tests {
 
     #[test]
     fn bindings_inherit_only_unspecified_fields() {
-        let mut client_config = ConnectConfig::default();
-        client_config
+        let mut connect_config = ConnectConfig::default();
+        connect_config
             .insert(Ipv4Addr::LOCALHOST)
             .insert(Ipv6Addr::LOCALHOST)
             .insert(Arc::<str>::from("lo"));
-        let mut request_config = ConnectConfig::default();
+        let mut connect_config = ConnectConfig::default().with_base(&connect_config);
         assert_eq!(
-            (
-                request_config.get_or::<Ipv4Addr>(&client_config).copied(),
-                request_config.get_or::<Ipv6Addr>(&client_config).copied(),
-            ),
-            (Some(Ipv4Addr::LOCALHOST), Some(Ipv6Addr::LOCALHOST))
+            connect_config.get_ref::<Ipv4Addr>(),
+            Some(&Ipv4Addr::LOCALHOST)
         );
-        request_config
+        assert_eq!(
+            connect_config.get_ref::<Ipv6Addr>(),
+            Some(&Ipv6Addr::LOCALHOST)
+        );
+        connect_config
             .insert(Ipv4Addr::UNSPECIFIED)
             .insert_if_some(None::<Ipv6Addr>);
         assert_eq!(
-            (
-                request_config.get_or::<Ipv4Addr>(&client_config).copied(),
-                request_config.get_or::<Ipv6Addr>(&client_config).copied(),
-            ),
-            (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::LOCALHOST))
+            connect_config.get_ref::<Ipv4Addr>(),
+            Some(&Ipv4Addr::UNSPECIFIED)
         );
         assert_eq!(
-            request_config
-                .get_or::<Arc<str>>(&client_config)
-                .map(Arc::as_ref),
+            connect_config.get_ref::<Ipv6Addr>(),
+            Some(&Ipv6Addr::LOCALHOST)
+        );
+        assert_eq!(
+            connect_config.get_ref::<Arc<str>>().map(Arc::as_ref),
             Some("lo")
         );
-        request_config
+        connect_config
             .insert_if_some(None::<Ipv4Addr>)
             .insert_if_some(Some(Ipv6Addr::UNSPECIFIED))
             .insert(Arc::<str>::from("eth0"));
         assert_eq!(
-            (
-                request_config.get_or::<Ipv4Addr>(&client_config).copied(),
-                request_config.get_or::<Ipv6Addr>(&client_config).copied(),
-            ),
-            (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::UNSPECIFIED))
+            connect_config.get_ref::<Ipv4Addr>(),
+            Some(&Ipv4Addr::UNSPECIFIED)
         );
         assert_eq!(
-            request_config
-                .get_or::<Arc<str>>(&client_config)
-                .map(Arc::as_ref),
+            connect_config.get_ref::<Ipv6Addr>(),
+            Some(&Ipv6Addr::UNSPECIFIED)
+        );
+        assert_eq!(
+            connect_config.get_ref::<Arc<str>>().map(Arc::as_ref),
             Some("eth0")
         );
     }

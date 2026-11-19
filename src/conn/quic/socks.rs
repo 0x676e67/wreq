@@ -36,12 +36,12 @@ use super::{
 use crate::{
     config::connect::ConnectConfig,
     conn::{
-        Conn, ConnectRequestExt,
+        Conn,
         dialer::{ConnectError, Dial, Dialer},
     },
     error::ProxyConnect,
     proxy::matcher::Intercept,
-    rt::BoxConnection,
+    rt::Connection,
     sync::Mutex,
 };
 
@@ -80,7 +80,7 @@ struct Socket {
 /// `notify` wakes senders once `closed` is set; `ended` signals the endpoint's watcher once.
 #[derive(Debug)]
 struct Shared {
-    association: Mutex<Option<UdpAssociation<BoxConnection>>>,
+    association: Mutex<Option<UdpAssociation<Box<dyn Connection>>>>,
     target: Address,
     header: Vec<u8>,
     closed: AtomicBool,
@@ -103,7 +103,7 @@ pin_project! {
 
 /// Resolves SOCKS5 targets locally or delegates SOCKS5h target names to the proxy.
 pub(super) async fn connect(
-    endpoints: &Endpoints,
+    endpoints: Arc<Endpoints>,
     dialer: Dialer,
     request: Request<ConnectConfig>,
     proxy: Intercept,
@@ -111,18 +111,14 @@ pub(super) async fn connect(
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
     let config = endpoints.tunnel_config(&request)?;
-    let deadline = request.deadline();
     let uri = request.uri();
     let host = crate::util::strip_ipv6_brackets(uri.host().ok_or(URI_MISSING_HOST)?);
     let port = uri.port_u16().unwrap_or(443);
     // The control connection takes the request's bindings, like the relay socket.
     let dial = || {
-        dialer.clone().oneshot(Dial::Tcp {
-            uri: proxy.uri().clone(),
-            config: request.body().clone(),
-            nodelay: false,
-            deadline,
-        })
+        dialer
+            .clone()
+            .oneshot(Dial::tcp(&request, proxy.uri().clone(), false))
     };
 
     if dns == DnsResolve::Remote {
@@ -130,7 +126,7 @@ pub(super) async fn connect(
             Ok(ip) => Address::Ip((ip, port).into()),
             Err(_) => Address::Domain(host.into(), port),
         };
-        return Ok(connect_target(endpoints, &request, dial(), &proxy, &config, target).await?);
+        return Ok(connect_target(&endpoints, &request, dial(), &proxy, &config, target).await?);
     }
 
     let addresses = endpoints.resolve(host, port, uri.port().is_some()).await?;
@@ -140,7 +136,7 @@ pub(super) async fn connect(
         .race(addresses, (None, None), |address| {
             let target = Address::Ip(address);
             let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
-                endpoints,
+                &endpoints,
                 &request,
                 dial(),
                 &proxy,
@@ -157,7 +153,7 @@ pub(super) async fn connect(
 async fn connect_target(
     endpoints: &Endpoints,
     request: &Request<ConnectConfig>,
-    dial: impl Future<Output = Result<BoxConnection, BoxError>>,
+    dial: impl Future<Output = Result<Box<dyn Connection>, BoxError>>,
     proxy: &Intercept,
     config: &QuicConfig,
     target: Address,
@@ -273,16 +269,20 @@ fn relay_socket(
     request: &Request<ConnectConfig>,
     remote: SocketAddr,
 ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-    let bindings = endpoints.bindings(request.body());
+    let connect_config = request.body();
     if matches!(
-        (bindings.addresses.0, bindings.addresses.1, remote),
+        (
+            connect_config.get_ref::<Ipv4Addr>(),
+            connect_config.get_ref::<Ipv6Addr>(),
+            remote
+        ),
         (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
     ) {
         return Err("relay address does not match local bindings".into());
     }
     Ok(endpoints
         .runtime()
-        .udp_socket(bind_udp(bindings, remote)?)?)
+        .udp_socket(bind_udp(connect_config, remote)?)?)
 }
 
 /// Labels a failed proxy stage, keeping it a proxy connect error.
@@ -295,7 +295,7 @@ fn proxy_error<E: Into<BoxError>>(stage: &'static str) -> impl FnOnce(E) -> Conn
 impl Socket {
     fn new(
         socket: Box<dyn AsyncUdpSocket>,
-        association: UdpAssociation<BoxConnection>,
+        association: UdpAssociation<Box<dyn Connection>>,
         relay: SocketAddr,
         target: Address,
     ) -> io::Result<Self> {

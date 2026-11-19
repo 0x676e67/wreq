@@ -14,7 +14,7 @@ use crate::{
     },
     ext::UriExt,
     proxy::Intercepted,
-    rt::{BoxConnection, Connection},
+    rt::Connection,
     tls::connector::{MaybeHttpsStream, TlsConnector},
 };
 
@@ -33,10 +33,8 @@ pub(super) fn connect(
     tls: &TlsConnector,
     request: &Request<ConnectConfig>,
     route: &Intercepted,
-) -> impl Future<Output = Result<MaybeHttpsStream<BoxConnection>, TunnelError>> + Send {
+) -> impl Future<Output = Result<MaybeHttpsStream<Box<dyn Connection>>, TunnelError>> + Send {
     let target = request.uri().clone();
-    let deadline = request.deadline();
-    let config = request.body().clone();
     let (proxy_uri, proxy) = match route {
         Intercepted::Proxy(proxy) => (proxy.uri().clone(), Some(proxy)),
         #[cfg(unix)]
@@ -46,12 +44,7 @@ pub(super) fn connect(
     let hop = service_fn(move |uri: Uri| {
         let dialer = dialer.clone();
         let dial = match route {
-            Intercepted::Proxy(_) => Dial::Tcp {
-                uri: uri.clone(),
-                config: config.clone(),
-                deadline,
-                nodelay: true,
-            },
+            Intercepted::Proxy(_) => Dial::tcp(request, uri.clone(), true),
             #[cfg(unix)]
             Intercepted::Unix(path) => Dial::Unix(path.clone()),
         };
@@ -69,11 +62,11 @@ pub(super) fn connect(
         });
         async move {
             let io = dialer.oneshot(dial).await?;
-            let Some((tls, origin, protocol, config)) = tls else {
+            let Some((tls, origin, protocol, connect_config)) = tls else {
                 return Ok(MaybeHttpsStream::Http(io));
             };
             let remote_ip = io.peer_addr().map(|addr| addr.ip());
-            tls.handshake(io, &origin, protocol, &config, &uri, remote_ip)
+            tls.handshake(io, &origin, protocol, &connect_config, &uri, remote_ip)
                 .await
                 .map(MaybeHttpsStream::Https)
         }

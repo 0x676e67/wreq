@@ -61,21 +61,6 @@ fn compio_client_uses_its_own_dns_io_and_timer() {
 }
 
 #[test]
-fn compio_try_execute_returns_tasks_without_a_runtime() {
-    use wreq::rt::{Runtime as _, compio::CompioRuntime};
-
-    let (done, ran) = tokio::sync::oneshot::channel();
-    // Outside a Compio runtime the task comes back instead of panicking.
-    let task = CompioRuntime
-        .try_execute(Box::pin(async move { done.send(()).unwrap() }))
-        .unwrap_err();
-    compio::runtime::Runtime::new().unwrap().block_on(async {
-        assert!(CompioRuntime.try_execute(task).is_ok());
-        ran.await.unwrap();
-    });
-}
-
-#[test]
 fn oversized_timeouts_do_not_overflow() {
     let server = support::server::http(|_| async { http::Response::new(Body::from("ok")) });
     let url = format!("http://{}/", server.addr());

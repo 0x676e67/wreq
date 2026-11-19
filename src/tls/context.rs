@@ -17,25 +17,20 @@ static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
 /// A connection configures its own copy of a compiled context for the handshake.
 pub(super) struct TlsContext<O, T> {
     pub(super) tls: Config,
-    pub(super) client_config: ConnectConfig,
-    pub(super) options: Option<Arc<O>>,
-    client_context: T,
+    context: T,
     requests: Mutex<LruCache<u64, (Arc<O>, T)>>,
 }
 
 impl<O: ContextOptions, T: Clone> TlsContext<O, T> {
     pub(super) fn new(
         tls: Config,
-        client_config: &ConnectConfig,
+        config: &ConnectConfig,
         compile: impl FnOnce(&Config, Option<&O>) -> Result<T>,
     ) -> Result<Self> {
-        let options = client_config.get_arc::<O>();
-        let client_context = compile(&tls, options.as_deref())?;
+        let context = compile(&tls, config.get_ref())?;
         Ok(Self {
             tls,
-            client_config: client_config.clone(),
-            options,
-            client_context,
+            context,
             requests: Mutex::new(LruCache::sparse(REQUEST_CONTEXTS)),
         })
     }
@@ -44,33 +39,27 @@ impl<O: ContextOptions, T: Clone> TlsContext<O, T> {
     /// Compilation runs outside the lock, so concurrent misses can compile the same context.
     pub(super) fn for_config(
         &self,
-        overrides: &ConnectConfig,
+        config: &ConnectConfig,
         compile: impl FnOnce(&Config, Option<&O>) -> Result<T>,
     ) -> Result<T> {
-        let Some(options) = overrides.get_arc::<O>() else {
-            return Ok(self.client_context.clone());
+        let Some(value) = config.override_if_different(O::same_context) else {
+            return Ok(self.context.clone());
         };
-        if self
-            .options
-            .as_ref()
-            .is_some_and(|client| client.same_context(&options))
-        {
-            return Ok(self.client_context.clone());
-        }
 
         let mut hasher = HASHER.build_hasher();
-        options.hash_context(&mut hasher);
+        value.hash_context(&mut hasher);
         let hash = hasher.finish();
         // A fingerprint collision is a cache miss, so compare the compiled options on a hit.
         if let Some((cached, context)) = self.requests.lock().get(&hash)
-            && cached.same_context(&options)
+            && cached.same_context(value)
         {
             return Ok(context.clone());
         }
 
-        let context = compile(&self.tls, Some(&options))?;
+        let context = compile(&self.tls, Some(value))?;
+        let entry = (value.clone(), context.clone());
         // An evicted context is freed after the lock is released.
-        let _evicted = self.requests.lock().push(hash, (options, context.clone()));
+        let _evicted = self.requests.lock().push(hash, entry);
         Ok(context)
     }
 }

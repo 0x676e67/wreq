@@ -6,7 +6,6 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-use http::Request;
 use netty::{conn, http3::Http3Options, rt::quic::Compat};
 use tower::{BoxError, Layer, Service, ServiceExt};
 
@@ -14,13 +13,7 @@ use super::{
     configure,
     mux::{Connection, Sender},
 };
-use crate::{
-    Body,
-    client::pool::{Checkout, PoolTarget},
-    config::connect::ConnectConfig,
-    conn::Conn,
-    rt::DynRuntime,
-};
+use crate::{Body, conn::Conn, rt::DynRuntime};
 
 /// Layers HTTP/3 handshaking over a QUIC connector.
 pub struct ConnectLayer<'a> {
@@ -45,14 +38,14 @@ impl<'a> ConnectLayer<'a> {
     /// Borrows the builder and per-entry overrides until the service is assembled.
     #[must_use]
     pub fn new(
+        runtime: &'a DynRuntime,
         builder: &'a Arc<conn::http3::Builder<DynRuntime>>,
         options: Option<&'a Http3Options>,
-        runtime: &'a DynRuntime,
     ) -> Self {
         Self {
+            runtime,
             builder,
             options,
-            runtime,
         }
     }
 }
@@ -71,12 +64,13 @@ impl<C> Layer<C> for ConnectLayer<'_> {
 
 // ===== impl Connect =====
 
-impl<C> Service<Checkout<PoolTarget>> for Connect<C>
+impl<C, Dst> Service<Dst> for Connect<C>
 where
-    C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError, Future: Send + 'static>
+    C: Service<Dst, Response = Conn, Error = BoxError, Future: Send + 'static>
         + Clone
         + Send
         + 'static,
+    Dst: Send + 'static,
 {
     type Response = Connection;
     type Error = BoxError;
@@ -87,7 +81,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, checkout: Checkout<PoolTarget>) -> Self::Future {
+    fn call(&mut self, target: Dst) -> Self::Future {
         let mut connector = self.connector.clone();
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
@@ -97,7 +91,7 @@ where
             let Conn {
                 transport,
                 connected,
-            } = connector.call(checkout.target.into()).await?;
+            } = connector.call(target).await?;
 
             // Convert the transport into a QUIC connection and endpoint.
             let (quic, endpoint) = transport.into_quic()?;

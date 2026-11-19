@@ -12,7 +12,6 @@ use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 
 use crate::{
-    config::connect::ConnectConfig,
     conn::ConnectDeadline,
     error::TimedOut,
     rt::{BoxSleep, DynRuntime, Timer as _, deadline_after},
@@ -74,9 +73,9 @@ impl<S> Layer<S> for DeadlineLayer {
 
 // ===== impl Deadline =====
 
-impl<S> Service<Request<ConnectConfig>> for Deadline<S>
+impl<S, B> Service<Request<B>> for Deadline<S>
 where
-    S: Service<Request<ConnectConfig>>,
+    S: Service<Request<B>>,
     S::Error: Into<BoxError>,
 {
     type Response = S::Response;
@@ -88,7 +87,7 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, mut request: Request<ConnectConfig>) -> Self::Future {
+    fn call(&mut self, mut request: Request<B>) -> Self::Future {
         let deadline = self
             .timeout
             .map(|timeout| deadline_after(self.runtime.now(), timeout));

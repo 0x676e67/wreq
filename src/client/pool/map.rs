@@ -25,7 +25,6 @@ use lru::LruCache;
 pub(super) struct Map<K, S> {
     /// Services indexed by connection compatibility key.
     entries: HashMap<K, S>,
-
     /// Retained-group LRU; stale markers are reconciled before capacity eviction.
     retained: Option<LruCache<K, ()>>,
 }

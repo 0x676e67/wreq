@@ -2360,13 +2360,6 @@ async fn runtime_resolver_is_used_without_dns_configuration() {
             TokioRuntime.execute(future);
         }
 
-        fn try_execute(
-            &self,
-            future: BoxFuture<'static, ()>,
-        ) -> Result<(), BoxFuture<'static, ()>> {
-            TokioRuntime.try_execute(future)
-        }
-
         fn connect_tcp(&self, socket: std::net::TcpStream, address: SocketAddr) -> Connecting {
             Runtime::connect_tcp(&TokioRuntime, socket, address)
         }

@@ -33,17 +33,17 @@ use crate::{
 pub(in crate::client) struct Pooled {
     /// HTTP/1 cache checkout or HTTP/2 or HTTP/3 singleton checkout.
     inner: PooledInner,
-
     /// Whether healthy senders should return to their pool.
     pool_enabled: bool,
-
     /// Runs pending entry maintenance after `inner` drops.
     cleanup: EntryCleanupGuard,
 }
 
 /// HTTP sender selected for one pool checkout.
 enum PooledInner {
+    /// HTTP/1 sender.
     Http1(Cached<http1::Connection>),
+    /// HTTP/2 or HTTP/3 sender.
     #[cfg(any(feature = "http2", feature = "http3"))]
     Mux(MuxSingled),
 }

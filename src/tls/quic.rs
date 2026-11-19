@@ -64,8 +64,12 @@ struct Attempt {
 
 impl QuicTls {
     /// Compiles the client's QUIC TLS context and retains its initial QUIC options.
-    pub(super) fn new(tls: Config, config: &ConnectConfig) -> Result<Self> {
-        Ok(Self(Arc::new(TlsContext::new(tls, config, compile)?)))
+    pub(super) fn new(tls: Config, connect_config: &ConnectConfig) -> Result<Self> {
+        Ok(Self(Arc::new(TlsContext::new(
+            tls,
+            connect_config,
+            compile,
+        )?)))
     }
 
     /// Returns whether responses carry the peer's [`TlsInfo`](crate::tls::TlsInfo).
@@ -83,7 +87,7 @@ impl QuicTls {
         &self,
         origin: &Uri,
         route: &Uri,
-        overrides: &ConnectConfig,
+        connect_config: &ConnectConfig,
     ) -> Result<QuicTlsConfig> {
         let contexts = &self.0;
         if contexts
@@ -94,11 +98,9 @@ impl QuicTls {
             return Err(Error::tls("HTTP/3 requires TLS 1.3"));
         }
 
-        let mut crypto = contexts.for_config(overrides, compile)?;
+        let mut crypto = contexts.for_config(connect_config, compile)?;
 
-        let options = overrides
-            .get_arc::<QuicOptions>()
-            .or_else(|| contexts.options.clone());
+        let options = connect_config.get_arc::<QuicOptions>();
         let resumption = options
             .as_ref()
             .is_some_and(|options| options.pre_shared_key);
@@ -116,8 +118,7 @@ impl QuicTls {
             let tickets = contexts.tls.tickets.clone();
             let target = SessionTarget::new(
                 origin,
-                overrides,
-                &contexts.client_config,
+                connect_config,
                 route,
                 Transport::Quic,
                 None,
@@ -328,13 +329,13 @@ mod tests {
         use btls::ssl::SslContextRef;
 
         use super::*;
-        use crate::{conn::options::Options, group::Group, protocol::Protocol, tls::KeyShare};
+        use crate::{group::Group, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
         let overrides = |grease: Option<bool>, group| {
-            let mut config = ConnectConfig::default();
+            let mut connect_config = ConnectConfig::default();
             if let Some(group) = group {
-                config.insert(Group::new(group));
+                connect_config.insert(Group::new(group));
             }
             if let Some(grease) = grease {
                 let options = QuicOptions::builder()
@@ -346,9 +347,9 @@ mod tests {
                 } else {
                     options
                 };
-                config.insert(options.build());
+                connect_config.insert(options.build());
             }
-            Options::new(Protocol::Http3, &config, &ConnectConfig::default()).into_config()
+            connect_config
         };
         let uri = Uri::from_static("https://localhost/");
         let tls = Config::default().quic(&ConnectConfig::default()).unwrap();

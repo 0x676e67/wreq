@@ -49,10 +49,8 @@ use crate::sync::Mutex;
 pub(super) struct Negotiate<L, R, S> {
     /// Pool used when inspection rejects the upgraded protocol.
     fallback: L,
-
     /// Pool used when inspection accepts the upgraded protocol.
     upgrade: R,
-
     /// Upgraded connections waiting to enter the singleton.
     pending: Arc<Mutex<VecDeque<S>>>,
 }

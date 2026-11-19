@@ -67,7 +67,7 @@ impl Connect {
             verbose,
             ..
         }: Config,
-        config: &ConnectConfig,
+        connect_config: &ConnectConfig,
     ) -> crate::Result<Self> {
         let tcp_nodelay = tcp.nodelay;
         let proxies = Arc::new(proxies);
@@ -75,7 +75,6 @@ impl Connect {
             runtime.clone(),
             resolver.clone(),
             tcp,
-            config.clone(),
             happy_eyeballs_timeout,
         );
 
@@ -85,8 +84,8 @@ impl Connect {
             resolver.clone(),
             proxies.clone(),
             happy_eyeballs_timeout,
-            tls.clone().quic(config)?,
-            config,
+            tls.clone().quic(connect_config)?,
+            connect_config,
             #[cfg(feature = "socks")]
             dialer.clone(),
         )?;
@@ -94,7 +93,7 @@ impl Connect {
         let stream = stream::Connect::new(
             dialer,
             proxies,
-            tls.stream(config)?,
+            tls.stream(connect_config)?,
             tcp_nodelay,
             #[cfg(feature = "socks")]
             resolver,

@@ -30,13 +30,13 @@ use {
 
 use super::{
     error::{Error, ErrorKind},
-    pool::{self, PoolKey, PoolTarget},
+    pool::{self, PoolKey},
     request::RequestVersion,
 };
 use crate::{
     Body,
     config::{connect::ConnectConfig, request::RequestConfig},
-    conn::{self, BoxedConnectLayer, Conn, options::Options},
+    conn::{self, BoxedConnectLayer, Conn},
     dns::DynResolver,
     ext::UriExt,
     protocol::Protocol,
@@ -61,7 +61,7 @@ pub(super) struct Config {
 pub(super) struct Client<S = Dispatch<conn::Connect>> {
     inner: S,
     protocol: Protocol,
-    config: ConnectConfig,
+    connect_config: ConnectConfig,
     retry_unsent: bool,
 }
 
@@ -107,7 +107,8 @@ struct Original {
 /// Dispatch returns this value only when the original body has not been sent.
 pub(super) struct DispatchRequest<B> {
     request: Request<B>,
-    pool_key: PoolKey<PoolTarget>,
+    pool_key: PoolKey<conn::Identity>,
+    connect_config: ConnectConfig,
     /// Whether checkout always connects and never returns the sender to the pool.
     #[cfg(feature = "ws")]
     dedicated: bool,
@@ -115,7 +116,7 @@ pub(super) struct DispatchRequest<B> {
     negotiable: bool,
     /// Default-group key whose established sender may carry this WebSocket.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-    extended_connect_key: Option<PoolKey<PoolTarget>>,
+    extended_connect_key: Option<PoolKey<conn::Identity>>,
 }
 
 /// Performs one connection-pool checkout and protocol send attempt.
@@ -209,7 +210,7 @@ impl Client {
         Ok(Self {
             inner: dispatch,
             protocol: config.protocol,
-            config: config.connect_config,
+            connect_config: config.connect_config,
             retry_unsent: true,
         })
     }
@@ -289,6 +290,8 @@ impl<S> Client<S> {
                 .with_context("HTTP/3 requires an https URI"));
         }
 
+        let connect_config = connect_config.with_base(&self.connect_config);
+
         // Probe the default group only where it may be HTTP/2, or HTTP/3 over https. Without
         // Alt-Svc discovery, an automatic client's explicit HTTP/3 group is not probed.
         #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
@@ -300,11 +303,12 @@ impl<S> Client<S> {
                 Protocol::Http3 => uri.is_https(),
                 _ => false,
             })
-        .then(|| self.pool_key(origin.clone(), self.protocol, &connect_config));
+        .then(|| Self::pool_key(origin.clone(), self.protocol, &connect_config));
 
         Ok(DispatchRequest {
             request,
-            pool_key: self.pool_key(origin, protocol, &connect_config),
+            pool_key: Self::pool_key(origin, protocol, &connect_config),
+            connect_config,
             #[cfg(feature = "ws")]
             dedicated: dedicated.is_some(),
             negotiable,
@@ -315,16 +319,11 @@ impl<S> Client<S> {
 
     #[must_use]
     fn pool_key(
-        &self,
         origin: Uri,
         protocol: Protocol,
-        config: &ConnectConfig,
-    ) -> PoolKey<PoolTarget> {
-        PoolKey::new(PoolTarget {
-            origin,
-            protocol,
-            options: Options::new(protocol, config, &self.config),
-        })
+        connect_config: &ConnectConfig,
+    ) -> PoolKey<conn::Identity> {
+        PoolKey::new(conn::Identity::new(origin, protocol, connect_config))
     }
 }
 
@@ -480,9 +479,11 @@ where
             feature = "ws" => request.dedicated,
             _ => false,
         };
+
+        let make = || pool::ConnectTarget::new(&request.pool_key, &request.connect_config);
         let pooled = match reused {
             Some(pooled) => pooled,
-            None => match self.pool.checkout(&request.pool_key, dedicated).await {
+            None => match self.pool.checkout(&request.pool_key, make, dedicated).await {
                 Ok(pooled) => pooled,
                 Err(error) if pool::is_canceled(&*error) => {
                     return Err(DispatchError::CheckoutCanceled {
@@ -913,7 +914,7 @@ mod tests {
         Client {
             inner: service,
             protocol,
-            config: ConnectConfig::default(),
+            connect_config: ConnectConfig::default(),
             retry_unsent,
         }
     }
@@ -1047,6 +1048,64 @@ mod tests {
                 .unwrap();
             assert_eq!(calls.load(Ordering::Relaxed), 2);
         }
+    }
+
+    #[tokio::test]
+    async fn connect_config_reaches_the_connector_without_partitioning_the_pool() {
+        use bytes::Bytes;
+        use http_body_util::Empty;
+
+        struct DialOption(u8);
+
+        let attempts = Arc::new(crate::sync::Mutex::new(Vec::new()));
+        let connector = tower::service_fn({
+            let attempts = attempts.clone();
+            move |request: Request<ConnectConfig>| {
+                attempts.lock().push(
+                    request
+                        .body()
+                        .get_ref::<DialOption>()
+                        .map(|option| option.0),
+                );
+                let (client, server) = tokio::io::duplex(4096);
+                let service = hyper::service::service_fn(|_| async {
+                    Ok::<_, std::convert::Infallible>(Response::new(Empty::<Bytes>::new()))
+                });
+                tokio::spawn(
+                    hyper::server::conn::http1::Builder::new()
+                        .serve_connection(hyper_util::rt::TokioIo::new(server), service),
+                );
+                future::ready(Ok::<_, BoxError>(Conn::test(client)))
+            }
+        });
+        let mut connect_config = ConnectConfig::default();
+        connect_config.insert(DialOption(1));
+        let dispatch = Dispatch::new(
+            connector,
+            DynRuntime::new(crate::rt::tokio::TokioRuntime),
+            pool::Config::default(),
+            &connect_config,
+            #[cfg(feature = "cookies")]
+            None,
+        );
+        let mut client = client(dispatch, Protocol::Http1, true);
+        client.connect_config = connect_config;
+
+        for (uri, option) in [
+            ("http://localhost/", None),
+            ("http://localhost/", Some(DialOption(2))),
+            ("http://localhost:8080/", Some(DialOption(3))),
+        ] {
+            let mut request = Request::get(uri).body(Body::default()).unwrap();
+            if let Some(option) = option {
+                let mut connect_config = ConnectConfig::default();
+                connect_config.insert(option);
+                request.extensions_mut().insert(connect_config);
+            }
+            let response = client.ready().await.unwrap().call(request).await.unwrap();
+            assert_eq!(response.status(), http::StatusCode::OK);
+        }
+        assert_eq!(*attempts.lock(), [Some(1), Some(3)]);
     }
 
     #[cfg(feature = "cookies")]
