@@ -150,11 +150,11 @@ impl SessionCache for Attempt {
     }
 
     fn remove(&self, _key: &[u8]) {
-        // A failed handshake has already consumed its ticket.
+        // Unused by the QUIC backend; `take` already consumes the per-attempt ticket.
     }
 
     fn clear(&self) {
-        // This adapter holds no shared tickets to clear.
+        // Unused by the QUIC backend; stored tickets live in the shared store, not here.
     }
 }
 
