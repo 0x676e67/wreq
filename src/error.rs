@@ -279,10 +279,18 @@ impl Error {
     }
 
     /// Returns true if the error is related to a connection reset.
+    ///
+    /// Resets during SOCKS proxy setup are reported by [`Self::is_proxy_connect`] instead.
+    /// The underlying I/O error remains available through the source chain.
     pub fn is_connection_reset(&self) -> bool {
         let mut source = self.source();
 
         while let Some(err) = source {
+            #[cfg(feature = "socks")]
+            if err.is::<crate::conn::proxy::socks::SocksError>() {
+                return false;
+            }
+
             if let Some(io) = err.downcast_ref::<io::Error>()
                 && io.kind() == io::ErrorKind::ConnectionReset
             {
