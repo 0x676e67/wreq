@@ -59,6 +59,7 @@ pub(super) struct Expire<T> {
 
 impl<T> Expire<T> {
     /// Creates an expiration component around `target`.
+    #[must_use]
     pub(super) fn new(target: Weak<T>, runtime: DynRuntime) -> Self {
         let (shutdown, _) = watch::channel(());
 
@@ -71,6 +72,7 @@ impl<T> Expire<T> {
     }
 
     /// Reads the selected runtime clock.
+    #[must_use]
     pub(super) fn now(&self) -> Instant {
         self.runtime.now()
     }
@@ -110,12 +112,9 @@ where
         let runtime = self.runtime.clone();
         let mut shutdown = self.shutdown.subscribe();
 
-        // Off a runtime thread, as when a pooled value drops there, the task comes back
-        // and is dropped; checkouts still reject expired connections. Claiming `running`
-        // only once polled keeps such a task from hiding a concurrent schedule's request.
-        // Each schedule before the first task is polled spawns its own task; the extras
-        // exit on a failed claim.
-        let _ = self.runtime.try_execute(Box::pin(async move {
+        // Claim on first poll so a task queued on a paused runtime cannot block a
+        // watcher from starting on another runtime.
+        self.runtime.execute(Box::pin(async move {
             if !running.claim() {
                 return;
             }
@@ -175,6 +174,7 @@ impl Running {
     }
 
     /// Takes ownership unless another watcher already holds it.
+    #[must_use]
     fn claim(&mut self) -> bool {
         self.owned = self
             .flag
@@ -251,9 +251,7 @@ mod tests {
                 Arc::downgrade(&target),
                 DynRuntime::new(crate::rt::tokio::TokioRuntime),
             );
-            expire.schedule(Some(Duration::from_secs(60)));
-            // Only a polled task claims the watcher, so one a runtime hands back never
-            // turns away a concurrent schedule.
+            expire.schedule(Some(Duration::from_mins(1)));
             assert!(!expire.is_running());
             tokio::task::yield_now().await;
             expire

@@ -7,6 +7,7 @@
 mod macros;
 
 pub(super) mod connector;
+mod context;
 mod ext;
 #[cfg(feature = "http3")]
 pub(super) mod quic;
@@ -19,7 +20,6 @@ pub mod trust;
 use std::{
     borrow::Cow,
     hash::{Hash, Hasher},
-    num::NonZeroUsize,
     sync::Arc,
 };
 
@@ -27,23 +27,18 @@ use std::{
 pub use btls::ssl::{EchGreaseAead, ExtensionType, KeyShare, Tls13Cipher};
 use btls::ssl::{SslContextBuilder, SslVerifyMode};
 use bytes::{BufMut, Bytes, BytesMut};
-use compress::CertificateCompressor;
+use compress::{CertificateCompressor, Compressors};
 use connector::StreamTls;
 use derive_deftly::Deftly;
 use educe::Educe;
 use ext::SslContextBuilderExt;
 use keylog::KeyLog;
-use lru::LruCache;
 #[cfg(feature = "http3")]
 use quic::QuicTls;
 use session::Tickets;
 use trust::{CertStore, Identity};
 
-use crate::{
-    Error,
-    config::connect::{ConfigScope, ConfigSet, Overrides, derive_deftly_template_ConfigKey},
-    sync::Mutex,
-};
+use crate::{Error, config::connect::ConnectConfig};
 
 /// Peer certificate information attached to response extensions when
 /// [`ClientBuilder::tls_info`](crate::ClientBuilder::tls_info) is enabled.
@@ -197,8 +192,7 @@ pub struct TlsOptionsBuilder {
 #[non_exhaustive]
 #[derive(Debug, Clone, Educe, Deftly)]
 #[educe(Default)]
-#[derive_deftly(ConfigKey)]
-#[deftly(config_key(scope = "ConfigScope::TLS"))]
+#[derive_deftly(TlsKey)]
 pub struct TlsOptions {
     /// Protocols offered through ALPN, in preference order ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
     ///
@@ -206,7 +200,7 @@ pub struct TlsOptions {
     /// the client's offer: HTTP/2 then HTTP/1.1 when HTTP/2 is enabled, otherwise HTTP/1.1.
     ///
     /// **Default:** `None` (inherits the client's offer).
-    #[deftly(config_key(negotiation))]
+    #[deftly(tls_key(pool))]
     pub alpn_protocols: Option<Cow<'static, [AlpnProtocol]>>,
 
     /// Protocols that exchange application-layer settings through ALPS during the handshake.
@@ -215,7 +209,7 @@ pub struct TlsOptions {
     /// request-level options do not inherit the client's list.
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(negotiation))]
+    #[deftly(tls_key(pool))]
     pub alps_protocols: Option<Cow<'static, [AlpsProtocol]>>,
 
     /// Selects the new ALPS codepoint when ALPS protocols are offered.
@@ -224,33 +218,29 @@ pub struct TlsOptions {
     ///
     /// **Default:** `true`.
     #[educe(Default = true)]
-    #[deftly(config_key(negotiation))]
+    #[deftly(tls_key(pool))]
     pub alps_use_new_codepoint: bool,
 
     /// Controls TLS session tickets ([RFC 5077](https://tools.ietf.org/html/rfc5077)).
     ///
     /// **Default:** `None` (backend policy unchanged).
-    #[deftly(config_key(context))]
     pub session_ticket: Option<bool>,
 
     /// Minimum TLS version allowed for the connection.
     ///
     /// **Default:** `None` (uses
     /// [`ClientBuilder::tls_min_version`](crate::ClientBuilder::tls_min_version)).
-    #[deftly(config_key(context))]
     pub min_tls_version: Option<TlsVersion>,
 
     /// Maximum TLS version allowed for the connection.
     ///
     /// **Default:** `None` (uses
     /// [`ClientBuilder::tls_max_version`](crate::ClientBuilder::tls_max_version)).
-    #[deftly(config_key(context))]
     pub max_tls_version: Option<TlsVersion>,
 
     /// Controls PSK with (EC)DHE key establishment (`psk_dhe_ke`).
     ///
     /// **Default:** `None` (backend policy unchanged).
-    #[deftly(config_key(context))]
     pub psk_dhe_ke: Option<bool>,
 
     /// Omits the `session_ticket` extension when resuming a TLS 1.3 session.
@@ -259,7 +249,7 @@ pub struct TlsOptions {
     /// resumption keep the extension.
     ///
     /// **Default:** `false`.
-    #[deftly(config_key(connection))]
+    #[deftly(tls_key(session))]
     pub psk_skip_session_ticket: bool,
 
     /// Enables ticket-based resumption and the TLS 1.3 `pre_shared_key` extension.
@@ -268,56 +258,48 @@ pub struct TlsOptions {
     /// See [RFC 8446 section 4.2.11](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.2.11).
     ///
     /// **Default:** `false`.
-    #[deftly(config_key(context))]
     pub pre_shared_key: bool,
 
     /// ECH GREASE policy, independent of the TLS cipher suite order.
     ///
     /// **Default:** `None` (GREASE disabled).
-    #[deftly(config_key(context))]
     pub ech_grease: Option<EchGrease>,
 
     /// Controls permutation of ClientHello extensions.
     ///
     /// **Default:** `None` (backend policy unchanged).
-    #[deftly(config_key(context))]
     pub permute_extensions: Option<bool>,
 
     /// Controls TLS GREASE ([RFC 8701](https://datatracker.ietf.org/doc/html/rfc8701)).
     ///
     /// **Default:** `None` (backend policy unchanged).
-    #[deftly(config_key(context))]
     pub grease_enabled: Option<bool>,
 
     /// Controls whether the ClientHello `signature_algorithms` extension includes a
     /// GREASE value ([RFC 8701](https://www.rfc-editor.org/rfc/rfc8701.html)).
     ///
     /// **Default:** `None` (backend policy unchanged).
-    #[deftly(config_key(context))]
     pub grease_sigalgs_enabled: Option<bool>,
 
     /// Enables OCSP stapling for the connection.
     ///
     /// **Default:** `false`.
-    #[deftly(config_key(context))]
     pub enable_ocsp_stapling: bool,
 
     /// Enables Signed Certificate Timestamps (SCT).
     ///
     /// **Default:** `false`.
-    #[deftly(config_key(context))]
     pub enable_signed_cert_timestamps: bool,
 
     /// Maximum TLS record size.
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub record_size_limit: Option<u16>,
 
     /// Key shares offered in TLS 1.3 handshakes.
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(connection))]
+    #[deftly(tls_key(session))]
     pub key_shares: Option<Cow<'static, [KeyShare]>>,
 
     /// Encoded Trust Anchor IDs sent in a TLS 1.3 [`ClientHello`].
@@ -333,7 +315,6 @@ pub struct TlsOptions {
     ///
     /// [`ClientHello`]: https://www.rfc-editor.org/rfc/rfc9846.html#section-4.2.2
     /// [`trust_anchors` extension]: https://datatracker.ietf.org/doc/html/draft-ietf-tls-trust-anchor-ids-04#section-4.1
-    #[deftly(config_key(context))]
     pub trust_anchors: Option<Cow<'static, [u8]>>,
 
     /// Requests TLS 1.3 EncryptedExtensions padding from the server.
@@ -343,57 +324,49 @@ pub struct TlsOptions {
     /// the request and only honor padding requests of at most 16 KiB.
     ///
     /// **Default:** `None`
-    #[deftly(config_key(connection))]
+    #[deftly(tls_key(session))]
     pub server_padding: Option<u16>,
 
     /// Enables TLS renegotiation by sending the `renegotiation_info` extension.
     ///
     /// **Default:** `None` (backend policy unchanged).
-    #[deftly(config_key(context))]
     pub renegotiation: Option<bool>,
 
     /// Signature algorithms for delegated credentials ([RFC 9345](https://datatracker.ietf.org/doc/html/rfc9345)).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub delegated_credentials: Option<Cow<'static, str>>,
 
     /// List of supported elliptic curves.
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub curves_list: Option<Cow<'static, str>>,
 
     /// List of supported signature algorithms.
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub sigalgs_list: Option<Cow<'static, str>>,
 
     /// Cipher suite selection and ordering for TLS 1.2 and earlier, in BoringSSL's cipher-list
     /// syntax.
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub cipher_list: Option<Cow<'static, str>>,
 
     /// TLS 1.3 cipher suites in the order offered to the server.
     /// An empty list uses the backend defaults. Duplicate suites fail TLS setup.
     ///
     /// **Default:** `None` (backend defaults).
-    #[deftly(config_key(context))]
     pub tls13_cipher_list: Option<Cow<'static, [Tls13Cipher]>>,
 
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context, map = "|compressor| compressor.algorithm()"))]
-    pub certificate_compressors: Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
+    certificate_compressors: Compressors,
 
     /// TLS extension order used for permutation.
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
 }
 
@@ -413,20 +386,6 @@ pub(crate) struct Config {
     pub(crate) tickets: Arc<Tickets>,
     pub(crate) tls_info: bool,
 }
-
-/// The client's compiled TLS context and the most recently used request contexts, keyed by
-/// the request's context [`Overrides`].
-///
-/// Contexts are stored without per-connection callbacks or session caches; each connection
-/// sets its own on a copy.
-struct ContextCache<T> {
-    client: T,
-    requests: Mutex<LruCache<Overrides, T>>,
-}
-
-/// Request contexts kept per client, least recently used evicted first.
-const REQUEST_CONTEXTS: NonZeroUsize =
-    NonZeroUsize::new(16).expect("request context capacity must be non-zero");
 
 // ===== impl TlsOptionsBuilder =====
 
@@ -662,7 +621,7 @@ impl TlsOptionsBuilder {
     where
         T: Into<Cow<'static, [&'static dyn CertificateCompressor]>>,
     {
-        self.config.certificate_compressors = Some(algs.into());
+        self.config.certificate_compressors = Compressors::new(&algs.into());
         self
     }
 
@@ -736,14 +695,14 @@ impl Config {
     /// Compiles the client's TCP/Unix context from its TLS options.
     /// Missing options leave TLS customization to the backend's defaults; the client-wide
     /// trust, version, and ALPN policy still applies.
-    pub(crate) fn stream(self, config_set: &ConfigSet) -> crate::Result<StreamTls> {
-        StreamTls::new(self, config_set.clone())
+    pub(crate) fn stream(self, config: &ConnectConfig) -> crate::Result<StreamTls> {
+        StreamTls::new(self, config)
     }
 
     /// Compiles the client's QUIC context from its QUIC options.
     #[cfg(feature = "http3")]
-    pub(crate) fn quic(self, config_set: &ConfigSet) -> crate::Result<QuicTls> {
-        QuicTls::new(self, config_set.clone())
+    pub(crate) fn quic(self, config: &ConnectConfig) -> crate::Result<QuicTls> {
+        QuicTls::new(self, config)
     }
 }
 
@@ -761,38 +720,6 @@ impl Default for Config {
             tickets: Arc::new(Tickets::new(None)),
             tls_info: false,
         }
-    }
-}
-
-// ===== impl ContextCache =====
-
-impl<T: Clone> ContextCache<T> {
-    /// Starts with the client's context and no request contexts.
-    fn new(client: T) -> Self {
-        Self {
-            client,
-            requests: Mutex::new(LruCache::sparse(REQUEST_CONTEXTS)),
-        }
-    }
-
-    /// Returns the client's context when `overrides` is empty, and otherwise the request's.
-    /// A missing request context is compiled outside the lock, so concurrent misses may
-    /// compile it more than once.
-    fn get(
-        &self,
-        overrides: Overrides,
-        compile: impl FnOnce(&Overrides) -> crate::Result<T>,
-    ) -> crate::Result<T> {
-        if overrides.is_empty() {
-            return Ok(self.client.clone());
-        }
-        if let Some(context) = self.requests.lock().get(&overrides) {
-            return Ok(context.clone());
-        }
-        let context = compile(&overrides)?;
-        // An evicted context is freed after the lock is released.
-        let _evicted = self.requests.lock().push(overrides, context.clone());
-        Ok(context)
     }
 }
 

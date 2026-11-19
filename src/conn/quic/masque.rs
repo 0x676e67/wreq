@@ -12,7 +12,6 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, Wake, Waker, ready},
-    time::Instant,
 };
 
 use ::quic::{
@@ -24,7 +23,7 @@ use futures_util::{
     StreamExt,
     stream::{self, BoxStream},
 };
-use http::Uri;
+use http::{Request, Uri};
 use netty::{
     conn::http3,
     proxy::masque::{ConnectUdp, SendError, Template, UdpTunnel},
@@ -36,10 +35,11 @@ use netty::{
 use tokio::sync::{Notify, futures::OwnedNotified};
 use tower::{BoxError, ServiceExt, service_fn};
 
-use super::endpoint::{Endpoints, TUNNEL_MTU};
+use super::{TUNNEL_MTU, endpoint::Endpoints};
 use crate::{
     Body,
-    conn::{Conn, request::ConnectRequest},
+    config::connect::ConnectConfig,
+    conn::Conn,
     error::ProxyConnect,
     ext::UriExt,
     proxy::matcher::Intercept,
@@ -100,10 +100,9 @@ struct Receiver(BoxStream<'static, Result<Bytes, ::quic::ConnectionError>>);
 
 /// Opens CONNECT-UDP and authenticates the target; its endpoint retains the outer connection.
 pub(super) async fn connect(
-    endpoints: &Endpoints,
-    request: ConnectRequest,
+    endpoints: Arc<Endpoints>,
+    request: Request<ConnectConfig>,
     proxy: Intercept,
-    deadline: Option<Instant>,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
     let config = endpoints.tunnel_config(&request)?;
@@ -114,11 +113,9 @@ pub(super) async fn connect(
         let template =
             Template::well_known(proxy.uri().authority().ok_or(PROXY_MISSING_AUTHORITY)?)?;
 
-        let (connection, endpoint) = endpoints
-            .connect_proxy(&request, template.proxy(), deadline)
-            .await?;
+        let (connection, endpoint) = endpoints.connect_proxy(&request, template.proxy()).await?;
         let remote = connection.remote_address();
-        let (sender, driver) = http3::Builder::new(endpoints.dialer().runtime().clone())
+        let (sender, driver) = http3::Builder::new(endpoints.runtime().clone())
             .handshake_with_datagrams::<_, Body>(OuterConnection::new(connection))
             .await?;
 
@@ -149,7 +146,7 @@ pub(super) async fn connect(
     let (socket, remote) = connect_proxy.await.map_err(ProxyConnect::Source)?;
     let ended = socket.shared.ended.clone();
     endpoints
-        .finish_tunnel(&request, &config, socket, remote, ended)
+        .finish_tunnel(request.uri(), &config, socket, remote, ended)
         .await
 }
 
@@ -406,6 +403,7 @@ impl<B: Buf> rt::Connection<B> for OuterConnection {
     type RecvStream = Compat<http3_quic::RecvStream>;
     type OpenStreams = Compat<http3_quic::OpenStreams>;
 
+    #[inline]
     fn poll_accept_recv(
         &mut self,
         cx: &mut Context<'_>,
@@ -413,6 +411,7 @@ impl<B: Buf> rt::Connection<B> for OuterConnection {
         rt::Connection::<B>::poll_accept_recv(&mut self.inner, cx)
     }
 
+    #[inline]
     fn poll_accept_bidi(
         &mut self,
         cx: &mut Context<'_>,
@@ -420,6 +419,7 @@ impl<B: Buf> rt::Connection<B> for OuterConnection {
         rt::Connection::<B>::poll_accept_bidi(&mut self.inner, cx)
     }
 
+    #[inline]
     fn opener(&self) -> Self::OpenStreams {
         rt::Connection::<B>::opener(&self.inner)
     }
@@ -429,6 +429,7 @@ impl<B: Buf> rt::OpenStreams<B> for OuterConnection {
     type SendStream = Compat<http3_quic::SendStream<B>>;
     type BidiStream = Compat<http3_quic::BidiStream<B>>;
 
+    #[inline]
     fn poll_open_bidi(
         &mut self,
         cx: &mut Context<'_>,
@@ -436,6 +437,7 @@ impl<B: Buf> rt::OpenStreams<B> for OuterConnection {
         rt::OpenStreams::<B>::poll_open_bidi(&mut self.inner, cx)
     }
 
+    #[inline]
     fn poll_open_send(
         &mut self,
         cx: &mut Context<'_>,
@@ -443,6 +445,7 @@ impl<B: Buf> rt::OpenStreams<B> for OuterConnection {
         rt::OpenStreams::<B>::poll_open_send(&mut self.inner, cx)
     }
 
+    #[inline]
     fn close(&mut self, code: u64, reason: &[u8]) {
         rt::OpenStreams::<B>::close(&mut self.inner, code, reason);
     }

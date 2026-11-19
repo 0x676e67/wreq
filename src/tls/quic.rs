@@ -10,47 +10,26 @@ use btls::{
 };
 use bytes::Bytes;
 use http::Uri;
-use quic::{
-    TokenStore, TransportConfig,
-    crypto::btls::{NoSessionCache, QuicClientConfig, SessionCache, Zeroizing},
-};
+use quic::crypto::btls::{NoSessionCache, QuicClientConfig, SessionCache, Zeroizing};
 
 use super::{
-    AlpnProtocol, AlpsProtocol, Config, ContextCache, TlsVersion,
+    AlpnProtocol, AlpsProtocol, Config, TlsVersion,
+    context::TlsContext,
     ext::{SslContextBuilderExt as _, set_ech_grease_host},
-    session::{Key, SessionTarget, Tickets},
+    session::{Key, SessionTarget, Tickets, Transport},
 };
-use crate::{
-    Error, Result,
-    config::connect::{ConfigSet, Overrides},
-    conn::request::ConnectRequest,
-    protocol::TransportKind,
-    quic::QuicOptions,
-    sync::Mutex,
-};
+use crate::{Error, Result, config::connect::ConnectConfig, quic::QuicOptions, sync::Mutex};
 
 /// Builds per-connection QUIC TLS configurations from shared client TLS policy.
 /// Different request context options are compiled once and cached.
 #[derive(Clone)]
-pub(crate) struct QuicTls(Arc<Inner>);
+pub(crate) struct QuicTls(Arc<TlsContext<QuicOptions, QuicClientConfig>>);
 
-/// Client policy, QUIC options and compiled TLS contexts.
-struct Inner {
-    config: Config,
-    config_set: ConfigSet,
-    options: Option<Arc<QuicOptions>>,
-    contexts: ContextCache<QuicClientConfig>,
-}
-
-/// The QUIC configuration of one connection, shared by its address race.
-/// Each handshake attempt starts from its own [`client`](Self::client) configuration; the
-/// connector sets the transport and token store.
-pub(crate) struct QuicConfig {
+/// TLS configuration shared by the address attempts of one QUIC connection.
+pub(crate) struct QuicTlsConfig {
     crypto: Arc<QuicClientConfig>,
     handshake: Arc<Handshake>,
     resumption: Option<Arc<Resumption>>,
-    transport: Option<Arc<TransportConfig>>,
-    tokens: Option<Arc<dyn TokenStore>>,
 }
 
 /// The settings the SSL callback applies to each handshake of one connection.
@@ -84,61 +63,49 @@ struct Attempt {
 // ===== impl QuicTls =====
 
 impl QuicTls {
-    pub(super) fn new(config: Config, config_set: ConfigSet) -> Result<Self> {
-        let options = config_set.get_arc::<QuicOptions>();
-        let contexts = ContextCache::new(compile(&config, options.as_deref())?);
-        Ok(Self(Arc::new(Inner {
-            config,
-            config_set,
-            options,
-            contexts,
-        })))
-    }
-
-    /// Returns the client's QUIC options.
-    #[inline]
-    pub(crate) fn options(&self) -> Option<&QuicOptions> {
-        self.0.options.as_deref()
+    /// Compiles the client's QUIC TLS context and retains its initial QUIC options.
+    pub(super) fn new(tls: Config, connect_config: &ConnectConfig) -> Result<Self> {
+        Ok(Self(Arc::new(TlsContext::new(
+            tls,
+            connect_config,
+            compile,
+        )?)))
     }
 
     /// Returns whether responses carry the peer's [`TlsInfo`](crate::tls::TlsInfo).
     #[inline]
     pub(crate) fn tls_info(&self) -> bool {
-        self.0.config.tls_info
+        self.0.tls.tls_info
     }
 
-    /// Returns the QUIC TLS configuration of one connection for `request`.
+    /// Returns the QUIC TLS configuration for an origin and its TLS peer.
     ///
     /// QUIC always negotiates TLS 1.3, so a client capped below it fails here rather than
     /// when it is built. Contexts are shared, so each connection installs its SSL callback on
     /// its own copy.
-    pub(crate) fn config(&self, request: &ConnectRequest, route: &Uri) -> Result<QuicConfig> {
-        let inner = &*self.0;
-        if inner
-            .config
+    pub(crate) fn config(
+        &self,
+        origin: &Uri,
+        route: &Uri,
+        connect_config: &ConnectConfig,
+    ) -> Result<QuicTlsConfig> {
+        let contexts = &self.0;
+        if contexts
+            .tls
             .max_version
             .is_some_and(|version| version != TlsVersion::TLS_1_3)
         {
             return Err(Error::tls("HTTP/3 requires TLS 1.3"));
         }
 
-        let overrides = Overrides::for_context(
-            request.config_set().clone(),
-            &inner.config_set,
-            TransportKind::Quic,
-        );
-        let mut crypto = inner.contexts.get(overrides, |overrides| {
-            compile(&inner.config, overrides.get::<QuicOptions>())
-        })?;
+        let mut crypto = contexts.for_config(connect_config, compile)?;
 
-        let options = request
-            .config_override_arc::<QuicOptions>()
-            .or_else(|| inner.options.clone());
+        let options = connect_config.get_arc::<QuicOptions>();
         let resumption = options
             .as_ref()
             .is_some_and(|options| options.pre_shared_key);
         let handshake = Arc::new(Handshake {
-            verify_peer: inner.config.cert_verification,
+            verify_peer: contexts.tls.cert_verification,
             options,
             rejected: OnceLock::new(),
         });
@@ -148,12 +115,12 @@ impl QuicTls {
         });
 
         let resumption = if resumption {
-            let tickets = inner.config.tickets.clone();
+            let tickets = contexts.tls.tickets.clone();
             let target = SessionTarget::new(
-                request,
+                origin,
+                connect_config,
                 route,
-                &inner.config_set,
-                TransportKind::Quic,
+                Transport::Quic,
                 None,
                 tickets.session_id_context().map_err(Error::tls)?,
             );
@@ -165,48 +132,26 @@ impl QuicTls {
             None
         };
 
-        Ok(QuicConfig {
+        Ok(QuicTlsConfig {
             crypto: Arc::new(crypto),
             handshake,
             resumption,
-            transport: None,
-            tokens: None,
         })
     }
 }
 
-// ===== impl QuicConfig =====
+// ===== impl QuicTlsConfig =====
 
-impl QuicConfig {
+impl QuicTlsConfig {
     /// Returns the configuration of one handshake attempt.
     ///
     /// With resumption, the attempt takes its own ticket here, before the QUIC endpoint's lock
     /// is held, so a slow session store stalls only this connection.
-    pub(crate) fn client(&self) -> quic::ClientConfig {
-        let crypto = match &self.resumption {
-            Some(resumption) => Arc::new(self.attempt(resumption)),
+    pub(crate) fn attempt(&self) -> Arc<QuicClientConfig> {
+        match &self.resumption {
+            Some(resumption) => Arc::new(self.resuming_attempt(resumption)),
             None => self.crypto.clone(),
-        };
-        let mut client = quic::ClientConfig::new(crypto);
-        if let Some(transport) = &self.transport {
-            client.transport_config(transport.clone());
         }
-        if let Some(tokens) = &self.tokens {
-            client.token_store(tokens.clone());
-        }
-        client
-    }
-
-    /// Sets the transport configuration of every attempt.
-    #[inline]
-    pub(crate) fn transport_config(&mut self, transport: Arc<TransportConfig>) {
-        self.transport = Some(transport);
-    }
-
-    /// Sets the address validation token store of every attempt.
-    #[inline]
-    pub(crate) fn token_store(&mut self, tokens: Arc<dyn TokenStore>) {
-        self.tokens = Some(tokens);
     }
 
     /// Returns the SSL callback's error once it rejected a session.
@@ -217,7 +162,7 @@ impl QuicConfig {
 
     /// Builds the TLS configuration of one attempt around a ticket of its own. A verifying
     /// handshake also reports the expiry of the path it verified.
-    fn attempt(&self, resumption: &Arc<Resumption>) -> QuicClientConfig {
+    fn resuming_attempt(&self, resumption: &Arc<Resumption>) -> QuicClientConfig {
         let verify_peer = self.handshake.verify_peer;
         let attempt = Arc::new(Attempt {
             resumption: resumption.clone(),
@@ -384,30 +329,38 @@ mod tests {
         use btls::ssl::SslContextRef;
 
         use super::*;
-        use crate::{protocol::Protocol, tls::KeyShare};
+        use crate::{group::Group, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
-        let request = |grease: Option<bool>| {
-            let mut config_set = ConfigSet::default();
-            if let Some(grease) = grease {
-                config_set.insert(
-                    QuicOptions::builder()
-                        .curves_list("X25519")
-                        .key_shares(vec![KeyShare::P256])
-                        .grease_enabled(grease)
-                        .build(),
-                );
+        let overrides = |grease: Option<bool>, group| {
+            let mut connect_config = ConnectConfig::default();
+            if let Some(group) = group {
+                connect_config.insert(Group::new(group));
             }
-            let uri = Uri::from_static("https://localhost/");
-            ConnectRequest::test(uri, Some(Protocol::Http3), config_set)
+            if let Some(grease) = grease {
+                let options = QuicOptions::builder()
+                    .curves_list("X25519")
+                    .key_shares(vec![KeyShare::P256])
+                    .grease_enabled(grease);
+                let options = if group.is_some() {
+                    options.initial_mtu(1280).enable_alps_protocol(true)
+                } else {
+                    options
+                };
+                connect_config.insert(options.build());
+            }
+            connect_config
         };
-        let tls = Config::default().quic(&ConfigSet::default()).unwrap();
-        let [client, first, second, other] =
-            [None, Some(false), Some(false), Some(true)].map(|grease| {
-                let request = request(grease);
-                tls.config(&request, request.uri()).unwrap()
-            });
-        let context = |config: &QuicConfig| -> *const SslContextRef { &**config.crypto.ctx() };
+        let uri = Uri::from_static("https://localhost/");
+        let tls = Config::default().quic(&ConnectConfig::default()).unwrap();
+        let [client, first, second, other] = [
+            (None, None),
+            (Some(false), None),
+            (Some(false), Some("tenant")),
+            (Some(true), None),
+        ]
+        .map(|(grease, group)| tls.config(&uri, &uri, &overrides(grease, group)).unwrap());
+        let context = |config: &QuicTlsConfig| -> *const SslContextRef { &**config.crypto.ctx() };
         // Equal context options hit the cache; others compile their own context.
         assert_eq!(context(&first), context(&second));
         assert_ne!(context(&first), context(&other));
@@ -420,7 +373,11 @@ mod tests {
             assert!(config.rejected().is_none());
             assert!(
                 endpoint
-                    .connect_with(config.client(), address, "localhost")
+                    .connect_with(
+                        quic::ClientConfig::new(config.attempt()),
+                        address,
+                        "localhost"
+                    )
                     .is_err()
             );
             assert!(config.rejected().is_some());

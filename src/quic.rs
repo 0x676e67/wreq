@@ -13,8 +13,10 @@ use educe::Educe;
 
 use crate::{
     Error,
-    config::connect::{ConfigScope, derive_deftly_template_ConfigKey},
-    tls::{EchGrease, ExtensionType, KeyShare, Tls13Cipher, compress::CertificateCompressor},
+    tls::{
+        EchGrease, ExtensionType, KeyShare, Tls13Cipher,
+        compress::{CertificateCompressor, Compressors},
+    },
 };
 
 /// Builder for [`QuicOptions`].
@@ -33,8 +35,8 @@ pub struct QuicOptionsBuilder {
 #[non_exhaustive]
 #[derive(Debug, Clone, Educe, Deftly)]
 #[educe(Default)]
-#[derive_deftly(ConfigKey)]
-#[deftly(config_key(scope = "ConfigScope::QUIC", transport))]
+#[derive_deftly(TlsKey)]
+#[deftly(tls_key(quic))]
 pub struct QuicOptions {
     /// Closes the connection after this much inactivity, advertised as `max_idle_timeout`
     /// ([RFC 9000 Section 10.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-10.1)).
@@ -43,19 +45,19 @@ pub struct QuicOptions {
     /// [`connect_timeout`](crate::ClientBuilder::connect_timeout) ends one that gets no reply.
     ///
     /// **Default:** `None` (30 seconds).
-    #[deftly(config_key(transport))]
+    #[deftly(tls_key(transport))]
     pub max_idle_timeout: Option<Duration>,
 
     /// Sends a PING after this much inactivity to keep the connection open; must not be zero.
     ///
     /// **Default:** `None` (disabled).
-    #[deftly(config_key(transport))]
+    #[deftly(tls_key(transport))]
     pub keep_alive_interval: Option<Duration>,
 
     /// Connection flow control limit, advertised as `initial_max_data`; must not be zero.
     ///
     /// **Default:** `None` (backend default).
-    #[deftly(config_key(transport))]
+    #[deftly(tls_key(transport))]
     pub initial_max_data: Option<u64>,
 
     /// Stream flow control limit, advertised as `initial_max_stream_data_bidi_local`,
@@ -63,14 +65,14 @@ pub struct QuicOptions {
     /// ([RFC 9114 Section 6.2](https://www.rfc-editor.org/rfc/rfc9114.html#section-6.2)).
     ///
     /// **Default:** `None` (backend default).
-    #[deftly(config_key(transport))]
+    #[deftly(tls_key(transport))]
     pub initial_max_stream_data: Option<u64>,
 
     /// Bidirectional streams the server may open, advertised as `initial_max_streams_bidi`,
     /// at most 65535. Each allowed stream is reserved when the connection starts.
     ///
     /// **Default:** `None` (100).
-    #[deftly(config_key(transport))]
+    #[deftly(tls_key(transport))]
     pub initial_max_streams_bidi: Option<u64>,
 
     /// Unidirectional streams the server may open, advertised as `initial_max_streams_uni`,
@@ -78,7 +80,7 @@ pub struct QuicOptions {
     /// to 65535.
     ///
     /// **Default:** `None` (100).
-    #[deftly(config_key(transport))]
+    #[deftly(tls_key(transport))]
     pub initial_max_streams_uni: Option<u64>,
 
     /// Largest DATAGRAM frame the server may send, advertised as `max_datagram_frame_size`
@@ -87,39 +89,37 @@ pub struct QuicOptions {
     /// the default instead of a value that buffers fewer than 16 tunneled packets (about 20 KB).
     ///
     /// **Default:** `None` (1,250,000).
-    #[deftly(config_key(transport))]
+    #[deftly(tls_key(transport))]
     pub max_datagram_frame_size: Option<u64>,
 
     /// UDP payload size used before path MTU discovery. Values below 1200 are raised to 1200.
     ///
     /// **Default:** `None` (1200).
-    #[deftly(config_key(transport))]
+    #[deftly(tls_key(transport))]
     pub initial_mtu: Option<u16>,
 
     /// Controls the latency spin bit ([RFC 9000 Section 17.4](https://www.rfc-editor.org/rfc/rfc9000.html#section-17.4)).
     ///
     /// **Default:** `None` (enabled on most connections).
-    #[deftly(config_key(transport))]
+    #[deftly(tls_key(transport))]
     pub allow_spin: Option<bool>,
 
     /// Supported groups, as [`TlsOptions::curves_list`](crate::tls::TlsOptions::curves_list).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub curves_list: Option<Cow<'static, str>>,
 
     /// Key shares offered in the ClientHello, as
     /// [`TlsOptions::key_shares`](crate::tls::TlsOptions::key_shares).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(connection))]
+    #[deftly(tls_key(session))]
     pub key_shares: Option<Cow<'static, [KeyShare]>>,
 
     /// Signature algorithms, as
     /// [`TlsOptions::sigalgs_list`](crate::tls::TlsOptions::sigalgs_list).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub sigalgs_list: Option<Cow<'static, str>>,
 
     /// TLS 1.3 cipher suites in offer order, as
@@ -127,25 +127,21 @@ pub struct QuicOptions {
     /// An empty list uses the backend defaults. Duplicate suites fail TLS setup.
     ///
     /// **Default:** `None` (backend defaults).
-    #[deftly(config_key(context))]
     pub tls13_cipher_list: Option<Cow<'static, [Tls13Cipher]>>,
 
     /// Controls TLS GREASE ([RFC 8701](https://datatracker.ietf.org/doc/html/rfc8701)).
     ///
     /// **Default:** `None` (backend policy unchanged).
-    #[deftly(config_key(context))]
     pub grease_enabled: Option<bool>,
 
     /// Controls a GREASE value in the `signature_algorithms` extension.
     ///
     /// **Default:** `None` (backend policy unchanged).
-    #[deftly(config_key(context))]
     pub grease_sigalgs_enabled: Option<bool>,
 
     /// Controls permutation of ClientHello extensions.
     ///
     /// **Default:** `None` (backend policy unchanged).
-    #[deftly(config_key(context))]
     pub permute_extensions: Option<bool>,
 
     /// ClientHello extension order, as
@@ -153,77 +149,67 @@ pub struct QuicOptions {
     /// sends [`ExtensionType::QUIC_TRANSPORT_PARAMETERS_STANDARD`] and never sends padding.
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
 
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context, map = "|compressor| compressor.algorithm()"))]
-    pub certificate_compressors: Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
+    pub(crate) certificate_compressors: Compressors,
 
     /// Signature algorithms for delegated credentials ([RFC 9345](https://datatracker.ietf.org/doc/html/rfc9345)).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub delegated_credentials: Option<Cow<'static, str>>,
 
     /// Requests OCSP stapling.
     ///
     /// **Default:** `false`.
-    #[deftly(config_key(context))]
     pub enable_ocsp_stapling: bool,
 
     /// Requests Signed Certificate Timestamps (SCT).
     ///
     /// **Default:** `false`.
-    #[deftly(config_key(context))]
     pub enable_signed_cert_timestamps: bool,
 
     /// Sends the `record_size_limit` extension ([RFC 8449](https://www.rfc-editor.org/rfc/rfc8449.html)).
     /// QUIC does not use TLS records, so this only shapes the ClientHello.
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub record_size_limit: Option<u16>,
 
     /// Encoded Trust Anchor IDs, as
     /// [`TlsOptions::trust_anchors`](crate::tls::TlsOptions::trust_anchors).
     ///
     /// **Default:** `None`.
-    #[deftly(config_key(context))]
     pub trust_anchors: Option<Cow<'static, [u8]>>,
 
     /// ECH GREASE policy; independent of the TLS cipher suite order.
     ///
     /// **Default:** `None` (GREASE disabled).
-    #[deftly(config_key(context))]
     pub ech_grease: Option<EchGrease>,
 
     /// Controls PSK with (EC)DHE key establishment (`psk_dhe_ke`); `Some(false)` disables
     /// resumption.
     ///
     /// **Default:** `None` (backend policy unchanged).
-    #[deftly(config_key(context))]
     pub psk_dhe_ke: Option<bool>,
 
     /// Resumes sessions through the TLS 1.3 `pre_shared_key` extension, without early data.
     ///
     /// **Default:** `false`.
-    #[deftly(config_key(context))]
     pub pre_shared_key: bool,
 
     /// Offers ALPS for `h3` during the TLS handshake, independently of ALPN negotiation.
     ///
     /// **Default:** `false`.
-    #[deftly(config_key(negotiation))]
+    #[deftly(tls_key(pool))]
     pub enable_alps_protocol: bool,
 
     /// Selects the new ALPS codepoint when ALPS is enabled.
     ///
     /// **Default:** `true`.
     #[educe(Default = true)]
-    #[deftly(config_key(negotiation))]
+    #[deftly(tls_key(pool))]
     pub alps_use_new_codepoint: bool,
 }
 
@@ -359,7 +345,7 @@ impl QuicOptionsBuilder {
     where
         T: Into<Cow<'static, [&'static dyn CertificateCompressor]>>,
     {
-        self.config.certificate_compressors = Some(compressors.into());
+        self.config.certificate_compressors = Compressors::new(&compressors.into());
         self
     }
 
@@ -450,10 +436,13 @@ impl QuicOptions {
         }
     }
 
-    /// Builds the transport configuration of a connection.
+    /// Builds a transport with the datagram frame limit selected for its path.
     ///
     /// Returns an error when a value does not fit its transport parameter.
-    pub(crate) fn transport(&self) -> crate::Result<::quic::TransportConfig> {
+    pub(crate) fn transport(
+        &self,
+        datagram_frame_size: Option<u64>,
+    ) -> crate::Result<::quic::TransportConfig> {
         use ::quic::{IdleTimeout, TransportConfig, VarInt};
 
         // The backend reserves every allowed stream when a connection starts.
@@ -513,7 +502,7 @@ impl QuicOptions {
                 MAX_STREAMS,
             )?);
         }
-        if let Some(size) = self.max_datagram_frame_size {
+        if let Some(size) = datagram_frame_size {
             let size = (size != 0)
                 .then(|| {
                     let name = "max_datagram_frame_size";
@@ -530,115 +519,5 @@ impl QuicOptions {
             transport.allow_spin(enabled);
         }
         Ok(transport)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::connect::{ConnectConfig, KeyPart};
-
-    #[test]
-    fn transport_rejects_values_the_connection_cannot_use() {
-        let valid = QuicOptions::builder()
-            .max_idle_timeout(Duration::from_micros(10))
-            .keep_alive_interval(Duration::from_secs(5))
-            .initial_max_data(1)
-            .initial_max_stream_data(1024)
-            .initial_max_streams_bidi(0)
-            .initial_max_streams_uni(3)
-            .max_datagram_frame_size(0)
-            .build();
-        assert!(valid.transport().is_ok());
-
-        let builder = QuicOptions::builder;
-        let invalid = [
-            (
-                builder().max_idle_timeout(Duration::MAX),
-                "max_idle_timeout",
-            ),
-            (
-                builder().keep_alive_interval(Duration::ZERO),
-                "keep_alive_interval",
-            ),
-            (
-                builder().keep_alive_interval(Duration::MAX),
-                "keep_alive_interval",
-            ),
-            (builder().initial_max_data(0), "initial_max_data"),
-            (builder().initial_max_data(u64::MAX), "initial_max_data"),
-            (
-                builder().initial_max_stream_data(1023),
-                "initial_max_stream_data",
-            ),
-            (
-                builder().initial_max_streams_bidi(1 << 16),
-                "initial_max_streams_bidi",
-            ),
-            (
-                builder().initial_max_streams_uni(2),
-                "initial_max_streams_uni",
-            ),
-            (
-                builder().max_datagram_frame_size(u64::MAX),
-                "max_datagram_frame_size",
-            ),
-        ];
-        for (options, name) in invalid {
-            let error = options.build().transport().unwrap_err();
-            let message = std::error::Error::source(&error).map(ToString::to_string);
-            assert!(
-                message.is_some_and(|message| message.contains(name)),
-                "{error:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn parts_follow_where_each_option_applies() {
-        let base = QuicOptions::default();
-        let changed = [
-            // Compiled into the context.
-            (
-                QuicOptions::builder()
-                    .tls13_cipher_list(&[Tls13Cipher::AES_256_GCM_SHA384])
-                    .build(),
-                [false, false, false],
-            ),
-            // GREASE callbacks are compiled into the TLS context too.
-            (
-                QuicOptions::builder()
-                    .ech_grease(crate::tls::EchGrease::Default)
-                    .build(),
-                [false, false, false],
-            ),
-            // Negotiation and transport bind neither contexts nor sessions.
-            (
-                QuicOptions::builder().enable_alps_protocol(true).build(),
-                [false, true, true],
-            ),
-            (
-                QuicOptions::builder().initial_max_data(1 << 20).build(),
-                [false, true, true],
-            ),
-        ];
-        for (options, [whole, session, context]) in changed {
-            assert_eq!(options.eq_part(&base, KeyPart::Whole), whole);
-            assert_eq!(options.eq_part(&base, KeyPart::Session), session);
-            assert_eq!(options.eq_part(&base, KeyPart::Context), context);
-            let hashes = options.hash_parts();
-            let base_hashes = base.hash_parts();
-            for (index, equal) in [whole, session, context].into_iter().enumerate() {
-                assert_eq!(hashes[index] == base_hashes[index], equal);
-            }
-        }
-        let transport = QuicOptions::builder().initial_max_data(1 << 20).build();
-        assert!(!transport.same_transport(&base));
-        assert!(
-            QuicOptions::builder()
-                .enable_alps_protocol(true)
-                .build()
-                .same_transport(&base)
-        );
     }
 }

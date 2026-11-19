@@ -31,8 +31,10 @@ use super::{
 use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
-    config::{RequestConfig, RequestConfigValue, connect::ConfigSet},
-    conn::dialer,
+    config::{
+        connect::ConnectConfig,
+        request::{RequestConfig, RequestConfigValue, impl_request_config_value},
+    },
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -194,8 +196,9 @@ impl Request {
     }
 
     #[inline]
-    fn config_set_mut(&mut self) -> &mut ConfigSet {
-        self.extensions_mut().get_or_insert_default::<ConfigSet>()
+    fn connect_config_mut(&mut self) -> &mut ConnectConfig {
+        self.extensions_mut()
+            .get_or_insert_default::<ConnectConfig>()
     }
 }
 
@@ -607,7 +610,8 @@ impl RequestBuilder {
     /// Cleartext HTTP/2 uses prior knowledge without an HTTP/1 Upgrade.
     /// Negotiation does not rewrite an HTTP/2 WebSocket handshake into HTTP/1 Upgrade.
     /// HTTP/3 requires an explicit `Version::HTTP_3` or an HTTP/3-only client.
-    /// Requests with an explicit version are pooled apart from requests without one.
+    /// An explicit version can share a pool group with the client's default when
+    /// both resolve to the same protocol selection and connection settings.
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.version_mut().replace(version);
@@ -687,7 +691,7 @@ impl RequestBuilder {
     /// Set the proxy for this request.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_set_mut().insert(proxy.into_matcher());
+            req.connect_config_mut().insert(proxy.into_matcher());
         }
         self
     }
@@ -698,8 +702,14 @@ impl RequestBuilder {
     where
         V: Into<Option<IpAddr>>,
     {
-        if let Ok(ref mut req) = self.request {
-            dialer::set_local_address(req.config_set_mut(), local_address.into());
+        if let Ok(ref mut req) = self.request
+            && let Some(address) = local_address.into()
+        {
+            let config = req.connect_config_mut();
+            match address {
+                IpAddr::V4(address) => config.insert(address),
+                IpAddr::V6(address) => config.insert(address),
+            };
         }
         self
     }
@@ -712,11 +722,12 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            dialer::set_local_addresses(
-                req.config_set_mut(),
-                ipv4_address.into(),
-                ipv6_address.into(),
-            );
+            let (ipv4, ipv6) = (ipv4_address.into(), ipv6_address.into());
+            if ipv4.is_some() || ipv6.is_some() {
+                req.connect_config_mut()
+                    .insert_if_some(ipv4)
+                    .insert_if_some(ipv6);
+            }
         }
         self
     }
@@ -787,18 +798,19 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            dialer::set_interface(req.config_set_mut(), interface.into());
+            req.connect_config_mut()
+                .insert(std::sync::Arc::<str>::from(interface.into()));
         }
         self
     }
 
     /// Applies the emulation's headers and protocol options to this request.
-    /// Supplied options replace matching overrides; absent ones are kept. An empty
-    /// header order keeps the existing one. Group, proxy, version and socket settings stay.
+    /// Supplied options and headers replace matching entries; absent ones stay and non-empty
+    /// original header names append. Group, proxy, version, and socket settings stay.
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            let Emulation(headers, orig_headers, config_set) = emulation.into_emulation();
-            req.config_set_mut().extend(config_set);
+            let Emulation(headers, orig_headers, connect_config) = emulation.into_emulation();
+            req.connect_config_mut().extend(connect_config);
             let builder = self.headers(headers);
             return if orig_headers.is_empty() {
                 builder
@@ -815,7 +827,7 @@ impl RequestBuilder {
     /// incompatible connection settings share a connection.
     pub fn group(mut self, group: Group) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_set_mut().insert(group);
+            req.connect_config_mut().insert(group);
         }
         self
     }

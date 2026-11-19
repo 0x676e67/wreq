@@ -1,71 +1,56 @@
+//! Emulation profiles combining default headers, header order, and protocol options.
+
 use http::HeaderMap;
 
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
 use crate::{
-    config::connect::{ConfigSet, ConnectConfig},
-    header::OrigHeaderMap,
-    http1::Http1Options,
-    tls::TlsOptions,
+    config::connect::ConnectConfig, header::OrigHeaderMap, http1::Http1Options, tls::TlsOptions,
 };
 #[cfg(feature = "http3")]
 use crate::{http3::Http3Options, quic::QuicOptions};
 
-/// Implements [`ProtocolConfig`] for the given protocol option type.
-macro_rules! impl_protocol_config {
-    ($type:ty) => {
-        impl ProtocolConfig for $type {}
-    };
-}
-
-/// Converts predefined or user-defined settings into [`Emulation`].
+/// Converts protocol options, an existing [`Emulation`], or a preset profile into [`Emulation`].
 pub trait IntoEmulation {
     /// Converts `self` into an [`Emulation`] configuration.
     fn into_emulation(self) -> Emulation;
 }
 
-/// Protocol options an [`Emulation`] carries: [`TlsOptions`], [`Http1Options`],
-/// and options for enabled HTTP/2 and HTTP/3 protocols.
-/// This trait is sealed.
-pub trait ProtocolConfig: ConnectConfig {}
-
-/// Collects headers, header order and protocol options for an [`Emulation`].
-/// Building transfers those settings without cloning them.
+/// Collects default headers, header order, and protocol options for an [`Emulation`].
+/// Later settings replace earlier values of the same type.
 #[must_use]
 #[derive(Debug)]
 pub struct EmulationBuilder {
     emulation: Emulation,
 }
 
-/// HTTP emulation settings: headers, header order and protocol options.
-/// Protocol options affect connection reuse; headers do not.
-/// Clones share the protocol options.
+/// HTTP emulation settings: default headers, header order, and protocol options.
+///
+/// Built with [`Emulation::builder`] or converted from protocol option types.
+/// Protocol options partition connection reuse while headers do not; clones share options.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct Emulation(
     pub(super) HeaderMap,
     pub(super) OrigHeaderMap,
-    pub(super) ConfigSet,
+    pub(super) ConnectConfig,
 );
-
-// ===== impl ProtocolConfig =====
-
-impl_protocol_config!(TlsOptions);
-impl_protocol_config!(Http1Options);
-#[cfg(feature = "http2")]
-impl_protocol_config!(Http2Options);
-#[cfg(feature = "http3")]
-impl_protocol_config!(Http3Options);
-#[cfg(feature = "http3")]
-impl_protocol_config!(QuicOptions);
 
 // ===== impl EmulationBuilder =====
 
 impl EmulationBuilder {
-    /// Sets one kind of protocol options; a later value of the same type replaces it.
+    /// Applies protocol options or another [`Emulation`], replacing matching option types and
+    /// headers while appending original header names.
     #[inline]
-    pub fn config<T: ProtocolConfig>(mut self, value: T) -> Self {
-        self.emulation.2.insert(value);
+    pub fn config<T: IntoEmulation>(mut self, value: T) -> Self {
+        let Emulation(headers, orig_headers, connect_config) = value.into_emulation();
+        self.emulation.2.extend(connect_config);
+        if !headers.is_empty() {
+            crate::util::replace_headers(&mut self.emulation.0, headers);
+        }
+        if !orig_headers.is_empty() {
+            self.emulation.1.extend(orig_headers);
+        }
         self
     }
 
@@ -76,7 +61,7 @@ impl EmulationBuilder {
         self
     }
 
-    /// Adds original header names to the existing map.
+    /// Appends original header casing and ordering entries to the existing map.
     #[inline]
     pub fn orig_headers(mut self, src: OrigHeaderMap) -> Self {
         self.emulation.1.extend(src);
@@ -102,11 +87,34 @@ impl Emulation {
     }
 }
 
-impl<T: ProtocolConfig> From<T> for Emulation {
-    #[inline]
-    fn from(value: T) -> Self {
-        Emulation::builder().config(value).build()
-    }
+macro_rules! impl_from_option {
+    ($($(#[$meta:meta])* $ty:ty),+ $(,)?) => {
+        $(
+            $(#[$meta])*
+            impl From<$ty> for Emulation {
+                #[inline]
+                fn from(options: $ty) -> Self {
+                    let mut connect_config = ConnectConfig::default();
+                    connect_config.insert(options);
+                    Self(HeaderMap::new(), OrigHeaderMap::new(), connect_config)
+                }
+            }
+        )+
+    };
+}
+
+impl_from_option! {
+    TlsOptions,
+    Http1Options,
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+    Http2Options,
+    #[cfg(feature = "http3")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
+    Http3Options,
+    #[cfg(feature = "http3")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
+    QuicOptions,
 }
 
 impl<T: Into<Emulation>> IntoEmulation for T {

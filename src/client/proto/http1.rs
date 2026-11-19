@@ -21,11 +21,11 @@ use http::{
     HeaderValue, Method, Request, Response, Uri,
     header::{HOST, PROXY_AUTHORIZATION},
 };
-use netty::{body::Incoming, conn};
+use netty::{body::Incoming, conn, http1::Http1Options};
 use tokio::sync::oneshot;
 use tower::{BoxError, Layer, Service};
 
-use super::{Established, SendError, is_expired};
+use super::{Established, SendError, configure, is_expired};
 use crate::{
     Body,
     client::{
@@ -52,11 +52,11 @@ pub struct Connection {
 ///
 /// The resulting service waits for the physical connector, performs the
 /// handshake with its entry's builder, and returns a cacheable [`Connection`].
-#[derive(Clone)]
-pub struct ConnectLayer {
-    builder: Arc<conn::http1::Builder>,
+pub struct ConnectLayer<'a> {
+    builder: &'a Arc<conn::http1::Builder>,
+    options: Option<&'a Http1Options>,
+    runtime: &'a DynRuntime,
     set_host: bool,
-    runtime: DynRuntime,
 }
 
 /// Connects a transport and performs an HTTP/1 handshake.
@@ -96,24 +96,31 @@ enum ConnectState<F> {
 
 // ===== impl ConnectLayer =====
 
-impl ConnectLayer {
-    /// Creates an HTTP/1 handshake layer for pooled connections.
-    pub fn new(builder: Arc<conn::http1::Builder>, runtime: DynRuntime, set_host: bool) -> Self {
+impl<'a> ConnectLayer<'a> {
+    /// Borrows the builder and per-entry overrides until the service is assembled.
+    #[must_use]
+    pub fn new(
+        runtime: &'a DynRuntime,
+        builder: &'a Arc<conn::http1::Builder>,
+        options: Option<&'a Http1Options>,
+        set_host: bool,
+    ) -> Self {
         Self {
-            builder,
-            set_host,
             runtime,
+            builder,
+            options,
+            set_host,
         }
     }
 }
 
-impl<S> Layer<S> for ConnectLayer {
+impl<S> Layer<S> for ConnectLayer<'_> {
     type Service = Connect<S>;
 
     fn layer(&self, service: S) -> Self::Service {
         Connect {
             service,
-            builder: self.builder.clone(),
+            builder: configure(self.builder, self.options, conn::http1::Builder::options),
             runtime: self.runtime.clone(),
             set_host: self.set_host,
         }
@@ -131,6 +138,7 @@ where
     type Error = BoxError;
     type Future = ConnectFuture<S::Future>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx)
     }
@@ -206,6 +214,7 @@ impl Connection {
         runtime: DynRuntime,
         set_host: bool,
     ) -> Result<Self, BoxError> {
+        // Extract the established transport and connection metadata.
         let Established { io, connected, .. } = established;
         let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
         let (error_tx, error_rx) = oneshot::channel();
@@ -216,6 +225,7 @@ impl Connection {
             }
         }));
 
+        // Wait for the sender to become ready, handling any connection errors.
         match tx.ready().await {
             Ok(()) => drop(error_rx),
             Err(error) if error.is_closed() => match error_rx.await {
@@ -235,26 +245,31 @@ impl Connection {
     }
 
     /// Returns metadata for the underlying transport.
+    #[must_use]
     pub fn connected(&self) -> &Connected {
         &self.connected
     }
 
     /// Returns whether the protocol sender is immediately ready.
+    #[must_use]
     pub fn is_ready(&self) -> bool {
         self.tx.is_ready()
     }
 
     /// Records when the exclusive sender becomes idle.
+    #[inline(always)]
     pub fn mark_idle(&mut self) {
         self.idle_at = self.runtime.now();
     }
 
     /// Returns whether the exclusive sender can safely re-enter the cache.
+    #[must_use]
     pub fn is_open(&self) -> bool {
         !self.connected().poisoned() && self.is_ready()
     }
 
     /// Returns whether the sender is healthy and within its idle timeout.
+    #[must_use]
     pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
         self.is_open() && !is_expired(self.idle_at, now, timeout)
     }
@@ -265,6 +280,7 @@ impl Service<Request<Body>> for Connection {
     type Error = SendError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.tx
             .poll_ready(cx)
@@ -280,6 +296,7 @@ impl Service<Request<Body>> for Connection {
             req.headers_mut().insert(HOST, host);
         }
 
+        // Adjust the request URI based on the connection type and HTTP method.
         let result = if req.method() == Method::CONNECT {
             authority_form(req.uri_mut())
         } else if self.connected.is_proxied() {

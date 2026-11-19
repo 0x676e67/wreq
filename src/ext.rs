@@ -1,10 +1,10 @@
 //! Extension utilities.
 
 use bytes::Bytes;
-use http::uri::{Authority, Scheme, Uri};
+use http::uri::{Authority, PathAndQuery, Scheme, Uri};
 use percent_encoding::{AsciiSet, CONTROLS};
 
-use crate::Body;
+use crate::{Body, error::BoxError};
 
 /// See: <https://url.spec.whatwg.org/#fragment-percent-encode-set>
 const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
@@ -82,6 +82,9 @@ pub(crate) trait UriExt {
     /// Returns the port of the URI, or the default port for the scheme if none is specified.
     fn port_or_default(&self) -> u16;
 
+    /// Returns the scheme and authority normalized to `/`.
+    fn origin(&self) -> Result<Uri, BoxError>;
+
     /// Returns the username and password from the URI's userinfo, if present.
     fn userinfo(&self) -> (Option<&str>, Option<&str>);
 
@@ -124,6 +127,14 @@ impl UriExt for Uri {
             None if self.is_https() => 443u16,
             _ => 80u16,
         }
+    }
+
+    fn origin(&self) -> Result<Uri, BoxError> {
+        Ok(Uri::builder()
+            .scheme(self.scheme().ok_or("URI missing scheme")?.clone())
+            .authority(self.authority().ok_or("URI missing authority")?.clone())
+            .path_and_query(PathAndQuery::from_static("/"))
+            .build()?)
     }
 
     fn userinfo(&self) -> (Option<&str>, Option<&str>) {

@@ -6,16 +6,21 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-use netty::{conn, rt::quic::Compat};
-use tower::{BoxError, Service, ServiceExt};
+use netty::{conn, http3::Http3Options, rt::quic::Compat};
+use tower::{BoxError, Layer, Service, ServiceExt};
 
-use super::mux::{Connection, Sender};
-use crate::{
-    Body,
-    client::pool::{PoolTarget, TransportConnector},
-    conn::Conn,
-    rt::DynRuntime,
+use super::{
+    configure,
+    mux::{Connection, Sender},
 };
+use crate::{Body, conn::Conn, rt::DynRuntime};
+
+/// Layers HTTP/3 handshaking over a QUIC connector.
+pub struct ConnectLayer<'a> {
+    builder: &'a Arc<conn::http3::Builder<DynRuntime>>,
+    options: Option<&'a Http3Options>,
+    runtime: &'a DynRuntime,
+}
 
 /// Establishes HTTP/3 connections for the pool's shared singleton.
 /// Handshakes use the entry's builder and do not wait for the peer, so, as for HTTP/2,
@@ -27,36 +32,56 @@ pub struct Connect<C> {
     runtime: DynRuntime,
 }
 
-// ===== impl Connect =====
+// ===== impl ConnectLayer =====
 
-impl<C> Connect<C> {
-    /// Creates the HTTP/3 connection service.
+impl<'a> ConnectLayer<'a> {
+    /// Borrows the builder and per-entry overrides until the service is assembled.
+    #[must_use]
     pub fn new(
-        connector: C,
-        builder: Arc<conn::http3::Builder<DynRuntime>>,
-        runtime: DynRuntime,
+        runtime: &'a DynRuntime,
+        builder: &'a Arc<conn::http3::Builder<DynRuntime>>,
+        options: Option<&'a Http3Options>,
     ) -> Self {
         Self {
-            connector,
-            builder,
             runtime,
+            builder,
+            options,
         }
     }
 }
 
-impl<C> Service<PoolTarget> for Connect<C>
+impl<C> Layer<C> for ConnectLayer<'_> {
+    type Service = Connect<C>;
+
+    fn layer(&self, connector: C) -> Self::Service {
+        Connect {
+            connector,
+            builder: configure(self.builder, self.options, conn::http3::Builder::options),
+            runtime: self.runtime.clone(),
+        }
+    }
+}
+
+// ===== impl Connect =====
+
+impl<C, Dst> Service<Dst> for Connect<C>
 where
-    C: TransportConnector,
+    C: Service<Dst, Response = Conn, Error = BoxError, Future: Send + 'static>
+        + Clone
+        + Send
+        + 'static,
+    Dst: Send + 'static,
 {
     type Response = Connection;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, target: PoolTarget) -> Self::Future {
+    fn call(&mut self, target: Dst) -> Self::Future {
         let mut connector = self.connector.clone();
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
@@ -66,12 +91,16 @@ where
             let Conn {
                 transport,
                 connected,
-            } = connector.call(target.req).await?;
+            } = connector.call(target).await?;
+
+            // Convert the transport into a QUIC connection and endpoint.
             let (quic, endpoint) = transport.into_quic()?;
             let quic = Compat::new(http3_quic::Connection::new(quic));
             let (mut tx, connection) = Arc::unwrap_or_clone(builder)
                 .handshake::<_, Body>(quic)
                 .await?;
+
+            // Spawn a task to drive the QUIC connection in the background.
             runtime.execute(Box::pin(async move {
                 let _endpoint = endpoint;
                 if let Err(_error) = connection.await {

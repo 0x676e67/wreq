@@ -75,7 +75,7 @@ impl Tickets {
     }
 
     /// Stores a TCP session emitted by BoringSSL's new-session callback.
-    pub(crate) fn insert_stream(&self, target: &SessionTarget, session: ClientSession) {
+    pub(in crate::tls) fn insert_stream(&self, target: &SessionTarget, session: ClientSession) {
         let kx = session
             .session()
             .cipher()
@@ -86,7 +86,7 @@ impl Tickets {
     }
 
     /// Retrieves a TCP session for the connection, then one bound to its remote IP.
-    pub(crate) fn pop_stream(&self, target: &SessionTarget) -> Option<ClientSession> {
+    pub(in crate::tls) fn pop_stream(&self, target: &SessionTarget) -> Option<ClientSession> {
         let stream = |ticket| match ticket {
             Ticket::Stream(session) => Some(session),
             #[cfg(feature = "http3")]

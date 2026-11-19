@@ -1,65 +1,90 @@
-//! Connector contract and composition: [`Connector::new`] stacks the [`layer`] middleware every
-//! connection passes over [`TransportConnector`], the [`svc`] that routes each request to the
-//! [`stream`] or QUIC path. Both paths reach hosts through the shared [`dialer`] and return a
-//! [`Conn`]: the [`Transport`] they establish with the [`Connected`] metadata they build.
+//! [`Connect`] applies connector layers and a deadline to [`svc::Connect`].
+//! It dispatches each connection request to the [`stream`] or QUIC service, which returns a
+//! [`Conn`] with the established [`Transport`] and its [`Connected`] metadata.
 
 mod connected;
+mod dialer;
+mod identity;
 mod layer;
 #[cfg(feature = "http3")]
 mod quic;
-mod route;
 mod stream;
 mod svc;
 
-pub(super) mod dialer;
-pub(crate) mod request;
+use std::time::{Duration, Instant};
 
-use std::time::Duration;
-
-pub(crate) use connected::{Connected, HttpInfo};
-use dialer::{Dialer, tcp};
+use dialer::tcp;
+use http::{Method, Request, Uri};
 use layer::deadline::{Deadline, DeadlineLayer};
-#[cfg(all(test, feature = "http3"))]
-pub(crate) use quic::test_server_config;
-pub(crate) use svc::{Io, Transport};
-use svc::{TransportConnector, TransportRequest};
 use tower::{
     BoxError, Layer, ServiceBuilder, ServiceExt,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either},
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapErr, MapRequest},
 };
 
+pub(crate) use self::{
+    connected::{Connected, HttpInfo},
+    identity::{CommonIdentity, Identity},
+    svc::{Io, Transport},
+};
 use crate::{
-    config::connect::ConfigSet, dns::DynResolver, error::map_timeout_to_connector_error,
-    proxy::Matcher as ProxyMatcher, rt::DynRuntime, tls,
+    config::connect::ConnectConfig, dns::DynResolver, error::map_timeout_to_connector_error,
+    protocol::Protocol, proxy::Matcher as ProxyMatcher, rt::DynRuntime, tls,
 };
 
-/// Type-erased transport service retained after custom connector layers are composed.
-pub type BoxedTransportConnector = BoxCloneSyncService<Unnameable, Conn, BoxError>;
+/// Type-erased connection service passed through user-supplied layers.
+pub type BoxedConnectService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
 
-/// Type-erased layer applied while assembling a [`BoxedTransportConnector`].
-pub type BoxedConnectorLayer =
-    BoxCloneSyncServiceLayer<BoxedTransportConnector, Unnameable, Conn, BoxError>;
+/// Type-erased layer that wraps a [`BoxedConnectService`].
+pub type BoxedConnectLayer =
+    BoxCloneSyncServiceLayer<BoxedConnectService, Unnameable, Conn, BoxError>;
 
 /// Establishes stream and QUIC transports under one connection deadline.
-/// Without user layers the transport connector is called directly; user layers see it
+/// Without user layers [`svc::Connect`] is called directly; user layers see the request
 /// behind [`Unnameable`]. Clones share the transports' state.
-pub(crate) type Connector =
-    Deadline<Either<TransportConnector, BoxCloneSyncService<TransportRequest, Conn, BoxError>>>;
+pub(crate) type Connect = Deadline<
+    Either<
+        svc::Connect,
+        MapRequest<
+            MapErr<BoxedConnectService, fn(BoxError) -> BoxError>,
+            fn(Request<ConnectConfig>) -> Unnameable,
+        >,
+    >,
+>;
 
-/// Client-wide connector settings, fixed at build.
+/// Client-wide transport settings, fixed at build.
 pub(crate) struct Config {
     pub(crate) tcp: tcp::Config,
     pub(crate) tls: tls::Config,
     pub(crate) proxies: Vec<ProxyMatcher>,
-    pub(crate) happy_eyeballs_timeout: Option<Duration>,
     pub(crate) connect_timeout: Option<Duration>,
+    pub(crate) happy_eyeballs_timeout: Option<Duration>,
     pub(crate) verbose: bool,
-    pub(crate) layers: Vec<BoxedConnectorLayer>,
+}
+
+/// Deadline attached to a connection request by [`Deadline`].
+#[derive(Clone, Copy)]
+struct ConnectDeadline(Instant);
+
+/// Connection-specific operations on the internal request passed through the connector.
+pub(crate) trait ConnectRequestExt {
+    /// Builds an internal CONNECT request with the selected protocol and connection overrides.
+    #[must_use]
+    fn new_connect(origin: Uri, protocol: Protocol, config: ConnectConfig) -> Self
+    where
+        Self: Sized;
+
+    /// Returns the selected HTTP protocol mode for this connection attempt.
+    #[must_use]
+    fn protocol(&self) -> Protocol;
+
+    /// Returns the outer connection deadline, if any.
+    #[must_use]
+    fn deadline(&self) -> Option<Instant>;
 }
 
 /// Opaque request passed through user-supplied connector layers.
 /// Keeps transport selection, connection configuration and the connect deadline internal.
-pub struct Unnameable(pub(super) TransportRequest);
+pub struct Unnameable(pub(super) Request<ConnectConfig>);
 
 /// Established connection and metadata returned through connector middleware.
 /// Protocol handshakes take the transport through `into_stream` or `into_quic`,
@@ -77,66 +102,91 @@ impl Default for Config {
             tcp: tcp::Config::default(),
             tls: tls::Config::default(),
             proxies: Vec::new(),
-            happy_eyeballs_timeout: Some(Duration::from_millis(300)),
             connect_timeout: None,
+            happy_eyeballs_timeout: Some(Duration::from_millis(300)),
             verbose: false,
-            layers: Vec::new(),
         }
     }
 }
 
-// ===== impl Connector =====
+// ===== impl Connect =====
 
-impl Connector {
-    /// Builds the dialer and the transport connector, then stacks the user's layers and the
-    /// connection deadline over them.
+impl Connect {
+    /// Stacks the user's layers and the connection deadline over the transport router.
     pub(crate) fn new(
-        config: Config,
         runtime: DynRuntime,
         resolver: DynResolver,
-        config_set: &ConfigSet,
+        config: Config,
+        connect_config: &ConnectConfig,
+        layers: Vec<BoxedConnectLayer>,
     ) -> Result<Self, crate::Error> {
-        let dialer = Dialer::new(
-            runtime.clone(),
-            resolver,
-            config.tcp,
-            config_set.clone(),
-            config.happy_eyeballs_timeout,
-        );
-        let connector = TransportConnector::new(
-            dialer,
-            config.tls,
-            config.proxies,
-            config.verbose,
-            config_set,
-        )?;
-
-        let service = if config.layers.is_empty() {
-            Either::Left(connector)
+        let connect_timeout = config.connect_timeout;
+        let connect = svc::Connect::new(&runtime, resolver, config, connect_config)?;
+        let service = if layers.is_empty() {
+            Either::Left(connect)
         } else {
-            let service = config.layers.iter().fold(
-                BoxCloneSyncService::new(connector.map_request(|Unnameable(request)| request)),
+            let service = layers.iter().fold(
+                BoxCloneSyncService::new(connect.map_request(|Unnameable(request)| request)),
                 |service, layer| layer.layer(service),
             );
-            Either::Right(BoxCloneSyncService::new(
+            Either::Right(
                 service
-                    .map_err(map_timeout_to_connector_error)
-                    .map_request(Unnameable),
-            ))
+                    .map_err(map_timeout_to_connector_error as _)
+                    .map_request(Unnameable as _),
+            )
         };
 
         Ok(ServiceBuilder::new()
-            .layer(DeadlineLayer::new(config.connect_timeout, runtime))
+            .layer(DeadlineLayer::new(connect_timeout, runtime))
             .service(service))
+    }
+}
+
+// ===== impl ConnectRequestExt =====
+
+impl ConnectRequestExt for Request<ConnectConfig> {
+    fn new_connect(origin: Uri, protocol: Protocol, config: ConnectConfig) -> Self {
+        let mut request = Self::new(config);
+        *request.method_mut() = Method::CONNECT;
+        *request.uri_mut() = origin;
+        if protocol != Protocol::Auto {
+            request.extensions_mut().insert(protocol);
+        }
+        request
+    }
+
+    #[inline]
+    fn protocol(&self) -> Protocol {
+        self.extensions()
+            .get::<Protocol>()
+            .copied()
+            .unwrap_or(Protocol::Auto)
+    }
+
+    #[inline]
+    fn deadline(&self) -> Option<Instant> {
+        self.extensions().get::<ConnectDeadline>().map(|d| d.0)
     }
 }
 
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "http3")]
-    use {super::request::ConnectRequest, crate::protocol::Protocol, std::sync::Arc};
+    use std::sync::Arc;
 
     use super::*;
+    #[cfg(feature = "http3")]
+    use crate::ext::UriExt;
+
+    #[cfg(feature = "http3")]
+    fn test_connect_request(
+        uri: Uri,
+        protocol: Option<Protocol>,
+        connect_config: ConnectConfig,
+    ) -> Request<ConnectConfig> {
+        let protocol = protocol.unwrap_or(Protocol::Auto);
+        Request::new_connect(uri.origin().unwrap(), protocol, connect_config)
+    }
 
     impl Conn {
         pub(crate) fn test(stream: tokio::io::DuplexStream) -> Self {
@@ -163,7 +213,28 @@ mod tests {
             }
         }
 
-        let (server_config, cert) = test_server_config();
+        let cert = rcgen::generate_simple_self_signed(vec![
+            "localhost".into(),
+            "127.0.0.1".into(),
+            "::1".into(),
+        ])
+        .unwrap();
+        let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.cert.der().clone()],
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+        )
+        .unwrap();
+        tls.alpn_protocols = vec![b"h3".to_vec()];
+        let server_config = ::quic::ServerConfig::with_crypto(Arc::new(
+            ::quic::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
+        ));
+        let cert = cert.cert.der().to_vec();
         let server =
             ::quic::Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         // Bound without replying, so a dial to it stays pending until the deadline.
@@ -181,21 +252,22 @@ mod tests {
                     ),
                     ..Default::default()
                 },
-                happy_eyeballs_timeout: delay,
                 connect_timeout: Some(Duration::from_millis(500)),
+                happy_eyeballs_timeout: delay,
                 ..Default::default()
             };
-            let connector = Connector::new(
-                config,
+            let connector = Connect::new(
                 runtime.clone(),
                 resolver.clone(),
-                &ConfigSet::default(),
+                config,
+                &ConnectConfig::default(),
+                Vec::new(),
             )
             .unwrap();
-            let request = ConnectRequest::test(
-                ::http::Uri::from_static("https://localhost/"),
+            let request = test_connect_request(
+                Uri::from_static("https://localhost/"),
                 Some(Protocol::Http3),
-                ConfigSet::default(),
+                ConnectConfig::default(),
             );
             let serve = async {
                 let _accepted = server.accept().await.unwrap().await;
@@ -233,27 +305,28 @@ mod tests {
                 .unwrap()
                 .into_matcher()
         };
-        let mut overridden = ConfigSet::default();
+        let mut overridden = ConnectConfig::default();
         overridden.insert(proxy());
-        for (proxies, config_set) in [
-            (vec![proxy()], ConfigSet::default()),
+        for (proxies, connect_config) in [
+            (vec![proxy()], ConnectConfig::default()),
             (Vec::new(), overridden),
         ] {
             let config = Config {
                 proxies,
                 ..Default::default()
             };
-            let connector = Connector::new(
-                config,
+            let connector = Connect::new(
                 runtime.clone(),
                 DynResolver::new(Arc::new(NoDns)),
-                &ConfigSet::default(),
+                config,
+                &ConnectConfig::default(),
+                Vec::new(),
             )
             .unwrap();
-            let request = ConnectRequest::test(
-                ::http::Uri::from_static("https://localhost/"),
+            let request = test_connect_request(
+                Uri::from_static("https://localhost/"),
                 Some(Protocol::Http3),
-                config_set,
+                connect_config,
             );
             let error = connector
                 .oneshot(request)

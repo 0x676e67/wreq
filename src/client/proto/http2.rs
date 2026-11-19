@@ -6,11 +6,11 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-use netty::conn;
+use netty::{conn, http2::Http2Options};
 use tower::{BoxError, Layer, Service};
 
 use super::{
-    Established,
+    Established, configure,
     mux::{Connection, Sender},
 };
 use crate::rt::DynRuntime;
@@ -20,10 +20,10 @@ use crate::rt::DynRuntime;
 /// Fixed HTTP/2 wraps the connector directly; automatic mode supplies a
 /// transport selected by negotiation. Both handshake with their entry's builder
 /// and return a cloneable sender for the pool's singleton service.
-#[derive(Clone)]
-pub struct ConnectLayer {
-    builder: Arc<conn::http2::Builder<DynRuntime>>,
-    runtime: DynRuntime,
+pub struct ConnectLayer<'a> {
+    builder: &'a Arc<conn::http2::Builder<DynRuntime>>,
+    options: Option<&'a Http2Options>,
+    runtime: &'a DynRuntime,
 }
 
 /// Performs an HTTP/2 handshake for a transport-producing service.
@@ -40,20 +40,29 @@ pub struct Connect<S> {
 
 // ===== impl ConnectLayer =====
 
-impl ConnectLayer {
-    /// Creates an HTTP/2 handshake layer for pooled connections.
-    pub fn new(builder: Arc<conn::http2::Builder<DynRuntime>>, runtime: DynRuntime) -> Self {
-        Self { builder, runtime }
+impl<'a> ConnectLayer<'a> {
+    /// Borrows the builder and per-entry overrides until the service is assembled.
+    #[must_use]
+    pub fn new(
+        runtime: &'a DynRuntime,
+        builder: &'a Arc<conn::http2::Builder<DynRuntime>>,
+        options: Option<&'a Http2Options>,
+    ) -> Self {
+        Self {
+            runtime,
+            builder,
+            options,
+        }
     }
 }
 
-impl<S> Layer<S> for ConnectLayer {
+impl<S> Layer<S> for ConnectLayer<'_> {
     type Service = Connect<S>;
 
     fn layer(&self, service: S) -> Self::Service {
         Connect {
             service,
-            builder: self.builder.clone(),
+            builder: configure(self.builder, self.options, conn::http2::Builder::options),
             runtime: self.runtime.clone(),
         }
     }
@@ -70,6 +79,7 @@ where
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx)
     }
@@ -79,8 +89,11 @@ where
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
         Box::pin(async move {
+            // Await the underlying service to establish the transport.
             let Established { io, connected, .. } = future.await?;
             let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
+
+            // Spawn a task to drive the HTTP/2 connection in the background.
             runtime.execute(Box::pin(async move {
                 if let Err(_error) = connection.await {
                     debug!("client connection error: {_error}");

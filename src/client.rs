@@ -67,8 +67,7 @@ use crate::cookie;
 use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Proxy,
-    config::connect::ConfigSet,
-    conn::{self, BoxedTransportConnector, Conn, Connector, Unnameable, dialer},
+    conn::{BoxedConnectService, Conn, Unnameable},
     dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
     error::Error,
     header::OrigHeaderMap,
@@ -102,11 +101,8 @@ cfg_select! {
     }
 }
 
-type ClientService = Timeout<
-    ConfigService<
-        MaybeDecompression<FollowRedirect<Retry<RetryPolicy, sealed::Client<Connector>>>>,
-    >,
->;
+type ClientService =
+    Timeout<ConfigService<MaybeDecompression<FollowRedirect<Retry<RetryPolicy, svc::Client>>>>>;
 
 type BoxedClientService = BoxCloneSyncService<
     http::Request<Body>,
@@ -162,24 +158,16 @@ struct Config {
         feature = "deflate",
     ))]
     accept_encoding: AcceptEncoding,
-    connect: conn::Config,
-    pool_idle_timeout: Option<Duration>,
-    pool_max_idle_per_host: usize,
-    pool_max_size: Option<NonZeroUsize>,
-    pool_strategy: PoolStrategy,
     auto_sys_proxy: bool,
     retry_policy: retry::Policy,
     redirect_policy: redirect::Policy,
     referer: bool,
     timeout_options: TimeoutOptions,
-    #[cfg(feature = "cookies")]
-    cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     dns_overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
-    protocol: Protocol,
     https_only: bool,
     layers: Vec<BoxedClientServiceLayer>,
-    config_set: ConfigSet,
+    svc: svc::Config,
 }
 
 // ===== impl Client =====
@@ -220,24 +208,17 @@ impl Client {
                     feature = "deflate",
                 ))]
                 accept_encoding: AcceptEncoding::default(),
-                connect: conn::Config::default(),
-                pool_idle_timeout: Some(Duration::from_secs(90)),
-                pool_max_idle_per_host: usize::MAX,
-                pool_max_size: None,
-                pool_strategy: PoolStrategy::default(),
+
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
                 redirect_policy: redirect::Policy::none(),
                 referer: true,
                 timeout_options: TimeoutOptions::default(),
-                #[cfg(feature = "cookies")]
-                cookie_store: None,
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
-                protocol: Protocol::Auto,
                 https_only: false,
                 layers: Vec::new(),
-                config_set: ConfigSet::default(),
+                svc: svc::Config::default(),
             },
             runtime: DynRuntime::new(runtime),
         }
@@ -422,7 +403,7 @@ impl ClientBuilder {
 
         // Prepare proxies
         if self.config.auto_sys_proxy {
-            self.config.connect.proxies.push(ProxyMatcher::system());
+            self.config.svc.connect.proxies.push(ProxyMatcher::system());
         }
 
         // Create base client service
@@ -439,26 +420,7 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            // The request stack inherits the client's bindings.
-            let connector = Connector::new(
-                self.config.connect,
-                self.runtime.clone(),
-                resolver,
-                &self.config.config_set,
-            )?;
-
-            sealed::Builder::new(self.runtime.clone())
-                .cookie_store(
-                    #[cfg(feature = "cookies")]
-                    self.config.cookie_store,
-                )
-                .config_set(self.config.config_set)
-                .protocol(self.config.protocol)
-                .pool_idle_timeout(self.config.pool_idle_timeout)
-                .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
-                .pool_max_size(self.config.pool_max_size)
-                .pool_strategy(self.config.pool_strategy)
-                .build(connector)
+            svc::Client::new(self.runtime.clone(), resolver, self.config.svc)?
         };
 
         // Configured client service with layers
@@ -630,7 +592,7 @@ impl ClientBuilder {
         if enable {
             self.cookie_provider(Arc::new(cookie::Jar::default()))
         } else {
-            self.config.cookie_store = None;
+            self.config.svc.cookie_store = None;
             self
         }
     }
@@ -649,7 +611,7 @@ impl ClientBuilder {
     #[cfg(feature = "cookies")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
     pub fn cookie_provider<C: cookie::IntoCookieStore>(mut self, cookie_store: C) -> ClientBuilder {
-        self.config.cookie_store = Some(cookie_store.into_shared());
+        self.config.svc.cookie_store = Some(cookie_store.into_shared());
         self
     }
 
@@ -849,7 +811,7 @@ impl ClientBuilder {
     /// ```
     #[inline]
     pub fn proxy(mut self, proxy: Proxy) -> ClientBuilder {
-        self.config.connect.proxies.push(proxy.into_matcher());
+        self.config.svc.connect.proxies.push(proxy.into_matcher());
         self.config.auto_sys_proxy = false;
         self
     }
@@ -863,7 +825,7 @@ impl ClientBuilder {
     /// This also disables the automatic usage of the "system" proxy.
     #[inline]
     pub fn no_proxy(mut self) -> ClientBuilder {
-        self.config.connect.proxies.clear();
+        self.config.svc.connect.proxies.clear();
         self.config.auto_sys_proxy = false;
         self
     }
@@ -896,14 +858,15 @@ impl ClientBuilder {
     /// Sets a time limit for establishing a connection.
     ///
     /// The timer starts after connector readiness and covers connector layers, DNS resolution,
-    /// proxy setup, TCP dialing and TLS, and QUIC handshakes.
-    /// A timeout reported while resolving or dialing a proxy is a [proxy connect
-    /// error](Error::is_proxy_connect).
+    /// proxy setup, TCP and Unix dialing, TLS, and QUIC handshakes.
+    /// A timeout returned by a TCP or QUIC proxy dial is a [proxy connect
+    /// error](Error::is_proxy_connect). If the outer deadline expires first, including
+    /// while waiting for a Unix proxy socket, the error is a [connect error](Error::is_connect).
     ///
     /// By default there is no connection timeout.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.connect.connect_timeout = Some(timeout);
+        self.config.svc.connect.connect_timeout = Some(timeout);
         self
     }
 
@@ -916,50 +879,53 @@ impl ClientBuilder {
     /// [log]: https://crates.io/crates/log
     #[inline]
     pub fn connection_verbose(mut self, verbose: bool) -> ClientBuilder {
-        self.config.connect.verbose = verbose;
+        self.config.svc.connect.verbose = verbose;
         self
     }
 
     // HTTP options
 
-    /// Sets how long an idle pooled connection remains eligible for reuse.
+    /// Sets how long an idle sender remains eligible for reuse.
     ///
-    /// Pass `None` to disable time-based eviction. The default is 90 seconds.
+    /// HTTP/1 idle time starts when the sender returns to the pool. For HTTP/2
+    /// and HTTP/3, it starts when the last checkout ends, even if a stream is open.
+    /// The default is 90 seconds. `None` disables time-based eviction.
+    /// [`Duration::ZERO`] checks expiry on checkout without a periodic sweep.
     #[inline]
     pub fn pool_idle_timeout<D>(mut self, val: D) -> ClientBuilder
     where
         D: Into<Option<Duration>>,
     {
-        self.config.pool_idle_timeout = val.into();
+        self.config.svc.pool.idle_timeout = val.into();
         self
     }
 
-    /// Sets the maximum idle HTTP/1 connections retained per compatibility group.
+    /// Limits idle HTTP/1 connections per connection group.
     ///
-    /// This does not limit active physical connections. Passing `0` disables
-    /// connection reuse.
+    /// The default is unlimited. Set `0` to disable pooling for all protocols.
     #[inline]
     pub fn pool_max_idle_per_host(mut self, max: usize) -> ClientBuilder {
-        self.config.pool_max_idle_per_host = max;
+        self.config.svc.pool.max_idle_per_host = max;
         self
     }
 
-    /// Sets the maximum number of compatibility groups retaining reusable connections.
+    /// Sets how many connection groups the pool tracks for least-recently-used eviction.
     ///
-    /// Idle HTTP/1 senders and shared HTTP/2 and HTTP/3 senders count toward this limit.
-    /// A full limit evicts the least recently used idle group; a shared sender with a live
-    /// request, body or tunnel is not evicted. This does not limit physical connections;
-    /// `0` means unlimited.
+    /// A group shares an origin, a protocol selection, and connection settings, including
+    /// any [`Group`](crate::Group). When a new group needs room, the pool evicts
+    /// the least recently used idle group. A group skipped because its HTTP/2 or
+    /// HTTP/3 sender is checked out counts again when its last checkout ends.
+    /// Open streams can finish after eviction. The default and `0` are unlimited.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
-        self.config.pool_max_size = NonZeroUsize::new(max);
+        self.config.svc.pool.max_size = NonZeroUsize::new(max);
         self
     }
 
-    /// Selects whether a reuse miss immediately connects or briefly waits for reuse.
+    /// Sets when the pool dials on a reuse miss. Defaults to [`PoolStrategy::Race`].
     #[inline]
     pub fn pool_strategy(mut self, strategy: PoolStrategy) -> ClientBuilder {
-        self.config.pool_strategy = strategy;
+        self.config.svc.pool.strategy = strategy;
         self
     }
 
@@ -977,7 +943,7 @@ impl ClientBuilder {
     /// [`version`](RequestBuilder::version) overrides this client setting.
     #[inline]
     pub fn http1_only(mut self) -> ClientBuilder {
-        self.config.protocol = Protocol::Http1;
+        self.config.svc.protocol = Protocol::Http1;
         self
     }
 
@@ -994,7 +960,7 @@ impl ClientBuilder {
     #[cfg(feature = "http2")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_only(mut self) -> ClientBuilder {
-        self.config.protocol = Protocol::Http2;
+        self.config.svc.protocol = Protocol::Http2;
         self
     }
 
@@ -1011,7 +977,7 @@ impl ClientBuilder {
     #[cfg(feature = "http3")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
     pub fn http3_only(mut self) -> ClientBuilder {
-        self.config.protocol = Protocol::Http3;
+        self.config.svc.protocol = Protocol::Http3;
         self
     }
 
@@ -1021,7 +987,7 @@ impl ClientBuilder {
     where
         T: Into<Option<Http1Options>>,
     {
-        self.config.config_set.set(options.into());
+        self.config.svc.connect_config.set(options.into());
         self
     }
 
@@ -1033,7 +999,7 @@ impl ClientBuilder {
     where
         T: Into<Option<Http2Options>>,
     {
-        self.config.config_set.set(options.into());
+        self.config.svc.connect_config.set(options.into());
         self
     }
 
@@ -1044,7 +1010,7 @@ impl ClientBuilder {
     where
         T: Into<Option<netty::http3::Http3Options>>,
     {
-        self.config.config_set.set(options.into());
+        self.config.svc.connect_config.set(options.into());
         self
     }
 
@@ -1056,7 +1022,7 @@ impl ClientBuilder {
     where
         T: Into<Option<crate::quic::QuicOptions>>,
     {
-        self.config.config_set.set(options.into());
+        self.config.svc.connect_config.set(options.into());
         self
     }
 
@@ -1067,7 +1033,7 @@ impl ClientBuilder {
     /// Default is `true`.
     #[inline]
     pub fn tcp_nodelay(mut self, enabled: bool) -> ClientBuilder {
-        self.config.connect.tcp.nodelay = enabled;
+        self.config.svc.connect.tcp.nodelay = enabled;
         self
     }
 
@@ -1081,7 +1047,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.connect.tcp.keepalive = val.into();
+        self.config.svc.connect.tcp.keepalive = val.into();
         self
     }
 
@@ -1095,7 +1061,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.connect.tcp.keepalive_interval = val.into();
+        self.config.svc.connect.tcp.keepalive_interval = val.into();
         self
     }
 
@@ -1109,7 +1075,7 @@ impl ClientBuilder {
     where
         C: Into<Option<u32>>,
     {
-        self.config.connect.tcp.keepalive_retries = retries.into();
+        self.config.svc.connect.tcp.keepalive_retries = retries.into();
         self
     }
 
@@ -1131,14 +1097,14 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.connect.tcp.tcp_user_timeout = val.into();
+        self.config.svc.connect.tcp.tcp_user_timeout = val.into();
         self
     }
 
     /// Set whether sockets have `SO_REUSEADDR` enabled.
     #[inline]
     pub fn tcp_reuse_address(mut self, enabled: bool) -> ClientBuilder {
-        self.config.connect.tcp.reuse_address = enabled;
+        self.config.svc.connect.tcp.reuse_address = enabled;
         self
     }
 
@@ -1159,7 +1125,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.connect.tcp.linger = val.into();
+        self.config.svc.connect.tcp.linger = val.into();
         self
     }
 
@@ -1171,7 +1137,7 @@ impl ClientBuilder {
     where
         S: Into<Option<usize>>,
     {
-        self.config.connect.tcp.send_buffer_size = size.into();
+        self.config.svc.connect.tcp.send_buffer_size = size.into();
         self
     }
 
@@ -1183,7 +1149,7 @@ impl ClientBuilder {
     where
         S: Into<Option<usize>>,
     {
-        self.config.connect.tcp.recv_buffer_size = size.into();
+        self.config.svc.connect.tcp.recv_buffer_size = size.into();
         self
     }
 
@@ -1205,7 +1171,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.connect.happy_eyeballs_timeout = val.into();
+        self.config.svc.connect.happy_eyeballs_timeout = val.into();
         self
     }
 
@@ -1227,12 +1193,15 @@ impl ClientBuilder {
     /// # }
     /// ```
     #[inline]
-    pub fn local_address<T>(mut self, addr: T) -> ClientBuilder
+    pub fn local_address<T>(self, addr: T) -> ClientBuilder
     where
         T: Into<Option<IpAddr>>,
     {
-        dialer::set_local_address(&mut self.config.config_set, addr.into());
-        self
+        match addr.into() {
+            Some(IpAddr::V4(addr)) => self.local_addresses(addr, None),
+            Some(IpAddr::V6(addr)) => self.local_addresses(None, addr),
+            None => self,
+        }
     }
 
     /// Sets the local IPv4 and IPv6 addresses for new IP sockets.
@@ -1259,7 +1228,12 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        dialer::set_local_addresses(&mut self.config.config_set, ipv4.into(), ipv6.into());
+        let (ipv4, ipv6) = (ipv4.into(), ipv6.into());
+        self.config
+            .svc
+            .connect_config
+            .insert_if_some(ipv4)
+            .insert_if_some(ipv6);
         self
     }
 
@@ -1335,7 +1309,10 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        dialer::set_interface(&mut self.config.config_set, interface.into());
+        self.config
+            .svc
+            .connect_config
+            .insert(Arc::<str>::from(interface.into()));
         self
     }
 
@@ -1346,7 +1323,7 @@ impl ClientBuilder {
     /// The identity is also offered to `https://` and `quic://` proxies that request one.
     #[inline]
     pub fn tls_identity(mut self, identity: Identity) -> ClientBuilder {
-        self.config.connect.tls.identity = Some(identity);
+        self.config.svc.connect.tls.identity = Some(identity);
         self
     }
 
@@ -1356,7 +1333,7 @@ impl ClientBuilder {
     /// `https://` and `quic://` proxies.
     #[inline]
     pub fn tls_cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.connect.tls.cert_store = Some(store);
+        self.config.svc.connect.tls.cert_store = Some(store);
         self
     }
 
@@ -1373,7 +1350,7 @@ impl ClientBuilder {
     /// as a last resort.
     #[inline]
     pub fn tls_cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
-        self.config.connect.tls.cert_verification = cert_verification;
+        self.config.svc.connect.tls.cert_verification = cert_verification;
         self
     }
 
@@ -1389,7 +1366,7 @@ impl ClientBuilder {
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     #[inline]
     pub fn tls_verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.connect.tls.verify_hostname = verify_hostname;
+        self.config.svc.connect.tls.verify_hostname = verify_hostname;
         self
     }
 
@@ -1399,14 +1376,14 @@ impl ClientBuilder {
     /// are never sent. Defaults to `true`.
     #[inline]
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.connect.tls.sni = tls_sni;
+        self.config.svc.connect.tls.sni = tls_sni;
         self
     }
 
     /// Configures TLS key logging for the client.
     #[inline]
     pub fn tls_keylog(mut self, keylog: KeyLog) -> ClientBuilder {
-        self.config.connect.tls.keylog = Some(keylog);
+        self.config.svc.connect.tls.keylog = Some(keylog);
         self
     }
 
@@ -1416,7 +1393,7 @@ impl ClientBuilder {
     /// TLS 1.3 and ignores this setting.
     #[inline]
     pub fn tls_min_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.connect.tls.min_version = Some(version);
+        self.config.svc.connect.tls.min_version = Some(version);
         self
     }
 
@@ -1426,7 +1403,7 @@ impl ClientBuilder {
     /// maximum makes every HTTP/3 connection fail.
     #[inline]
     pub fn tls_max_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.connect.tls.max_version = Some(version);
+        self.config.svc.connect.tls.max_version = Some(version);
         self
     }
 
@@ -1437,7 +1414,7 @@ impl ClientBuilder {
     /// feature to be enabled.
     #[inline]
     pub fn tls_info(mut self, tls_info: bool) -> ClientBuilder {
-        self.config.connect.tls.tls_info = tls_info;
+        self.config.svc.connect.tls.tls_info = tls_info;
         self
     }
 
@@ -1446,7 +1423,7 @@ impl ClientBuilder {
     /// Session keys remain scoped to this client and its request configuration.
     #[inline]
     pub fn tls_session_store<S: IntoTlsSessionStore>(mut self, store: S) -> ClientBuilder {
-        self.config.connect.tls.tickets = Arc::new(Tickets::new(Some(store.into_shared())));
+        self.config.svc.connect.tls.tickets = Arc::new(Tickets::new(Some(store.into_shared())));
         self
     }
 
@@ -1457,7 +1434,7 @@ impl ClientBuilder {
     where
         T: Into<Option<TlsOptions>>,
     {
-        self.config.config_set.set(options.into());
+        self.config.svc.connect_config.set(options.into());
         self
     }
 
@@ -1592,7 +1569,7 @@ impl ClientBuilder {
     #[inline]
     pub fn connector_layer<L>(mut self, layer: L) -> ClientBuilder
     where
-        L: Layer<BoxedTransportConnector> + Send + Sync + 'static,
+        L: Layer<BoxedConnectService> + Send + Sync + 'static,
         L::Service: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>
             + Clone
             + Send
@@ -1600,165 +1577,19 @@ impl ClientBuilder {
             + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
-        self.config.connect.layers.push(layer);
+        self.config.svc.connector_layers.push(layer);
         self
     }
 
     // Emulation options
 
     /// Applies the emulation's headers and protocol options.
-    /// Supplied options replace matching settings; absent ones are kept.
-    /// The emulation does not create a connection group.
+    /// Supplied options and headers replace matching entries; absent ones stay and original
+    /// header names append. Does not create a connection group.
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> ClientBuilder {
-        let emulate::Emulation(headers, orig_headers, config_set) = emulation.into_emulation();
-        self.config.config_set.extend(config_set);
+        let emulate::Emulation(headers, orig_headers, connect_config) = emulation.into_emulation();
+        self.config.svc.connect_config.extend(connect_config);
         self.default_headers(headers).orig_headers(orig_headers)
-    }
-}
-
-/// Low-level Tower client and builder used by the public client.
-mod sealed {
-    use super::{pool::TransportConnector, *};
-
-    /// Tower service beneath [`crate::Client`] that validates and sends HTTP requests.
-    /// Applies request configuration, cancellation retries, pool checkout and protocol dispatch.
-    /// Clones share the pool without cloning request bodies.
-    pub type Client<C> = svc::Stack<svc::Dispatch<C>, Body>;
-
-    /// Assembles the protocol, runtime, and pool services used by [`Client`].
-    ///
-    /// The builder owns client connection configuration until [`Builder::build`]
-    /// consumes it. The resulting client clones share the pool created around
-    /// the supplied connector.
-    pub struct Builder {
-        /// Runtime used by protocol drivers and pool maintenance.
-        runtime: DynRuntime,
-
-        /// Protocol, options and socket bindings that requests inherit.
-        protocol: Protocol,
-        config_set: ConfigSet,
-
-        /// Connection-pool reuse and retention policy.
-        pool_config: pool::Config,
-
-        /// Cookie store consulted immediately around protocol dispatch.
-        #[cfg(feature = "cookies")]
-        cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    }
-
-    // ===== impl Builder =====
-
-    impl Builder {
-        /// Creates a builder using `runtime` for protocol drivers and pool tasks.
-        pub fn new(runtime: DynRuntime) -> Self {
-            Self {
-                protocol: Protocol::Auto,
-                config_set: ConfigSet::default(),
-                pool_config: pool::Config {
-                    idle_timeout: Some(Duration::from_secs(90)),
-                    max_idle_per_host: usize::MAX,
-                    max_size: None,
-                    ..pool::Config::default()
-                },
-                #[cfg(feature = "cookies")]
-                cookie_store: None,
-                runtime,
-            }
-        }
-
-        /// Sets how long a connection considered idle remains eligible for reuse.
-        ///
-        /// `None` disables time-based eviction. The default is 90 seconds.
-        #[inline]
-        pub fn pool_idle_timeout<D>(mut self, val: D) -> Self
-        where
-            D: Into<Option<Duration>>,
-        {
-            self.pool_config.idle_timeout = val.into();
-            self
-        }
-
-        /// Sets the maximum idle HTTP/1 senders retained per compatibility group.
-        ///
-        /// This does not limit active physical connections. `0` disables pooling;
-        /// the default is `usize::MAX`.
-        #[inline]
-        pub fn pool_max_idle_per_host(mut self, max_idle: usize) -> Self {
-            self.pool_config.max_idle_per_host = max_idle;
-            self
-        }
-
-        /// Sets the maximum number of compatibility groups retaining reusable senders.
-        ///
-        /// An entry is counted only while it owns a reusable sender. Routing-only
-        /// and connecting entries are not counted. This does not limit physical
-        /// connections. The default is `None`.
-        #[inline]
-        pub fn pool_max_size(mut self, max_size: impl Into<Option<NonZeroUsize>>) -> Self {
-            self.pool_config.max_size = max_size.into();
-            self
-        }
-
-        /// Selects whether a reuse miss immediately connects or waits for reuse.
-        #[inline]
-        pub fn pool_strategy(mut self, strategy: PoolStrategy) -> Self {
-            self.pool_config.strategy = strategy;
-            self
-        }
-
-        /// Shares the client's protocol selection with the request stack and pool.
-        #[inline]
-        pub fn protocol(mut self, protocol: Protocol) -> Self {
-            self.protocol = protocol;
-            self
-        }
-
-        /// Sets the connection options inherited by requests.
-        ///
-        /// Pool and session identities count only request values that differ from these.
-        #[inline]
-        pub fn config_set(mut self, config_set: ConfigSet) -> Self {
-            self.config_set = config_set;
-            self
-        }
-
-        /// Sets the cookie store consulted immediately around protocol dispatch.
-        #[inline]
-        pub fn cookie_store(
-            #[cfg_attr(
-                not(feature = "cookies"),
-                expect(unused_mut, reason = "Only the cookies feature mutates this builder")
-            )]
-            mut self,
-            #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-        ) -> Self {
-            #[cfg(feature = "cookies")]
-            {
-                self.cookie_store = cookie_store;
-            }
-            self
-        }
-
-        /// Consumes the builder and wraps the connector in the complete client stack.
-        ///
-        /// Every client retries unsent requests and lets HTTP/1 generate a missing `Host`.
-        pub fn build<C>(self, connector: C) -> Client<C>
-        where
-            C: TransportConnector,
-        {
-            let dispatch = svc::Dispatch::new(
-                self.pool_config,
-                connector,
-                &self.config_set,
-                true,
-                #[cfg(feature = "cookies")]
-                self.cookie_store,
-                self.runtime,
-            );
-            ServiceBuilder::new()
-                .layer(svc::layer(self.protocol, self.config_set, true))
-                .service(dispatch)
-        }
     }
 }

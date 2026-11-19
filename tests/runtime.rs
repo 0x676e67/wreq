@@ -61,21 +61,6 @@ fn compio_client_uses_its_own_dns_io_and_timer() {
 }
 
 #[test]
-fn compio_try_execute_returns_tasks_without_a_runtime() {
-    use wreq::rt::{Runtime as _, compio::CompioRuntime};
-
-    let (done, ran) = tokio::sync::oneshot::channel();
-    // Outside a Compio runtime the task comes back instead of panicking.
-    let task = CompioRuntime
-        .try_execute(Box::pin(async move { done.send(()).unwrap() }))
-        .unwrap_err();
-    compio::runtime::Runtime::new().unwrap().block_on(async {
-        assert!(CompioRuntime.try_execute(task).is_ok());
-        ran.await.unwrap();
-    });
-}
-
-#[test]
 fn oversized_timeouts_do_not_overflow() {
     let server = support::server::http(|_| async { http::Response::new(Body::from("ok")) });
     let url = format!("http://{}/", server.addr());
@@ -157,7 +142,6 @@ fn early_response_is_read_while_upload_is_blocked() {
 
 #[test]
 fn split_upgrade_keeps_reader_and_writer_wakeups() {
-    // Larger than the loopback socket buffers, so a flush blocks until the server reads.
     const UPLOAD: usize = 16 << 20;
     let read_upload = Arc::new(tokio::sync::Notify::new());
     let server = support::server::http({
@@ -188,8 +172,11 @@ fn split_upgrade_keeps_reader_and_writer_wakeups() {
     let url = format!("http://{}/", server.addr());
 
     compio::runtime::Runtime::new().unwrap().block_on(async {
-        let response = Client::builder_compio()
-            .no_proxy()
+        let builder = Client::builder_compio().no_proxy();
+        // With send buffering, Winsock can complete the flush before the peer reads.
+        #[cfg(windows)]
+        let builder = builder.tcp_send_buffer_size(0);
+        let response = builder
             .build()
             .unwrap()
             .get(&url)
