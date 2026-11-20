@@ -17,8 +17,7 @@ use http::Uri;
 use lru::LruCache;
 
 use super::{
-    Key, SESSION_ENTRY_CAPACITY, SESSION_ID_CONTEXT_LENGTH, SessionKey, Ticket, TlsSession,
-    TlsSessionStore,
+    Key, SESSION_ENTRY_CAPACITY, SESSION_ID_CONTEXT_LENGTH, Ticket, TlsSession, TlsSessionStore,
     entry::{self, SessionEntry},
 };
 use crate::{config::ConnectConfig, sync::Mutex, tls::KeyIdentity};
@@ -76,14 +75,10 @@ impl Tickets {
         &self,
         origin: &Uri,
         peer: &Uri,
-        connect_config: &ConnectConfig,
+        config: &ConnectConfig,
     ) -> Result<Key, ErrorStack> {
-        let session_id_context = self.session_id_context()?;
-        Ok(Key {
-            session: SessionKey::new::<O, T>(origin, connect_config, peer),
-            remote_ip: None,
-            session_id_context,
-        })
+        self.session_id_context()
+            .map(|context| Key::new::<O, T>(origin, peer, config, context))
     }
 
     /// Stores a ticket under `key`.

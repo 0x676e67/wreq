@@ -413,13 +413,11 @@ impl ClientBuilder {
                     Some(dns_resolver) => dns_resolver,
                     None => self.runtime.resolver(),
                 };
-
                 if !self.config.dns_overrides.is_empty() {
                     resolver = Arc::new(OverrideResolver::new(resolver, self.config.dns_overrides));
                 }
                 DynResolver::new(resolver)
             };
-
             svc::Client::new(self.runtime.clone(), resolver, self.config.svc)?
         };
 
@@ -898,7 +896,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.pool.idle_timeout = val.into();
+        self.config.svc.pool_config.idle_timeout = val.into();
         self
     }
 
@@ -907,7 +905,7 @@ impl ClientBuilder {
     /// The default is unlimited. Set `0` to disable pooling for all protocols.
     #[inline]
     pub fn pool_max_idle_per_host(mut self, max: usize) -> ClientBuilder {
-        self.config.svc.pool.max_idle_per_host = max;
+        self.config.svc.pool_config.max_idle_per_host = max;
         self
     }
 
@@ -920,14 +918,14 @@ impl ClientBuilder {
     /// Open streams can finish after eviction. The default and `0` are unlimited.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
-        self.config.svc.pool.max_size = NonZeroUsize::new(max);
+        self.config.svc.pool_config.max_size = NonZeroUsize::new(max);
         self
     }
 
     /// Sets when the pool dials on a reuse miss. Defaults to [`PoolStrategy::Race`].
     #[inline]
     pub fn pool_strategy(mut self, strategy: PoolStrategy) -> ClientBuilder {
-        self.config.svc.pool.strategy = strategy;
+        self.config.svc.pool_config.strategy = strategy;
         self
     }
 

@@ -304,6 +304,7 @@ mod config;
 mod conn;
 mod error;
 mod group;
+mod identity;
 mod into_uri;
 mod protocol;
 mod proxy;

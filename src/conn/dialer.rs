@@ -31,6 +31,7 @@ use tower::Service;
 
 pub(super) use self::race::Race;
 use crate::{
+    config::ConnectConfig,
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
     rt::{Connection, DynRuntime, Timer as _, deadline_after},
@@ -115,6 +116,21 @@ struct State {
 #[derive(Clone)]
 pub(super) struct Dialer {
     state: Arc<State>,
+}
+
+// ===== impl Dial =====
+
+impl Dial {
+    /// Builds a TCP dial using the effective local socket bindings.
+    #[must_use]
+    pub(super) fn tcp(uri: Uri, config: &ConnectConfig, nodelay: bool) -> Self {
+        Self::Tcp {
+            uri,
+            addresses: (config.get_ref().copied(), config.get_ref().copied()),
+            interface: config.get_ref().cloned(),
+            nodelay,
+        }
+    }
 }
 
 // ===== impl Dialer =====
@@ -360,7 +376,6 @@ mod tests {
     use tower::{Service, service_fn};
 
     use super::*;
-    use crate::config::ConnectConfig;
 
     const V4: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 443);
     const V6: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 443);

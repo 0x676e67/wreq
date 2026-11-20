@@ -61,10 +61,10 @@ impl Resumption {
         tickets: &Arc<Tickets>,
         origin: &Uri,
         peer: &Uri,
-        connect_config: &ConnectConfig,
+        config: &ConnectConfig,
     ) -> Result<Self> {
         let key = tickets
-            .key::<QuicOptions, Ticket>(origin, peer, connect_config)
+            .key::<QuicOptions, Ticket>(origin, peer, config)
             .map_err(Error::tls)?;
         Ok(Self {
             tickets: tickets.clone(),

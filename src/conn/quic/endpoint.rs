@@ -5,12 +5,11 @@
 
 use std::{
     collections::VecDeque,
-    hash::{BuildHasher, Hash, Hasher},
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroUsize,
     ops::Deref,
     pin::pin,
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 
 use ::quic::{
@@ -21,18 +20,17 @@ use btls::x509::X509;
 use bytes::Bytes;
 use futures_util::future::{self, BoxFuture, Either};
 use http::Uri;
-use lru::{DefaultHasher, LruCache};
+use lru::LruCache;
 use tower::BoxError;
 
 use super::{Network, TUNNEL_MTU, Tunnel, URI_MISSING_HOST, bind_udp};
 use crate::{
     config::ConnectConfig,
     conn::{
-        self, Conn, Connected, HttpInfo, Request, Transport, connected::tls_info,
-        dialer::ConnectError,
+        Conn, Connected, HttpInfo, Request, Transport, connected::tls_info, dialer::ConnectError,
     },
     dns::SocketAddrs,
-    protocol::Protocol,
+    identity::Identity,
     quic::{QuicOptions, tls},
     rt::DynRuntime,
     sync::Mutex,
@@ -93,7 +91,7 @@ struct Slots {
 /// Tokens are linkable across connections, so they are only shared between requests that
 /// could share a pooled connection
 /// ([RFC 9000 Section 8.1.3](https://www.rfc-editor.org/rfc/rfc9000#section-8.1.3)).
-struct Tokens(Mutex<LruCache<TokenKey, VecDeque<Bytes>>>);
+struct Tokens(Mutex<LruCache<Identity, VecDeque<Bytes>>>);
 
 /// [`TokenStore`] adapter scoped to a single pool identity.
 ///
@@ -101,16 +99,7 @@ struct Tokens(Mutex<LruCache<TokenKey, VecDeque<Bytes>>>);
 /// rather than by raw server hostname.
 struct ScopedTokens {
     tokens: Arc<Tokens>,
-    key: TokenKey,
-}
-
-/// Pre-hashed HTTP/3 pool identity used to key [`Tokens`].
-///
-/// Computes its hash once outside the cache lock to keep token lookups fast.
-#[derive(Clone, PartialEq, Eq)]
-struct TokenKey {
-    hash: u64,
-    identity: conn::Identity,
+    key: Identity,
 }
 
 /// Outer MTU needed to carry a 1200-byte tunneled datagram: QUIC short header (1 + 20-byte
@@ -174,8 +163,8 @@ impl Endpoints {
     async fn connect_addr(
         runtime: &DynRuntime,
         slots: &Slots,
-        connect_config: &ConnectConfig,
         quic_config: &QuicConfig,
+        connect_config: &ConnectConfig,
         address: SocketAddr,
         host: &str,
     ) -> Result<(Connection, Endpoint), ConnectError> {
@@ -218,7 +207,7 @@ impl Endpoints {
         runtime: &DynRuntime,
         slot: &Mutex<Option<Endpoint>>,
         stale: &Endpoint,
-        connect_config: &ConnectConfig,
+        config: &ConnectConfig,
         tls: &tls::Config,
         address: SocketAddr,
         connect: impl Fn(&Endpoint) -> Result<Connecting, ::quic::ConnectError>,
@@ -232,7 +221,7 @@ impl Endpoints {
                 return Ok((current.clone(), connecting));
             }
         }
-        let fresh = Self::open(runtime, connect_config, address)?;
+        let fresh = Self::open(runtime, config, address)?;
         let connecting = connect(&fresh);
         if !driver_stopped(&connecting, tls) {
             *slot = Some(fresh.clone());
@@ -244,14 +233,14 @@ impl Endpoints {
     fn endpoint(
         runtime: &DynRuntime,
         slot: &Mutex<Option<Endpoint>>,
-        connect_config: &ConnectConfig,
+        config: &ConnectConfig,
         remote: SocketAddr,
     ) -> Result<Endpoint, ConnectError> {
         let mut slot = slot.lock();
         if let Some(endpoint) = slot.as_ref() {
             return Ok(endpoint.clone());
         }
-        let endpoint = Self::open(runtime, connect_config, remote)?;
+        let endpoint = Self::open(runtime, config, remote)?;
         *slot = Some(endpoint.clone());
         Ok(endpoint)
     }
@@ -374,8 +363,8 @@ impl Endpoints {
                 let attempt: BoxFuture<'_, _> = Box::pin(Self::connect_addr(
                     &network.runtime,
                     slots,
-                    connect_config,
                     quic_config,
+                    connect_config,
                     address,
                     host,
                 ));
@@ -398,7 +387,7 @@ impl Endpoints {
         let tokens = (!matches!(path, Path::Proxy)).then(|| {
             Arc::new(ScopedTokens {
                 tokens: self.tokens.clone(),
-                key: TokenKey::new(origin, connect_config),
+                key: request.to_identity(request.protocol()),
             })
         });
         Ok(QuicConfig {
@@ -410,21 +399,13 @@ impl Endpoints {
 
     /// Selects the [`TransportConfig`] for `path`, reusing the client's cached config unless
     /// transport options are overridden. Tunnel paths always build a dedicated config.
-    fn transport(
-        &self,
-        connect_config: &ConnectConfig,
-        path: Path,
-    ) -> crate::Result<Arc<TransportConfig>> {
-        let requested = connect_config.override_if_different(QuicOptions::same_transport);
-        match (path, requested) {
+    fn transport(&self, config: &ConnectConfig, path: Path) -> crate::Result<Arc<TransportConfig>> {
+        let opts = config.override_if_different(QuicOptions::same_transport);
+        match (path, opts) {
             (Path::Direct, None) => Ok(self.direct_transport.clone()),
             (Path::Proxy, None) => Ok(self.proxy_transport.clone()),
             (path, requested) => path
-                .transport(
-                    requested
-                        .map(Arc::as_ref)
-                        .or_else(|| connect_config.base_ref()),
-                )
+                .transport(requested.map(Arc::as_ref).or_else(|| config.base_ref()))
                 .map(Arc::new),
         }
     }
@@ -564,25 +545,6 @@ impl Path {
     }
 }
 
-// ===== impl TokenKey =====
-
-impl TokenKey {
-    /// Hashes the HTTP/3 identity before token cache access acquires its lock.
-    #[must_use]
-    fn new(origin: &Uri, connect_config: &ConnectConfig) -> Self {
-        static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
-        let identity = conn::Identity::new(origin.clone(), Protocol::Http3, connect_config);
-        let hash = HASHER.hash_one(&identity);
-        Self { hash, identity }
-    }
-}
-
-impl Hash for TokenKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u64(self.hash);
-    }
-}
-
 // ===== impl ScopedTokens =====
 
 impl TokenStore for ScopedTokens {
@@ -625,6 +587,7 @@ mod tests {
         conn::{Unnameable, layer::timeout::TimeoutLayer},
         dns::{Addrs, DynResolver, Name, Resolve, Resolving},
         ext::UriExt,
+        protocol::Protocol,
         rt::tokio::TokioRuntime,
         tls::trust::CertStore,
     };
@@ -672,16 +635,8 @@ mod tests {
         }
     }
 
-    fn request_for(
-        uri: &Uri,
-        protocol: Protocol,
-        connect_config: ConnectConfig,
-    ) -> Request<ConnectConfig> {
-        Request::new(uri.origin().unwrap(), protocol, connect_config)
-    }
-
     fn request(uri: Uri, connect_config: ConnectConfig) -> Request<ConnectConfig> {
-        request_for(&uri, Protocol::Auto, connect_config)
+        Request::new(uri.origin().unwrap(), Protocol::Http3, connect_config)
     }
 
     async fn connect(
@@ -707,7 +662,7 @@ mod tests {
     fn state_with(
         resolver: Arc<dyn Resolve>,
         cert: &[u8],
-        connect_config: &ConnectConfig,
+        config: &ConnectConfig,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Arc<State> {
         let tls = crate::tls::Config {
@@ -715,7 +670,7 @@ mod tests {
             ..Default::default()
         };
         Arc::new(State {
-            endpoints: Endpoints::new(tls, connect_config).unwrap(),
+            endpoints: Endpoints::new(tls, config).unwrap(),
             network: Network {
                 runtime: DynRuntime::new(TokioRuntime),
                 resolver: DynResolver::new(resolver),
@@ -930,9 +885,8 @@ mod tests {
             None,
         );
         let uri = Uri::from_static("https://localhost/");
-        let request = |overrides: ConnectConfig| {
-            request_for(&uri, Protocol::Auto, overrides.with_base(&connect_config))
-        };
+        let request =
+            |overrides: ConnectConfig| request(uri.clone(), overrides.with_base(&connect_config));
         let (first, shared, _peer) =
             connect(&state, request(ConnectConfig::default()), &server).await;
         assert_eq!(shared.local_addr().unwrap().ip(), Ipv4Addr::LOCALHOST);
@@ -973,11 +927,7 @@ mod tests {
         testnet.insert(Ipv4Addr::new(192, 0, 2, 1));
         let mut connect_config = ConnectConfig::default().with_base(&testnet);
         connect_config.insert(invalid);
-        let invalid = request_for(
-            &Uri::from_static("https://localhost/"),
-            Protocol::Http3,
-            connect_config,
-        );
+        let invalid = request(Uri::from_static("https://localhost/"), connect_config);
         let error = state.clone().connect(invalid).await.err().unwrap();
         let mut chain = std::iter::successors(
             Some(&*error as &(dyn std::error::Error + 'static)),
@@ -1152,15 +1102,11 @@ mod tests {
             if let Some(options) = http3 {
                 connect_config.insert(options);
             }
-            request_for(
-                &Uri::from_static("https://localhost/"),
-                Protocol::Http3,
-                connect_config,
-            )
+            request(Uri::from_static("https://localhost/"), connect_config)
         };
 
         let first = request("first", None);
-        let key = TokenKey::new(first.uri(), first.body());
+        let key = first.to_identity(first.protocol());
         let received = |state: &State| {
             state
                 .endpoints
@@ -1224,7 +1170,7 @@ mod tests {
         let request = |options| {
             let mut overrides = ConnectConfig::default().with_base(&connect_config);
             overrides.insert(options);
-            request_for(&uri, Protocol::Http3, overrides)
+            request(uri.clone(), overrides)
         };
 
         let tls_only = request(QuicOptions::builder().curves_list("X25519").build());

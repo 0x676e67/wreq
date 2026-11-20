@@ -9,26 +9,25 @@ pub(super) mod store;
 use std::{
     any::{Any, TypeId},
     borrow::Borrow,
-    hash::{BuildHasher, Hash, Hasher},
+    hash::{Hash, Hasher},
     net::IpAddr,
     num::NonZeroUsize,
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 
 use btls::ssl::{ClientSession, SslSession, SslSessionRef};
 use http::Uri;
-use lru::{DefaultHasher, LruCache};
+use lru::LruCache;
 pub(crate) use store::Tickets;
 
 use super::{KeyIdentity, TlsVersion};
-use crate::{config::ConnectConfig, conn::CommonIdentity, sync::Mutex};
+use crate::{config::ConnectConfig, conn::Request, identity::Identity, sync::Mutex};
 
 const SESSION_ENTRY_CAPACITY: usize = 1024;
 const SESSION_ID_CONTEXT_LENGTH: usize = 32;
-static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
 
-/// Type-erased [`KeyIdentity`] used by [`SessionKey`] to store stream or QUIC options.
-type ErasedIdentity = dyn for<'h> KeyIdentity<dyn Any, dyn Hasher + 'h>;
+/// Type-erased [`KeyIdentity`] storing stream or QUIC options that affect session reuse.
+type ErasedOptions = dyn for<'h> KeyIdentity<dyn Any, dyn Hasher + 'h>;
 
 /// An opaque key identifying a TLS session store entry.
 ///
@@ -37,24 +36,9 @@ type ErasedIdentity = dyn for<'h> KeyIdentity<dyn Any, dyn Hasher + 'h>;
 /// RSA sessions also include the remote socket's IP (the proxy's IP for tunneled connections).
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Key {
-    session: SessionKey,
+    identity: Identity,
     remote_ip: Option<IpAddr>,
     session_id_context: [u8; SESSION_ID_CONTEXT_LENGTH],
-}
-
-/// Connection identity for session resumption: transport, origin, TLS peer, and any
-/// request-level options that differ from the client's defaults.
-///
-/// Differences in ALPN, ALPS, or HTTP framing share tickets; transport, proxy, socket
-/// bindings, and pool group partition the cache.
-#[derive(Clone)]
-struct SessionKey {
-    origin: Uri,
-    route: Uri,
-    common: CommonIdentity,
-    namespace: &'static TypeId,
-    options: Option<Arc<ErasedIdentity>>,
-    hash: u64,
 }
 
 /// A stored TLS session used for ticket-based resumption.
@@ -127,6 +111,29 @@ pub struct LruTlsSessionStore {
 // ===== impl Key =====
 
 impl Key {
+    /// Builds a key for the authenticated TLS peer and ticket type `T`.
+    ///
+    /// Differences in ALPN, ALPS, or HTTP framing do not split the ticket cache.
+    #[must_use]
+    fn new<O: for<'h> KeyIdentity<dyn Any, dyn Hasher + 'h>, T: 'static>(
+        origin: &Uri,
+        peer: &Uri,
+        config: &ConnectConfig,
+        session_id_context: [u8; SESSION_ID_CONTEXT_LENGTH],
+    ) -> Self {
+        let scope = Request::reuse_scope(config);
+        let namespace = const { &TypeId::of::<T>() };
+        let options = config
+            .override_if_different::<O>(|options, base| options.same(base))
+            .cloned()
+            .map(|options| options as Arc<ErasedOptions>);
+        Self {
+            identity: Identity::new((origin.clone(), peer.clone(), scope, namespace, options)),
+            remote_ip: None,
+            session_id_context,
+        }
+    }
+
     /// Restricts a copy of this session key to the remote socket's IP.
     pub(super) fn with_remote_ip(&self, remote_ip: IpAddr) -> Self {
         Self {
@@ -136,67 +143,17 @@ impl Key {
     }
 }
 
-// ===== impl SessionKey =====
+// ===== impl ErasedOptions =====
 
-impl SessionKey {
-    /// Derives the session identity for a connection, where `route` is the authenticated
-    /// TLS peer (the origin itself or a proxy hop).
-    #[must_use]
-    fn new<O: for<'h> KeyIdentity<dyn Any, dyn Hasher + 'h>, T: 'static>(
-        origin: &Uri,
-        connect_config: &ConnectConfig,
-        route: &Uri,
-    ) -> Self {
-        let common = CommonIdentity::new(connect_config);
-        let namespace = const { &TypeId::of::<T>() };
-        let options = connect_config
-            .override_if_different::<O>(|options, base| options.same(base))
-            .cloned()
-            .map(|options| options as Arc<ErasedIdentity>);
-        let origin = origin.clone();
-        let route = route.clone();
-        let hash = HASHER.hash_one((&origin, &route, &common, namespace, &options));
-        Self {
-            origin,
-            route,
-            common,
-            namespace,
-            options,
-            hash,
-        }
-    }
-}
-
-impl PartialEq for SessionKey {
-    fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash
-            && self.origin == other.origin
-            && self.route == other.route
-            && self.common == other.common
-            && self.namespace == other.namespace
-            && self.options == other.options
-    }
-}
-
-impl Eq for SessionKey {}
-
-impl Hash for SessionKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u64(self.hash);
-    }
-}
-
-// ===== impl ErasedIdentity =====
-
-impl PartialEq for ErasedIdentity {
+impl PartialEq for ErasedOptions {
     fn eq(&self, other: &Self) -> bool {
         self.same(other)
     }
 }
 
-impl Eq for ErasedIdentity {}
+impl Eq for ErasedOptions {}
 
-impl Hash for ErasedIdentity {
+impl Hash for ErasedOptions {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.hash_key(state);
     }
@@ -343,86 +300,53 @@ impl TlsSessionStore for LruTlsSessionStore {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::Ipv4Addr;
 
     use super::*;
-    use crate::{
-        group::Group,
-        http1::Http1Options,
-        tls::{AlpnProtocol, AlpsProtocol, TlsOptions, TlsOptionsBuilder},
-    };
-
-    fn tls(options: TlsOptionsBuilder) -> ConnectConfig {
-        let mut connect_config = ConnectConfig::default();
-        connect_config.insert(options.pre_shared_key(true).build());
-        connect_config
-    }
+    use crate::{group::Group, tls::TlsOptions};
 
     #[test]
-    fn session_keys_ignore_negotiation_and_inherit_client_options() {
-        let connect_config = tls(TlsOptions::builder());
+    fn session_keys_keep_distinct_sessions_isolated() {
         let origin = Uri::from_static("https://example.com/");
-        let key = |overrides: ConnectConfig| {
-            SessionKey::new::<TlsOptions, ClientSession>(
-                &origin,
-                &overrides.with_base(&connect_config),
-                &origin,
-            )
-        };
-        let inherited = ConnectConfig::default().with_base(&connect_config);
-        let plain = key(ConnectConfig::default());
-
-        // ALPN, ALPS, HTTP options and equal client options share tickets.
-        let mut negotiation = tls(TlsOptions::builder()
-            .alpn_protocols([AlpnProtocol::HTTP1])
-            .alps_protocols([AlpsProtocol::HTTP1])
-            .alps_use_new_codepoint(false));
-        negotiation.insert(Http1Options::builder().max_headers(8).build());
-        for connect_config in [negotiation, tls(TlsOptions::builder())] {
-            assert!(plain == key(connect_config));
-        }
-
-        let mut grouped = ConnectConfig::default();
-        grouped.insert(Group::new("tenant"));
-        let mut proxied = ConnectConfig::default();
-        proxied.insert(
-            crate::Proxy::all("http://localhost:8080")
-                .unwrap()
-                .into_matcher(),
+        let mut config = ConnectConfig::default();
+        config.insert(TlsOptions::builder().pre_shared_key(true).build());
+        let mut grouped_config = config.clone();
+        grouped_config.insert(Group::new("isolated"));
+        let mut overrides = ConnectConfig::default();
+        overrides.insert(
+            TlsOptions::builder()
+                .pre_shared_key(true)
+                .key_shares(Vec::new())
+                .build(),
         );
-        let others = [
-            key(tls(
-                TlsOptions::builder().max_tls_version(TlsVersion::TLS_1_2)
-            )),
-            key(tls(TlsOptions::builder().key_shares(Vec::new()))),
-            key(grouped),
-            key(proxied),
-            SessionKey::new::<TlsOptions, ClientSession>(
-                &origin,
-                &inherited,
-                &Uri::from_static("https://proxy:8443"),
+
+        let context = [0; SESSION_ID_CONTEXT_LENGTH];
+        let key = |config: &ConnectConfig, peer: &Uri| {
+            Key::new::<TlsOptions, ClientSession>(&origin, peer, config, context)
+        };
+        let baseline = key(&config, &origin);
+        let cases = [
+            (
+                "TLS peer",
+                key(&config, &Uri::from_static("https://proxy:8443")),
             ),
-            SessionKey::new::<TlsOptions, ()>(&origin, &inherited, &origin),
+            (
+                "ticket type",
+                Key::new::<TlsOptions, ()>(&origin, &origin, &config, context),
+            ),
+            ("TLS options", key(&overrides, &origin)),
+            ("reuse scope", key(&grouped_config, &origin)),
         ];
-        for mut other in others {
-            assert!(plain != other);
-            other.hash = plain.hash;
-            assert!(plain != other);
+        for (field, other) in cases {
+            assert!(baseline != other, "key must distinguish {field}");
         }
 
-        let mut connect_config = connect_config;
-        connect_config.insert(Ipv4Addr::LOCALHOST);
-        connect_config.insert(Ipv6Addr::LOCALHOST);
-        let inherited = ConnectConfig::default().with_base(&connect_config);
-        let mut partial = inherited.clone();
-        partial.insert(Ipv4Addr::LOCALHOST);
-        let mut changed = inherited.clone();
-        changed.insert(Ipv4Addr::UNSPECIFIED);
-        let key = |connect_config| {
-            SessionKey::new::<TlsOptions, ClientSession>(&origin, connect_config, &origin)
-        };
-        let inherited_key = key(&inherited);
-        assert!(inherited_key == key(&partial));
-        assert!(inherited_key != key(&changed));
+        config.insert(Ipv4Addr::LOCALHOST);
+        let mut overrides = ConnectConfig::default().with_base(&config);
+        let inherited = key(&overrides, &origin);
+        overrides.insert(Ipv4Addr::LOCALHOST);
+        assert!(inherited == key(&overrides, &origin));
+        overrides.insert(Ipv4Addr::UNSPECIFIED);
+        assert!(inherited != key(&overrides, &origin));
     }
 }

@@ -41,7 +41,7 @@ use crate::{
 };
 #[cfg(feature = "socks")]
 use crate::{
-    conn::{dialer::Dialer, tcp_dial},
+    conn::dialer::{Dial, Dialer},
     rt::AsyncUdpSocket,
 };
 
@@ -192,7 +192,8 @@ impl Network {
         })
     }
 
-    /// Races multiple socket addresses to establish a connection using the Happy Eyeballs algorithm.
+    /// Races multiple socket addresses to establish a connection using the Happy Eyeballs
+    /// algorithm.
     fn race<C, F>(
         &self,
         addrs: SocketAddrs,
@@ -253,7 +254,7 @@ async fn connect_socks(
     let connect_target = |target| {
         let dial = dialer
             .clone()
-            .oneshot(tcp_dial(&request, proxy.uri().clone(), false));
+            .oneshot(Dial::tcp(proxy.uri().clone(), request.body(), false));
         let tunnel = socks::open(dial, &proxy, target, &network.resolver, &open_relay);
         async move {
             endpoints
@@ -285,20 +286,20 @@ async fn connect_socks(
 #[cfg(feature = "socks")]
 fn relay_socket(
     runtime: &DynRuntime,
-    connect_config: &ConnectConfig,
+    config: &ConnectConfig,
     remote: SocketAddr,
 ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
     if matches!(
         (
-            connect_config.get_ref::<Ipv4Addr>(),
-            connect_config.get_ref::<Ipv6Addr>(),
+            config.get_ref::<Ipv4Addr>(),
+            config.get_ref::<Ipv6Addr>(),
             remote
         ),
         (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
     ) {
         return Err("relay address does not match local bindings".into());
     }
-    Ok(runtime.udp_socket(bind_udp(connect_config, remote)?)?)
+    Ok(runtime.udp_socket(bind_udp(config, remote)?)?)
 }
 
 /// Binds a non-blocking UDP socket matching the address family of `remote`.

@@ -49,7 +49,8 @@ pub struct QuicOptions {
     /// ([RFC 9000 Section 10.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-10.1)).
     ///
     /// Zero omits the parameter and leaves only the server's limit; in that case an
-    /// unanswered handshake is only bounded by [`connect_timeout`](crate::ClientBuilder::connect_timeout).
+    /// unanswered handshake is only bounded by
+    /// [`connect_timeout`](crate::ClientBuilder::connect_timeout).
     ///
     /// **Default:** `None` (30 seconds).
     #[deftly(tls_key(transport))]
@@ -75,7 +76,8 @@ pub struct QuicOptions {
     #[deftly(tls_key(transport))]
     pub initial_max_stream_data: Option<u64>,
 
-    /// Maximum bidirectional streams the server may open (`initial_max_streams_bidi`, up to 65535).
+    /// Maximum bidirectional streams the server may open (`initial_max_streams_bidi`, up to
+    /// 65535).
     ///
     /// Each allowed stream slot is reserved when the connection starts.
     ///

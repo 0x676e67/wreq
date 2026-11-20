@@ -14,15 +14,14 @@ use netty::proxy::socks::{DnsResolve, SocksConnector, Version};
 use netty::proxy::tunnel::{TunnelConnector, TunnelError};
 use tower::{BoxError, Service, ServiceExt, service_fn};
 
-#[cfg(unix)]
-use crate::conn::dialer::Dial;
 #[cfg(feature = "socks")]
 use crate::dns::{DynResolver, Name};
 use crate::{
     config::ConnectConfig,
     conn::{
-        Conn, Connected, HttpInfo, Io, Request, Routed, Transport, connected::tls_info,
-        dialer::Dialer, tcp_dial,
+        Conn, Connected, HttpInfo, Io, Request, Routed, Transport,
+        connected::tls_info,
+        dialer::{Dial, Dialer},
     },
     error::{ProxyConnect, ProxyMismatch},
     ext::UriExt,
@@ -126,7 +125,7 @@ impl State {
                 let io = self
                     .dialer
                     .clone()
-                    .oneshot(tcp_dial(&request, request.uri().clone(), is_https))
+                    .oneshot(Dial::tcp(request.uri().clone(), request.body(), is_https))
                     .await?;
                 (MaybeHttpsStream::Http(io), tls)
             }
@@ -146,7 +145,7 @@ impl State {
                 let tls = self.tls.clone().for_config(request.body())?;
                 let hop = self.dialer.clone().map_request(|uri: Uri| {
                     let nodelay = is_https || uri.is_https();
-                    tcp_dial(&request, uri, nodelay)
+                    Dial::tcp(uri, request.body(), nodelay)
                 });
                 let resolver = self.resolver.clone().map_request(Name::new);
                 let io = socks_connector(proxy, hop, resolver, (version, dns))
@@ -177,9 +176,9 @@ impl State {
                 let io = self
                     .dialer
                     .clone()
-                    .oneshot(tcp_dial(
-                        &request,
+                    .oneshot(Dial::tcp(
                         proxy.uri().clone(),
+                        request.body(),
                         proxy.uri().is_https(),
                     ))
                     .await
@@ -206,7 +205,7 @@ impl State {
     {
         let hop = service_fn(move |uri: Uri| {
             let dial = match route {
-                Intercepted::Proxy(_) => tcp_dial(request, uri.clone(), true),
+                Intercepted::Proxy(_) => Dial::tcp(uri.clone(), request.body(), true),
                 #[cfg(unix)]
                 Intercepted::Unix(path) => Dial::Unix(path.clone()),
             };

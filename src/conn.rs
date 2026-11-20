@@ -5,13 +5,14 @@
 
 mod connected;
 mod dialer;
-mod identity;
 mod layer;
 #[cfg(feature = "http3")]
 mod quic;
 mod stream;
 
 use std::{
+    hash::Hash,
+    net::{Ipv4Addr, Ipv6Addr},
     sync::Arc,
     task::{Context, Poll, ready},
     time::Duration,
@@ -20,7 +21,7 @@ use std::{
 use dialer::{Dialer, tcp};
 #[cfg(feature = "http3")]
 use futures_util::future;
-use http::{Method, Uri};
+use http::Uri;
 use layer::{
     timeout::{Timeout, TimeoutLayer},
     verbose::{self, Verbose},
@@ -31,19 +32,23 @@ use tower::{
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapErr},
 };
 
-pub(crate) use self::{
-    connected::{Connected, HttpInfo},
-    identity::{CommonIdentity, Identity},
-};
+pub(crate) use self::connected::{Connected, HttpInfo};
+#[cfg(feature = "http2")]
+use crate::http2::Http2Options;
 use crate::{
     config::ConnectConfig,
     dns::DynResolver,
     error::map_timeout_to_connector_error,
+    group::Group,
+    http1::Http1Options,
+    identity::Identity,
     protocol::Protocol,
     proxy::{Intercepted, Matcher as ProxyMatcher},
     rt::DynRuntime,
     tls,
 };
+#[cfg(feature = "http3")]
+use crate::{http3::Http3Options, quic::QuicOptions};
 
 /// Type-erased connection service passed through user-supplied layers.
 pub type BoxedConnectService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
@@ -81,12 +86,16 @@ pub(crate) struct Config {
     pub(crate) verbose: bool,
 }
 
-/// Internal connection request carrying the target origin, selected [`Protocol`], and
-/// [`ConnectConfig`].
+/// Connection request carrying the normalized origin URI, selected [`Protocol`], and options.
 ///
-/// Wraps an [`http::Request`] with method `CONNECT` and stores non-default protocol selection
-/// in HTTP extensions.
-pub(crate) struct Request<T>(http::Request<T>);
+/// Prepared before pool lookup, used to derive reuse [`Identity`] keys, and wrapped in
+/// [`Unnameable`] when dialing through connector layers on a pool miss.
+#[derive(Clone)]
+pub(crate) struct Request<T> {
+    uri: Uri,
+    protocol: Protocol,
+    body: T,
+}
 
 /// Opaque connection request passed through user-supplied connector layers.
 ///
@@ -262,38 +271,91 @@ impl Service<Unnameable> for Connect {
 // ===== impl Request =====
 
 impl<T> Request<T> {
-    /// Builds an internal CONNECT request with the selected protocol and body.
+    /// Pairs a normalized origin and selected protocol with the connection options.
     #[must_use]
-    pub(crate) fn new(origin: Uri, protocol: Protocol, body: T) -> Self {
-        let mut request = http::Request::new(body);
-        *request.method_mut() = Method::CONNECT;
-        *request.uri_mut() = origin;
-        if protocol != Protocol::Auto {
-            request.extensions_mut().insert(protocol);
+    pub(crate) fn new(uri: Uri, protocol: Protocol, body: T) -> Self {
+        Self {
+            uri,
+            protocol,
+            body,
         }
-        Self(request)
     }
 
     /// Returns the origin URI for this connection.
     #[must_use]
     fn uri(&self) -> &Uri {
-        self.0.uri()
+        &self.uri
     }
 
     /// Borrows the request body.
     #[must_use]
     pub(crate) fn body(&self) -> &T {
-        self.0.body()
+        &self.body
     }
 
     /// Returns the protocol selected for this connection attempt.
     #[must_use]
-    fn protocol(&self) -> Protocol {
-        self.0
-            .extensions()
-            .get::<Protocol>()
-            .copied()
-            .unwrap_or(Protocol::Auto)
+    pub(crate) fn protocol(&self) -> Protocol {
+        self.protocol
+    }
+}
+
+impl Request<ConnectConfig> {
+    /// Captures non-protocol overrides shared by connection pool and TLS session keys.
+    #[must_use]
+    pub(crate) fn reuse_scope(config: &ConnectConfig) -> impl Eq + Hash + Send + Sync + 'static {
+        (
+            config
+                .override_if_different::<Group>(PartialEq::eq)
+                .cloned(),
+            config
+                .override_if_different::<ProxyMatcher>(PartialEq::eq)
+                .cloned(),
+            config
+                .override_if_different::<Ipv4Addr>(PartialEq::eq)
+                .cloned(),
+            config
+                .override_if_different::<Ipv6Addr>(PartialEq::eq)
+                .cloned(),
+            config
+                .override_if_different::<Arc<str>>(PartialEq::eq)
+                .cloned(),
+        )
+    }
+
+    /// Builds a pool or QUIC address-token [`Identity`] for `protocol` without consuming `self`.
+    ///
+    /// Only overrides relevant to `protocol` that differ from client defaults participate in the
+    /// key.
+    #[must_use]
+    pub(crate) fn to_identity(&self, protocol: Protocol) -> Identity {
+        macro_rules! key {
+            ($($(#[$attr:meta])* $option:ty),+ $(,)?) => {
+                Identity::new((
+                    self.uri.clone(),
+                    protocol,
+                    Self::reuse_scope(self.body()),
+                    $(
+                        $(#[$attr])*
+                        self.body().override_if_different::<$option>(PartialEq::eq).cloned(),
+                    )+
+                ))
+            };
+        }
+
+        match protocol {
+            Protocol::Auto => key!(
+                tls::TlsOptions,
+                Http1Options,
+                #[cfg(feature = "http2")]
+                Http2Options,
+            ),
+            Protocol::Http1 => key!(tls::TlsOptions, Http1Options),
+            #[cfg(feature = "http2")]
+            Protocol::Http2 => key!(tls::TlsOptions, Http2Options),
+            #[cfg(feature = "http3")]
+            Protocol::Http3 => key!(Http3Options, QuicOptions),
+        }
     }
 }
 
@@ -326,20 +388,6 @@ impl Transport {
     }
 }
 
-/// Builds a TCP dial request from `request`'s socket bindings.
-fn tcp_dial(request: &Request<ConnectConfig>, uri: Uri, nodelay: bool) -> dialer::Dial {
-    let connect_config = request.body();
-    dialer::Dial::Tcp {
-        uri,
-        addresses: (
-            connect_config.get_ref().copied(),
-            connect_config.get_ref().copied(),
-        ),
-        interface: connect_config.get_ref().cloned(),
-        nodelay,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,10 +397,9 @@ mod tests {
     #[cfg(feature = "http3")]
     fn test_connect_request(
         uri: Uri,
-        protocol: Option<Protocol>,
+        protocol: Protocol,
         connect_config: ConnectConfig,
     ) -> Unnameable {
-        let protocol = protocol.unwrap_or(Protocol::Auto);
         Unnameable(Request::new(
             uri.origin().unwrap(),
             protocol,
@@ -438,7 +485,7 @@ mod tests {
             .unwrap();
             let request = test_connect_request(
                 Uri::from_static("https://localhost/"),
-                Some(Protocol::Http3),
+                Protocol::Http3,
                 ConnectConfig::default(),
             );
             let serve = async {
@@ -497,7 +544,7 @@ mod tests {
             .unwrap();
             let request = test_connect_request(
                 Uri::from_static("https://localhost/"),
-                Some(Protocol::Http3),
+                Protocol::Http3,
                 connect_config,
             );
             let error = connector

@@ -7,7 +7,6 @@
 pub(crate) mod macros;
 
 pub(super) mod connector;
-mod context;
 
 pub mod compress;
 pub mod keylog;
@@ -18,6 +17,7 @@ use std::{
     any::Any,
     borrow::Cow,
     hash::{BuildHasher, Hash, Hasher},
+    num::NonZeroUsize,
     sync::{Arc, LazyLock},
 };
 
@@ -33,11 +33,11 @@ use compress::{CertificateCompressor, Compressors};
 use derive_deftly::Deftly;
 use educe::Educe;
 use keylog::KeyLog;
+use lru::{DefaultHasher, LruCache};
 use session::Tickets;
 use trust::{CertStore, Identity};
 
-pub(crate) use self::context::TlsContext;
-use crate::Error;
+use crate::{Error, sync::Mutex};
 
 /// Compares and hashes the subset of TLS options that define a cache or session key.
 ///
@@ -53,6 +53,61 @@ pub(crate) trait KeyIdentity<
 
     /// Hashes the fields compared by [`Self::same`].
     fn hash_key(&self, state: &mut H);
+}
+
+const REQUEST_CONTEXTS: NonZeroUsize =
+    NonZeroUsize::new(16).expect("request context capacity must be non-zero");
+static CONTEXT_HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
+
+/// Compiled base TLS context paired with a bounded LRU cache for per-request overrides.
+///
+/// Shared by both stream and QUIC TLS contexts so identical request overrides reuse a single
+/// compiled BoringSSL context instead of rebuilding it on every connection.
+pub(crate) struct TlsContext<O, T> {
+    inner: T,
+    cache: Mutex<LruCache<u64, (Arc<O>, T)>>,
+}
+
+// ===== impl TlsContext =====
+
+impl<O: KeyIdentity, T: Clone> TlsContext<O, T> {
+    /// Creates a cache around the compiled base context.
+    pub(crate) fn new(inner: T) -> Self {
+        Self {
+            inner,
+            cache: Mutex::new(LruCache::sparse(REQUEST_CONTEXTS)),
+        }
+    }
+
+    /// Returns the base context when `options` is `None`, or looks up (and compiles on miss)
+    /// a cached override context.
+    ///
+    /// Compilation runs outside the lock, so concurrent misses may compile redundantly.
+    pub(crate) fn get_or_compile(
+        &self,
+        options: Option<&Arc<O>>,
+        compile: impl FnOnce(&O) -> crate::Result<T>,
+    ) -> crate::Result<T> {
+        let Some(value) = options else {
+            return Ok(self.inner.clone());
+        };
+
+        let mut hasher = CONTEXT_HASHER.build_hasher();
+        value.hash_key(&mut hasher);
+        let hash = hasher.finish();
+        // Guard against hash collisions by checking equality on hit.
+        if let Some((cached, context)) = self.cache.lock().get(&hash)
+            && cached.same(value)
+        {
+            return Ok(context.clone());
+        }
+
+        let context = compile(value)?;
+        let entry = (value.clone(), context.clone());
+        // Drop any evicted context after releasing the lock.
+        let _evicted = self.cache.lock().push(hash, entry);
+        Ok(context)
+    }
 }
 
 /// Peer certificate information attached to response extensions when
