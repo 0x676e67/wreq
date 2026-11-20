@@ -139,7 +139,10 @@ async fn self_signed_certificate_requires_explicit_trust() {
         .unwrap();
     assert!(response.extensions().get::<TlsInfo>().is_none());
 
-    let store = CertStore::builder().add_der_cert(peer_cert).build().unwrap();
+    let store = CertStore::builder()
+        .add_der_cert(peer_cert)
+        .build()
+        .unwrap();
     let named = |host: &'static str| {
         Client::builder()
             .resolve(host, addr)
