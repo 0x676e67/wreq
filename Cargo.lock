@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "btls"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?rev=8879c026b548c25441f83ff58b39d7e22ba1b5b1#8879c026b548c25441f83ff58b39d7e22ba1b5b1"
+source = "git+https://github.com/0x676e67/btls?branch=main#8879c026b548c25441f83ff58b39d7e22ba1b5b1"
 dependencies = [
  "bitflags",
  "btls-sys",
@@ -271,7 +271,7 @@ dependencies = [
 [[package]]
 name = "btls-sys"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?rev=8879c026b548c25441f83ff58b39d7e22ba1b5b1#8879c026b548c25441f83ff58b39d7e22ba1b5b1"
+source = "git+https://github.com/0x676e67/btls?branch=main#8879c026b548c25441f83ff58b39d7e22ba1b5b1"
 dependencies = [
  "bindgen",
  "cmake",
@@ -1451,7 +1451,7 @@ dependencies = [
 [[package]]
 name = "http2"
 version = "0.5.20"
-source = "git+https://github.com/0x676e67/http2?rev=3219d38910c22105ea7fc5464696f26589432e9c#3219d38910c22105ea7fc5464696f26589432e9c"
+source = "git+https://github.com/0x676e67/http2?branch=master#3219d38910c22105ea7fc5464696f26589432e9c"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2005,7 +2005,7 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 [[package]]
 name = "netty"
 version = "0.2.5"
-source = "git+https://github.com/0x676e67/netty?rev=314db585d85e7ea9c15535f458e7324b800fc702#314db585d85e7ea9c15535f458e7324b800fc702"
+source = "git+https://github.com/0x676e67/netty?branch=main#314db585d85e7ea9c15535f458e7324b800fc702"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -3202,7 +3202,7 @@ dependencies = [
 [[package]]
 name = "tokio-btls"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?rev=8879c026b548c25441f83ff58b39d7e22ba1b5b1#8879c026b548c25441f83ff58b39d7e22ba1b5b1"
+source = "git+https://github.com/0x676e67/btls?branch=main#8879c026b548c25441f83ff58b39d7e22ba1b5b1"
 dependencies = [
  "btls",
  "btls-sys",
