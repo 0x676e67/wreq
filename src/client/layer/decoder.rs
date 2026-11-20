@@ -2,9 +2,10 @@
 
 use std::task::{Context, Poll};
 
+use futures_util::{TryFutureExt, future::MapOk};
 use http::{
-    HeaderValue, Request, Response,
-    header::{ACCEPT_ENCODING, RANGE},
+    HeaderValue, Request, Response, StatusCode,
+    header::{ACCEPT_ENCODING, CONTENT_ENCODING, Entry, RANGE},
 };
 use http_body::Body;
 use tower::{Layer, Service};
@@ -41,14 +42,23 @@ pub struct DecompressionLayer {
 /// Negotiates response encodings and transparently decodes response bodies.
 ///
 /// Before forwarding a request, `Decompression` applies request-specific
-/// [`AcceptEncoding`] settings and keeps range requests on the identity representation.
-/// The wrapped `tower-http` service then advertises enabled encodings and decodes matching
-/// responses.
+/// [`AcceptEncoding`] settings and defaults range requests to identity encoding. The wrapped
+/// `tower-http` service decodes matching responses except for partial content.
 #[derive(Clone)]
 pub struct Decompression<S> {
-    decoder: Option<decompression::Decompression<S>>,
+    decoder: Option<decompression::Decompression<PreservePartialContent<S>>>,
     enabled: bool,
 }
+
+/// Keeps encoded partial responses out of the wrapped decompressor.
+#[derive(Clone)]
+struct PreservePartialContent<S>(S);
+
+/// Encoding header values held while tower-http wraps a partial response body.
+#[derive(Clone)]
+struct PartialContentEncoding(Vec<HeaderValue>);
+
+type MapResponse<F, B> = MapOk<F, fn(Response<B>) -> Response<B>>;
 
 // ===== AcceptEncoding =====
 
@@ -110,7 +120,7 @@ impl<S> Layer<S> for DecompressionLayer {
 
     #[inline(always)]
     fn layer(&self, service: S) -> Self::Service {
-        let decoder = decompression::Decompression::new(service)
+        let decoder = decompression::Decompression::new(PreservePartialContent(service))
             .no_br()
             .no_deflate()
             .no_gzip()
@@ -128,9 +138,9 @@ impl<S> Decompression<S> {
     const BUG_MSG: &str = "[BUG] Decompression service not initialized; bug in setup";
 
     fn accept_in_place(
-        mut decoder: decompression::Decompression<S>,
+        mut decoder: decompression::Decompression<PreservePartialContent<S>>,
         accept: &AcceptEncoding,
-    ) -> decompression::Decompression<S> {
+    ) -> decompression::Decompression<PreservePartialContent<S>> {
         #[cfg(feature = "gzip")]
         {
             decoder = decoder.gzip(accept.gzip);
@@ -163,7 +173,8 @@ where
 {
     type Response = Response<DecompressionBody<ResBody>>;
     type Error = S::Error;
-    type Future = ResponseFuture<S::Future>;
+    type Future =
+        MapResponse<ResponseFuture<MapResponse<S::Future, ResBody>>, DecompressionBody<ResBody>>;
 
     #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -190,9 +201,59 @@ where
             // https://www.rfc-editor.org/rfc/rfc9110.html#section-14.1.2
             // https://fetch.spec.whatwg.org/#http-network-or-cache-fetch
             req.headers_mut()
-                .insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
+                .entry(ACCEPT_ENCODING)
+                .or_insert(HeaderValue::from_static("identity"));
         }
 
-        self.decoder.as_mut().expect(Self::BUG_MSG).call(req)
+        self.decoder
+            .as_mut()
+            .expect(Self::BUG_MSG)
+            .call(req)
+            .map_ok(restore_partial_content_encoding::<DecompressionBody<ResBody>> as fn(_) -> _)
     }
+}
+
+// ===== impl PreservePartialContent =====
+
+impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for PreservePartialContent<S>
+where
+    S: Service<Request<ReqBody>, Response = Response<ResBody>>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = MapResponse<S::Future, ResBody>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
+        self.0
+            .call(req)
+            .map_ok(hide_partial_content_encoding::<ResBody> as fn(_) -> _)
+    }
+}
+
+fn hide_partial_content_encoding<B>(mut response: Response<B>) -> Response<B> {
+    // Byte ranges refer to the encoded representation (RFC 9110 section 14.1.2).
+    // tower-http decodes based on Content-Encoding alone, so hide it for 206 responses.
+    if response.status() == StatusCode::PARTIAL_CONTENT
+        && let Entry::Occupied(entry) = response.headers_mut().entry(CONTENT_ENCODING)
+    {
+        let (_, values) = entry.remove_entry_mult();
+        let encoding = PartialContentEncoding(values.collect());
+        response.extensions_mut().insert(encoding);
+    }
+    response
+}
+
+fn restore_partial_content_encoding<B>(mut response: Response<B>) -> Response<B> {
+    if response.status() == StatusCode::PARTIAL_CONTENT
+        && let Some(encoding) = response.extensions_mut().remove::<PartialContentEncoding>()
+    {
+        for value in encoding.0 {
+            response.headers_mut().append(CONTENT_ENCODING, value);
+        }
+    }
+    response
 }
