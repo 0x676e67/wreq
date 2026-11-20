@@ -125,9 +125,7 @@ async fn test_proxy_unix_socket() {
             .expect("Unix proxy must receive CONNECT");
         let mut tunnel = TokioIo::new(upgrade.await.unwrap());
         let mut upstream = TcpStream::connect(upstream_addr).await.unwrap();
-        tokio::io::copy_bidirectional(&mut tunnel, &mut upstream)
-            .await
-            .unwrap();
+        tokio::io::copy_bidirectional(&mut tunnel, &mut upstream).await
     });
 
     let client = Client::builder()
@@ -145,7 +143,7 @@ async fn test_proxy_unix_socket() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(resp.text().await.unwrap(), "hello tunnel");
     drop(client);
-    timeout(Duration::from_secs(5), proxy)
+    let proxy_result = timeout(Duration::from_secs(5), proxy)
         .await
         .unwrap()
         .unwrap();
@@ -153,4 +151,13 @@ async fn test_proxy_unix_socket() {
         .await
         .unwrap()
         .unwrap();
+
+    // A reset while closing the tunnel is acceptable after the full HTTPS exchange.
+    if let Err(error) = proxy_result {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::ConnectionReset,
+            "proxy tunnel copy failed: {error}"
+        );
+    }
 }
