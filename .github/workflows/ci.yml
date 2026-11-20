@@ -63,7 +63,11 @@ jobs:
         uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Resolve MSRV aware dependencies
-        run: cargo update
+        run: |
+          # A full update would move branch-based Git dependencies past the lockfile.
+          if ! grep -Eq '^source = "git[+][^"]+[?]branch=' Cargo.lock; then
+            cargo update
+          fi
         env:
           CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
       - name: Get MSRV package metadata
@@ -75,7 +79,7 @@ jobs:
           toolchain: ${{ steps.metadata.outputs.msrv }}
       - uses: Swatinem/rust-cache@v2
       - name: Check
-        run: cargo check
+        run: cargo check --locked
 
   test:
     name: Test (${{ matrix.feature-set }})

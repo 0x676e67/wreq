@@ -7,7 +7,10 @@ use http::{Uri, Version};
 
 use super::{
     Cookie, CookieStore, Cookies, IntoCookie,
-    store::{DEFAULT_PATH, Store, canonical_host, cookie_is_expired, domain_match, normalize_path},
+    store::{
+        DEFAULT_PATH, Store, canonical_host, cookie_is_expired, domain_match, is_public_suffix,
+        normalize_path,
+    },
 };
 use crate::{IntoUri, ext::UriExt, header::HeaderValue, sync::RwLock};
 
@@ -50,7 +53,7 @@ impl Jar {
         let now = OffsetDateTime::now_utc();
         let store = self.0.read();
         let entry = store
-            .cookies
+            .cookies()
             .get(&host)?
             .get(uri.path())?
             .entries(name)
@@ -75,7 +78,7 @@ impl Jar {
 
         self.0
             .read()
-            .cookies
+            .cookies()
             .get(&host)
             .and_then(|path_map| path_map.get(uri.path()))
             .is_some_and(|cookie_map| {
@@ -111,7 +114,7 @@ impl Jar {
         let mut cookies = self
             .0
             .read()
-            .cookies
+            .cookies()
             .iter()
             .flat_map(|(host, path_map)| {
                 path_map.values().flat_map(move |cookie_map| {
@@ -138,7 +141,7 @@ impl Jar {
         let now = OffsetDateTime::now_utc();
         self.0
             .read()
-            .cookies
+            .cookies()
             .values()
             .flat_map(|path_map| path_map.values())
             .flat_map(|cookie_map| cookie_map.values())
@@ -152,7 +155,7 @@ impl Jar {
         !self
             .0
             .read()
-            .cookies
+            .cookies()
             .values()
             .flat_map(|path_map| path_map.values())
             .flat_map(|cookie_map| cookie_map.values())
@@ -242,10 +245,11 @@ impl Jar {
             let Some(host) = uri.host().and_then(canonical_host) else {
                 return;
             };
-            let host_only = cookie.domain().is_none();
+            let mut host_only = cookie.domain().is_none();
 
             // If the canonicalized request-host does not domain-match the
-            // domain-attribute:
+            // domain-attribute, or if the domain-attribute is a public suffix
+            // and does not equal the canonicalized request-host:
             //    Ignore the cookie entirely and abort these steps.
             //
             // RFC 6265 §5.3 + §5.1.3:
@@ -255,12 +259,21 @@ impl Jar {
                 let Some(domain) = canonical_host(raw_domain) else {
                     return;
                 };
-                if !domain_match(&host, &domain) {
+                if is_public_suffix(&domain) {
+                    // A public suffix is only accepted for the request host itself, as a
+                    // host-only cookie.
+                    if domain != host {
+                        return;
+                    }
+                    cookie.unset_domain();
+                    host_only = true;
+                    host
+                } else if domain_match(&host, &domain) {
+                    cookie.set_domain(domain.to_string());
+                    domain
+                } else {
                     return;
                 }
-
-                cookie.set_domain(domain.to_string());
-                domain
             } else {
                 host
             };
@@ -302,6 +315,7 @@ impl Jar {
                 .to_owned();
 
             let mut store = self.0.write();
+            store.evict_expired(now);
             if !secure_origin
                 && store.would_overlay_secure_cookie(cookie.name(), &domain, &path, now)
             {
@@ -312,7 +326,7 @@ impl Jar {
                 store.remove_stored_cookie(&domain, &path, cookie.name(), host_only);
             } else {
                 cookie.set_path(path.clone());
-                store.insert_stored_cookie(domain, path, cookie);
+                store.insert_stored_cookie(domain, path, cookie, now);
             }
         }
     }
@@ -343,6 +357,7 @@ impl Jar {
             };
             let cookie = cookie.into();
             let mut store = self.0.write();
+            store.evict_expired(OffsetDateTime::now_utc());
             store.remove_stored_cookies(&host, uri.path(), cookie.name());
         }
     }
@@ -1264,5 +1279,38 @@ mod tests {
                 "cookie must NOT leak to {uri_str}"
             );
         }
+    }
+
+    #[test]
+    fn jar_rejects_public_suffix_domains() {
+        let jar = Jar::default();
+        let supercookies = [
+            ("a=1; Domain=com", "https://attacker.com/"),
+            ("a=1; Domain=com.", "https://attacker.com./"),
+            #[cfg(feature = "cookies-psl")]
+            ("a=1; Domain=co.uk", "https://attacker.co.uk/"),
+            #[cfg(feature = "cookies-psl")]
+            ("a=1; Domain=github.io", "https://attacker.github.io/"),
+        ];
+        for (cookie, uri) in supercookies {
+            jar.add(cookie, uri);
+        }
+        assert!(jar.is_empty());
+
+        // RFC 6265 section 5.3 step 5: a public suffix equal to the request host is host-only.
+        jar.add("local=1; Domain=localhost", "http://localhost/");
+        let cookies = |uri| jar.cookies(&Uri::from_static(uri), Version::HTTP_11);
+        assert!(matches!(
+            cookies("http://localhost/"),
+            Cookies::Compressed(_)
+        ));
+        assert!(matches!(cookies("http://sub.localhost/"), Cookies::Empty));
+
+        // A registrable domain under a short ccTLD is not a public suffix.
+        jar.add("id=1; Domain=id.me", "https://api.id.me/");
+        assert!(matches!(
+            cookies("https://www.id.me/"),
+            Cookies::Compressed(_)
+        ));
     }
 }

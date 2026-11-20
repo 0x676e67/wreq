@@ -42,6 +42,9 @@ charset = ["dep:encoding_rs", "dep:mime"]
 # Enable cookies store support.
 cookies = ["dep:cookie"]
 
+# Reject cookies scoped to public suffixes using the Public Suffix List.
+cookies-psl = ["cookies", "dep:psl"]
+
 # Enable gzip decompression support.
 gzip = ["dep:tower-http", "tower-http?/decompression-gzip"]
 
@@ -150,6 +153,7 @@ chromium-roots = { version = "0.1.1", optional = true }
 
 ## cookies
 cookie = { version = "0.18", optional = true }
+psl = { version = "2.1", optional = true }
 
 ## tower http
 tower-http = { version = "0.7.1", default-features = false, optional = true }
@@ -400,8 +404,8 @@ name = "unix_socket"
 path = "examples/unix_socket.rs"
 
 [patch.crates-io]
-btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
-btls-sys = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
-tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "5ec1c113a03626a5877b34dd6d2ea8d440897a91" }
-http2 = { git = "https://github.com/0x676e67/http2", rev = "fb5bf8bdbf3e9d9aad7073759a6f06f47373342e" }
-netty = { git = "https://github.com/0x676e67/netty", rev = "6e53746abc632056e3a8e518e10e26f6b86a21e6" }
+btls = { git = "https://github.com/0x676e67/btls", branch = "main" }
+btls-sys = { git = "https://github.com/0x676e67/btls", branch = "main" }
+tokio-btls = { git = "https://github.com/0x676e67/btls", branch = "main" }
+http2 = { git = "https://github.com/0x676e67/http2", branch = "master" }
+netty = { git = "https://github.com/0x676e67/netty", branch = "main" }

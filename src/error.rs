@@ -241,11 +241,52 @@ impl Error {
         false
     }
 
+    /// Returns `true` for a 407 response to HTTP CONNECT or a SOCKS5 authentication error.
+    ///
+    /// With the `socks` feature, the SOCKS5 cases are missing required credentials, rejected
+    /// credentials, and negotiation with no acceptable authentication method.
+    /// A forwarding proxy's 407 is available through [`Response::status`](crate::Response::status).
+    pub fn is_proxy_auth(&self) -> bool {
+        #[cfg(feature = "socks")]
+        use crate::conn::proxy::socks::SocksError;
+        use crate::conn::proxy::tunnel::TunnelError;
+
+        let mut source = self.source();
+
+        while let Some(err) = source {
+            if let Some(TunnelError::ProxyAuthRequired) = err.downcast_ref::<TunnelError>() {
+                return true;
+            }
+
+            #[cfg(feature = "socks")]
+            if let Some(SocksError::Socks(
+                tokio_socks::Error::PasswordAuthFailure(_)
+                | tokio_socks::Error::AuthorizationRequired
+                | tokio_socks::Error::NoAcceptableAuthMethods,
+            )) = err.downcast_ref::<SocksError>()
+            {
+                return true;
+            }
+
+            source = err.source();
+        }
+
+        false
+    }
+
     /// Returns true if the error is related to a connection reset.
+    ///
+    /// Resets during SOCKS proxy setup are reported by [`Self::is_proxy_connect`] instead.
+    /// The underlying I/O error remains available through the source chain.
     pub fn is_connection_reset(&self) -> bool {
         let mut source = self.source();
 
         while let Some(err) = source {
+            #[cfg(feature = "socks")]
+            if err.is::<crate::conn::proxy::socks::SocksError>() {
+                return false;
+            }
+
             if let Some(io) = err.downcast_ref::<io::Error>()
                 && io.kind() == io::ErrorKind::ConnectionReset
             {
@@ -540,6 +581,65 @@ mod tests {
         let io = io::Error::from(io::ErrorKind::TimedOut);
         let nested = Error::request(io);
         assert!(nested.is_timeout());
+    }
+
+    #[test]
+    fn is_proxy_auth() {
+        use crate::conn::proxy::tunnel::TunnelError;
+
+        let err = Error::request(ProxyConnect(Box::new(TunnelError::ProxyAuthRequired)));
+        assert!(err.is_proxy_auth());
+
+        let err = Error::request(ProxyConnect(Box::new(TunnelError::TunnelUnsuccessful(
+            Some(503),
+        ))));
+        assert!(!err.is_proxy_auth());
+    }
+
+    #[cfg(feature = "socks")]
+    #[test]
+    fn is_proxy_auth_socks() {
+        use crate::conn::proxy::socks::SocksError;
+
+        let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
+            tokio_socks::Error::PasswordAuthFailure(1),
+        ))));
+        assert!(err.is_proxy_auth());
+
+        let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
+            tokio_socks::Error::AuthorizationRequired,
+        ))));
+        assert!(err.is_proxy_auth());
+
+        let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
+            tokio_socks::Error::NoAcceptableAuthMethods,
+        ))));
+        assert!(err.is_proxy_auth());
+
+        let err = Error::request(ProxyConnect(Box::new(SocksError::MissingHost)));
+        assert!(!err.is_proxy_auth());
+    }
+
+    #[cfg(feature = "socks")]
+    #[test]
+    fn socks_connect_failure_exposes_its_io_error() {
+        use crate::conn::proxy::socks::SocksError;
+
+        let refused = io::Error::from(io::ErrorKind::ConnectionRefused);
+        let err = Error::request(ProxyConnect(Box::new(SocksError::ConnectFailed(Box::new(
+            refused,
+        )))));
+
+        let mut source = err.source();
+        let mut kind = None;
+        while let Some(inner) = source {
+            if let Some(io) = inner.downcast_ref::<io::Error>() {
+                kind = Some(io.kind());
+            }
+            source = inner.source();
+        }
+
+        assert_eq!(kind, Some(io::ErrorKind::ConnectionRefused));
     }
 
     #[test]

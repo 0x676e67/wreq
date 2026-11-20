@@ -229,7 +229,10 @@
 //!
 //! - **http2** *(enabled by default)*: Provides HTTP/2 support. Without it, ALPN only offers
 //!   `http/1.1`.
-//! - **cookies**: Provides cookie session support.
+//! - **cookies**: Provides cookie session support. Cookies scoped to a single-label domain such as
+//!   `com` are rejected unless it is the request host.
+//! - **cookies-psl**: Also rejects cookies scoped to any public suffix, using the Public Suffix
+//!   List.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **brotli**: Provides response body brotli decompression.
 //! - **zstd**: Provides response body zstd decompression.
@@ -364,9 +367,12 @@ pub mod http1 {
 pub mod http2 {
     //! HTTP/2 protocol implementation and utilities.
 
-    pub use http2::frame::{
-        Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
-        SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
+    pub use http2::{
+        ext::{HeadersDependency, HeadersPriority},
+        frame::{
+            Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
+            SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
+        },
     };
     pub use netty::http2::{Http2Options, Http2OptionsBuilder};
 }

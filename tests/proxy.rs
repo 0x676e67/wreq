@@ -416,11 +416,103 @@ async fn tunnel_detects_auth_required() {
         .await
         .unwrap_err();
 
-    let err = support::error::inspect(err).pop().unwrap();
+    assert!(err.is_proxy_connect(), "{err:?}");
+    assert!(err.is_proxy_auth(), "{err:?}");
+}
+
+#[cfg(feature = "socks")]
+async fn loopback_proxy_error(
+    proxy_prefix: &str,
+    handshake: impl AsyncFnOnce(tokio::net::TcpStream),
+) -> wreq::Error {
+    use std::time::Duration;
+
+    use tokio::{net::TcpListener, time::timeout};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = format!("{proxy_prefix}{}", listener.local_addr().unwrap());
+    let client = Client::builder()
+        .proxy(wreq::Proxy::all(proxy).unwrap())
+        .build()
+        .unwrap();
+    let serve = async {
+        let (stream, _) = listener.accept().await.unwrap();
+        handshake(stream).await;
+    };
+    let request = client.get("https://hyper.rs.local/prox").send();
+    let (response, ()) = timeout(Duration::from_secs(5), async {
+        tokio::join!(request, serve)
+    })
+    .await
+    .expect("loopback proxy exchange timed out");
+    response.unwrap_err()
+}
+
+#[cfg(feature = "socks")]
+#[tokio::test]
+async fn socks5_preserves_rejected_credentials_error() {
+    use std::error::Error;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let err = loopback_proxy_error("socks5h://user:pass@", async |mut stream| {
+        let mut greeting = [0; 4];
+        stream.read_exact(&mut greeting).await.unwrap();
+        assert_eq!(greeting, [5, 2, 0, 2]);
+        stream.write_all(&[5, 2]).await.unwrap();
+
+        let mut credentials = [0; 11];
+        stream.read_exact(&mut credentials).await.unwrap();
+        assert_eq!(credentials, *b"\x01\x04user\x04pass");
+        stream.write_all(&[1, 1]).await.unwrap();
+    })
+    .await;
+
+    assert!(err.is_proxy_connect(), "{err:?}");
+    assert!(err.is_proxy_auth(), "{err:?}");
     assert!(
-        err.contains("auth"),
-        "proxy auth err expected, got: {err:?}"
+        std::iter::successors(err.source(), |&source| source.source()).any(|source| matches!(
+            source.downcast_ref::<tokio_socks::Error>(),
+            Some(tokio_socks::Error::PasswordAuthFailure(1))
+        )),
+        "{err:?}"
     );
+}
+
+#[cfg(feature = "socks")]
+#[tokio::test]
+async fn socks5_handshake_reset_remains_a_proxy_connect_error() {
+    use std::{error::Error, io, time::Duration};
+
+    use socket2::SockRef;
+    use tokio::io::AsyncReadExt;
+
+    for (proxy_prefix, expected_greeting, expected_reset) in
+        [("socks5h://", [5, 1, 0], false), ("http://", *b"CON", true)]
+    {
+        let err = loopback_proxy_error(proxy_prefix, async |mut stream| {
+            let mut greeting = [0; 3];
+            stream.read_exact(&mut greeting).await.unwrap();
+            assert_eq!(greeting, expected_greeting);
+            SockRef::from(&stream)
+                .set_linger(Some(Duration::ZERO))
+                .unwrap();
+        })
+        .await;
+
+        assert!(err.is_proxy_connect(), "{proxy_prefix}: {err:?}");
+        assert!(
+            std::iter::successors(err.source(), |&source| source.source())
+                .filter_map(|source| source.downcast_ref::<io::Error>())
+                .any(|source| source.kind() == io::ErrorKind::ConnectionReset),
+            "{proxy_prefix}: {err:?}"
+        );
+        assert_eq!(
+            err.is_connection_reset(),
+            expected_reset,
+            "{proxy_prefix}: {err:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -454,6 +546,7 @@ async fn tunnel_includes_proxy_auth() {
         .await
         .unwrap_err();
 
+    assert!(!err.is_proxy_auth(), "{err:?}");
     let err = support::error::inspect(err).pop().unwrap();
     assert!(
         err.contains("unsuccessful"),
@@ -502,10 +595,62 @@ async fn tunnel_includes_user_agent() {
 }
 
 #[tokio::test]
+async fn tunnel_reports_proxy_status() {
+    let url = "https://hyper.rs.local/prox";
+
+    let server = server::http(move |req| {
+        assert_eq!(req.method(), "CONNECT");
+        assert_eq!(req.uri(), "hyper.rs.local:443");
+
+        async {
+            // reject the tunnel with a status callers can tell apart
+            let mut res = http::Response::default();
+            *res.status_mut() = http::StatusCode::PAYMENT_REQUIRED;
+            res
+        }
+    });
+
+    let proxy = format!("http://{}", server.addr());
+
+    let err = Client::builder()
+        .proxy(wreq::Proxy::https(&proxy).unwrap())
+        .build()
+        .unwrap()
+        .get(url)
+        .send()
+        .await
+        .unwrap_err();
+
+    let err = support::error::inspect(err).pop().unwrap();
+    assert!(
+        err.contains("unsuccessful (status 402)"),
+        "proxy status expected, got: {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn proxy_tunnel_connect_error() {
+    struct Resolver;
+
+    impl wreq::dns::Resolve for Resolver {
+        fn resolve(&self, name: wreq::dns::Name) -> wreq::dns::Resolving {
+            Box::pin(async move {
+                match name.as_str() {
+                    "invalid.proxy" => Err("proxy DNS lookup failed".into()),
+                    "example.com" => Ok(Box::new(std::iter::once(std::net::SocketAddr::from((
+                        [127, 0, 0, 1],
+                        0,
+                    )))) as wreq::dns::Addrs),
+                    _ => panic!("unexpected DNS lookup: {name}"),
+                }
+            })
+        }
+    }
+
     let client = Client::builder()
         .tls_cert_verification(false)
         .no_proxy()
+        .dns_resolver(Resolver)
         .build()
         .unwrap();
 
@@ -533,6 +678,7 @@ async fn proxy_tunnel_connect_error() {
                 err.is_proxy_connect(),
                 "proxy connect error expected, got: {err:?}"
             );
+            assert!(!err.is_proxy_auth(), "{err:?}");
         }
     }
 }
