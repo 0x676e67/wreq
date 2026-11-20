@@ -4,17 +4,24 @@ macro_rules! set_bool {
             $conn.$setter();
         }
     };
-    ($cfg:expr, !$field:ident, $conn:expr, $setter:ident, $arg:expr) => {
-        if !$cfg.$field {
-            $conn.$setter($arg);
-        }
-    };
 }
 
 macro_rules! set_option {
     ($cfg:expr, $field:ident, $conn:expr, $setter:ident) => {
         if let Some(val) = $cfg.$field {
             $conn.$setter(val);
+        }
+    };
+    // Optional feature switches invert the backend's NO_* disable flags.
+    ($cfg:expr, !$field:ident, $conn:expr, $flag:expr) => {
+        match $cfg.$field {
+            Some(false) => {
+                $conn.set_options($flag);
+            }
+            Some(true) => {
+                $conn.clear_options($flag);
+            }
+            None => {}
         }
     };
 }

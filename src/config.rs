@@ -68,9 +68,7 @@ where
     /// current instance (typically a client instance).
     #[inline]
     pub(crate) fn fetch<'a>(&'a self, ext: &'a Extensions) -> Option<&'a T::Value> {
-        ext.get::<RequestConfig<T>>()
-            .and_then(Self::as_ref)
-            .or(self.as_ref())
+        Self::get(ext).or(self.as_ref())
     }
 
     /// Loads the internal value from the provided [`http::Extensions`], if present.

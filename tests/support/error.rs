@@ -1,6 +1,9 @@
 use std::error::Error as StdError;
 
-#[allow(unused)]
+#[allow(
+    dead_code,
+    reason = "Only proxy tests inspect the complete error chain"
+)]
 pub fn inspect<E>(err: E) -> Vec<String>
 where
     E: Into<Box<dyn StdError + Send + Sync>>,

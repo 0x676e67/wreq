@@ -4,35 +4,14 @@ use std::{
 };
 
 use futures_util::future::{self, Either, Ready};
-use http::{HeaderMap, Request, Response, Version};
-use netty::http1::Http1Options;
-#[cfg(feature = "http2")]
-use netty::http2::Http2Options;
+use http::{HeaderMap, Request, Response};
 use tower::{Layer, Service};
 
-use crate::{
-    Error, config::RequestConfig, conn::net::SocketBindOptions, ext::UriExt, group::Group,
-    header::OrigHeaderMap, proxy::Matcher, tls::TlsOptions,
-};
+use crate::{Error, config::RequestConfig, ext::UriExt, header::OrigHeaderMap};
 
 /// A marker type for the default headers configuration value.
 #[derive(Clone, Copy)]
 pub(crate) struct DefaultHeaders;
-
-/// Per-request configuration for proxy, protocol, and transport options.
-/// Overrides client defaults for a single request.
-#[derive(Debug, Default, Clone)]
-#[non_exhaustive]
-pub(crate) struct RequestOptions {
-    pub group: Group,
-    pub proxy: Option<Matcher>,
-    pub version: Option<Version>,
-    pub tls_options: Option<TlsOptions>,
-    pub http1_options: Option<Http1Options>,
-    #[cfg(feature = "http2")]
-    pub http2_options: Option<Http2Options>,
-    pub socket_bind_options: Option<SocketBindOptions>,
-}
 
 /// Configuration for the [`ConfigService`].
 struct Config {
@@ -57,10 +36,6 @@ pub struct ConfigService<S> {
 // ===== impl DefaultHeaders =====
 
 impl_request_config_value!(DefaultHeaders, bool);
-
-// ===== impl RequestOptions =====
-
-impl_request_config_value!(RequestOptions);
 
 // ===== impl ConfigServiceLayer =====
 

@@ -4,7 +4,7 @@ use wreq::{Version, header, ws::message::Message};
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
     // Use the API you're already familiar with
-    let resp = wreq::websocket("wss://127.0.0.1:3000/ws")
+    let resp = wreq::websocket("wss://pingly.us.kg/api/websocket")
         .version(Version::HTTP_2)
         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
         .read_buffer_size(1024 * 1024)
