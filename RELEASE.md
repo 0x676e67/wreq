@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.16.4](https://github.com/0x676e67/wreq/compare/v0.16.3..v0.16.4) - 2026-11-20
+
+### Features
+
+- *(proxy)* Expose proxy error causes and detect auth-required failures ([#1398](https://github.com/0x676e67/wreq/issues/1398)) ([#1412](https://github.com/0x676e67/wreq/issues/1412)) - ([e516338](https://github.com/0x676e67/wreq/commit/e51633860f5b1727f78fa88113fd0bf4d0b742e4))
+
+### Bug Fixes
+
+- *(bench)* Disable Nagle on bench server sockets ([#1304](https://github.com/0x676e67/wreq/issues/1304)) ([#1413](https://github.com/0x676e67/wreq/issues/1413)) - ([04d3ffa](https://github.com/0x676e67/wreq/commit/04d3ffa3aa4e9154b124da383600dd9f46951a80))
+- *(ci)* Use the published 0.16 version as the release baseline ([#1414](https://github.com/0x676e67/wreq/issues/1414)) - ([67ffd21](https://github.com/0x676e67/wreq/commit/67ffd21d79ba7fa8be0c8d645413634ebac3af12))
+- *(cookie)* Evict expired cookies and fix reinsertion order ([#1402](https://github.com/0x676e67/wreq/issues/1402)) - ([cf72d5d](https://github.com/0x676e67/wreq/commit/cf72d5da2db7a55edba4eb6e9e890cff6f17ecbc))
+- *(proxy)* Preserve SOCKS reset classification ([#1418](https://github.com/0x676e67/wreq/issues/1418)) ([#1420](https://github.com/0x676e67/wreq/issues/1420)) - ([6b3de3f](https://github.com/0x676e67/wreq/commit/6b3de3f4a60727f449490b3bb524eaaab13758ee))
+- *(proxy)* Keep the CONNECT status code in tunnel errors ([#1328](https://github.com/0x676e67/wreq/issues/1328)) ([#1400](https://github.com/0x676e67/wreq/issues/1400)) - ([27f008b](https://github.com/0x676e67/wreq/commit/27f008b21274aa468d9ed7d37674f63092f131d0))
+
+### Testing
+
+- *(tls)* Remove redundant TLS tests ([#1368](https://github.com/0x676e67/wreq/issues/1368)) ([#1369](https://github.com/0x676e67/wreq/issues/1369)) - ([37ecccf](https://github.com/0x676e67/wreq/commit/37ecccf90e3f2e947b19770a6d0113f9fa03950e))
+
+### Backport
+
+- *(0.16.x)* Test: use local HTTPS for Unix socket proxy coverage ([#1421](https://github.com/0x676e67/wreq/issues/1421)) - ([4846bce](https://github.com/0x676e67/wreq/commit/4846bce3c2d2ffb0a71468f8fff682d436d870d1))
+- *(0.16.x)* Test: replace public TLS endpoints with local servers and limit public-host tests in CI ([#1423](https://github.com/0x676e67/wreq/issues/1423)) - ([baba60d](https://github.com/0x676e67/wreq/commit/baba60d3cd3233bb5acc88bc29b26281e7c27399))
+
+### Build
+
+- *(deps)* Bump actions/github-script from 7 to 9 ([#1358](https://github.com/0x676e67/wreq/issues/1358)) ([#1401](https://github.com/0x676e67/wreq/issues/1401)) - ([a31b44b](https://github.com/0x676e67/wreq/commit/a31b44b5d1de54caed93bcda6919acefa94b7367))
+
 ## [0.16.3](https://github.com/0x676e67/wreq/compare/v0.16.2..v0.16.3) - 2026-10-30
 
 ### Features
