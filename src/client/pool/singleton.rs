@@ -1,17 +1,14 @@
-//! Shares one cloneable service across concurrent checkouts.
+//! Shares a single cloneable service across concurrent checkouts.
 //!
-//! [`Singleton`] fits multiplexed protocols such as HTTP/2. The first checkout
-//! starts a maker future and becomes its driver. Concurrent checkouts join the
-//! same [`Batch`], then receive clones of the completed service.
+//! [`Singleton`] fits multiplexed protocols such as HTTP/2 and HTTP/3. The first checkout
+//! starts a maker future and drives it; concurrent checkouts join the same [`Batch`] and
+//! receive clones once it completes.
 //!
-//! If the driver is canceled, one waiter takes over the same pinned maker
-//! future. This avoids abandoning a connection attempt while another request is
-//! still waiting for it. A maker lost to a panic cancels its batch instead, so
-//! waiters retry rather than wait forever. Every batch also owns a generation
-//! marker. A failed maker reports its shared root cause to every participant, so
-//! concurrent checkouts do not retry the same failure one after another. A
-//! failed checkout may clear only the generation that produced it, so a stale
-//! sender cannot remove a newer replacement.
+//! If the driver is canceled, a waiting checkout takes over the pinned maker future instead
+//! of abandoning the attempt. If the maker panics, the batch is canceled so waiters retry
+//! rather than hanging. Each batch carries a generation marker: a maker error is shared
+//! with every participant, and a failed checkout can invalidate only its own generation so
+//! a stale sender never clears a newer replacement.
 
 use std::{
     fmt,
@@ -27,27 +24,25 @@ use tower::{BoxError, Service};
 
 use crate::sync::Mutex;
 
-/// A pool that creates at most one shared cloneable service at a time.
+/// Pool that maintains at most one shared cloneable service at a time.
 ///
-/// All clones share one [`State`]. The empty state accepts one maker call, the
-/// making state gathers concurrent participants, and the made state returns a
-/// clone without calling the maker. `poll_ready` reaches the maker only while
-/// the singleton is empty.
+/// All clones share a single [`State`]: `Empty` polls and calls `maker`, `Making` gathers
+/// concurrent participants into a batch, and `Made` hands out clones directly. Dropping
+/// the driver hands its pinned maker to a waiter; only canceling the last participant drops
+/// the maker.
 ///
-/// This type coordinates creation, but it does not decide service health.
-/// [`Singled`] clears its own generation after a readiness failure or explicit
-/// discard request. A dropped driver transfers its pinned maker to a waiter;
-/// only cancellation of the final participant destroys the maker.
+/// Health checks stay outside this type; [`Singled`] invalidates only its own generation
+/// on readiness failure or explicit discard.
 #[derive(Debug)]
 pub(super) struct Singleton<M, Dst>
 where
     M: Service<Dst>,
 {
-    /// Creates the shared service when the singleton is empty.
+    /// Underlying maker called when the singleton is empty.
     maker: M,
-    /// Shared empty, creating, or created state.
+    /// Shared lifecycle state across all singleton clones.
     state: Arc<Mutex<State<M::Future, M::Response>>>,
-    /// Carries the destination type without owning a destination.
+    /// Destination type marker.
     _dst: PhantomData<fn(Dst)>,
 }
 
@@ -259,35 +254,33 @@ where
 
 /// Future for a singleton checkout.
 ///
-/// A `Participating` future belongs to one creation generation. It either owns
-/// the driver role or waits over a oneshot channel. If its receiver closes after
-/// driver handoff, it checks shared state and can continue as the new driver.
-/// A `Made` future owns an immediately available clone.
+/// `Participating` joins an in-flight batch as either the driver or a oneshot waiter;
+/// if its receiver closes during driver handoff, it re-checks shared state and can take
+/// over driving. `Made` yields a clone that was already available.
 ///
-/// Cancellation removes the participant from its batch. Canceling the driver
-/// promotes a waiter; canceling the final participant drops the maker outside
-/// the state lock.
+/// Dropping a participant removes it from its batch, promoting a waiter if it was the
+/// driver or dropping the maker outside the lock if it was the last participant.
 pub(super) enum SingletonFuture<F, S> {
-    /// Participates in the current creation batch.
+    /// Participates in an in-flight creation batch.
     Participating {
-        /// Identifier used for cancellation and driver handoff.
+        /// Participant ID used for cancellation and driver handoff.
         id: ParticipantId,
-        /// Creation generation this participant belongs to.
+        /// Generation token identifying this creation batch.
         generation: Arc<()>,
         /// Shared singleton state.
         state: Arc<Mutex<State<F, S>>>,
-        /// Result channel for a non-driver participant.
+        /// Oneshot receiver for waiters; `None` once acting as driver.
         receiver: Option<oneshot::Receiver<Result<S, SingletonError>>>,
-        /// Whether this checkout joined work started by another caller.
+        /// Whether this checkout joined an existing batch rather than starting it.
         reused: bool,
     },
     /// Owns a clone of an already-created service.
     Made {
-        /// Service returned on the first poll.
+        /// Cloned service returned on the first poll.
         service: Option<S>,
-        /// Generation that produced `service`.
+        /// Generation token paired with `service`.
         generation: Arc<()>,
-        /// Weak state used to invalidate this generation on failure.
+        /// Weak state reference used to invalidate this generation on failure.
         state: Weak<Mutex<State<F, S>>>,
     },
 }
@@ -300,20 +293,19 @@ impl<F, S> Unpin for SingletonFuture<F, S> {}
 
 /// Lifecycle of the shared singleton service.
 ///
-/// `Making` tracks one maker generation with at most one driver polling it.
-/// `Made` stores the cloneable service with the generation allowed to invalidate
-/// it. Transitions that destroy a future, service, or result sender move that
-/// value out first so destruction and task wakeups happen outside the lock.
+/// `Making` tracks an in-flight generation with at most one driver polling it; `Made`
+/// stores the cloneable service with the generation allowed to invalidate it. Values
+/// being destroyed or woken are moved out first so drops and wakeups run unlocked.
 pub(super) enum State<F, S> {
     /// No service exists and no maker is running.
     Empty,
-    /// One participant drives a maker shared by the batch.
+    /// A batch is actively creating the shared service.
     Making(Batch<F, S>),
     /// A completed service is available for cloning.
     Made {
         /// Shared cloneable service.
         service: S,
-        /// Identity used to reject invalidation from stale clones.
+        /// Generation token guarding against invalidation by stale clones.
         generation: Arc<()>,
     },
 }
@@ -330,93 +322,77 @@ impl<F, S: fmt::Debug> fmt::Debug for State<F, S> {
     }
 }
 
-/// Coordinates one maker future and every checkout waiting for it.
+/// Coordinates an in-flight maker future and all checkouts waiting on it.
 ///
-/// The maker remains pinned in the batch across driver changes. Polling removes
-/// it temporarily so arbitrary future code runs without the singleton state
-/// lock, then restores it if still pending and the same participant remains the
-/// driver.
-///
-/// Participant identifiers and the generation separate cancellation from newer
-/// batches that may already occupy the singleton.
+/// The maker stays pinned across driver handoffs; each poll temporarily takes it out so
+/// arbitrary future code runs without holding the state lock, then restores it if still
+/// pending and the same participant remains driver.
 pub(super) struct Batch<F, S> {
-    /// Maker future owned by the current driver.
+    /// Pinned maker future, temporarily taken out while the driver polls it.
     future: Option<Pin<Box<F>>>,
-
-    /// Identity shared by all participants and produced clones.
+    /// Generation token shared by all participants and resulting clones.
     generation: Arc<()>,
-
-    /// Wrapping participant identifier source.
+    /// Wrapping counter allocating participant IDs within this batch.
     next_id: ParticipantId,
-
-    /// Participant currently responsible for polling the maker.
+    /// Participant currently driving `future`.
     driver: Option<Driver>,
-
-    /// Participants waiting for the driver's result.
+    /// Non-driver participants awaiting the broadcast result.
     waiters: Vec<Waiter<S>>,
 }
 
-/// Identifier for one participant in a creation batch.
+/// Wrapping participant identifier scoped to a single [`Batch`].
 ///
-/// The counter wraps explicitly and is scoped to a single [`Batch`]. It is used
-/// to transfer the driver role and remove canceled waiters.
+/// Used to transfer the driver role and remove canceled waiters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ParticipantId(usize);
 
-/// Participant currently responsible for polling the shared maker future.
+/// Identifies the participant currently responsible for polling the maker future.
 ///
-/// The driver stores no task handle. Ownership is represented by its
-/// [`ParticipantId`], which lets any matching checkout take the pinned future from
-/// the batch for one poll.
+/// Ownership is tracked by [`ParticipantId`] alone so the matching checkout can take the
+/// pinned maker from [`Batch`] for each poll.
 struct Driver {
-    /// Driver participant identifier.
+    /// Participant ID of the active driver.
     id: ParticipantId,
 }
 
-/// Non-driver participant waiting for the shared result.
+/// Non-driver participant waiting on the shared batch result.
 ///
-/// Dropping its sender wakes the receiver during driver promotion. Completion
-/// sends a clone of the shared service or of the maker's failure.
+/// Sending delivers a cloned service or shared error; dropping `sender` closes the channel
+/// to wake the waiter during driver promotion.
 struct Waiter<S> {
-    /// Waiter participant identifier.
+    /// Participant ID of this waiter.
     id: ParticipantId,
-    /// Delivers the shared result; closing it signals driver promotion.
+    /// Result channel; dropping it without sending signals driver promotion.
     sender: oneshot::Sender<Result<S, SingletonError>>,
 }
 
-/// Values removed when one singleton participant is canceled.
+/// Detached state returned when canceling a participant so drops run outside the lock.
 ///
-/// The caller updates [`State`] while locked, then drops the returned waiter and
-/// maker future afterward. `batch_empty` tells it whether the singleton can move
-/// back to `Empty`.
+/// `batch_empty` tells the caller whether to reset [`State`] to `Empty`; `waiter` and
+/// `future` are dropped after unlocking so wakeups and maker cancellation run unlocked.
 struct ParticipantRemoval<F, S> {
-    /// Whether no participant remains in the creation batch.
+    /// Whether removing this participant left the batch empty.
     batch_empty: bool,
-    /// Removed waiter, dropped outside the state lock to wake its receiver.
+    /// Detached waiter, dropped unlocked to wake its receiver on promotion.
     waiter: Option<Waiter<S>>,
-    /// Maker canceled with the final participant, also dropped outside the lock.
+    /// Detached maker future, dropped unlocked when the last participant cancels.
     future: Option<Pin<Box<F>>>,
 }
 
-/// A checked-out clone of the singleton service.
+/// Checked-out clone of a singleton service.
 ///
-/// The wrapper delegates requests to its inner clone and remembers the creation
-/// generation. A readiness failure or explicit discard clears the shared
-/// service only when the singleton still contains that generation. Its weak
-/// state reference allows an evicted pool entry to be destroyed independently
-/// of outstanding checkouts.
+/// Delegates requests to its inner clone and clears the shared singleton on readiness
+/// failure or explicit discard only if the same generation is still installed. Holds a
+/// weak state reference so evicted pool entries can drop independently of active checkouts.
 #[derive(Debug)]
 pub(super) struct Singled<F, S> {
-    /// Clone used by this checkout.
+    /// Cloned service owned by this checkout.
     inner: S,
-
-    /// Whether another checkout started or created this service.
+    /// Whether this checkout reused an existing service or in-flight batch.
     reused: bool,
-
-    /// Generation allowed to be invalidated by this checkout.
+    /// Generation token checked before invalidating shared state.
     generation: Arc<()>,
-
-    /// Weak reference avoids keeping an unused singleton alive.
+    /// Weak state handle so active checkouts do not keep an evicted singleton alive.
     state: Weak<Mutex<State<F, S>>>,
 }
 
@@ -448,6 +424,7 @@ where
                             )));
                         }
                         Poll::Ready(Ok(Err(error))) => return Poll::Ready(Err(error)),
+                        // Channel closed without a result means this waiter was promoted to driver.
                         Poll::Ready(Err(_)) => *receiver = None,
                         // The batch may already be empty while its result is sent unlocked.
                         // Only a closed channel hands this waiter the driver role.
@@ -701,7 +678,8 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Removes a participant and reports whether the batch became empty.
-    /// If the driver leaves, one remaining waiter takes over the same maker.
+    ///
+    /// If the driver leaves, a remaining waiter takes over the same maker.
     #[must_use]
     fn remove(&mut self, id: ParticipantId) -> ParticipantRemoval<F, S> {
         if let Some(index) = self.waiters.iter().position(|waiter| waiter.id == id) {
@@ -765,7 +743,7 @@ impl<F, S> Batch<F, S> {
     }
 }
 
-/// Sends one result clone per waiter after the singleton state lock is released.
+/// Broadcasts the shared result to all waiters after the state lock is released.
 fn send_result<S>(waiters: Vec<Waiter<S>>, result: Result<&S, &SingletonError>)
 where
     S: Clone,
@@ -775,7 +753,7 @@ where
     }
 }
 
-/// Removes one completed singleton generation and drops it outside the lock.
+/// Clears a completed singleton generation and drops it outside the lock.
 fn discard_generation<F, S>(state: &Weak<Mutex<State<F, S>>>, generation: &Arc<()>) {
     let Some(state) = state.upgrade() else {
         return;
@@ -878,9 +856,7 @@ mod tests {
     use super::{Singled, Singleton, State};
     use crate::sync::Mutex;
 
-    /// Maker completed explicitly by a test-held sender.
-    /// Each call stores a new completion sender and waits on its receiver.
-    /// Dropping that sender lets the test fail the current maker generation.
+    /// Maker completed or failed explicitly via a test-held oneshot sender.
     #[derive(Clone)]
     struct ControlledMaker {
         sender: Arc<Mutex<Option<tokio::sync::oneshot::Sender<&'static str>>>>,
@@ -905,9 +881,7 @@ mod tests {
         }
     }
 
-    /// Shared service whose readiness can be failed by the test.
-    /// Clones observe the same failure flag while requests complete immediately.
-    /// Used to check that readiness failure invalidates only its own generation.
+    /// Cloneable service whose `poll_ready` fails when toggled by the test.
     #[derive(Clone)]
     struct ReadinessService {
         fail: Arc<AtomicBool>,
@@ -931,9 +905,7 @@ mod tests {
         }
     }
 
-    /// Immediately creates a readiness-controlled service and counts creations.
-    /// The test uses the count to distinguish reuse from replacement.
-    /// Maker clones and returned services share the test's failure flag.
+    /// Creates a [`ReadinessService`] immediately while counting maker invocations.
     #[derive(Clone)]
     struct CountingMaker {
         calls: Arc<AtomicUsize>,

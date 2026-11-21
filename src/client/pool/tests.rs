@@ -25,7 +25,7 @@ use crate::{
     reuse::{self, Group},
 };
 
-/// Connector behavior used to exercise unsuccessful checkout cleanup.
+/// Mock connector covering failure, stall, keep-alive, HTTP/2, and HTTP/3 scenarios.
 #[derive(Clone)]
 enum TestConnector {
     /// Fails the connection attempt immediately.
@@ -243,9 +243,7 @@ fn http3_connector() -> TestConnector {
 
 #[test]
 fn protocol_modes_clone_connector_once() {
-    /// Counts connector copies made while composing protocol entries.
-    /// Shares the counter between clones without creating a transport.
-    /// Captured by the connector closure to observe service graph construction.
+    /// Counts connector clones made during protocol entry construction.
     struct CloneCounter(Arc<AtomicUsize>);
 
     impl Clone for CloneCounter {
@@ -458,31 +456,51 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
 
 #[tokio::test(start_paused = true)]
 async fn idle_task_tracks_reusable_state() {
-    let pool = Pool::new(
-        TestConnector::KeepsAlive,
-        DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        Config {
-            idle_timeout: Some(Duration::from_millis(10)),
-            ..Config::default()
-        },
-        &ConnectConfig::default(),
-        true,
-    );
-    let pooled = pool
-        .test_checkout(connect_request(Protocol::Http1))
-        .await
-        .expect("successful checkout");
+    for (protocol, connector) in [
+        (Protocol::Http1, TestConnector::KeepsAlive),
+        #[cfg(feature = "http2")]
+        (
+            Protocol::Http2,
+            TestConnector::Http2(
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(tokio::sync::Semaphore::new(1)),
+            ),
+        ),
+    ] {
+        let pool = Pool::new(
+            connector,
+            DynRuntime::new(crate::rt::tokio::TokioRuntime),
+            Config {
+                idle_timeout: Some(Duration::from_millis(10)),
+                ..Config::default()
+            },
+            &ConnectConfig::default(),
+            true,
+        );
+        let request = connect_request(protocol);
+        let pooled = pool.test_checkout(request.clone()).await.unwrap();
+        if protocol == Protocol::Http1 {
+            assert!(!pool.inner.expire.is_running());
+        }
+        drop(pooled);
+        tokio::task::yield_now().await;
+        assert!(pool.inner.expire.is_running());
 
-    assert!(!pool.inner.expire.is_running());
-    drop(pooled);
-    tokio::task::yield_now().await;
-    assert!(pool.inner.expire.is_running());
+        let reused = pool.test_checkout(request).await.unwrap();
+        assert!(reused.is_reused());
+        tokio::time::advance(Duration::from_millis(100)).await;
+        tokio::task::yield_now().await;
+        assert!(!pool.inner.entries.lock().is_empty());
 
-    tokio::time::advance(Duration::from_millis(100)).await;
-    tokio::task::yield_now().await;
+        drop(reused);
+        tokio::task::yield_now().await;
+        assert!(pool.inner.expire.is_running());
+        tokio::time::advance(Duration::from_millis(100)).await;
+        tokio::task::yield_now().await;
 
-    assert!(pool.inner.entries.lock().is_empty());
-    assert!(!pool.inner.expire.is_running());
+        assert!(pool.inner.entries.lock().is_empty());
+        assert!(!pool.inner.expire.is_running());
+    }
 
     let pool = Pool::new(
         TestConnector::KeepsAlive,

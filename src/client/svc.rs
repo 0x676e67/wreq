@@ -1,7 +1,9 @@
 //! Low-level Tower services for request preparation, pool checkout, and unsent retries.
 //!
-//! Each request is validated and keyed once; retries only occur when a reused connection
-//! fails before any request bytes are encoded (bodies are never cloned).
+//! [`Client`] validates each request, freezes its connection config and pool key once,
+//! and retries failures only when no request bytes were encoded (bodies are never cloned).
+//! [`Dispatch`] checks out a pooled sender, reconciles the request with the negotiated
+//! protocol, applies cookies, and returns the sender to the pool.
 
 use std::{
     future::Future,
@@ -46,12 +48,13 @@ use crate::{
 /// Client-wide settings assembled by [`ClientBuilder`](crate::ClientBuilder) to construct
 /// the low-level [`Client`] service.
 ///
-/// Bundles connector, pool, default connection config, protocol mode, and optional cookie store.
+/// Bundles transport connector settings, pool policy, default connection options, protocol
+/// mode, and optional cookie storage.
 pub(super) struct Config {
     pub(super) connect: conn::Config,
+    pub(super) pool_config: pool::Config,
     pub(super) connect_config: ConnectConfig,
     pub(super) connector_layers: Vec<BoxedConnectLayer>,
-    pub(super) pool_config: pool::Config,
     pub(super) protocol: Protocol,
     #[cfg(feature = "cookies")]
     pub(super) cookie_store: Option<Arc<dyn CookieStore>>,
@@ -99,6 +102,7 @@ pin_project! {
 ///
 /// Kept outside `pin_project!` because its conditional fields carry `#[cfg]` attributes.
 struct Original {
+    /// Request URI before any CONNECT target-port normalization.
     uri: Uri,
     /// Wire version before connection reconciliation.
     version: Version,
@@ -114,11 +118,8 @@ struct Original {
 pub(super) struct Request<B> {
     inner: http::Request<B>,
     connect: conn::Request<ConnectConfig>,
-    /// Absent for a dedicated connection that never enters the pool.
     pool_key: Option<reuse::Key>,
-    /// Whether the wire version may adapt to the negotiated connection (`Protocol::Auto`).
     negotiable: bool,
-    /// Default-group key to probe for an established extended CONNECT sender.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
     extended_connect_key: Option<reuse::Key>,
 }
@@ -144,7 +145,7 @@ pub(super) enum DispatchError<B> {
         error: Error,
         request: Box<Request<B>>,
     },
-    /// The connection failed before encoding any request bytes on a reused sender.
+    /// The connection failed before encoding any request bytes.
     Unsent {
         error: Error,
         request: Box<Request<B>>,
@@ -168,7 +169,6 @@ struct Http1Upgrade {
 /// HTTP/2 or HTTP/3 are both enabled.
 struct CheckedOut {
     pooled: pool::pooled::Pooled,
-    /// WebSocket upgrade rewritten for an extended CONNECT sender, restored if unsent.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
     upgrade: Option<Http1Upgrade>,
 }
@@ -356,6 +356,7 @@ where
             #[cfg(feature = "cookies")]
             had_cookie: request.inner.headers().contains_key(COOKIE),
         };
+
         let replacement = self.inner.clone();
         let mut service = mem::replace(&mut self.inner, replacement);
         let future = service.call(request);
@@ -596,7 +597,8 @@ where
         pooled.connected().set_extras(response.extensions_mut());
         response.extensions_mut().insert(pooled.connected().clone());
 
-        // Multiplexed senders are shared, so only HTTP/1 waits to become ready again.
+        // Multiplexed senders are shared; only busy HTTP/1 senders wait for readiness
+        // before dropping so they can return to the pool once the response finishes.
         if pooled.version() != Version::HTTP_11 || !pooled.is_pool_enabled() || pooled.is_ready() {
             drop(pooled);
         } else {
@@ -850,6 +852,7 @@ fn connect_target_port<B>(request: &mut http::Request<B>, multiplexed: bool) -> 
     Ok(())
 }
 
+/// Populates `Cookie` headers from `cookie_store` unless the caller already set one.
 #[cfg(feature = "cookies")]
 fn apply_request_cookies<B>(
     request: &mut http::Request<B>,
@@ -874,6 +877,7 @@ fn apply_request_cookies<B>(
     }
 }
 
+/// Persists any `Set-Cookie` response headers into `cookie_store`.
 #[cfg(feature = "cookies")]
 fn store_response_cookies(
     response: &Response<Incoming>,

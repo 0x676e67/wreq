@@ -1,7 +1,7 @@
-//! Senders checked out from the pool.
+//! Checked-out HTTP senders from the pool.
 //!
-//! [`Pooled`] presents one request interface over an exclusive HTTP/1 sender or a shared
-//! HTTP/2 or HTTP/3 sender, and decides on drop whether the sender returns for reuse.
+//! [`Pooled`] provides a uniform request service over exclusive HTTP/1 and shared
+//! HTTP/2 or HTTP/3 senders, deciding on drop whether to return or discard them.
 
 use std::{
     fmt,
@@ -27,23 +27,22 @@ use crate::{
 
 /// A sender checked out from a pool entry.
 ///
-/// HTTP/1 returns a healthy, ready sender to its cache. HTTP/2 and HTTP/3 release
-/// a shared checkout at response headers, on error, or on cancellation. The protocol
-/// driver keeps open streams running after the checkout ends.
+/// On drop, healthy HTTP/1 senders return to their cache, while HTTP/2 and HTTP/3 release
+/// their checkout handle while letting the connection driver finish any open streams.
 pub(in crate::client) struct Pooled {
-    /// HTTP/1 cache checkout or HTTP/2 or HTTP/3 singleton checkout.
+    /// Checked-out HTTP/1 cache handle or shared HTTP/2 or HTTP/3 singleton handle.
     inner: PooledInner,
-    /// Whether healthy senders should return to their pool.
+    /// Whether healthy senders return to their pool on drop.
     pool_enabled: bool,
-    /// Runs pending entry maintenance after `inner` drops.
+    /// Must drop after `inner` so maintenance sees the updated cache or singleton state.
     cleanup: EntryCleanupGuard,
 }
 
-/// HTTP sender selected for one pool checkout.
+/// Underlying protocol sender held by [`Pooled`].
 enum PooledInner {
-    /// HTTP/1 sender.
+    /// Exclusive HTTP/1 sender.
     Http1(Cached<http1::Connection>),
-    /// HTTP/2 or HTTP/3 sender.
+    /// Shared HTTP/2 or HTTP/3 sender.
     #[cfg(any(feature = "http2", feature = "http3"))]
     Mux(MuxSingled),
 }
@@ -53,23 +52,22 @@ enum PooledInner {
 impl Pooled {
     /// Wraps a checked-out sender and takes over entry cleanup from `usage`.
     ///
-    /// HTTP/2 and HTTP/3 checkout accounting starts first; with pooling enabled the
-    /// entry is then reconciled with empty cleanup and the idle-group LRU.
+    /// HTTP/2 and HTTP/3 checkout accounting starts before handing off entry cleanup.
     #[must_use]
     fn new(inner: PooledInner, pool_enabled: bool, usage: EntryUse) -> Self {
         #[cfg(any(feature = "http2", feature = "http3"))]
         if let PooledInner::Mux(service) = &inner {
             service.inner().begin_checkout();
         }
-        let cleanup = usage.into_cleanup();
-        if pool_enabled {
-            cleanup.maintain();
-        }
-        Self {
+        let pooled = Self {
             inner,
             pool_enabled,
-            cleanup,
+            cleanup: usage.into_cleanup(),
+        };
+        if pool_enabled {
+            pooled.cleanup.maintain(pooled.is_reused());
         }
+        pooled
     }
 
     /// Wraps an HTTP/1 sender, maintaining its entry when pooling is enabled.
@@ -89,7 +87,7 @@ impl Pooled {
         Self::new(PooledInner::Mux(service), pool_enabled, usage)
     }
 
-    /// Returns the HTTP version of this checkout's connection; HTTP/1 reports HTTP/1.1.
+    /// Returns the HTTP version of this connection (HTTP/1 reports HTTP/1.1).
     #[must_use]
     pub(in crate::client) fn version(&self) -> Version {
         match &self.inner {
@@ -99,8 +97,9 @@ impl Pooled {
         }
     }
 
-    /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS.
-    /// HTTP/1 never supports it.
+    /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS arrive.
+    ///
+    /// Always returns `Some(false)` for HTTP/1.
     #[must_use]
     #[cfg(any(feature = "http2", feature = "http3"))]
     pub(in crate::client) fn extended_connect(&self) -> Option<bool> {
@@ -180,7 +179,7 @@ impl Drop for Pooled {
                 let returned = service.return_to_cache();
                 if self.pool_enabled {
                     if returned {
-                        self.cleanup.maintain();
+                        self.cleanup.maintain(false);
                     } else {
                         self.cleanup.arm();
                     }

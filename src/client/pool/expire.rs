@@ -1,14 +1,11 @@
-//! Drives periodic expiration for a retained pool service.
+//! Periodic idle expiration for pooled connections.
 //!
-//! The component follows the boundary proposed in
-//! <https://github.com/hyperium/hyper/issues/3948>: protocol pools expose a
-//! retention operation, while one outer watcher owns the runtime and decides when
-//! to inspect them. wreq wraps the destination [`Map`](super::map::Map), keeping
-//! one watcher for the whole client instead of one task per destination.
+//! Follows the split proposed in <https://github.com/hyperium/hyper/issues/3948>:
+//! protocol pools expose retention hooks, while a single outer watcher owns the runtime
+//! timer and drives sweeps across the whole [`Map`](super::map::Map).
 //!
-//! [`Expire`] holds only a weak reference to the inspected pool. The task cannot
-//! extend the pool lifetime, and dropping the final pool handle closes the
-//! shutdown channel so a long sleep ends immediately.
+//! [`Expire`] holds only a weak reference to its target so it never keeps the pool alive;
+//! dropping the last pool handle closes the shutdown channel to cancel any pending sleep.
 
 use std::{
     future::Future,
@@ -37,23 +34,18 @@ pub(super) trait Retain: Send + Sync + 'static {
     fn next(&self) -> Option<Duration>;
 }
 
-/// Runs one expiration watcher for a weakly owned pool target.
+/// Drives at most one periodic expiration watcher for a weakly referenced pool.
 ///
-/// `Expire` remains dormant until its owner observes retained state and calls
-/// [`Expire::schedule`]. At most one watcher runs at a time. It repeatedly asks
-/// [`Retain`] to filter the wrapped pool, then stops once no reusable state
-/// remains.
+/// Stays dormant until [`Expire::schedule`] is called after retained state appears, then
+/// sweeps via [`Retain`] until no reusable state remains or the pool is dropped.
 pub(super) struct Expire<T> {
-    /// Pool inspected on each expiration tick.
+    /// Weak reference to the pool swept on each tick.
     target: Weak<T>,
-
-    /// Held by the task running the watcher loop; a spawned task claims it on first poll or exits.
+    /// Claimed on first poll by the active watcher so duplicate spawns exit early.
     running: Arc<AtomicBool>,
-
-    /// Closes the watcher when this component is dropped.
+    /// Dropping this sender wakes and stops a sleeping watcher immediately.
     shutdown: watch::Sender<()>,
-
-    /// Runtime used to execute the watcher.
+    /// Runtime providing the timer and task executor for the watcher.
     runtime: DynRuntime,
 }
 
@@ -78,7 +70,7 @@ impl<T> Expire<T> {
     }
 
     /// Returns whether the expiration watcher is active.
-    #[cfg(test)]
+    #[must_use]
     pub(super) fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
     }
@@ -90,9 +82,8 @@ where
 {
     /// Starts the watcher when proactive expiration is configured.
     ///
-    /// The final policy check closes the stop/start race without holding a pool
-    /// lock while spawning or waking another task. A zero interval disables the
-    /// watcher to prevent an accidental busy loop.
+    /// Before stopping, the watcher releases its running flag and uses [`Retain::next`]
+    /// to check for newly retained connections. A zero interval disables the watcher.
     pub(super) fn schedule(&self, interval: Option<Duration>) {
         let Some(interval) = interval.filter(|interval| *interval != Duration::ZERO) else {
             return;
@@ -159,7 +150,9 @@ where
 /// Dropping the task without completion, for example during runtime shutdown,
 /// must still let a later [`Expire::schedule`] start a replacement watcher.
 struct Running {
+    /// Shared flag synchronized with [`Expire::running`].
     flag: Arc<AtomicBool>,
+    /// Whether this guard claimed `flag` and must clear it on drop.
     owned: bool,
 }
 
@@ -212,14 +205,11 @@ mod tests {
 
     use super::*;
 
-    /// Controllable retained state inspected by the watcher.
-    /// Counts checks and lets the test switch periodic maintenance off.
-    /// The test owns the target; the watcher keeps only a weak reference.
+    /// Controllable retention target used to count watcher sweeps.
     struct TestTarget {
-        /// Whether another expiration tick is required.
+        /// Whether the target still reports retained state needing sweeps.
         retained: AtomicBool,
-
-        /// Number of completed retention checks.
+        /// Number of `retain` sweeps observed.
         checks: AtomicUsize,
     }
 

@@ -1,31 +1,22 @@
-//! Maps connection destinations to independently managed pool services.
+//! Keyed pool map with optional retained-group LRU tracking.
 //!
-//! [`Map`] routes each connection compatibility key to its pool service.
-//!
-//! Entries are created lazily in an unbounded routing map. An optional LRU tracks
-//! only entries that currently retain reusable connection state.
-//!
-//! The pool coordinator performs lookup while holding its map lock, then drops
-//! any evicted service after releasing that lock.
+//! Entries are created lazily in an unbounded map, while an optional LRU tracks only
+//! groups currently retaining reusable state. Lookups run under the caller's lock, and
+//! removed entries are returned so callers can drop connections after unlocking.
 
 use std::{collections::HashMap, hash::Hash, num::NonZeroUsize};
 
 use lru::LruCache;
 
-/// Lazily maps destination keys to independently managed pool services.
+/// Unsynchronized map from compatibility keys to pool entries with an optional idle-group LRU.
 ///
-/// `Map` owns no synchronization. The pool coordinator locks it around lookup
-/// and maintenance operations. Methods that remove an entry return the service
-/// to the caller so connection senders can be dropped only after that outer
-/// lock has been released.
-///
-/// Lookups refresh the optional idle-group LRU when the key is already tracked.
-/// The pool coordinator decides when a service gains or loses reusable state
-/// and performs any resulting eviction outside this type.
+/// The caller synchronizes access externally and drops any returned entries after unlocking.
+/// Lookups refresh the LRU when a key is already tracked, while the caller decides when an
+/// entry gains or loses retained state and performs capacity eviction.
 pub(super) struct Map<K, S> {
-    /// Services indexed by connection compatibility key.
+    /// Pool entries indexed by compatibility key.
     entries: HashMap<K, S>,
-    /// Retained-group LRU; stale markers are reconciled before capacity eviction.
+    /// LRU of retained groups; stale markers are reconciled before capacity eviction.
     retained: Option<LruCache<K, ()>>,
 }
 
@@ -153,7 +144,7 @@ where
         self.entries.iter_mut()
     }
 
-    /// Gives `predicate` the current service and removes it if it returns `true`.
+    /// Removes and returns the service for `key` if `predicate` returns `true`.
     #[must_use]
     pub(super) fn remove_if<F>(&mut self, key: &K, predicate: F) -> Option<S>
     where
@@ -184,9 +175,7 @@ mod tests {
 
     use super::*;
 
-    /// Models retained state and counts when a mapped service is destroyed.
-    /// The flag lets the test change retention without replacing the entry.
-    /// Drop updates a shared counter to verify deferred destruction.
+    /// Counts drops while letting tests toggle retained state.
     struct DropProbe(Arc<AtomicUsize>, bool);
 
     impl Drop for DropProbe {

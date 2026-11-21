@@ -1,9 +1,8 @@
 //! Races reusable services against newly created services.
 //!
-//! This component manages services that can serve one checkout at a time, which
-//! is how wreq uses HTTP/1 senders. Each [`Cache`] clone has an independent
-//! readiness reservation. Idle services, FIFO waiters, and checkout accounting
-//! are shared across clones.
+//! Manages exclusive services that handle one checkout at a time, such as HTTP/1 senders.
+//! Each [`Cache`] clone owns an independent readiness reservation, while idle services,
+//! FIFO waiters, and active counts are shared.
 //!
 //! # Checkout lifecycle
 //!
@@ -13,9 +12,9 @@
 //! 3. [`Cached`] returns the service on drop unless readiness failed or the caller marked it for
 //!    discard. The caller is responsible for protocol-specific health checks before return.
 //!
-//! Returned services go to the oldest waiter before they enter the idle list.
-//! If reuse wins after connection work has started, the configured event handler
-//! may finish that work in the background and cache the result.
+//! Returned services go to the oldest waiter before entering the idle list. If reuse wins
+//! after connection work has started, the configured event handler may finish that work in
+//! the background and cache the result.
 
 use std::{
     collections::VecDeque,
@@ -55,38 +54,31 @@ pub(super) fn builder() -> Builder<events::Ignore> {
 
 /// A cloneable cache of exclusive services produced by `M`.
 ///
-/// A clone reserves at most one service during `poll_ready`, and only its next
-/// `call` can consume that reservation. This preserves Tower's readiness
-/// contract when several client tasks use cache clones concurrently.
+/// Each clone reserves at most one service during `poll_ready`, and only its next `call`
+/// consumes that reservation, preserving Tower's readiness contract under concurrent use.
 ///
-/// [`Shared`] owns idle services and FIFO handoff state. Checked-out services
-/// hold only a weak reference to it, so neither a checkout nor a background
-/// maker keeps an otherwise unused cache alive. Dropping the final shared owner
-/// also closes the shutdown channel used by background maker work.
+/// [`Shared`] owns idle services and FIFO handoff state. Checked-out services and
+/// background makers hold only weak references to it so they never keep an unused cache
+/// alive; dropping the last shared owner also signals background makers to stop.
 #[derive(Debug)]
 pub(super) struct Cache<M, Dst, Ev>
 where
     M: Service<Dst>,
 {
-    /// Creates a service when no reusable service wins the race.
+    /// Underlying maker polled and called on a cache miss.
     maker: M,
-
-    /// State shared by every cache clone and checked-out service.
+    /// Shared idle list, FIFO waiters, and shutdown channel.
     shared: Arc<Mutex<Shared<M::Response>>>,
-
-    /// Decides what happens to a connection attempt that loses to reuse.
+    /// Policy handling maker futures that lose the reuse race.
     events: Ev,
 
-    /// Service reserved by this clone during `poll_ready`.
+    /// Idle service reserved for this clone's next `call`.
     ready: Ready<M::Response>,
-
-    /// FIFO waiter registered by this clone during `poll_ready`.
+    /// Waiter registered while this clone's `poll_ready` is pending.
     ready_waiter: Option<WaiterId>,
-
-    /// Number of checked-out services and background connects.
+    /// Active checkouts and background connects keeping the entry non-empty.
     active: Arc<AtomicUsize>,
-
-    /// Carries the destination type without owning a destination.
+    /// Destination type marker.
     _dst: PhantomData<fn(Dst)>,
 }
 
@@ -97,147 +89,122 @@ where
 /// bounds results that have no waiting checkout.
 #[derive(Debug)]
 pub(super) struct Builder<Ev> {
-    /// Handler for a maker future that loses the checkout race.
+    /// Policy for maker futures that lose to reuse.
     events: Ev,
-    /// Maximum number of services retained without a waiter.
+    /// Maximum unreserved idle services kept in the cache.
     max_idle: usize,
 }
 
-/// RAII checkout for one exclusive cached service.
+/// RAII handle for a checked-out exclusive service.
 ///
-/// Drop returns the service to the oldest waiter or idle list unless readiness
-/// failed or the caller requested discard. It does not check protocol health.
-/// A weak cache reference lets the service outlive its map entry.
+/// Returns the service to the oldest waiter or idle list on drop unless readiness failed
+/// or [`Cached::discard_on_drop`] was called. Protocol health checks are left to the
+/// caller; a weak cache reference lets the service outlive its pool entry.
 pub(super) struct Cached<S> {
-    /// Prevents a failed or explicitly discarded service from returning.
+    /// Prevents returning the service after readiness failure or explicit discard.
     discard: bool,
-
-    /// Records whether this checkout came from the cache.
+    /// Whether this checkout reused an existing cached service.
     reused: bool,
-
-    /// Owned service, taken by `return_to_cache` or `Drop`.
+    /// Owned service, taken on explicit return or drop.
     inner: Option<S>,
-
-    /// Weak reference avoids keeping an otherwise unused cache alive.
+    /// Weak cache handle so an active checkout never keeps an unused cache alive.
     shared: Weak<Mutex<Shared<S>>>,
-
-    /// Shared active-checkout counter used by idle cleanup.
+    /// Shared active-work counter decremented on return or drop.
     active: Arc<AtomicUsize>,
-
-    /// Prevents the active checkout from being released more than once.
+    /// Guards against decrementing `active` more than once.
     active_checkout: bool,
 }
 
-/// Readiness reservation owned by one [`Cache`] clone.
+/// Per-clone readiness reservation for [`Cache`].
 ///
 /// Keeping this state outside [`Shared`] prevents another clone from consuming
 /// a service after this clone has reported readiness.
 #[derive(Debug)]
 enum Ready<S> {
-    /// No reusable service is reserved.
+    /// No cached service is reserved.
     None,
-    /// A service is reserved for the next `call` on this clone.
+    /// Service reserved for the next `call` on this clone.
     Cached(S),
 }
 
 /// Future returned by a cache checkout.
 ///
-/// `Racing` polls a FIFO reservation before the maker on every wake. If reuse
-/// wins, started maker work is passed to the event policy. `Cached` owns a
-/// service reserved during readiness and completes without touching shared
-/// state again.
-///
-/// Dropping a racing future removes its waiter and reassigns any service that
-/// was already reserved for it.
+/// `Racing` polls a FIFO reservation before the maker on every wake, handing started maker
+/// work to the event policy if reuse wins; dropping it cancels its waiter and reassigns
+/// any reserved service. `Cached` yields a service already reserved during readiness.
 pub(super) enum CacheFuture<M, Dst, Ev>
 where
     M: Service<Dst>,
 {
     Racing {
-        /// Cache state inspected for a returned service.
+        /// Shared cache state checked for a reserved return on each poll.
         shared: Arc<Mutex<Shared<M::Response>>>,
-
-        /// FIFO reservation assigned to this checkout.
+        /// FIFO waiter ID assigned to this racing checkout.
         waiter: WaiterId,
-
-        /// Maker future racing the reuse reservation.
+        /// In-flight maker future racing against reuse.
         future: Option<M::Future>,
-
-        /// Handler used when reuse wins after the maker started.
+        /// Policy invoked if reuse wins after the maker started.
         events: Ev,
-
-        /// Shared active-checkout counter.
+        /// Shared active-work counter passed to [`Cached`] or [`BackgroundConnect`].
         active: Arc<AtomicUsize>,
     },
     Cached {
-        /// Immediately available checked-out service.
+        /// Service already reserved during `poll_ready`.
         service: Option<Cached<M::Response>>,
     },
 }
 
 /// Shared idle services and FIFO checkout handoff state.
 ///
-/// A returned service is first moved into `reservations` under this lock, then
-/// its waiter's task is woken after the lock is released. Keeping queued waiters
-/// separate from assigned reservations makes cancellation safe: canceling a
-/// waiter either removes its queue entry or passes its assigned service onward.
+/// Returned services move into `reservations` under this lock, and the waiter's task is
+/// woken after unlocking. Keeping queued waiters separate from assigned reservations makes
+/// cancellation safe: canceling a waiter removes its queue entry or hands off its service.
 ///
-/// The watch sender also gives background makers an active shutdown signal when
-/// the final shared cache owner is dropped.
+/// Dropping the final shared owner closes `shutdown`, canceling background maker work.
 #[derive(Debug)]
 pub(super) struct Shared<S> {
-    /// Idle services not reserved for a waiter.
+    /// Unreserved idle services reused in LIFO order.
     idle: Vec<S>,
-
-    /// Checkouts waiting for a returned service.
+    /// Pending checkouts waiting for a returned service in FIFO order.
     waiters: VecDeque<Waiter>,
-
-    /// Services assigned to a specific waiter but not yet collected.
+    /// Returned services already assigned to a specific waiter.
     reservations: Vec<(WaiterId, S)>,
-
-    /// Wrapping identifier source; only live IDs need to be distinct.
+    /// Wrapping ID counter; only live waiter IDs need to be unique.
     next_waiter: usize,
-
-    /// Maximum idle services retained when no waiter exists.
+    /// Maximum idle services retained when no waiter is queued.
     max_idle: usize,
-
-    /// Closes when the cache state is dropped, canceling background makers.
+    /// Closed when `Shared` drops, signaling background connects to exit.
     shutdown: watch::Sender<()>,
 }
 
-/// Identifier pairing a queued checkout with its reserved service.
+/// Wrapping identifier pairing a queued checkout with its reserved service.
 ///
-/// IDs wrap explicitly. They are used only inside one cache and are discarded
-/// when their waiter or reservation leaves [`Shared`].
+/// Scoped to a single [`Shared`] cache and discarded once its waiter or reservation leaves.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct WaiterId(usize);
 
-/// One pending checkout in FIFO order.
+/// Queued checkout waiting in FIFO order for a returned service.
 ///
-/// The latest task waker is stored while the waiter is queued. Once a service is
-/// assigned, the waiter is removed from the queue and the service is addressed
-/// by [`WaiterId`] in the reservation list.
+/// Stores the latest task waker until a service is assigned, at which point the waiter
+/// leaves the queue and its service is tracked by [`WaiterId`] in `reservations`.
 #[derive(Debug)]
 struct Waiter {
-    /// Identifier used to store and recover its reservation.
+    /// Identifier matching this waiter's eventual reservation.
     id: WaiterId,
-    /// Latest task interested in this waiter.
+    /// Latest waker registered by the waiting task.
     waker: Option<Waker>,
 }
 
-/// Values removed while canceling one cache waiter.
+/// Detached state returned when canceling a waiter so drops and wakeups run unlocked.
 ///
-/// The waiter and rejected service are destroyed after releasing the cache
-/// lock. A waker produced by reassigning an existing reservation is also woken
-/// outside the lock.
+/// Holds the removed waiter, any next waiter to wake after reassigning a reservation,
+/// and any service rejected by `max_idle`.
 struct CancelResult<S> {
-    /// Queued waiter removed before it received a service.
+    /// Queued waiter removed before receiving a service.
     canceled: Option<Waiter>,
-
-    /// Next waiter to wake after reservation handoff.
+    /// Next waiter to wake after a reserved service was reassigned.
     wake: Option<Waker>,
-
-    /// Service rejected by the idle limit during handoff.
+    /// Service dropped if `max_idle` rejected the reassigned reservation.
     discarded: Option<S>,
 }
 
@@ -304,8 +271,9 @@ where
     M: Service<Dst>,
 {
     /// Removes rejected idle services and this clone's readiness reservation.
-    /// Active checkouts and reservations held for other callers are untouched.
-    /// Returns removed services for destruction outside the caller's locks.
+    ///
+    /// Active checkouts and reservations held for other callers are untouched; removed
+    /// services are returned for drop outside the caller's locks.
     pub(super) fn retain<F>(&mut self, mut predicate: F) -> Vec<M::Response>
     where
         F: FnMut(&mut M::Response) -> bool,
@@ -324,6 +292,7 @@ where
     }
 
     /// Removes shared idle services and this clone's readiness reservation.
+    ///
     /// Reservations held for other callers are untouched.
     pub(super) fn drain_idle(&mut self) -> Vec<M::Response> {
         let mut discarded = self.shared.lock().drain_idle();
@@ -592,6 +561,8 @@ where
                 let connected = match ready!(Pin::new(connecting).poll(cx)) {
                     Ok(service) => service,
                     Err(error) => {
+                        // A returned service may have been reserved while the dial failed;
+                        // prefer reuse over surfacing the dial error.
                         let reserved = {
                             let mut locked = shared.lock();
                             match locked.take_reserved(*waiter) {
@@ -708,6 +679,7 @@ impl<S> Cached<S> {
         let result = {
             let mut shared = shared.lock();
             let result = shared.put(service);
+            // Release active count under the lock so is_empty() never sees a gap.
             self.release_active();
             result
         };
@@ -749,6 +721,7 @@ impl<S> Drop for Cached<S> {
                 let result = {
                     let mut shared = shared.lock();
                     let result = shared.put(service);
+                    // Release active count under the lock so is_empty() never sees a gap.
                     self.release_active();
                     result
                 };
@@ -881,22 +854,17 @@ fn finish_cancel<S>(result: CancelResult<S>) {
 
 /// Completes useful maker work after connection reuse wins the checkout race.
 ///
-/// The future does not keep the cache alive. It exits when the cache shutdown
-/// signal fires, and otherwise returns a successful result to the cache if the
-/// shared state still exists. Connection errors are intentionally ignored
-/// because another service already satisfied the checkout. Until dropped, it
-/// counts as active work so entry cleanup does not cancel it.
+/// Holds only a weak cache reference and exits immediately on cache shutdown; otherwise
+/// caches a successful service while ignoring errors since reuse already satisfied the
+/// checkout. Counts against `active` until dropped so entry cleanup does not drop it.
 pub(super) struct BackgroundConnect<F, S> {
-    /// Maker future that already began useful work.
+    /// Started maker future finishing in the background.
     future: F,
-
-    /// Destination cache, if it still exists when work completes.
+    /// Weak cache handle receiving the completed service if still alive.
     shared: Weak<Mutex<Shared<S>>>,
-
-    /// Wakes the task when the destination cache is dropped.
+    /// Resolves when the cache drops so background work stops promptly.
     shutdown: BoxFuture<'static, ()>,
-
-    /// Active-work counter released on drop.
+    /// Shared active-work counter decremented on drop.
     active: Arc<AtomicUsize>,
 }
 
@@ -960,9 +928,7 @@ mod tests {
 
     use super::*;
 
-    /// Pending connection future that records every poll.
-    /// Lets shutdown tests detect work polled after the cache disappears.
-    /// Shares only the counter with the test and never produces a service.
+    /// Pending future that counts polls to verify shutdown stops polling.
     struct CountingPending(Arc<AtomicUsize>);
 
     impl Future for CountingPending {
@@ -974,13 +940,10 @@ mod tests {
         }
     }
 
-    /// Creates one service immediately, then leaves later connection attempts pending.
-    /// Clones share the call count and a test-controlled readiness gate.
-    /// This keeps reuse races observable without opening network connections.
+    /// Produces one service immediately, then leaves subsequent calls pending.
     #[derive(Clone, Default)]
     struct QueueConnector {
         calls: Arc<AtomicUsize>,
-
         allow_ready: Arc<AtomicBool>,
     }
 
@@ -1009,9 +972,7 @@ mod tests {
         }
     }
 
-    /// Records whether a parked cache service was explicitly woken.
-    /// Both wake methods set the same flag for deterministic poll assertions.
-    /// The test holds it through an Arc while the cache owns a task waker.
+    /// Records whether a task waker was triggered.
     struct WakeFlag(AtomicBool);
 
     impl Wake for WakeFlag {
@@ -1024,9 +985,7 @@ mod tests {
         }
     }
 
-    /// Connector that rejects calls not preceded by readiness.
-    /// Each clone starts unready while sharing call and reservation counters.
-    /// A successful call consumes that clone's readiness and returns a service ID.
+    /// Enforces `poll_ready` before every `call` on each clone independently.
     #[derive(Default)]
     struct StrictConnector {
         poll_ready_count: Arc<AtomicUsize>,
@@ -1283,16 +1242,16 @@ pub(super) mod events {
     #[derive(Clone, Debug)]
     pub struct Ignore;
 
-    /// Policy that completes useful lost maker futures on a runtime.
+    /// Policy that completes started lost maker futures on a runtime.
     ///
-    /// Futures that have only waited for reuse are still canceled.
-    /// Once physical connection work starts, the runtime can finish it and put
-    /// a successful service into the cache for a later checkout.
+    /// Futures that have only waited for reuse are still canceled; once physical
+    /// connection work has started, the runtime finishes it and caches a successful
+    /// service for a later checkout.
     #[derive(Clone)]
     pub struct WithRuntime {
-        /// Runtime used to finish a connection attempt.
+        /// Runtime executing detached background connects.
         pub(super) runtime: DynRuntime,
-        /// Optional maintenance callback invoked after completion.
+        /// Optional entry maintenance callback run after the background task finishes.
         pub(super) on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
     }
 
@@ -1305,7 +1264,6 @@ pub(super) mod events {
     // ===== impl Ignore =====
 
     impl<F> Events<F> for Ignore {
-        /// Drops the maker future immediately.
         fn on_race_lost(&self, _future: F) {}
     }
 
@@ -1315,7 +1273,6 @@ pub(super) mod events {
     where
         F: Started<Output = ()> + Send + 'static,
     {
-        /// Spawns the maker only when it has started useful work.
         fn on_race_lost(&self, future: F) {
             if future.started() {
                 let on_complete = self.on_complete.clone();

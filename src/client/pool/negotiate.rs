@@ -1,14 +1,13 @@
-//! Selects a pool after inspecting a newly established connection.
+//! Selects a fallback or upgraded pool after inspecting a newly established connection.
 //!
-//! Unlike request routing, negotiation chooses from an intermediate connection
-//! result. wreq uses the fallback path to establish a transport and inspect its
-//! ALPN result. HTTP/1 stays in the fallback cache, while HTTP/2 is handed to the
-//! upgraded singleton.
+//! Instead of routing before dialing, wreq establishes a transport on the fallback path and
+//! inspects its ALPN result: HTTP/1 stays in the fallback cache, while HTTP/2 is handed off
+//! to the upgraded singleton.
 //!
-//! An upgraded result enters the pending queue before [`UpgradeSignal`] wakes
-//! concurrent fallback attempts. Selection checks the singleton and removes queued
-//! transports under the pending lock; maker calls and future polling happen afterward.
-//! A stale notification starts a fresh fallback attempt if no upgraded work remains.
+//! Upgraded transports enter the pending queue before [`UpgradeSignal`] wakes concurrent
+//! fallback attempts. Selection checks the singleton and detaches redundant queued
+//! transports under the pending lock; maker calls and polling run unlocked, and a stale
+//! wake falls back to a fresh attempt if no upgraded work remains.
 
 use std::{
     collections::VecDeque,
@@ -34,24 +33,18 @@ use super::{
 };
 use crate::sync::Mutex;
 
-/// Selects a fallback or upgraded pool from an intermediate connection result.
+/// Selects a fallback or upgraded pool from an inspected connection.
 ///
-/// `fallback` owns the connection maker and inspector. `upgrade` accepts
-/// connections already selected by that inspector. The pending queue bridges
-/// the two service graphs without requiring the upgraded pool to reconnect.
-///
-/// Clones share the pending queue and the state inside both child pools. A
-/// checkout first joins an existing upgraded service, then consumes a queued
-/// connection, and only then starts the fallback path. This keeps redundant
-/// pending transports out of an already active singleton. Pending transports
-/// removed during a race are returned to the caller for destruction outside the
-/// negotiation lock.
+/// `fallback` owns the connector and inspector, while `upgrade` wraps transports diverted
+/// into the shared `pending` queue so it never reconnects. Clones share both child pools
+/// and `pending`, checking for an existing upgraded service or queued transport before
+/// starting a fallback attempt; redundant transports are dropped outside the lock.
 pub(super) struct Negotiate<L, R, S> {
-    /// Pool used when inspection rejects the upgraded protocol.
+    /// Pool handling non-upgraded connections.
     fallback: L,
-    /// Pool used when inspection accepts the upgraded protocol.
+    /// Pool handling connections diverted by inspection.
     upgrade: R,
-    /// Upgraded connections waiting to enter the singleton.
+    /// Upgraded transports waiting to enter `upgrade`.
     pending: Arc<Mutex<VecDeque<S>>>,
 }
 
@@ -61,42 +54,40 @@ pub(super) struct Negotiate<L, R, S> {
 pub(super) type Negotiated<L, R> = ServiceEither<L, R>;
 
 pin_project! {
-    /// Future that completes the currently selected pool path.
+    /// Future driving the active fallback or upgrade checkout branch.
     ///
-    /// The fallback state retains a clone of the fallback service and its
-    /// destination. They are used only when an upgrade notification is stale and
-    /// a replacement connection must be started with a fresh readiness cycle.
-    /// The upgrade state owns the singleton checkout future after handoff.
+    /// While in the fallback branch, retains a fallback pool clone and destination only for
+    /// retrying with fresh readiness after a stale upgrade notification. Once handed off,
+    /// polls the upgraded singleton future directly.
     pub(super) struct Negotiating<Dst, L, R, S>
     where
         L: Service<Dst>,
         R: Service<S>,
     {
-        // Fallback or upgraded future currently being polled.
+        // Active fallback or upgrade future.
         #[pin]
         state: State<Dst, L, Either<L::Future, Oneshot<L, Dst>>, R::Future>,
-        // Clone used to join or start the upgraded singleton after handoff.
+        // Upgraded pool clone used to join or start the singleton on handoff.
         upgrade: R,
-        // Upgraded connection queue shared with inspectors.
+        // Shared queue of inspected upgraded transports.
         pending: Arc<Mutex<VecDeque<S>>>,
     }
 }
 
 pin_project! {
     #[project = StateProj]
-    /// Active branch of one negotiation future.
+    /// Active branch of [`Negotiating`].
     ///
-    /// A future starts in `Fallback` unless a queued or existing upgraded
-    /// service was available. `UseOther` moves it to `Upgrade`; a stale signal
-    /// creates a new fallback future in the same state.
+    /// Starts in `Fallback` unless upgraded work is already available. A [`UseOther`]
+    /// signal switches to `Upgrade`, or restarts `Fallback` if the notification was stale.
     enum State<Dst, L, FL, FR> {
         /// Establishes and inspects a connection through the fallback path.
         Fallback {
             #[pin]
             future: FL,
-            // Fallback pool retained only for a stale-signal retry.
+            // Retained only for retrying with fresh readiness after a stale signal.
             fallback: L,
-            // Destination retained only for a stale-signal retry.
+            // Destination cloned for a stale-signal retry.
             destination: Dst,
         },
         /// Builds or joins the upgraded service.
@@ -133,7 +124,7 @@ impl<L: Clone, R: Clone, S> Clone for Negotiate<L, R, S> {
 }
 
 impl<L, R, S> Negotiate<L, R, S> {
-    /// Composes both pools around one inspected connection service.
+    /// Composes the fallback and upgrade pools around an inspected connector.
     ///
     /// `fallback` wraps `connect`, whose results `inspect` may divert to the
     /// pending queue; `upgrade` wraps the identity maker those results enter.
@@ -222,7 +213,8 @@ where
     M::Response: Clone,
 {
     /// Joins existing upgraded work without invoking the fallback service.
-    /// Returns redundant transports for destruction outside any caller-held lock.
+    ///
+    /// Returns redundant queued transports for drop outside any caller-held lock.
     #[must_use]
     pub(super) fn checkout_existing(&self) -> Option<(UpgradeFuture<M, S>, VecDeque<S>)> {
         checkout_existing(&self.upgrade, &mut self.pending.lock())
@@ -383,6 +375,7 @@ where
 /// later state change. The signal is a hint; consumers recover from stale wakes.
 #[derive(Clone, Debug)]
 pub(super) struct UpgradeSignal {
+    /// Wrapping counter incremented whenever an upgraded transport is queued.
     generation: watch::Sender<usize>,
 }
 
@@ -425,44 +418,35 @@ impl UpgradeSignal {
 /// followed by a signal to sibling attempts, and the current future returns the
 /// private [`UseOther`] marker so [`Negotiating`] switches to the singleton.
 pub(super) struct Inspector<M, S, I> {
-    /// Intermediate connection service.
+    /// Underlying connector producing raw transports.
     service: M,
-
-    /// Predicate selecting the upgraded protocol.
+    /// Predicate returning `true` for upgraded protocols.
     inspect: I,
-
-    /// Queue consumed by the upgraded pool.
+    /// Shared queue receiving upgraded transports.
     pending: Arc<Mutex<VecDeque<S>>>,
-
-    /// Notification shared by concurrent fallback attempts.
+    /// Signal waking sibling fallback attempts after an upgrade is queued.
     signal: UpgradeSignal,
 }
 
 pin_project! {
     /// Future that races connection completion against another observed upgrade.
     ///
-    /// The notification is polled first. If another attempt has already queued
-    /// an upgraded connection, this future yields to that shared result. When its
-    /// own connection completes first, the inspector either returns it through
-    /// the fallback path or publishes it for upgrade handoff.
+    /// Checks for upgrades queued before subscription on the first poll, then polls the
+    /// notification before the connection future. When its own connection finishes first,
+    /// returns fallback transports directly or queues upgraded ones with [`UseOther`].
     pub(super) struct InspectFuture<F, S, I> {
-        // Intermediate connection future.
+        // Underlying connection future.
         #[pin]
         future: F,
-
-        // Checks once for an upgrade queued before this subscription existed.
+        // One-shot check on first poll for upgrades queued before subscribing.
         check_pending: bool,
-
-        // Notification that another attempt produced an upgraded connection.
+        // Resolves when a sibling attempt publishes an upgraded transport.
         notified: BoxFuture<'static, ()>,
-
-        // Predicate selecting the upgraded protocol.
+        // Predicate selecting upgraded transports.
         inspect: I,
-
-        // Queue receiving this result when it upgrades.
+        // Shared queue receiving upgraded transports.
         pending: Arc<Mutex<VecDeque<S>>>,
-
-        // Signal advanced after the result is queued.
+        // Signal advanced after pushing to `pending`.
         signal: UpgradeSignal,
     }
 }
@@ -551,11 +535,10 @@ where
     }
 }
 
-/// Identity maker for a connection already produced by the inspector.
+/// Identity maker for a connection already produced by [`Inspector`].
 ///
-/// The upgraded pool expects a make-service interface, but negotiation already
-/// owns the physical connection. This zero-sized adapter returns that supplied
-/// value unchanged and performs no readiness or allocation work.
+/// The upgraded pool expects a make-service interface, but negotiation already owns the
+/// physical transport; this zero-sized adapter returns the supplied value immediately.
 pub(super) struct Provided<S>(PhantomData<fn(S)>);
 
 // ===== impl Provided =====
@@ -628,9 +611,7 @@ mod tests {
 
     use super::*;
 
-    /// Immediately returns the protocol label supplied by the test.
-    /// Substitutes for transport creation when testing protocol selection.
-    /// The static label is shared without allocating a connection.
+    /// Returns a fixed protocol label immediately.
     #[derive(Clone, Copy)]
     struct ReadyConnector(&'static str);
 
@@ -648,9 +629,7 @@ mod tests {
         }
     }
 
-    /// Small layer adapter used to compose the two test pool paths.
-    /// Applies its closure to the supplied inner service during construction.
-    /// The returned service owns runtime state; this adapter owns only the closure.
+    /// Closure-backed [`Layer`] adapter for composing test pools.
     #[derive(Clone, Copy)]
     struct LayerFn<F>(F);
 
@@ -665,9 +644,7 @@ mod tests {
         }
     }
 
-    /// Fallback service that rejects calls not preceded by readiness.
-    /// Its first call emits an upgrade signal; later calls return a fallback label.
-    /// Clones share the call count but must acquire their own readiness.
+    /// Enforces `poll_ready` before `call`; returns `UseOther` once, then `"fallback"`.
     struct StrictFallback {
         calls: Arc<AtomicUsize>,
         ready: bool,

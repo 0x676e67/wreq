@@ -119,9 +119,13 @@ pub enum PoolStrategy {
 /// [`PoolStrategy`] applied before opening a new connection.
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
+    /// Maximum time an idle connection may stay pooled before expiration.
     pub(super) idle_timeout: Option<Duration>,
+    /// Maximum unreserved idle HTTP/1 connections per group; `0` disables pooling.
     pub(super) max_idle_per_host: usize,
+    /// Optional LRU cap on groups currently retaining reusable connections.
     pub(super) max_size: Option<NonZeroUsize>,
+    /// Policy controlling whether HTTP/1 and `Auto` checkouts wait for reuse before dialing.
     pub(super) strategy: PoolStrategy,
 }
 
@@ -152,6 +156,7 @@ impl Default for Config {
 /// unlocked. Dropping the last handle stops the idle-cleanup task (checked-out senders hold
 /// only weak references to the pool).
 pub(super) struct Pool<K, C> {
+    /// Shared pool state; dropping the last strong handle stops the expiration watcher.
     inner: Arc<PoolInner<K, C>>,
 }
 
@@ -161,10 +166,17 @@ pub(super) struct Pool<K, C> {
 /// I/O runs while `entries` is locked. `expire` holds a weak reference to `self` so idle
 /// cleanup stops promptly on drop.
 struct PoolInner<K, C> {
+    /// Whether checkouts may reuse and return connections (`max_idle_per_host > 0`).
     enabled: bool,
+    /// Idle timeout applied during checkout pruning and periodic expiration sweeps.
     idle_timeout: Option<Duration>,
+    /// Whether `entries` enforces a retained-group LRU cap (reused hits must refresh LRU).
+    has_group_limit: bool,
+    /// Single background watcher sweeping expired entries across the whole pool.
     expire: Expire<Self>,
+    /// Factory composing the protocol service stack when a new map entry is created.
     targeter: PoolTargeter<C>,
+    /// Outer map from reuse key `K` to its type-erased protocol entry.
     entries: Mutex<Map<K, BoxedEntry>>,
 }
 
@@ -175,8 +187,9 @@ type BoxedEntry = Box<dyn Entry<Request<ConnectConfig>>>;
 /// Passed into [`StreamMaker`] so dedicated or unpooled checkouts skip any reuse-first delay.
 #[derive(Clone)]
 pub(super) struct Checkout<T> {
+    /// Connection request forwarded to the underlying connector on a dial.
     target: T,
-    /// Whether this checkout can wait for existing pool state to become reusable.
+    /// Whether this checkout may wait out a reuse-first delay before dialing.
     wait_for_reuse: bool,
 }
 
@@ -185,14 +198,22 @@ pub(super) struct Checkout<T> {
 /// Shares client-wide HTTP handshake builders and runtime handles; unpooled checkouts build
 /// a temporary entry without inserting it into the map.
 struct PoolTargeter<C> {
+    /// Base transport connector cloned once per new map entry.
     connector: C,
+    /// Per-entry HTTP/1 idle connection cap passed into [`Cache`].
     max_idle_per_host: usize,
+    /// Non-zero reuse-first delay passed into [`StreamMaker`], if enabled.
     reuse_delay: Option<Duration>,
+    /// Runtime driving timers, handshakes, and detached background connects.
     runtime: DynRuntime,
+    /// Whether HTTP/1 handshakes populate a default `Host` header.
     set_host: bool,
+    /// Client-wide default HTTP/1 handshake builder.
     http1: Arc<netty::conn::http1::Builder>,
+    /// Client-wide default HTTP/2 handshake builder.
     #[cfg(feature = "http2")]
     http2: Arc<netty::conn::http2::Builder<DynRuntime>>,
+    /// Client-wide default HTTP/3 handshake builder.
     #[cfg(feature = "http3")]
     http3: Arc<netty::conn::http3::Builder<DynRuntime>>,
 }
@@ -203,8 +224,11 @@ struct PoolTargeter<C> {
 /// so readiness and `call` happen on the same service instance.
 #[derive(Clone)]
 struct StreamMaker<C> {
+    /// Underlying connector cloned for each dial attempt.
     connector: C,
+    /// Reuse-first delay applied when `Checkout::wait_for_reuse` is set.
     reuse_delay: Option<Duration>,
+    /// Runtime providing the delay timer and connection establishment timestamp.
     runtime: DynRuntime,
 }
 
@@ -213,8 +237,11 @@ struct StreamMaker<C> {
 /// `started` flips to `true` right before awaiting the connector (after any reuse delay),
 /// letting the HTTP/1 cache decide whether a lost race is worth finishing in the background.
 struct MakeFuture<T> {
+    /// Boxed async dial pipeline (optional delay followed by connector `Oneshot`).
     future: BoxFuture<'static, Result<T, BoxError>>,
+    /// Tracks first poll when there is no reuse delay (`started` is `None`).
     polled: bool,
+    /// Shared flag set right after the reuse delay finishes and dialing begins.
     started: Option<Arc<AtomicBool>>,
 }
 
@@ -289,6 +316,7 @@ where
             PoolInner {
                 enabled: pool_config.is_enabled(),
                 idle_timeout: pool_config.idle_timeout,
+                has_group_limit: pool_config.max_size.is_some(),
                 expire: Expire::new(pool.clone(), runtime),
                 entries: Mutex::new(Map::new(pool_config.max_size)),
                 targeter,
@@ -344,7 +372,7 @@ where
             return None;
         }
         let (service, state) = self.inner.entries.lock().get_mut(key)?.checkout_made()?;
-        // Pooled::new runs map maintenance, so it must stay outside the map lock.
+        // Pooled::new_mux runs map maintenance, so it must stay outside the map lock.
         let connection = service.inner();
         let usable = connection.extended_connect() == Some(true)
             && connection.is_reusable(self.inner.now(), self.inner.idle_timeout);
@@ -401,13 +429,21 @@ where
                 Some(key) => {
                     let pool = Arc::downgrade(self);
                     let key = key.clone();
-                    Box::new(move |state| {
-                        if let Some(pool) = pool.upgrade() {
+                    Box::new(move |state, reused| {
+                        let Some(pool) = pool.upgrade() else {
+                            return;
+                        };
+                        // LRU reconciliation and starting a stopped watcher still need the map.
+                        if !reused
+                            || pool.has_group_limit
+                            || (pool.expiration_interval(true).is_some()
+                                && !pool.expire.is_running())
+                        {
                             pool.update_entry(&key, state);
                         }
                     })
                 }
-                None => Box::new(|_| {}),
+                None => Box::new(|_, _| {}),
             },
         });
         self.targeter.service(request, state)
@@ -569,7 +605,7 @@ impl<C> PoolTargeter<C> {
                 let state = state.clone();
                 cache::builder()
                     .runtime(self.runtime.clone())
-                    .on_background_complete(move || (state.maintain)(&state))
+                    .on_background_complete(move || (state.maintain)(&state, false))
                     .max_idle(self.max_idle_per_host)
                     .build(service)
             })
