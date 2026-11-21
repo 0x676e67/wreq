@@ -84,8 +84,8 @@ where
         self.service.poll_ready(cx)
     }
 
-    fn call(&mut self, target: Dst) -> Self::Future {
-        let future = self.service.call(target);
+    fn call(&mut self, dst: Dst) -> Self::Future {
+        let future = self.service.call(dst);
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
         Box::pin(async move {

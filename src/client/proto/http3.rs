@@ -81,7 +81,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, target: Dst) -> Self::Future {
+    fn call(&mut self, dst: Dst) -> Self::Future {
         let mut connector = self.connector.clone();
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
@@ -91,7 +91,7 @@ where
             let Conn {
                 transport,
                 connected,
-            } = connector.call(target).await?;
+            } = connector.call(dst).await?;
 
             // Convert the transport into a QUIC connection and endpoint.
             let (quic, endpoint) = transport.into_quic()?;
