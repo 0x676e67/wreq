@@ -303,11 +303,10 @@ mod client;
 mod config;
 mod conn;
 mod error;
-mod group;
-mod identity;
 mod into_uri;
 mod protocol;
 mod proxy;
+mod reuse;
 mod sync;
 mod util;
 
@@ -336,9 +335,9 @@ pub use self::{
     },
     error::{Error, Result},
     ext::{ResponseBuilderExt, ResponseExt},
-    group::Group,
     into_uri::IntoUri,
     proxy::{NoProxy, Proxy},
+    reuse::Group,
 };
 
 pub mod http1 {

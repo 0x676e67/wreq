@@ -20,7 +20,10 @@ use {
 };
 
 use super::*;
-use crate::{conn, group::Group, identity::Identity};
+use crate::{
+    conn,
+    reuse::{self, Group},
+};
 
 /// Connector behavior used to exercise unsuccessful checkout cleanup.
 #[derive(Clone)]
@@ -167,7 +170,7 @@ fn grouped_request(group: Group, protocol: Protocol) -> conn::Request<ConnectCon
 }
 
 /// Creates a pool without periodic cleanup so empty-entry removal is explicit.
-fn test_pool(connector: TestConnector) -> Pool<Identity, TestConnector> {
+fn test_pool(connector: TestConnector) -> Pool<reuse::Key, TestConnector> {
     Pool::new(
         connector,
         DynRuntime::new(crate::rt::tokio::TokioRuntime),
@@ -180,12 +183,12 @@ fn test_pool(connector: TestConnector) -> Pool<Identity, TestConnector> {
     )
 }
 
-impl Pool<Identity, TestConnector> {
+impl Pool<reuse::Key, TestConnector> {
     async fn test_checkout(
         &self,
         request: conn::Request<ConnectConfig>,
     ) -> Result<Pooled, BoxError> {
-        let key = request.to_identity(request.protocol());
+        let key = request.reuse_key(request.protocol());
         self.checkout(Some(&key), &request).await
     }
 }
@@ -279,7 +282,7 @@ fn protocol_modes_clone_connector_once() {
     .enumerate()
     {
         let request = connect_request(protocol);
-        let key = request.to_identity(protocol);
+        let key = request.reuse_key(protocol);
         let _entry = pool.inner.new_entry(Some(&key), &request);
         assert_eq!(clones.load(Ordering::Relaxed), index + 1);
     }
@@ -336,18 +339,18 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         different.insert(Http1Options::builder().max_headers(97).build());
         let driver_request = request(protocol, driver_connect_config);
         let waiter_request = request(protocol, waiter_connect_config);
-        let key = driver_request.to_identity(protocol);
-        let equivalent_key = waiter_request.to_identity(protocol);
+        let key = driver_request.reuse_key(protocol);
+        let equivalent_key = waiter_request.reuse_key(protocol);
         assert_eq!(equivalent_key, key);
         assert_eq!(
-            request(protocol, different).to_identity(protocol) == key,
+            request(protocol, different).reuse_key(protocol) == key,
             protocol == Protocol::Http2
         );
-        let checkout_with = |key: &Identity, request: &conn::Request<ConnectConfig>| {
+        let checkout_with = |key: &reuse::Key, request: &conn::Request<ConnectConfig>| {
             let mut entries = pool.inner.entries.lock();
             let entry =
                 entries.get_or_insert_with(key, || pool.inner.new_entry(Some(key), request));
-            entry.checkout(&|| request.clone(), true)
+            entry.checkout(request, true)
         };
         let checkout = || checkout_with(&equivalent_key, &waiter_request);
 
@@ -418,16 +421,8 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         assert!(!replacement.is_reused());
         drop(pending);
         drop(held);
-        let reuse = pool
-            .inner
-            .entries
-            .lock()
-            .get_mut(&equivalent_key)
-            .unwrap()
-            .checkout(
-                &|| panic!("reuse must not take a new connection request"),
-                true,
-            );
+        let reuse = checkout();
+        assert!(matches!(reuse, CheckoutFuture::Mux { .. }));
         let reused = reuse.await.unwrap();
         assert!(reused.is_reused());
         drop(reused);
@@ -520,7 +515,7 @@ async fn extended_connect_checkout_only_clones_established_senders() {
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let pool = test_pool(TestConnector::Http2(calls.clone(), gate.clone()));
         let request = connect_request(protocol);
-        let key = request.to_identity(protocol);
+        let key = request.reuse_key(protocol);
 
         // A miss neither connects nor leaves an entry behind.
         assert!(pool.checkout_extended_connect(&key).is_none());
@@ -642,7 +637,7 @@ async fn checkouts_remove_empty_map_entries() {
 
     let pool = test_pool(TestConnector::KeepsAlive);
     let request = grouped_request(Group::new("active"), Protocol::Http1);
-    let key = request.to_identity(request.protocol());
+    let key = request.reuse_key(request.protocol());
     let mut first = pool
         .checkout(Some(&key), &request)
         .await
@@ -720,8 +715,8 @@ async fn pool_max_size_evicts_only_idle_groups() {
     );
     let first_request = grouped_request(Group::new("first"), Protocol::Http1);
     let second_request = grouped_request(Group::new("second"), Protocol::Http1);
-    let first_key = first_request.to_identity(first_request.protocol());
-    let second_key = second_request.to_identity(second_request.protocol());
+    let first_key = first_request.reuse_key(first_request.protocol());
+    let second_key = second_request.reuse_key(second_request.protocol());
 
     let mut first = pool
         .checkout(Some(&first_key), &first_request)
@@ -780,7 +775,7 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
         let pool = make_pool(2);
         let group = |name| {
             let request = grouped_request(Group::new(name), protocol);
-            (request.to_identity(protocol), request)
+            (request.reuse_key(protocol), request)
         };
         let [(live_key, live), (dead_key, dead), (next_key, next)] =
             ["live", "dead", "next"].map(group);

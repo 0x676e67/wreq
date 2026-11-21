@@ -38,8 +38,8 @@ use crate::{
     conn::{self, BoxedConnectLayer, Conn, Unnameable},
     dns::DynResolver,
     ext::UriExt,
-    identity::Identity,
     protocol::Protocol,
+    reuse,
     rt::DynRuntime,
 };
 
@@ -115,12 +115,12 @@ pub(super) struct Request<B> {
     inner: http::Request<B>,
     connect: conn::Request<ConnectConfig>,
     /// Absent for a dedicated connection that never enters the pool.
-    pool_key: Option<Identity>,
+    pool_key: Option<reuse::Key>,
     /// Whether the wire version may adapt to the negotiated connection (`Protocol::Auto`).
     negotiable: bool,
     /// Default-group key to probe for an established extended CONNECT sender.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-    extended_connect_key: Option<Identity>,
+    extended_connect_key: Option<reuse::Key>,
 }
 
 /// Checks out a pooled sender, dispatches the request, and attaches cookies and metadata.
@@ -128,7 +128,7 @@ pub(super) struct Request<B> {
 /// Multiplexed senders release on response headers; busy HTTP/1 senders are returned by a
 /// background readiness task. Returns [`DispatchError::Unsent`] when encoding never started.
 pub(super) struct Dispatch<C> {
-    pool: pool::Pool<Identity, C>,
+    pool: pool::Pool<reuse::Key, C>,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
     runtime: DynRuntime,
@@ -306,7 +306,7 @@ impl<S> Client<S> {
             feature = "ws" => dedicated.is_none(),
             _ => true,
         }
-        .then(|| connect.to_identity(protocol));
+        .then(|| connect.reuse_key(protocol));
 
         // Probe the default group only where it may be HTTP/2, or HTTP/3 over https. Without
         // Alt-Svc discovery, an automatic client's explicit HTTP/3 group is not probed.
@@ -319,7 +319,7 @@ impl<S> Client<S> {
                 Protocol::Http3 => uri.is_https(),
                 _ => false,
             })
-        .then(|| connect.to_identity(self.protocol));
+        .then(|| connect.reuse_key(self.protocol));
 
         Ok(Request {
             inner: request,

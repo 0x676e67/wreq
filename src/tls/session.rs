@@ -21,7 +21,7 @@ use lru::LruCache;
 pub(crate) use store::Tickets;
 
 use super::{KeyIdentity, TlsVersion};
-use crate::{config::ConnectConfig, conn::Request, identity::Identity, sync::Mutex};
+use crate::{config::ConnectConfig, conn::Request, reuse, sync::Mutex};
 
 const SESSION_ENTRY_CAPACITY: usize = 1024;
 const SESSION_ID_CONTEXT_LENGTH: usize = 32;
@@ -36,7 +36,7 @@ type ErasedOptions = dyn for<'h> KeyIdentity<dyn Any, dyn Hasher + 'h>;
 /// RSA sessions also include the remote socket's IP (the proxy's IP for tunneled connections).
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Key {
-    identity: Identity,
+    reuse: reuse::Key,
     remote_ip: Option<IpAddr>,
     session_id_context: [u8; SESSION_ID_CONTEXT_LENGTH],
 }
@@ -128,7 +128,7 @@ impl Key {
             .cloned()
             .map(|options| options as Arc<ErasedOptions>);
         Self {
-            identity: Identity::new((origin.clone(), peer.clone(), scope, namespace, options)),
+            reuse: reuse::Key::new((origin.clone(), peer.clone(), scope, namespace, options)),
             remote_ip: None,
             session_id_context,
         }
@@ -303,7 +303,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use super::*;
-    use crate::{group::Group, tls::TlsOptions};
+    use crate::{reuse::Group, tls::TlsOptions};
 
     #[test]
     fn session_keys_keep_distinct_sessions_isolated() {

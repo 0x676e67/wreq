@@ -240,7 +240,7 @@ mod tests {
 
         use btls::ssl::SslContextRef;
 
-        use crate::{group::Group, tls::KeyShare};
+        use crate::{reuse::Group, tls::KeyShare};
 
         // The key share is not among the curves, so the SSL callback of each connection fails.
         let overrides = |grease: Option<bool>, group| {

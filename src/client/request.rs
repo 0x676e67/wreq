@@ -33,9 +33,9 @@ use crate::{
     Error, Method, Proxy,
     config::{ConnectConfig, RequestConfig, RequestConfigValue, impl_request_config_value},
     ext::UriExt,
-    group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     redirect,
+    reuse::Group,
 };
 
 /// A request which can be executed with [`Client::execute()`].

@@ -30,8 +30,8 @@ use crate::{
         Conn, Connected, HttpInfo, Request, Transport, connected::tls_info, dialer::ConnectError,
     },
     dns::SocketAddrs,
-    identity::Identity,
     quic::{QuicOptions, tls},
+    reuse,
     rt::DynRuntime,
     sync::Mutex,
 };
@@ -91,7 +91,7 @@ struct Slots {
 /// Tokens are linkable across connections, so they are only shared between requests that
 /// could share a pooled connection
 /// ([RFC 9000 Section 8.1.3](https://www.rfc-editor.org/rfc/rfc9000#section-8.1.3)).
-struct Tokens(Mutex<LruCache<Identity, VecDeque<Bytes>>>);
+struct Tokens(Mutex<LruCache<reuse::Key, VecDeque<Bytes>>>);
 
 /// [`TokenStore`] adapter scoped to a single pool identity.
 ///
@@ -99,7 +99,7 @@ struct Tokens(Mutex<LruCache<Identity, VecDeque<Bytes>>>);
 /// rather than by raw server hostname.
 struct ScopedTokens {
     tokens: Arc<Tokens>,
-    key: Identity,
+    key: reuse::Key,
 }
 
 /// Outer MTU needed to carry a 1200-byte tunneled datagram: QUIC short header (1 + 20-byte
@@ -387,7 +387,7 @@ impl Endpoints {
         let tokens = (!matches!(path, Path::Proxy)).then(|| {
             Arc::new(ScopedTokens {
                 tokens: self.tokens.clone(),
-                key: request.to_identity(request.protocol()),
+                key: request.reuse_key(request.protocol()),
             })
         });
         Ok(QuicConfig {
@@ -588,6 +588,7 @@ mod tests {
         dns::{Addrs, DynResolver, Name, Resolve, Resolving},
         ext::UriExt,
         protocol::Protocol,
+        reuse::Group,
         rt::tokio::TokioRuntime,
         tls::trust::CertStore,
     };
@@ -1098,7 +1099,7 @@ mod tests {
         let state = state(resolving(vec![server.local_addr().unwrap()]), &cert);
         let request = |group, http3| {
             let mut connect_config = ConnectConfig::default();
-            connect_config.insert(crate::group::Group::new(group));
+            connect_config.insert(Group::new(group));
             if let Some(options) = http3 {
                 connect_config.insert(options);
             }
@@ -1106,7 +1107,7 @@ mod tests {
         };
 
         let first = request("first", None);
-        let key = first.to_identity(first.protocol());
+        let key = first.reuse_key(first.protocol());
         let received = |state: &State| {
             state
                 .endpoints

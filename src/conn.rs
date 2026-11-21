@@ -39,11 +39,10 @@ use crate::{
     config::ConnectConfig,
     dns::DynResolver,
     error::map_timeout_to_connector_error,
-    group::Group,
     http1::Http1Options,
-    identity::Identity,
     protocol::Protocol,
     proxy::{Intercepted, Matcher as ProxyMatcher},
+    reuse::{self, Group},
     rt::DynRuntime,
     tls,
 };
@@ -88,7 +87,7 @@ pub(crate) struct Config {
 
 /// Connection request carrying the normalized origin URI, selected [`Protocol`], and options.
 ///
-/// Prepared before pool lookup, used to derive reuse [`Identity`] keys, and wrapped in
+/// Prepared before pool lookup, used to derive a [`reuse::Key`], and wrapped in
 /// [`Unnameable`] when dialing through connector layers on a pool miss.
 #[derive(Clone)]
 pub(crate) struct Request<T> {
@@ -323,15 +322,15 @@ impl Request<ConnectConfig> {
         )
     }
 
-    /// Builds a pool or QUIC address-token [`Identity`] for `protocol` without consuming `self`.
+    /// Builds a pool or QUIC address-token key for `protocol` without changing the request.
     ///
     /// Only overrides relevant to `protocol` that differ from client defaults participate in the
     /// key.
     #[must_use]
-    pub(crate) fn to_identity(&self, protocol: Protocol) -> Identity {
+    pub(crate) fn reuse_key(&self, protocol: Protocol) -> reuse::Key {
         macro_rules! key {
             ($($(#[$attr:meta])* $option:ty),+ $(,)?) => {
-                Identity::new((
+                reuse::Key::new((
                     self.uri.clone(),
                     protocol,
                     Self::reuse_scope(self.body()),

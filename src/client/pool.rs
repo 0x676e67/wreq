@@ -168,8 +168,7 @@ struct PoolInner<K, C> {
     entries: Mutex<Map<K, BoxedEntry>>,
 }
 
-type BoxedEntry =
-    Box<dyn for<'a> Entry<dyn Fn() -> Request<ConnectConfig> + 'a, Request<ConnectConfig>>>;
+type BoxedEntry = Box<dyn Entry<Request<ConnectConfig>>>;
 
 /// Owned connection input paired with whether the checkout may wait for reuse.
 ///
@@ -309,12 +308,11 @@ where
         key: Option<&K>,
         request: &Request<ConnectConfig>,
     ) -> Result<Pooled, BoxError> {
-        let make = || request.clone();
         let Some(key) = key.filter(|_| self.inner.enabled) else {
             return self
                 .inner
                 .new_entry(None, request)
-                .checkout(&make, false)
+                .checkout(request, false)
                 .await;
         };
 
@@ -327,7 +325,7 @@ where
             let entry =
                 entries.get_or_insert_with(key, || self.inner.new_entry(Some(key), request));
             let discarded = entry.prune(now, self.inner.idle_timeout);
-            let future = entry.checkout(&make, true);
+            let future = entry.checkout(request, true);
             drop(entries);
             drop(discarded);
             future

@@ -30,7 +30,7 @@ use self::message::{CloseCode, Message, Utf8Bytes};
 use super::{
     emulate::IntoEmulation, request::RequestBuilder, response::Response, svc::DedicatedConnection,
 };
-use crate::{Error, Upgraded, group::Group, header::OrigHeaderMap, proxy::Proxy};
+use crate::{Error, Upgraded, header::OrigHeaderMap, proxy::Proxy, reuse::Group};
 
 /// A WebSocket stream.
 type WebSocketStream = tokio_tungstenite::WebSocketStream<Upgraded>;
