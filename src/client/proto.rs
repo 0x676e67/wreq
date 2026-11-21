@@ -58,9 +58,9 @@ pub(super) struct Established {
 /// unsent request so the outer client can retry only when encoding did not
 /// begin.
 #[derive(Debug)]
-pub enum SendError {
+pub enum SendError<R = Request<Body>> {
     Request(Error),
-    Protocol(Box<TrySendError<Request<Body>>>),
+    Protocol(Box<TrySendError<R>>),
 }
 
 // ===== impl Established =====
@@ -98,16 +98,16 @@ impl Established {
 
 // ===== impl SendError =====
 
-impl From<Error> for SendError {
+impl<R> From<Error> for SendError<R> {
     fn from(error: Error) -> Self {
         Self::Request(error)
     }
 }
 
-impl SendError {
+impl<R> SendError<R> {
     /// Boxes a protocol failure that may carry the complete unsent request.
     #[must_use]
-    pub(super) fn protocol(error: TrySendError<Request<Body>>) -> Self {
+    pub(super) fn protocol(error: TrySendError<R>) -> Self {
         Self::Protocol(Box::new(error))
     }
 
@@ -120,7 +120,7 @@ impl SendError {
 
     /// Takes a request recovered before protocol encoding began.
     #[must_use]
-    pub fn take_message(&mut self) -> Option<Request<Body>> {
+    pub fn take_message(&mut self) -> Option<R> {
         match self {
             Self::Request(_) => None,
             Self::Protocol(error) => error.take_message(),

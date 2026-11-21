@@ -21,13 +21,13 @@ use http::{
     HeaderValue, Method, Request, Response, Uri,
     header::{HOST, PROXY_AUTHORIZATION},
 };
+use http_body::Body;
 use netty::{body::Incoming, conn, http1::Http1Options};
 use tokio::sync::oneshot;
 use tower::{BoxError, Layer, Service};
 
 use super::{Established, SendError, configure, is_expired};
 use crate::{
-    Body,
     client::{
         error::{Error, ErrorKind},
         pool::cache::Started,
@@ -40,8 +40,8 @@ use crate::{
 ///
 /// HTTP/1 permits one active checkout. Dispatch returns this sender only after
 /// it becomes ready again; a busy sender is held by a readiness task.
-pub struct Connection {
-    tx: conn::http1::SendRequest<Body>,
+pub struct Connection<B = crate::Body> {
+    tx: conn::http1::SendRequest<B>,
     connected: Connected,
     set_host: bool,
     idle_at: Instant,
@@ -204,7 +204,7 @@ where
 
 // ===== impl Connection =====
 
-impl Connection {
+impl<B> Connection<B> {
     /// Handshakes a transport and returns a ready HTTP/1 sender.
     /// Starts the driver before waiting for readiness, preserving its error if
     /// the sender closes during setup.
@@ -213,7 +213,12 @@ impl Connection {
         builder: Arc<conn::http1::Builder>,
         runtime: DynRuntime,
         set_host: bool,
-    ) -> Result<Self, BoxError> {
+    ) -> Result<Self, BoxError>
+    where
+        B: Body + Send + 'static,
+        B::Data: Send,
+        B::Error: Into<BoxError>,
+    {
         // Extract the established transport and connection metadata.
         let Established { io, connected, .. } = established;
         let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
@@ -275,9 +280,12 @@ impl Connection {
     }
 }
 
-impl Service<Request<Body>> for Connection {
+impl<B> Service<Request<B>> for Connection<B>
+where
+    B: Body + Send + 'static,
+{
     type Response = Response<Incoming>;
-    type Error = SendError;
+    type Error = SendError<Request<B>>;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     #[inline(always)]
@@ -287,7 +295,7 @@ impl Service<Request<Body>> for Connection {
             .map_err(|error| SendError::Request(Error::closed(error)))
     }
 
-    fn call(&mut self, mut req: Request<Body>) -> Self::Future {
+    fn call(&mut self, mut req: Request<B>) -> Self::Future {
         // Host must be derived before the absolute URI becomes a wire target.
         if self.set_host
             && !req.headers().contains_key(HOST)
