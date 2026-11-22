@@ -1,8 +1,7 @@
-//! The leaf beneath both transport paths: [`Dialer`] resolves names, races addresses and applies
-//! local bindings and TCP socket options; it opens TCP and Unix streams and binds the UDP sockets
-//! QUIC uses.
+//! Stream dialing resolves names, races addresses and applies local bindings and TCP socket
+//! options. This module also provides the socket and address helpers used by QUIC.
 //!
-//! DNS completes before the [`race()`], and the connector's deadline covers both.
+//! DNS completes before the [`Race`], and the connector's deadline covers both.
 
 mod race;
 
@@ -11,73 +10,56 @@ pub(crate) mod tcp;
 #[cfg(unix)]
 use std::path::Path;
 use std::{
-    borrow::Cow,
     error::Error as StdError,
     fmt,
     future::Future,
     io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::pin,
     sync::Arc,
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
-use futures_util::{TryFutureExt, future::Either};
-use http::Uri;
-#[cfg(feature = "http3")]
-use {
-    socket2::{Domain, Protocol, Socket, Type},
-    std::net::UdpSocket,
+#[cfg(unix)]
+use futures_util::future::ErrInto;
+use futures_util::{
+    TryFutureExt,
+    future::{BoxFuture, Either, select},
 };
+use http::{Request, Uri};
+use tower::Service;
 
-pub(super) use self::race::race;
+pub(super) use self::race::Race;
 use crate::{
-    config::connect::{ConfigSet, impl_connect_config},
+    config::connect::ConnectConfig,
+    conn::ConnectRequestExt,
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
-    rt::{BoxConnection, DynRuntime, Timer as _},
+    rt::{Connection, DynRuntime, Timer as _},
 };
 
-/// Reaches addresses from this host: resolves names, races addresses and applies local
-/// bindings and TCP socket options. It also opens Unix streams and binds UDP sockets for QUIC.
-#[derive(Clone)]
-pub(crate) struct Dialer {
-    inner: Arc<Inner>,
-}
+const CONNECT_TIMEOUT: &str = "connect timeout";
 
-/// The runtime, resolver and client socket settings every dial shares.
-struct Inner {
-    runtime: DynRuntime,
-    resolver: DynResolver,
-    tcp: tcp::Config,
-    config_set: ConfigSet,
-    happy_eyeballs_timeout: Option<Duration>,
-}
-
-/// A physical socket destination. TCP settings apply to the dialed hop.
-pub(super) enum SocketRequest {
+/// A physical stream dial. Unix dials use the outer connector's deadline.
+pub(super) enum Dial {
     Tcp {
         uri: Uri,
-        /// Keeps TCP_NODELAY enabled through any TLS on this socket, including tunneled TLS.
-        secure: bool,
-        /// Lets the dial report its own timeout before the outer connector does.
+        addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+        interface: Option<Arc<str>>,
+        /// Disables Nagle for this dial even when the client leaves it enabled.
+        nodelay: bool,
         deadline: Option<Instant>,
-        config_set: ConfigSet,
     },
     #[cfg(unix)]
     Unix(Arc<Path>),
 }
 
-/// The interface name participates in reuse identity by value, regardless of ownership.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Interface(Cow<'static, str>);
-
 /// Connection failure with an optional attempted address and underlying cause.
-pub struct ConnectError {
-    pub(crate) msg: &'static str,
-    pub(crate) addr: Option<SocketAddr>,
-    pub(crate) cause: Option<BoxError>,
-    /// Every other address of the host would fail the same way, so the race ends here.
+pub(super) struct ConnectError {
+    pub(super) msg: &'static str,
+    pub(super) addr: Option<SocketAddr>,
+    pub(super) cause: Option<BoxError>,
     pub(super) terminal: bool,
 }
 
@@ -114,29 +96,35 @@ where
     ))
 }
 
-/// Runs a dial until the connect deadline. Expiry fails the dial itself, so the connector that
-/// dialed wraps the timeout like its other errors: a proxy connector reports a proxy failure.
-pub(super) fn within_deadline<T, F>(
-    deadline: Option<Instant>,
-    runtime: &DynRuntime,
-    dial: F,
-) -> impl Future<Output = Result<T, BoxError>> + use<T, F>
-where
-    F: Future<Output = Result<T, BoxError>>,
-{
-    let sleep = deadline.map(|deadline| runtime.sleep_until(deadline));
-    async move {
-        let Some(sleep) = sleep else {
-            return dial.await;
-        };
-        // The dial is polled first, so one that completes at the deadline still wins.
-        match futures_util::future::select(pin!(dial), sleep).await {
-            Either::Left((result, _)) => result,
-            Either::Right(_) => Err(ConnectError::new(
-                "connect timeout",
-                io::Error::from(io::ErrorKind::TimedOut),
-            )
-            .into()),
+/// The runtime, resolver and client socket settings every dial shares.
+struct State {
+    runtime: DynRuntime,
+    resolver: DynResolver,
+    tcp: tcp::Config,
+    happy_eyeballs_timeout: Option<Duration>,
+}
+
+/// Opens TCP and Unix sockets. Clones share the runtime, resolver and socket settings.
+#[derive(Clone)]
+pub(super) struct Dialer {
+    state: Arc<State>,
+}
+
+// ===== impl Dial =====
+
+impl Dial {
+    /// Prepares the socket dial for `uri`, which may be a proxy rather than the origin.
+    pub(super) fn tcp(request: &Request<ConnectConfig>, uri: Uri, nodelay: bool) -> Self {
+        let connect_config = request.body();
+        Self::Tcp {
+            uri,
+            addresses: (
+                connect_config.get_ref::<Ipv4Addr>().copied(),
+                connect_config.get_ref::<Ipv6Addr>().copied(),
+            ),
+            interface: connect_config.get_ref::<Arc<str>>().cloned(),
+            nodelay,
+            deadline: request.deadline(),
         }
     }
 }
@@ -144,224 +132,101 @@ where
 // ===== impl Dialer =====
 
 impl Dialer {
-    /// Creates a dialer with the client's socket options and bindings, racing addresses
-    /// `happy_eyeballs_timeout` apart.
-    pub(crate) fn new(
+    #[must_use]
+    pub(super) fn new(
         runtime: DynRuntime,
         resolver: DynResolver,
         tcp: tcp::Config,
-        config_set: ConfigSet,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         Self {
-            inner: Arc::new(Inner {
+            state: Arc::new(State {
                 runtime,
                 resolver,
                 tcp,
-                config_set,
                 happy_eyeballs_timeout,
             }),
         }
     }
-
-    /// Returns whether the client disables Nagle.
-    #[inline]
-    pub(crate) fn nodelay(&self) -> bool {
-        self.inner.tcp.nodelay
-    }
-
-    /// Returns the resolver for names that SOCKS routes and QUIC dials resolve locally.
-    #[inline]
-    #[cfg(any(feature = "socks", feature = "http3"))]
-    pub(crate) fn resolver(&self) -> &DynResolver {
-        &self.inner.resolver
-    }
 }
 
-#[cfg(feature = "http3")]
-impl Dialer {
-    /// Returns the runtime that drives QUIC endpoints, tunnels and timers.
-    #[inline]
-    pub(crate) fn runtime(&self) -> &DynRuntime {
-        &self.inner.runtime
-    }
-
-    /// Returns the Happy Eyeballs delay for QUIC and SOCKS5 target races.
-    #[inline]
-    pub(crate) fn happy_eyeballs_timeout(&self) -> Option<Duration> {
-        self.inner.happy_eyeballs_timeout
-    }
-
-    /// Client configuration inherited by each dial.
-    #[inline]
-    pub(crate) fn config_set(&self) -> &ConfigSet {
-        &self.inner.config_set
-    }
-
-    /// Binds a UDP socket for the address family of `remote` before the runtime registers it.
-    pub(crate) fn bind_udp(
-        &self,
-        config_set: &ConfigSet,
-        remote: SocketAddr,
-    ) -> Result<UdpSocket, ConnectError> {
-        let (ipv4, ipv6) = local_addresses(config_set, &self.inner.config_set);
-        let interface = interface(config_set, &self.inner.config_set);
-        let address = match remote {
-            SocketAddr::V4(_) => SocketAddr::from((ipv4.unwrap_or(Ipv4Addr::UNSPECIFIED), 0)),
-            SocketAddr::V6(_) => SocketAddr::from((ipv6.unwrap_or(Ipv6Addr::UNSPECIFIED), 0)),
-        };
-        let socket = Socket::new(
-            Domain::for_address(address),
-            Type::DGRAM,
-            Some(Protocol::UDP),
-        )
-        .map_err(ConnectError::m("quic open error"))?;
-        socket
-            .set_nonblocking(true)
-            .map_err(ConnectError::m("quic set_nonblocking error"))?;
-        if address.is_ipv6() {
-            socket
-                .set_only_v6(true)
-                .map_err(ConnectError::m("quic set_only_v6 error"))?;
+impl Service<Dial> for Dialer {
+    type Response = Box<dyn Connection>;
+    type Error = BoxError;
+    type Future = cfg_select! {
+        unix => {
+            Either<
+                BoxFuture<'static, Result<Self::Response, Self::Error>>,
+                ErrInto<crate::rt::Connecting, BoxError>,
+            >
         }
-        bind_interface(&socket, address, interface)
-            .map_err(ConnectError::m("quic bind interface error"))?;
-        socket
-            .bind(&address.into())
-            .map_err(ConnectError::m("quic bind local error"))?;
-        Ok(socket.into())
-    }
-}
+        _ => { BoxFuture<'static, Result<Self::Response, Self::Error>> }
+    };
 
-impl Dialer {
-    /// Returns a future that owns its dial state and can outlive the dialer borrow.
-    /// TCP dials arm the supplied absolute deadline before polling DNS.
-    pub(super) fn dial(
-        &self,
-        request: SocketRequest,
-    ) -> impl Future<Output = Result<BoxConnection, BoxError>> + use<> {
-        match request {
-            SocketRequest::Tcp {
+    #[inline]
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, dial: Dial) -> Self::Future {
+        match dial {
+            Dial::Tcp {
                 uri,
-                config_set,
-                secure,
+                addresses,
+                interface,
                 deadline,
+                nodelay,
             } => {
-                let dial = self.dial_tcp(uri, config_set, secure, deadline);
+                let nodelay = nodelay || self.state.tcp.nodelay;
+                let state = self.state.clone();
+                // Start the TCP connection attempt with Happy Eyeballs and deadline handling.
+                let connect = async move {
+                    let (host, port) = tcp::get_host_port(&uri)?;
+                    let addrs = resolve(host, port, uri.port().is_some(), |name| {
+                        state.resolver.resolve(name)
+                    })
+                    .await?;
+
+                    Race::new(state.happy_eyeballs_timeout, |duration| {
+                        state.runtime.sleep(duration)
+                    })
+                    .run(addrs, addresses, |addr| {
+                        tcp::connect_socket(
+                            &addr,
+                            &state.tcp,
+                            addresses,
+                            interface.as_deref(),
+                            nodelay,
+                            &state.runtime,
+                        )
+                        .map(|future| future.map_err(ConnectError::m("tcp connect error")))
+                    })
+                    .await
+                    .map_err(BoxError::from)
+                };
+
+                // Start the deadline timer if a deadline is specified.
+                let sleep = deadline.map(|deadline| self.state.runtime.sleep_until(deadline));
+                let future = Box::pin(async move {
+                    let Some(sleep) = sleep else {
+                        return connect.await;
+                    };
+                    // A dial that completes at the deadline wins.
+                    match select(pin!(connect), sleep).await {
+                        Either::Left((result, _)) => result,
+                        Either::Right(_) => Err(ConnectError::timeout().into()),
+                    }
+                });
+
                 cfg_select! {
-                    unix => Either::Left(dial),
-                    _ => dial,
+                    unix => Either::Left(future),
+                    _ => future,
                 }
             }
             #[cfg(unix)]
-            SocketRequest::Unix(path) => {
-                Either::Right(self.inner.runtime.connect_unix(path).err_into())
-            }
+            Dial::Unix(path) => Either::Right(self.state.runtime.connect_unix(path).err_into()),
         }
     }
-
-    /// Resolves the host and races its addresses until the request's deadline.
-    fn dial_tcp(
-        &self,
-        uri: Uri,
-        config_set: ConfigSet,
-        secure: bool,
-        deadline: Option<Instant>,
-    ) -> impl Future<Output = Result<BoxConnection, BoxError>> + use<> {
-        // Disable Nagle during TLS handshakes.
-        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        let nodelay = secure || self.nodelay();
-        let inner = self.inner.clone();
-        let dial = async move {
-            let (host, port) = tcp::get_host_port(&uri)?;
-            let addrs = resolve(host, port, uri.port().is_some(), |name| {
-                inner.resolver.resolve(name)
-            })
-            .await?;
-            let addresses = local_addresses(&config_set, &inner.config_set);
-            let interface = interface(&config_set, &inner.config_set);
-            let stream = race(
-                addrs,
-                addresses,
-                inner.happy_eyeballs_timeout,
-                |addr| {
-                    tcp::connect_socket(
-                        &addr,
-                        &inner.tcp,
-                        addresses,
-                        interface,
-                        nodelay,
-                        &inner.runtime,
-                    )
-                    .map(|future| future.map_err(ConnectError::m("tcp connect error")))
-                },
-                |duration| inner.runtime.sleep(duration),
-            )
-            .await?;
-            Ok(stream)
-        };
-        within_deadline(deadline, &self.inner.runtime, dial)
-    }
-}
-
-impl_connect_config!(Ipv4Addr, SOCKET);
-impl_connect_config!(Ipv6Addr, SOCKET);
-impl_connect_config!(Interface, SOCKET);
-
-/// Returns whether the effective bindings match the client's shared QUIC endpoints.
-/// All fields must match, including the address family this dial does not use.
-#[cfg(feature = "http3")]
-pub(super) fn uses_client_bindings(request: &ConfigSet, client: &ConfigSet) -> bool {
-    local_addresses(request, client) == local_addresses(client, client)
-        && interface(request, client) == interface(client, client)
-}
-
-/// Sets one local address family without clearing the other.
-/// Passing `None` leaves both families unchanged.
-pub(crate) fn set_local_address(config: &mut ConfigSet, address: Option<IpAddr>) {
-    match address {
-        Some(IpAddr::V4(address)) => {
-            config.insert(address);
-        }
-        Some(IpAddr::V6(address)) => {
-            config.insert(address);
-        }
-        None => {}
-    }
-}
-
-/// Sets the supplied local address families; each `None` leaves its earlier value intact.
-pub(crate) fn set_local_addresses(
-    config: &mut ConfigSet,
-    ipv4: Option<Ipv4Addr>,
-    ipv6: Option<Ipv6Addr>,
-) {
-    if let Some(address) = ipv4 {
-        config.insert(address);
-    }
-    if let Some(address) = ipv6 {
-        config.insert(address);
-    }
-}
-
-/// Resolves each local address independently, preferring request values over the client's.
-/// Explicit unspecified addresses still select their address family during dialing.
-pub(crate) fn local_addresses(
-    request: &ConfigSet,
-    client: &ConfigSet,
-) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
-    (
-        request.get::<Ipv4Addr>().or_else(|| client.get()).copied(),
-        request.get::<Ipv6Addr>().or_else(|| client.get()).copied(),
-    )
-}
-
-/// Borrows the request's interface name, falling back to the client's when absent.
-pub(crate) fn interface<'a>(request: &'a ConfigSet, client: &'a ConfigSet) -> Option<&'a str> {
-    request
-        .get::<Interface>()
-        .or_else(|| client.get())
-        .map(|interface| interface.0.as_ref())
 }
 
 cfg_select! {
@@ -377,11 +242,6 @@ cfg_select! {
         target_os = "visionos",
         target_os = "watchos",
     ) => {
-        /// Selects the interface name stored in this connection configuration.
-        pub(crate) fn set_interface(config: &mut ConfigSet, interface: Cow<'static, str>) {
-            config.insert(Interface(interface));
-        }
-
         /// Applies the selected interface before binding or connecting the socket.
         pub(super) fn bind_interface(
             socket: &socket2::Socket,
@@ -427,7 +287,9 @@ cfg_select! {
 // ===== impl ConnectError =====
 
 impl ConnectError {
-    pub(crate) fn new<E: Into<BoxError>>(msg: &'static str, cause: E) -> ConnectError {
+    /// Creates a connection error with a static context message and underlying cause.
+    #[must_use]
+    pub(super) fn new<E: Into<BoxError>>(msg: &'static str, cause: E) -> ConnectError {
         ConnectError {
             msg,
             addr: None,
@@ -436,14 +298,23 @@ impl ConnectError {
         }
     }
 
-    pub(crate) fn dns<E: Into<BoxError>>(cause: E) -> ConnectError {
+    /// Wraps a DNS resolution failure as a connection error.
+    #[must_use]
+    fn dns<E: Into<BoxError>>(cause: E) -> ConnectError {
         ConnectError::new("dns error", cause)
     }
 
-    pub(crate) fn m<E: Into<BoxError>>(msg: &'static str) -> impl FnOnce(E) -> ConnectError {
+    #[must_use]
+    pub(super) fn timeout() -> Self {
+        Self::new(CONNECT_TIMEOUT, io::Error::from(io::ErrorKind::TimedOut))
+    }
+
+    /// Returns a closure mapping an error into a [ConnectError] with msg.
+    pub(super) fn m<E: Into<BoxError>>(msg: &'static str) -> impl FnOnce(E) -> ConnectError {
         move |cause| ConnectError::new(msg, cause)
     }
 
+    /// Constructs a NotConnected error when no resolved address can be dialed.
     fn network_unreachable() -> ConnectError {
         ConnectError::new(
             "connect error",
@@ -451,6 +322,7 @@ impl ConnectError {
         )
     }
 
+    /// Attaches the peer socket address attempted when the error occurred.
     fn with_addr(mut self, addr: SocketAddr) -> Self {
         self.addr = Some(addr);
         self
@@ -545,32 +417,53 @@ mod tests {
             io::ErrorKind::NotFound
         );
     }
+
     #[test]
     fn bindings_inherit_only_unspecified_fields() {
-        let mut client = ConfigSet::default();
-        set_local_addresses(
-            &mut client,
-            Some(Ipv4Addr::LOCALHOST),
-            Some(Ipv6Addr::LOCALHOST),
-        );
-        client.insert(Interface(Cow::Borrowed("lo")));
-        let mut request = ConfigSet::default();
+        let mut connect_config = ConnectConfig::default();
+        connect_config
+            .insert(Ipv4Addr::LOCALHOST)
+            .insert(Ipv6Addr::LOCALHOST)
+            .insert(Arc::<str>::from("lo"));
+        let mut connect_config = ConnectConfig::default().with_base(&connect_config);
         assert_eq!(
-            local_addresses(&request, &client),
-            (Some(Ipv4Addr::LOCALHOST), Some(Ipv6Addr::LOCALHOST))
+            connect_config.get_ref::<Ipv4Addr>(),
+            Some(&Ipv4Addr::LOCALHOST)
         );
-        set_local_address(&mut request, Some(Ipv4Addr::UNSPECIFIED.into()));
-        set_local_address(&mut request, None);
-        set_local_addresses(&mut request, None, Some(Ipv6Addr::UNSPECIFIED));
-        set_local_addresses(&mut request, None, None);
         assert_eq!(
-            local_addresses(&request, &client),
-            (Some(Ipv4Addr::UNSPECIFIED), Some(Ipv6Addr::UNSPECIFIED))
+            connect_config.get_ref::<Ipv6Addr>(),
+            Some(&Ipv6Addr::LOCALHOST)
         );
-        assert_eq!(interface(&request, &client), Some("lo"));
-        request.insert(Interface(Cow::Owned("lo".to_owned())));
-        assert_eq!(request.get::<Interface>(), client.get::<Interface>());
-        request.insert(Interface(Cow::Borrowed("eth0")));
-        assert_eq!(interface(&request, &client), Some("eth0"));
+        connect_config
+            .insert(Ipv4Addr::UNSPECIFIED)
+            .insert_if_some(None::<Ipv6Addr>);
+        assert_eq!(
+            connect_config.get_ref::<Ipv4Addr>(),
+            Some(&Ipv4Addr::UNSPECIFIED)
+        );
+        assert_eq!(
+            connect_config.get_ref::<Ipv6Addr>(),
+            Some(&Ipv6Addr::LOCALHOST)
+        );
+        assert_eq!(
+            connect_config.get_ref::<Arc<str>>().map(Arc::as_ref),
+            Some("lo")
+        );
+        connect_config
+            .insert_if_some(None::<Ipv4Addr>)
+            .insert_if_some(Some(Ipv6Addr::UNSPECIFIED))
+            .insert(Arc::<str>::from("eth0"));
+        assert_eq!(
+            connect_config.get_ref::<Ipv4Addr>(),
+            Some(&Ipv4Addr::UNSPECIFIED)
+        );
+        assert_eq!(
+            connect_config.get_ref::<Ipv6Addr>(),
+            Some(&Ipv6Addr::UNSPECIFIED)
+        );
+        assert_eq!(
+            connect_config.get_ref::<Arc<str>>().map(Arc::as_ref),
+            Some("eth0")
+        );
     }
 }

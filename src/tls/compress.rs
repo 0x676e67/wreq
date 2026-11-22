@@ -4,7 +4,12 @@
 //! Supports Zlib, Brotli, and Zstd algorithms to minimize bytes-on-wire
 //! and fit within the initial congestion window.
 
-use std::{fmt::Debug, io};
+use std::{
+    fmt::Debug,
+    hash::{Hash, Hasher},
+    io,
+    sync::Arc,
+};
 
 use btls::{
     error::ErrorStack,
@@ -43,8 +48,18 @@ pub trait CertificateCompressor: Debug + Sync + Send + 'static {
     /// Returns the [`Codec`] used to decompress certificate chains for this algorithm.
     fn decompress(&self) -> Codec;
 
-    /// Returns the IANA-assigned identifier of the compression algorithm.
+    /// Returns the IANA-assigned identifier read when configuring this compressor.
     fn algorithm(&self) -> CertificateCompressionAlgorithm;
+}
+
+/// Compressors in offer order. Their recorded algorithms are the cache identity.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct Compressors(Option<Arc<[ConfiguredCompressor]>>);
+
+#[derive(Debug)]
+struct ConfiguredCompressor {
+    algorithm: CertificateCompressionAlgorithm,
+    compressor: &'static dyn CertificateCompressor,
 }
 
 struct Compressor<const ALGORITHM: i32> {
@@ -60,6 +75,77 @@ impl Codec {
         match self {
             Codec::Pointer(func) => func(input, output),
             Codec::Dynamic(closure) => closure(input, output),
+        }
+    }
+}
+
+// ===== impl Compressors =====
+
+impl Compressors {
+    pub(crate) fn new(compressors: &[&'static dyn CertificateCompressor]) -> Self {
+        Self((!compressors.is_empty()).then(|| {
+            compressors
+                .iter()
+                .map(|&compressor| ConfiguredCompressor {
+                    algorithm: compressor.algorithm(),
+                    compressor,
+                })
+                .collect()
+        }))
+    }
+
+    pub(super) fn register(&self, builder: &mut SslContextBuilder) -> Result<(), ErrorStack> {
+        for compressor in self.0.as_deref().unwrap_or_default() {
+            compressor.register(builder)?;
+        }
+        Ok(())
+    }
+}
+
+// ===== impl ConfiguredCompressor =====
+
+impl PartialEq for ConfiguredCompressor {
+    fn eq(&self, other: &Self) -> bool {
+        self.algorithm == other.algorithm
+    }
+}
+
+impl Eq for ConfiguredCompressor {}
+
+impl Hash for ConfiguredCompressor {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.algorithm.hash(state);
+    }
+}
+
+impl ConfiguredCompressor {
+    fn register(&self, builder: &mut SslContextBuilder) -> Result<(), ErrorStack> {
+        let compressor = self.compressor;
+        match self.algorithm {
+            CertificateCompressionAlgorithm::ZLIB => {
+                builder.add_certificate_compression_algorithm(Compressor::<
+                    { ffi::TLSEXT_cert_compression_zlib },
+                > {
+                    compress: compressor.compress(),
+                    decompress: compressor.decompress(),
+                })
+            }
+            CertificateCompressionAlgorithm::BROTLI => builder
+                .add_certificate_compression_algorithm(Compressor::<
+                    { ffi::TLSEXT_cert_compression_brotli },
+                > {
+                    compress: compressor.compress(),
+                    decompress: compressor.decompress(),
+                }),
+            CertificateCompressionAlgorithm::ZSTD => {
+                builder.add_certificate_compression_algorithm(Compressor::<
+                    { ffi::TLSEXT_cert_compression_zstd },
+                > {
+                    compress: compressor.compress(),
+                    decompress: compressor.decompress(),
+                })
+            }
+            _ => unreachable!(),
         }
     }
 }
@@ -93,36 +179,78 @@ impl<const ALGORITHM: i32> ssl::CertificateCompressor for Compressor<ALGORITHM> 
     }
 }
 
-/// Register a certificate compressor with the given [`SslContextBuilder`].
-pub(super) fn register(
-    compressor: &dyn CertificateCompressor,
-    builder: &mut SslContextBuilder,
-) -> Result<(), ErrorStack> {
-    match compressor.algorithm() {
-        CertificateCompressionAlgorithm::ZLIB => {
-            builder.add_certificate_compression_algorithm(Compressor::<
-                { ffi::TLSEXT_cert_compression_zlib },
-            > {
-                compress: compressor.compress(),
-                decompress: compressor.decompress(),
-            })
+#[cfg(test)]
+mod tests {
+    use std::{
+        hash::BuildHasher,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    use super::*;
+
+    #[test]
+    fn options_compare_compressors_by_algorithm_in_order() {
+        #[derive(Debug)]
+        struct TestCompressor(CertificateCompressionAlgorithm, AtomicUsize);
+
+        impl CertificateCompressor for TestCompressor {
+            fn algorithm(&self) -> CertificateCompressionAlgorithm {
+                self.1.fetch_add(1, Ordering::Relaxed);
+                self.0
+            }
+
+            fn compress(&self) -> Codec {
+                Codec::Pointer(|_, _| Err(io::ErrorKind::Unsupported.into()))
+            }
+
+            fn decompress(&self) -> Codec {
+                self.compress()
+            }
         }
-        CertificateCompressionAlgorithm::BROTLI => {
-            builder.add_certificate_compression_algorithm(Compressor::<
-                { ffi::TLSEXT_cert_compression_brotli },
-            > {
-                compress: compressor.compress(),
-                decompress: compressor.decompress(),
-            })
+
+        fn check<T: Debug + Eq + Hash>(
+            default: T,
+            with: impl Fn(Vec<&'static dyn CertificateCompressor>) -> T,
+        ) {
+            static ZLIB: TestCompressor =
+                TestCompressor(CertificateCompressionAlgorithm::ZLIB, AtomicUsize::new(0));
+            static OTHER_ZLIB: TestCompressor =
+                TestCompressor(CertificateCompressionAlgorithm::ZLIB, AtomicUsize::new(0));
+            static BROTLI: TestCompressor =
+                TestCompressor(CertificateCompressionAlgorithm::BROTLI, AtomicUsize::new(0));
+
+            let hasher = std::hash::RandomState::new();
+            let empty = with(Vec::new());
+            let first = with(vec![&ZLIB, &BROTLI]);
+            let same = with(vec![&OTHER_ZLIB, &BROTLI]);
+            let reversed = with(vec![&BROTLI, &ZLIB]);
+            let algorithm_calls = || {
+                [&ZLIB, &OTHER_ZLIB, &BROTLI].map(|compressor| compressor.1.load(Ordering::Relaxed))
+            };
+            let before = algorithm_calls();
+            assert_eq!(default, empty);
+            assert_eq!(hasher.hash_one(&default), hasher.hash_one(&empty));
+            assert_eq!(first, same);
+            assert_eq!(hasher.hash_one(&first), hasher.hash_one(&same));
+            assert_ne!(first, reversed);
+            assert_eq!(algorithm_calls(), before);
         }
-        CertificateCompressionAlgorithm::ZSTD => {
-            builder.add_certificate_compression_algorithm(Compressor::<
-                { ffi::TLSEXT_cert_compression_zstd },
-            > {
-                compress: compressor.compress(),
-                decompress: compressor.decompress(),
-            })
+
+        use crate::tls::TlsOptions;
+        check(TlsOptions::default(), |compressors| {
+            TlsOptions::builder()
+                .certificate_compressors(compressors)
+                .build()
+        });
+
+        #[cfg(feature = "http3")]
+        {
+            use crate::quic::QuicOptions;
+            check(QuicOptions::default(), |compressors| {
+                QuicOptions::builder()
+                    .certificate_compressors(compressors)
+                    .build()
+            });
         }
-        _ => unreachable!(),
     }
 }

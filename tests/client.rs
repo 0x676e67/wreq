@@ -29,7 +29,7 @@ use wreq::{Client, PoolStrategy, header::OrigHeaderMap, http1::Http1Options};
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn socket_bindings_inherit_and_partition_the_pool() {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());
@@ -52,18 +52,26 @@ async fn socket_bindings_inherit_and_partition_the_pool() {
     let client = Client::builder_tokio()
         .no_proxy()
         .local_address(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        .local_addresses(None, Ipv6Addr::LOCALHOST)
+        .local_address(None)
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
-    for (address, expected) in [
-        (None, "0 127.0.0.1"),
-        (Some(Ipv4Addr::LOCALHOST), "0 127.0.0.1"),
-        (Some(Ipv4Addr::new(127, 0, 0, 2)), "1 127.0.0.2"),
-        (None, "0 127.0.0.1"),
+    for (ipv4, ipv6, expected) in [
+        (None, None, "0 127.0.0.1"),
+        (
+            Some(Ipv4Addr::LOCALHOST),
+            Some(Ipv6Addr::LOCALHOST),
+            "0 127.0.0.1",
+        ),
+        (Some(Ipv4Addr::new(127, 0, 0, 2)), None, "1 127.0.0.2"),
+        (None, None, "0 127.0.0.1"),
     ] {
         let response = client
             .get(&url)
-            .local_address(address.map(IpAddr::V4))
+            .local_address(ipv4.map(IpAddr::V4))
+            .local_addresses(None, ipv6)
+            .local_address(None)
             .send()
             .await
             .unwrap();
@@ -1269,10 +1277,7 @@ async fn tls_alps_follows_alpn_offer() {
     use std::sync::Mutex;
 
     use btls::ssl::{ExtensionType, SelectCertError, SslAcceptor, SslMethod};
-    use wreq::{
-        Emulation,
-        tls::{AlpsProtocol, TlsOptions},
-    };
+    use wreq::tls::{AlpsProtocol, TlsOptions};
 
     // Records ALPN and both ALPS codepoints, then aborts before certificate selection.
     let hellos = Arc::new(Mutex::new(Vec::new()));
@@ -1310,7 +1315,7 @@ async fn tls_alps_follows_alpn_offer() {
         .alps_protocols([AlpsProtocol::HTTP2])
         .build();
     let client = Client::builder_tokio()
-        .emulation(Emulation::builder().config(tls).build())
+        .emulation(tls)
         .no_proxy()
         .timeout(Duration::from_secs(5))
         .build()
@@ -1328,10 +1333,10 @@ async fn tls_alps_follows_alpn_offer() {
     assert_eq!(
         *hellos.lock().unwrap(),
         [
-            #[cfg(feature = "http2")]
-            (Some(b"\x00\x0c\x02h2\x08http/1.1".to_vec()), true, false),
-            #[cfg(not(feature = "http2"))]
-            (Some(b"\x00\x09\x08http/1.1".to_vec()), false, false),
+            cfg_select! {
+                feature = "http2" => (Some(b"\x00\x0c\x02h2\x08http/1.1".to_vec()), true, false),
+                _ => (Some(b"\x00\x09\x08http/1.1".to_vec()), false, false),
+            },
             (Some(b"\x00\x09\x08http/1.1".to_vec()), false, false),
         ]
     );
@@ -1436,10 +1441,37 @@ async fn connection_pool_http2_errors_respect_negotiation() {
 
 #[tokio::test]
 async fn connection_pool_reuses_and_discards_poisoned_connections() {
-    let mut server = server::http(move |_| async move { http::Response::default() });
-    let url = format!("http://{}", server.addr());
+    use std::error::Error as _;
 
-    let http1 = Client::builder_tokio().http1_only().build().unwrap();
+    use wreq::Emulation;
+
+    let mut server = server::http(|request| async move {
+        let mut response = http::Response::default();
+        if request.uri().path() == "/limits" {
+            for i in 0..40 {
+                response.headers_mut().insert(
+                    header::HeaderName::try_from(format!("x-{i}")).unwrap(),
+                    HeaderValue::from_static("1"),
+                );
+            }
+        }
+        response
+    });
+    let url = format!("http://{}", server.addr());
+    let mut accepted = || {
+        server
+            .events()
+            .into_iter()
+            .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+            .count()
+    };
+    let builder = || {
+        Client::builder_tokio()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+    };
+
+    let http1 = builder().http1_only().build().unwrap();
     for _ in 0..2 {
         http1.get(&url).send().await.unwrap().bytes().await.unwrap();
     }
@@ -1455,7 +1487,7 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
         .unwrap();
 
     #[cfg(feature = "http2")]
-    let http2 = Client::builder_tokio().http2_only().build().unwrap();
+    let http2 = builder().http2_only().build().unwrap();
     #[cfg(feature = "http2")]
     {
         let responses =
@@ -1471,12 +1503,11 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
             .unwrap();
     }
 
-    let accepted = server
-        .events()
-        .iter()
-        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
-        .count();
-    assert_eq!(accepted, 1 + usize::from(cfg!(feature = "http2")));
+    let initial_connections = accepted();
+    assert_eq!(
+        initial_connections,
+        1 + usize::from(cfg!(feature = "http2"))
+    );
 
     for client in [
         &http1,
@@ -1499,12 +1530,88 @@ async fn connection_pool_reuses_and_discards_poisoned_connections() {
         }
     }
 
-    let replacement_connections = server
-        .events()
-        .iter()
-        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
-        .count();
-    assert_eq!(replacement_connections, accepted);
+    assert_eq!(accepted(), initial_connections);
+
+    for (builder, version) in [
+        (builder().http1_only(), Version::HTTP_11),
+        #[cfg(feature = "http2")]
+        (builder().http2_only(), Version::HTTP_2),
+    ] {
+        let client = builder.build().unwrap();
+        // Only the options for the active protocol differ between requests.
+        let emulation = |strict| {
+            let max_headers = if strict && version == Version::HTTP_11 {
+                32
+            } else {
+                64
+            };
+            let emulation = Emulation::builder()
+                .config(Http1Options::builder().max_headers(max_headers).build());
+            #[cfg(feature = "http2")]
+            let emulation = emulation.config(
+                wreq::http2::Http2Options::builder()
+                    .header_table_size(if strict && version == Version::HTTP_2 {
+                        8192
+                    } else {
+                        4096
+                    })
+                    .build(),
+            );
+            emulation.build()
+        };
+        let send = async |strict| {
+            let response = client
+                .get(&url)
+                .emulation(emulation(strict))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.version(), version);
+            let address = response
+                .local_addr()
+                .expect("the response records the TCP socket");
+            response.bytes().await.unwrap();
+            address
+        };
+        let regular = send(false).await;
+        let strict = send(true).await;
+        assert_ne!(
+            regular, strict,
+            "{version:?} emulations must use different sockets"
+        );
+        assert_eq!(
+            send(false).await,
+            regular,
+            "{version:?} must reuse the regular socket"
+        );
+        assert_eq!(
+            send(true).await,
+            strict,
+            "{version:?} must reuse the strict socket"
+        );
+
+        if version == Version::HTTP_11 {
+            let error = client
+                .get(format!("{url}/limits"))
+                .emulation(emulation(true))
+                .send()
+                .await
+                .unwrap_err();
+            assert!(
+                std::iter::successors(error.source(), |&source| source.source()).any(|source| {
+                    source
+                        .downcast_ref::<netty::Error>()
+                        .is_some_and(netty::Error::is_parse)
+                }),
+                "the strict HTTP/1 emulation must reject 40 headers: {error:?}"
+            );
+        }
+        assert_eq!(
+            accepted(),
+            2,
+            "{version:?} emulations should each dial only once"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1846,7 +1953,7 @@ async fn connection_pool_preserves_upload_after_response_headers() {
 
 #[cfg(feature = "http2")]
 #[tokio::test]
-async fn connection_pool_keeps_http2_connection_with_live_body_past_idle_timeout() {
+async fn connection_pool_finishes_http2_body_after_idle_eviction() {
     let release = Arc::new(tokio::sync::Notify::new());
     let mut server = server::http({
         let release = release.clone();
@@ -1865,13 +1972,6 @@ async fn connection_pool_keeps_http2_connection_with_live_body_past_idle_timeout
         }
     });
     let url = format!("http://{}/", server.addr());
-    let mut new_connections = || {
-        server
-            .events()
-            .iter()
-            .filter(|event| matches!(event, server::Event::ConnectionAccepted))
-            .count()
-    };
     let client = Client::builder_tokio()
         .no_proxy()
         .http2_only()
@@ -1879,20 +1979,20 @@ async fn connection_pool_keeps_http2_connection_with_live_body_past_idle_timeout
         .timeout(Duration::from_secs(10))
         .build()
         .unwrap();
-    let get = async || client.get(&url).send().await.unwrap().text().await.unwrap();
 
-    // A body outliving the idle timeout and a sweep keeps its connection reusable.
     let slow = client.get(format!("{url}slow")).send().await.unwrap();
     tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(get().await, "ok");
-    assert_eq!(new_connections(), 1);
+    let fast = client.get(&url).send().await.unwrap();
+    assert_eq!(fast.text().await.unwrap(), "ok");
+    let connections = server
+        .events()
+        .iter()
+        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+        .count();
+    assert_eq!(connections, 2);
 
-    // Once the body ends, the connection idles out again.
     release.notify_one();
     assert_eq!(slow.text().await.unwrap(), "ok");
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(get().await, "ok");
-    assert_eq!(new_connections(), 1);
 }
 
 #[tokio::test]
@@ -2258,13 +2358,6 @@ async fn runtime_resolver_is_used_without_dns_configuration() {
     impl Runtime for SelectedRuntime {
         fn execute(&self, future: BoxFuture<'static, ()>) {
             TokioRuntime.execute(future);
-        }
-
-        fn try_execute(
-            &self,
-            future: BoxFuture<'static, ()>,
-        ) -> Result<(), BoxFuture<'static, ()>> {
-            TokioRuntime.try_execute(future)
         }
 
         fn connect_tcp(&self, socket: std::net::TcpStream, address: SocketAddr) -> Connecting {

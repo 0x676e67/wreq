@@ -7,11 +7,12 @@ use std::{
     time::Duration,
 };
 
+use http::Request;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 
 use crate::{
-    conn::{request::ConnectRequest, svc::TransportRequest},
+    conn::ConnectDeadline,
     error::TimedOut,
     rt::{BoxSleep, DynRuntime, Timer as _, deadline_after},
 };
@@ -25,7 +26,7 @@ pub(crate) struct DeadlineLayer {
 
 /// Bounds each connector call by one deadline, started in `call` after readiness waits.
 /// It covers everything beneath: user layers, proxy setup and the transport handshakes.
-/// Dials that use the deadline in [`TransportRequest`] can report their own timeout before the
+/// Dials that use the attached [`ConnectDeadline`] can report their own timeout before the
 /// outer timer ends the call.
 #[derive(Clone)]
 pub(crate) struct Deadline<S> {
@@ -51,6 +52,7 @@ pin_project! {
 impl DeadlineLayer {
     /// Creates a layer that bounds each connector call by `timeout`, measured on `runtime`'s
     /// clock. `None` leaves calls unbounded.
+    #[must_use]
     pub(crate) fn new(timeout: Option<Duration>, runtime: DynRuntime) -> Self {
         Self { timeout, runtime }
     }
@@ -71,9 +73,9 @@ impl<S> Layer<S> for DeadlineLayer {
 
 // ===== impl Deadline =====
 
-impl<S> Service<ConnectRequest> for Deadline<S>
+impl<S, B> Service<Request<B>> for Deadline<S>
 where
-    S: Service<TransportRequest>,
+    S: Service<Request<B>>,
     S::Error: Into<BoxError>,
 {
     type Response = S::Response;
@@ -85,12 +87,17 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, request: ConnectRequest) -> Self::Future {
+    fn call(&mut self, mut request: Request<B>) -> Self::Future {
         let deadline = self
             .timeout
             .map(|timeout| deadline_after(self.runtime.now(), timeout));
+
+        if let Some(deadline) = deadline {
+            request.extensions_mut().insert(ConnectDeadline(deadline));
+        }
+
         ResponseFuture {
-            future: self.inner.call(TransportRequest { request, deadline }),
+            future: self.inner.call(request),
             sleep: deadline.map(|deadline| self.runtime.sleep_until(deadline)),
         }
     }

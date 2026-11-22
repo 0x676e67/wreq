@@ -13,7 +13,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll, ready},
-    time::Instant,
 };
 
 use ::quic::{
@@ -21,26 +20,29 @@ use ::quic::{
     udp::{RecvMeta, Transmit},
 };
 use futures_util::future::BoxFuture;
+use http::Request;
 use netty::proxy::socks::{
     DnsResolve,
     udp::{self, Address, AddressRef, AssociateError, UdpAssociation},
 };
 use pin_project_lite::pin_project;
 use tokio::sync::{Notify, futures::OwnedNotified};
-use tower::BoxError;
+use tower::{BoxError, ServiceExt};
 
-use super::endpoint::{Endpoints, TUNNEL_MTU, handshake_error};
+use super::{
+    TUNNEL_MTU, bind_udp,
+    endpoint::{Endpoints, QuicConfig, handshake_error},
+};
 use crate::{
+    config::connect::ConnectConfig,
     conn::{
         Conn,
-        dialer::{self, ConnectError, Dialer, SocketRequest, race, resolve},
-        request::ConnectRequest,
+        dialer::{ConnectError, Dial, Dialer},
     },
     error::ProxyConnect,
     proxy::matcher::Intercept,
-    rt::{BoxConnection, Timer as _},
+    rt::Connection,
     sync::Mutex,
-    tls::quic::QuicConfig,
 };
 
 static URI_MISSING_HOST: &str = "HTTP/3 URI has no host";
@@ -78,7 +80,7 @@ struct Socket {
 /// `notify` wakes senders once `closed` is set; `ended` signals the endpoint's watcher once.
 #[derive(Debug)]
 struct Shared {
-    association: Mutex<Option<UdpAssociation<BoxConnection>>>,
+    association: Mutex<Option<UdpAssociation<Box<dyn Connection>>>>,
     target: Address,
     header: Vec<u8>,
     closed: AtomicBool,
@@ -101,70 +103,62 @@ pin_project! {
 
 /// Resolves SOCKS5 targets locally or delegates SOCKS5h target names to the proxy.
 pub(super) async fn connect(
-    endpoints: &Endpoints,
-    request: ConnectRequest,
+    endpoints: Arc<Endpoints>,
+    dialer: Dialer,
+    request: Request<ConnectConfig>,
     proxy: Intercept,
     dns: DnsResolve,
-    deadline: Option<Instant>,
 ) -> Result<Conn, BoxError> {
     // A local configuration error must not cost, or be reported as, a proxy setup.
     let config = endpoints.tunnel_config(&request)?;
     let uri = request.uri();
     let host = crate::util::strip_ipv6_brackets(uri.host().ok_or(URI_MISSING_HOST)?);
     let port = uri.port_u16().unwrap_or(443);
+    // The control connection takes the request's bindings, like the relay socket.
+    let dial = || {
+        dialer
+            .clone()
+            .oneshot(Dial::tcp(&request, proxy.uri().clone(), false))
+    };
 
     if dns == DnsResolve::Remote {
         let target = match host.parse::<IpAddr>() {
             Ok(ip) => Address::Ip((ip, port).into()),
             Err(_) => Address::Domain(host.into(), port),
         };
-        return Ok(connect_target(endpoints, &request, &proxy, &config, target, deadline).await?);
+        return Ok(connect_target(&endpoints, &request, dial(), &proxy, &config, target).await?);
     }
 
-    let dialer = endpoints.dialer();
-    let addresses = resolve(host, port, uri.port().is_some(), |name| {
-        dialer.resolver().resolve(name)
-    })
-    .await?;
+    let addresses = endpoints.resolve(host, port, uri.port().is_some()).await?;
 
     // Target families are independent of the physical proxy's bindings.
-    Ok(race(
-        addresses,
-        (None, None),
-        dialer.happy_eyeballs_timeout(),
-        |address| {
+    Ok(endpoints
+        .race(addresses, (None, None), |address| {
             let target = Address::Ip(address);
             let attempt: BoxFuture<'_, _> = Box::pin(connect_target(
-                endpoints, &request, &proxy, &config, target, deadline,
+                &endpoints,
+                &request,
+                dial(),
+                &proxy,
+                &config,
+                target,
             ));
             Ok(attempt)
-        },
-        |duration| dialer.runtime().sleep(duration),
-    )
-    .await?)
+        })
+        .await?)
 }
 
 /// Each candidate owns its association; cancellation closes the control stream and UDP socket.
 /// Errors name the stage that failed; those of the proxy's stages are proxy connect errors.
 async fn connect_target(
     endpoints: &Endpoints,
-    request: &ConnectRequest,
+    request: &Request<ConnectConfig>,
+    dial: impl Future<Output = Result<Box<dyn Connection>, BoxError>>,
     proxy: &Intercept,
     config: &QuicConfig,
     target: Address,
-    deadline: Option<Instant>,
 ) -> Result<Conn, ConnectError> {
-    let dialer = endpoints.dialer();
-    // The control connection takes the request's bindings, like the relay socket.
-    let io = dialer
-        .dial(SocketRequest::Tcp {
-            uri: proxy.uri().clone(),
-            config_set: request.config_set().clone(),
-            secure: false,
-            deadline,
-        })
-        .await
-        .map_err(proxy_error(PROXY_CONNECT_ERROR))?;
+    let io = dial.await.map_err(proxy_error(PROXY_CONNECT_ERROR))?;
 
     let peer = io.peer_addr();
 
@@ -206,12 +200,10 @@ async fn connect_target(
             Address::Ip(relay) if relay.ip().is_unspecified() => {
                 return Err(PEER_ADDR_REQUIRED.into());
             }
-            Address::Ip(relay) => (relay_socket(dialer, request, relay)?, relay),
+            Address::Ip(relay) => (relay_socket(endpoints, request, relay)?, relay),
             Address::Domain(host, port) => {
                 // BND.PORT is authoritative even when the resolver returns another port.
-                let mut resolving = pin!(resolve(&host, port, true, |name| {
-                    dialer.resolver().resolve(name)
-                }));
+                let mut resolving = pin!(endpoints.resolve(&host, port, true));
                 let addresses = poll_fn(|cx| {
                     // The association can close while DNS is pending; stop that lookup too.
                     if let Poll::Ready(result) = association.poll_closed(cx) {
@@ -243,7 +235,7 @@ async fn connect_target(
                     .filter(preferred)
                     .chain(addresses.iter().filter(|addr| !preferred(addr)))
                 {
-                    match relay_socket(dialer, request, relay) {
+                    match relay_socket(endpoints, request, relay) {
                         Ok(socket) => {
                             selected = Some((socket, relay));
                             break;
@@ -266,28 +258,31 @@ async fn connect_target(
     let ended = socket.shared.ended.clone();
 
     endpoints
-        .finish_tunnel(request, config, socket, relay, ended)
+        .finish_tunnel(request.uri(), config, socket, relay, ended)
         .await
         .map_err(handshake_error(TARGET_HANDSHAKE_ERROR))
 }
 
 /// Opens a relay socket with the same binding policy as direct QUIC.
 fn relay_socket(
-    dialer: &Dialer,
-    request: &ConnectRequest,
+    endpoints: &Endpoints,
+    request: &Request<ConnectConfig>,
     remote: SocketAddr,
 ) -> Result<Box<dyn AsyncUdpSocket>, BoxError> {
-    let config_set = request.config_set();
-    let (ipv4, ipv6) = dialer::local_addresses(config_set, dialer.config_set());
+    let connect_config = request.body();
     if matches!(
-        (ipv4, ipv6, remote),
+        (
+            connect_config.get_ref::<Ipv4Addr>(),
+            connect_config.get_ref::<Ipv6Addr>(),
+            remote
+        ),
         (Some(_), None, SocketAddr::V6(_)) | (None, Some(_), SocketAddr::V4(_))
     ) {
         return Err("relay address does not match local bindings".into());
     }
-    Ok(dialer
+    Ok(endpoints
         .runtime()
-        .udp_socket(dialer.bind_udp(config_set, remote)?)?)
+        .udp_socket(bind_udp(connect_config, remote)?)?)
 }
 
 /// Labels a failed proxy stage, keeping it a proxy connect error.
@@ -300,7 +295,7 @@ fn proxy_error<E: Into<BoxError>>(stage: &'static str) -> impl FnOnce(E) -> Conn
 impl Socket {
     fn new(
         socket: Box<dyn AsyncUdpSocket>,
-        association: UdpAssociation<BoxConnection>,
+        association: UdpAssociation<Box<dyn Connection>>,
         relay: SocketAddr,
         target: Address,
     ) -> io::Result<Self> {

@@ -20,7 +20,7 @@ use crate::{IntoUri, ext::UriExt};
 // This module is a couple pieces:
 //
 // - The public builder API
-// - The internal built types that our Connector knows how to use.
+// - The proxy rules used to route connection attempts.
 //
 // The user creates a builder (`wreq::Proxy`), and configures any extras.
 // Once that type is passed to the `ClientBuilder`, we convert it into the
@@ -455,6 +455,8 @@ impl NoProxy {
 // ===== impl Matcher =====
 
 impl Matcher {
+    /// Returns a matcher based on the system's proxy configuration.
+    #[must_use]
     pub(crate) fn system() -> Self {
         Self {
             inner: Box::new(matcher::Matcher::from_system()),
@@ -463,14 +465,10 @@ impl Matcher {
 
     /// Intercept the given destination URI, returning the intercepted
     /// proxy configuration if there is a match.
-    #[inline]
+    #[must_use]
     pub(crate) fn intercept(&self, dst: &Uri) -> Option<Intercepted> {
         self.inner.intercept(dst)
     }
-}
-
-impl crate::config::connect::ConnectConfig for Matcher {
-    const SCOPE: crate::config::connect::ConfigScope = crate::config::connect::ConfigScope::ROUTE;
 }
 
 // ===== impl Extra =====

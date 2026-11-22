@@ -300,8 +300,10 @@ mod trace;
 #[macro_use]
 mod ext;
 #[macro_use]
-mod config;
+#[path = "tls/key.rs"]
+mod tls_key;
 mod client;
+mod config;
 mod conn;
 mod error;
 mod group;
@@ -328,7 +330,7 @@ pub use self::{
     client::{
         Client, ClientBuilder,
         body::Body,
-        emulate::{Emulation, EmulationBuilder, IntoEmulation, ProtocolConfig},
+        emulate::{Emulation, EmulationBuilder, IntoEmulation},
         pool::PoolStrategy,
         request::{Request, RequestBuilder},
         response::Response,

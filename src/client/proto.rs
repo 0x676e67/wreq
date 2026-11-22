@@ -1,8 +1,8 @@
 //! Adapts established transports into protocol request senders.
 //!
 //! The HTTP/1 and optional HTTP/2 layers handshake established streams.
-//! With the `http3` feature, the HTTP/3 connection service establishes
-//! QUIC and performs its handshake. The pool composes these Tower services with reuse.
+//! With the `http3` feature, the HTTP/3 layer wraps a QUIC connector.
+//! The pool composes these Tower services with reuse.
 //!
 //! A successful handshake starts the protocol driver and returns a sender with
 //! the connection metadata needed by request preparation and pool health checks.
@@ -16,7 +16,10 @@ pub(super) mod http3;
 #[cfg(any(feature = "http2", feature = "http3"))]
 pub(super) mod mux;
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use http::Request;
 use netty::conn::TrySendError;
@@ -27,11 +30,20 @@ use crate::{
     conn::{Connected, Io},
 };
 
-/// Physical byte stream and its transport metadata.
-///
-/// Connection making creates this value before protocol negotiation. The
-/// selected handshake consumes it exactly once and transfers the stream to
-/// the resulting protocol driver.
+/// Shares the client's builder unless the request overrides its protocol options.
+#[must_use]
+pub(super) fn configure<B: Clone, O: Clone>(
+    builder: &Arc<B>,
+    options: Option<&O>,
+    apply: fn(B, O) -> B,
+) -> Arc<B> {
+    match options {
+        Some(options) => Arc::new(apply(B::clone(builder), options.clone())),
+        None => builder.clone(),
+    }
+}
+
+/// Established byte stream and transport metadata passed to an HTTP handshake.
 pub(super) struct Established {
     io: Box<dyn Io>,
     connected: Connected,
@@ -55,6 +67,7 @@ pub enum SendError {
 
 impl Established {
     /// Creates the protocol-neutral output of a physical connector.
+    #[must_use]
     pub(super) fn new(
         io: Box<dyn Io>,
         connected: Connected,
@@ -69,12 +82,14 @@ impl Established {
     }
 
     /// Returns metadata for the transport, including its negotiated ALPN.
+    #[must_use]
     #[cfg(feature = "http2")]
     pub(super) fn connected(&self) -> &Connected {
         &self.connected
     }
 
     /// Returns when this transport became available for protocol selection.
+    #[must_use]
     #[cfg(feature = "http2")]
     pub(super) fn idle_at(&self) -> Instant {
         self.idle_at
@@ -91,17 +106,20 @@ impl From<Error> for SendError {
 
 impl SendError {
     /// Boxes a protocol failure that may carry the complete unsent request.
+    #[must_use]
     pub(super) fn protocol(error: TrySendError<Request<Body>>) -> Self {
         Self::Protocol(Box::new(error))
     }
 
     /// Returns whether the protocol rejected the request itself; such a failure repeats
     /// on the same connection, so the returned request must not be retried.
+    #[must_use]
     pub fn is_user(&self) -> bool {
         matches!(self, Self::Protocol(error) if error.error().is_user())
     }
 
     /// Takes a request recovered before protocol encoding began.
+    #[must_use]
     pub fn take_message(&mut self) -> Option<Request<Body>> {
         match self {
             Self::Request(_) => None,
@@ -110,6 +128,7 @@ impl SendError {
     }
 
     /// Preserves local errors and assigns `kind` to protocol failures.
+    #[must_use]
     pub fn into_client_error(self, kind: ErrorKind) -> Error {
         match self {
             Self::Request(error) => error,
@@ -119,6 +138,7 @@ impl SendError {
 }
 
 /// Returns whether an idle timestamp exceeds the configured timeout.
+#[must_use]
 pub(super) fn is_expired(idle_at: Instant, now: Instant, timeout: Option<Duration>) -> bool {
     timeout.is_some_and(|timeout| now.saturating_duration_since(idle_at) > timeout)
 }

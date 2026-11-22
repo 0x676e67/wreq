@@ -12,7 +12,6 @@ use crate::{
     Error,
     tls::{
         EchGrease, TlsOptions,
-        compress::{self, CertificateCompressor},
         trust::{CertStore, Identity},
     },
 };
@@ -91,13 +90,6 @@ pub(super) trait SslContextBuilderExt {
 
     /// Controls certificate chain verification independently of hostname checks.
     fn set_cert_verification(&mut self, enable: bool);
-
-    /// Registers certificate compressors in the supplied order.
-    /// Returns backend errors for the caller to classify once.
-    fn set_cert_compressors(
-        &mut self,
-        compressors: &[&dyn CertificateCompressor],
-    ) -> Result<(), ErrorStack>;
 }
 
 impl SslContextBuilderExt for SslContextBuilder {
@@ -153,16 +145,5 @@ impl SslContextBuilderExt for SslContextBuilder {
         } else {
             SslVerifyMode::NONE
         });
-    }
-
-    fn set_cert_compressors(
-        &mut self,
-        compressors: &[&dyn CertificateCompressor],
-    ) -> Result<(), ErrorStack> {
-        for &compressor in compressors {
-            compress::register(compressor, self)?;
-        }
-
-        Ok(())
     }
 }

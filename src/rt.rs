@@ -34,11 +34,6 @@ use tokio_btls::SslStream;
 pub(crate) use self::handle::DynRuntime;
 use crate::dns::Resolve;
 
-#[cfg(unix)]
-const UNSUPPORTED_UNIX_SOCKETS: &str = "runtime does not support Unix domain sockets";
-#[cfg(feature = "http3")]
-const UNSUPPORTED_UDP_SOCKETS: &str = "runtime does not support UDP sockets";
-
 /// Longest delay [`deadline_after`] adds: about 30 years, Tokio's far-future deadline.
 const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
 
@@ -49,33 +44,29 @@ const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
 /// Callers can replace the resolver with
 /// [`ClientBuilder::dns_resolver`](crate::ClientBuilder::dns_resolver).
 ///
-/// A runtime that wraps another must also forward [`try_execute`](Self::try_execute),
-/// `connect_unix` and `udp_socket`, whose defaults ignore the wrapped runtime.
+/// Poll and drop in-flight request futures in the selected runtime's context.
+/// Dropping a request can schedule idle connection cleanup.
+///
+/// A runtime that wraps another must also forward `connect_unix` and `udp_socket`,
+/// whose defaults ignore the wrapped runtime.
 pub trait Runtime: Timer + Debug + 'static {
     /// Schedules a task to run in the background.
     #[track_caller]
     fn execute(&self, fut: BoxFuture<'static, ()>);
 
-    /// Schedules a task like [`execute`](Self::execute), but hands it back when the current
-    /// thread has no runtime to run it. The client uses this for work that dropping pooled
-    /// connections can start. The default calls `execute`; override it if that can panic.
-    #[track_caller]
-    fn try_execute(&self, fut: BoxFuture<'static, ()>) -> Result<(), BoxFuture<'static, ()>> {
-        self.execute(fut);
-        Ok(())
-    }
-
     /// Returns the resolver used unless the client builder overrides DNS.
+    #[must_use]
     fn resolver(&self) -> Arc<dyn Resolve>;
 
     /// Connects an unconnected, nonblocking socket to `address`.
     /// The socket already has the client's TCP and local binding options applied.
-    fn connect_tcp(&self, socket: TcpStream, address: SocketAddr) -> Connecting;
+    fn connect_tcp(&self, socket: TcpStream, addr: SocketAddr) -> Connecting;
 
     /// Connects a Unix domain socket.
     /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error.
     #[cfg(unix)]
     fn connect_unix(&self, _path: Arc<std::path::Path>) -> Connecting {
+        const UNSUPPORTED_UNIX_SOCKETS: &str = "runtime does not support Unix domain sockets";
         Box::pin(std::future::ready(Err(io::Error::new(
             io::ErrorKind::Unsupported,
             UNSUPPORTED_UNIX_SOCKETS,
@@ -91,6 +82,7 @@ pub trait Runtime: Timer + Debug + 'static {
     /// is in use.
     #[cfg(feature = "http3")]
     fn udp_socket(&self, _socket: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
+        const UNSUPPORTED_UDP_SOCKETS: &str = "runtime does not support UDP sockets";
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             UNSUPPORTED_UDP_SOCKETS,
@@ -126,11 +118,8 @@ pub trait Connection: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {
     }
 }
 
-/// An established connection returned by a runtime.
-pub type BoxConnection = Box<dyn Connection>;
-
 /// A pending runtime connection attempt.
-pub type Connecting = BoxFuture<'static, io::Result<BoxConnection>>;
+pub type Connecting = BoxFuture<'static, io::Result<Box<dyn Connection>>>;
 
 /// Creates sleeps using the selected runtime's clock.
 /// Deadlines and [`Timer::now`] must use the same clock.
@@ -145,6 +134,7 @@ pub trait Timer: Send + Sync {
     fn sleep_until(&self, deadline: Instant) -> BoxSleep;
 
     /// Returns the current time; override this when using a simulated clock.
+    #[must_use]
     fn now(&self) -> Instant {
         Instant::now()
     }
@@ -159,6 +149,7 @@ pub trait Sleep: Future<Output = ()> + Send + Sync {
 /// An owned, resettable sleep returned by a [`Timer`].
 /// Moving this handle keeps the underlying future pinned; dropping it cancels the wait.
 /// Construction adapts and boxes the concrete sleep in one allocation.
+#[must_use = "a sleep does nothing unless it is awaited or polled"]
 pub struct BoxSleep {
     inner: Pin<Box<dyn netty::rt::Sleep>>,
 }
@@ -174,7 +165,7 @@ pin_project! {
 
 // ===== impl Connection =====
 
-impl Connection for BoxConnection {
+impl Connection for Box<dyn Connection> {
     #[inline]
     fn peer_addr(&self) -> Option<SocketAddr> {
         self.as_ref().peer_addr()

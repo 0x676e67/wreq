@@ -23,7 +23,7 @@ use {::compio::net::UnixStream, std::path::Path};
 use self::{future::SendFuture, gai::GaiResolver, io::Compat};
 use crate::{
     dns::Resolve,
-    rt::{BoxConnection, BoxSleep, Connecting, Runtime, Sleep, Timer},
+    rt::{BoxSleep, Connecting, Runtime, Sleep, Timer},
 };
 
 /// Runtime that uses Compio for task execution, timers, system DNS and socket I/O.
@@ -62,15 +62,6 @@ impl Runtime for CompioRuntime {
     }
 
     #[inline]
-    fn try_execute(&self, task: BoxFuture<'static, ()>) -> Result<(), BoxFuture<'static, ()>> {
-        let Some(current) = runtime::Runtime::try_current() else {
-            return Err(task);
-        };
-        current.spawn(task).detach();
-        Ok(())
-    }
-
-    #[inline]
     fn resolver(&self) -> Arc<dyn Resolve> {
         Arc::new(GaiResolver::new())
     }
@@ -79,7 +70,7 @@ impl Runtime for CompioRuntime {
     fn connect_tcp(&self, socket: TcpStream, address: SocketAddr) -> Connecting {
         Box::pin(SendFuture::new(async move {
             let stream = TcpSocket::from_std_stream(socket)?.connect(address).await?;
-            Ok(Box::new(Compat::new(stream)) as BoxConnection)
+            Ok(Box::new(Compat::new(stream)) as _)
         }))
     }
 
@@ -88,7 +79,7 @@ impl Runtime for CompioRuntime {
     fn connect_unix(&self, path: Arc<Path>) -> Connecting {
         Box::pin(SendFuture::new(async move {
             let stream = UnixStream::connect(path).await?;
-            Ok(Box::new(Compat::new(stream)) as BoxConnection)
+            Ok(Box::new(Compat::new(stream)) as _)
         }))
     }
 }

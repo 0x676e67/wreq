@@ -424,18 +424,11 @@ impl Response {
         self.res.extensions_mut()
     }
 
-    /// Forbids the [`Response`] connection from being recycled back into the pool.
+    /// Marks the underlying connection for removal from the pool.
     ///
-    /// This marks the underlying connection as "poisoned." Once marked, the connection
-    /// will be discarded instead of reused after the current request-response cycle completes.
-    ///
-    /// # Note on Lifecycle
-    /// Marking the connection does not trigger an immediate shutdown. An HTTP/1
-    /// connection still reading this body closes once the body completes or is
-    /// dropped. A connection already back in the pool, such as a shared HTTP/2
-    /// connection or an HTTP/1 connection after an empty body, is discarded the
-    /// next time the pool inspects it, such as the next request with the same
-    /// origin and options or the idle sweep; open streams continue.
+    /// A checked-out HTTP/1 sender is discarded on return. A later checkout or cleanup
+    /// removes a sender already in the pool, including shared HTTP/2 and HTTP/3 senders.
+    /// Open streams can finish. This only affects responses with client connection metadata.
     #[inline]
     pub fn forbid_recycle(&self) {
         self.res

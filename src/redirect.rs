@@ -12,7 +12,7 @@ use http::{HeaderMap, HeaderName, StatusCode, Uri};
 use self::referrer::Referrer;
 use crate::{
     client::layer::redirect,
-    config::RequestConfig,
+    config::request::{RequestConfig, impl_request_config_value},
     error::{BoxError, Error},
     ext::UriExt,
     header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, WWW_AUTHENTICATE},

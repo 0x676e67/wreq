@@ -18,18 +18,20 @@ cfg_select! {
 use std::{
     future::Future,
     io,
+    net::{SocketAddr, TcpStream},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
     time::Instant,
 };
 
-use futures_util::future::BoxFuture;
+use futures_util::future::{BoxFuture, TryFutureExt};
 use pin_project_lite::pin_project;
+use tokio::net::TcpSocket;
 
 use crate::{
     dns::Resolve,
-    rt::{BoxConnection, BoxSleep, Connecting, Connection, Sleep, Timer},
+    rt::{BoxSleep, Connecting, Connection, Sleep, Timer},
 };
 
 /// Runtime that uses Tokio for task execution, timers, DNS and socket I/O.
@@ -75,40 +77,23 @@ impl super::Runtime for TokioRuntime {
     }
 
     #[inline]
-    fn try_execute(&self, task: BoxFuture<'static, ()>) -> Result<(), BoxFuture<'static, ()>> {
-        let Ok(handle) = ::tokio::runtime::Handle::try_current() else {
-            return Err(task);
-        };
-        handle.spawn(task);
-        Ok(())
-    }
-
-    #[inline]
     fn resolver(&self) -> Arc<dyn Resolve> {
         Arc::new(Resolver)
     }
 
     #[inline]
-    fn connect_tcp(
-        &self,
-        socket: std::net::TcpStream,
-        address: std::net::SocketAddr,
-    ) -> Connecting {
-        Box::pin(async move {
-            let stream = ::tokio::net::TcpSocket::from_std_stream(socket)
-                .connect(address)
-                .await?;
-            Ok(Box::new(stream) as BoxConnection)
-        })
+    fn connect_tcp(&self, socket: TcpStream, addr: SocketAddr) -> Connecting {
+        Box::pin(
+            TcpSocket::from_std_stream(socket)
+                .connect(addr)
+                .map_ok(|stream| Box::new(stream) as _),
+        )
     }
 
     #[inline]
     #[cfg(unix)]
     fn connect_unix(&self, path: Arc<std::path::Path>) -> Connecting {
-        Box::pin(async move {
-            let stream = ::tokio::net::UnixStream::connect(path).await?;
-            Ok(Box::new(stream) as BoxConnection)
-        })
+        Box::pin(::tokio::net::UnixStream::connect(path).map_ok(|stream| Box::new(stream) as _))
     }
 
     #[inline]
@@ -117,8 +102,7 @@ impl super::Runtime for TokioRuntime {
         &self,
         socket: std::net::UdpSocket,
     ) -> io::Result<Box<dyn super::AsyncUdpSocket>> {
-        use ::quic::Runtime as _;
-        ::quic::TokioRuntime.wrap_udp_socket(socket)
+        ::quic::Runtime::wrap_udp_socket(&::quic::TokioRuntime, socket)
     }
 }
 

@@ -27,6 +27,12 @@ use crate::dns::SocketAddrs;
 
 const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
 
+/// Address-racing policy and the clock used to stagger attempts.
+pub(in crate::conn) struct Race<S> {
+    delay: Option<Duration>,
+    sleep: S,
+}
+
 /// The attempts in flight, oldest first. As a stream it yields the launch order and outcome of
 /// each attempt that completes; dropping it cancels the rest.
 struct Attempts<F>(VecDeque<Attempt<F>>);
@@ -38,111 +44,119 @@ struct Attempt<F> {
     future: F,
 }
 
-/// Tries candidates using transport-specific setup and the selected clock, staggered by
-/// `happy_eyeballs_timeout` or one at a time without it. Bindings of one family drop the
-/// other family's candidates. Setup errors and failed futures advance through addresses; a
-/// terminal error ends the race at once and cancels the other attempts.
-pub(crate) async fn race<C, F, S>(
-    addrs: SocketAddrs,
-    addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
-    happy_eyeballs_timeout: Option<Duration>,
-    mut start: impl FnMut(SocketAddr) -> Result<F, ConnectError>,
-    sleep: impl Fn(Duration) -> S,
-) -> Result<C, ConnectError>
-where
-    F: Future<Output = Result<C, ConnectError>> + Unpin,
-    S: Future<Output = ()>,
-{
-    let addrs = match addresses {
-        (Some(_), None) => addrs.filter(SocketAddr::is_ipv4),
-        (None, Some(_)) => addrs.filter(SocketAddr::is_ipv6),
-        _ => addrs,
-    };
-    // Avoid allocating an active set when no overlapping attempts are needed.
-    let Some(delay) = happy_eyeballs_timeout.filter(|_| addrs.len() > 1) else {
+// ===== impl Race =====
+
+impl<S> Race<S> {
+    #[must_use]
+    pub fn new(delay: Option<Duration>, sleep: S) -> Self {
+        Self { delay, sleep }
+    }
+
+    /// Tries candidates matching the local address families. A terminal failure cancels the
+    /// pending attempts, and without a delay candidates are tried in resolver order.
+    pub async fn run<C, F, T>(
+        self,
+        addrs: SocketAddrs,
+        addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+        mut start: impl FnMut(SocketAddr) -> Result<F, ConnectError>,
+    ) -> Result<C, ConnectError>
+    where
+        F: Future<Output = Result<C, ConnectError>> + Unpin,
+        S: Fn(Duration) -> T,
+        T: Future<Output = ()>,
+    {
+        let Self { delay, sleep } = self;
+        let addrs = match addresses {
+            (Some(_), None) => addrs.filter(SocketAddr::is_ipv4),
+            (None, Some(_)) => addrs.filter(SocketAddr::is_ipv6),
+            _ => addrs,
+        };
+        // Avoid allocating an active set when no overlapping attempts are needed.
+        let Some(delay) = delay.filter(|_| addrs.len() > 1) else {
+            let mut first_error = None;
+            for addr in addrs {
+                let result = match start(addr) {
+                    Ok(future) => future.await,
+                    Err(error) => Err(error),
+                };
+                match result {
+                    Ok(connection) => return Ok(connection),
+                    Err(error) => {
+                        let error = error.with_addr(addr);
+                        trace!("connect error for {}: {:?}", addr, error);
+                        if error.terminal {
+                            return Err(error);
+                        }
+                        first_error.get_or_insert(error);
+                    }
+                }
+            }
+            return Err(first_error.unwrap_or_else(ConnectError::network_unreachable));
+        };
+
+        // Families alternate, starting with the preferred one; the longer one finishes alone.
+        let (mut preferred, mut fallback) = addrs.split_by_preference(None, None);
+        let mut fallback_next = false;
+        let mut candidates = iter::from_fn(move || {
+            let use_fallback = !fallback.is_empty() && (fallback_next || preferred.is_empty());
+            fallback_next = !use_fallback;
+            if use_fallback {
+                fallback.next()
+            } else {
+                preferred.next()
+            }
+        })
+        .enumerate()
+        .peekable();
+        let mut attempts = Attempts(VecDeque::with_capacity(MAX_PARALLEL_CONNECT_ATTEMPTS));
         let mut first_error = None;
-        for addr in addrs {
-            let result = match start(addr) {
-                Ok(future) => future.await,
-                Err(error) => Err(error),
-            };
-            match result {
-                Ok(connection) => return Ok(connection),
-                Err(error) => {
-                    let error = error.with_addr(addr);
-                    trace!("connect error for {}: {:?}", addr, error);
-                    if error.terminal {
-                        return Err(error);
-                    }
-                    first_error.get_or_insert(error);
-                }
-            }
-        }
-        return Err(first_error.unwrap_or_else(ConnectError::network_unreachable));
-    };
 
-    // Families alternate, starting with the preferred one; the longer one finishes alone.
-    let (mut preferred, mut fallback) = addrs.split_by_preference(None, None);
-    let mut fallback_next = false;
-    let mut candidates = iter::from_fn(move || {
-        let use_fallback = !fallback.is_empty() && (fallback_next || preferred.is_empty());
-        fallback_next = !use_fallback;
-        if use_fallback {
-            fallback.next()
-        } else {
-            preferred.next()
-        }
-    })
-    .enumerate()
-    .peekable();
-    let mut attempts = Attempts(VecDeque::with_capacity(MAX_PARALLEL_CONNECT_ATTEMPTS));
-    let mut first_error = None;
-
-    loop {
-        // Start the next candidate; one whose setup fails gives way to the one after it.
-        for (order, addr) in candidates.by_ref() {
-            match start(addr) {
-                Ok(future) => {
-                    attempts.0.push_back(Attempt {
-                        addr,
-                        order,
-                        future,
-                    });
-                    break;
-                }
-                Err(error) => record(&mut first_error, order, error.with_addr(addr)),
-            }
-        }
-        if attempts.0.is_empty() {
-            return Err(first_error
-                .map(|(_, error)| error)
-                .unwrap_or_else(ConnectError::network_unreachable));
-        }
-
-        // The next candidate starts after the delay, or at once when every attempt has failed.
-        let mut timer = pin!(match candidates.peek() {
-            Some(_) => Either::Left(sleep(delay)),
-            None => Either::Right(future::pending()),
-        });
         loop {
-            match future::select(attempts.next(), &mut timer).await {
-                Either::Left((Some((_, Ok(connection))), _)) => return Ok(connection),
-                Either::Left((Some((order, Err(error))), _)) => {
-                    if error.terminal {
-                        return Err(error);
-                    }
-                    record(&mut first_error, order, error);
-                    if attempts.0.is_empty() {
+            // Start the next candidate; one whose setup fails gives way to the one after it.
+            for (order, addr) in candidates.by_ref() {
+                match start(addr) {
+                    Ok(future) => {
+                        attempts.0.push_back(Attempt {
+                            addr,
+                            order,
+                            future,
+                        });
                         break;
                     }
+                    Err(error) => record(&mut first_error, order, error.with_addr(addr)),
                 }
-                Either::Left((None, _)) => break,
-                Either::Right(_) => {
-                    if attempts.0.len() >= MAX_PARALLEL_CONNECT_ATTEMPTS {
-                        // Dropping the oldest pending future gives later addresses a slot.
-                        attempts.0.pop_front();
+            }
+            if attempts.0.is_empty() {
+                return Err(first_error
+                    .map(|(_, error)| error)
+                    .unwrap_or_else(ConnectError::network_unreachable));
+            }
+
+            // The next candidate starts after the delay, or at once when every attempt has failed.
+            let mut timer = pin!(match candidates.peek() {
+                Some(_) => Either::Left(sleep(delay)),
+                None => Either::Right(future::pending()),
+            });
+            loop {
+                match future::select(attempts.next(), &mut timer).await {
+                    Either::Left((Some((_, Ok(connection))), _)) => return Ok(connection),
+                    Either::Left((Some((order, Err(error))), _)) => {
+                        if error.terminal {
+                            return Err(error);
+                        }
+                        record(&mut first_error, order, error);
+                        if attempts.0.is_empty() {
+                            break;
+                        }
                     }
-                    break;
+                    Either::Left((None, _)) => break,
+                    Either::Right(_) => {
+                        if attempts.0.len() >= MAX_PARALLEL_CONNECT_ATTEMPTS {
+                            // Dropping the oldest pending future gives later addresses a slot.
+                            attempts.0.pop_front();
+                        }
+                        break;
+                    }
                 }
             }
         }
@@ -238,34 +252,34 @@ mod tests {
             let mut launched = Vec::new();
             let mut max_active = 0;
             let started = tokio::time::Instant::now();
-            let result = race(
-                SocketAddrs::new([v4.as_slice(), v6.as_slice()].concat()),
-                (None, None),
-                happy_eyeballs_timeout,
-                |addr| {
-                    launched.push(addr);
-                    let attempt = Active::new(&active);
-                    max_active = max_active.max(active.load(Ordering::SeqCst));
-                    Ok(async move {
-                        let _attempt = attempt;
-                        if addr == winner {
-                            Ok(addr)
-                        } else if parallel && addr != failed {
-                            pending().await
-                        } else {
-                            tokio::time::sleep(if parallel { DELAY / 10 } else { DELAY / 2 }).await;
-                            Err(ConnectError::new(
-                                "attempt failed",
-                                io::Error::from(io::ErrorKind::ConnectionRefused),
-                            ))
+            let result = Race::new(happy_eyeballs_timeout, tokio::time::sleep)
+                .run(
+                    SocketAddrs::new([v4.as_slice(), v6.as_slice()].concat()),
+                    (None, None),
+                    |addr| {
+                        launched.push(addr);
+                        let attempt = Active::new(&active);
+                        max_active = max_active.max(active.load(Ordering::SeqCst));
+                        Ok(async move {
+                            let _attempt = attempt;
+                            if addr == winner {
+                                Ok(addr)
+                            } else if parallel && addr != failed {
+                                pending().await
+                            } else {
+                                tokio::time::sleep(if parallel { DELAY / 10 } else { DELAY / 2 })
+                                    .await;
+                                Err(ConnectError::new(
+                                    "attempt failed",
+                                    io::Error::from(io::ErrorKind::ConnectionRefused),
+                                ))
+                            }
                         }
-                    }
-                    .boxed())
-                },
-                tokio::time::sleep,
-            )
-            .await
-            .unwrap();
+                        .boxed())
+                    },
+                )
+                .await
+                .unwrap();
             assert_eq!(result, winner);
             assert_eq!(
                 started.elapsed(),
@@ -280,11 +294,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn reports_the_error_of_the_first_launched_attempt() {
         let started = tokio::time::Instant::now();
-        let error = race(
-            SocketAddrs::new(vec![V4, V6]),
-            (None, None),
-            Some(DELAY),
-            |addr| {
+        let error = Race::new(Some(DELAY), tokio::time::sleep)
+            .run(SocketAddrs::new(vec![V4, V6]), (None, None), |addr| {
                 Ok(async move {
                     if addr == V4 {
                         tokio::time::sleep(DELAY * 3).await;
@@ -295,11 +306,9 @@ mod tests {
                     ))
                 }
                 .boxed())
-            },
-            tokio::time::sleep,
-        )
-        .await
-        .unwrap_err();
+            })
+            .await
+            .unwrap_err();
         assert_eq!(
             error.addr,
             Some(V4),
@@ -319,11 +328,8 @@ mod tests {
                 let bindings = (ipv4, ipv6);
                 let mut launched = Vec::new();
                 let started = tokio::time::Instant::now();
-                let result = race(
-                    SocketAddrs::new(vec![V4, V6]),
-                    bindings,
-                    happy_eyeballs_timeout,
-                    |addr| {
+                let result = Race::new(happy_eyeballs_timeout, tokio::time::sleep)
+                    .run(SocketAddrs::new(vec![V4, V6]), bindings, |addr| {
                         launched.push(addr);
                         if addr == expected {
                             Ok(ready(Ok(addr)))
@@ -333,11 +339,9 @@ mod tests {
                                 io::Error::from(io::ErrorKind::AddrNotAvailable),
                             ))
                         }
-                    },
-                    tokio::time::sleep,
-                )
-                .await
-                .unwrap();
+                    })
+                    .await
+                    .unwrap();
                 assert_eq!(result, expected);
                 assert_eq!(started.elapsed(), Duration::ZERO);
                 assert_eq!(
@@ -351,15 +355,12 @@ mod tests {
             }
         }
 
-        let error = race(
-            SocketAddrs::new(Vec::new()),
-            (None, None),
-            Some(DELAY),
-            |addr| Ok(ready(Ok(addr))),
-            tokio::time::sleep,
-        )
-        .await
-        .unwrap_err();
+        let error = Race::new(Some(DELAY), tokio::time::sleep)
+            .run(SocketAddrs::new(Vec::new()), (None, None), |addr| {
+                Ok(ready(Ok(addr)))
+            })
+            .await
+            .unwrap_err();
         assert_eq!(error.addr, None);
         assert_eq!(
             error.cause.unwrap().downcast::<io::Error>().unwrap().kind(),
@@ -372,10 +373,9 @@ mod tests {
         let active = Arc::new(AtomicUsize::new(0));
         let mut launched = 0;
         let bindings = (None, None);
-        let mut race = Box::pin(race(
+        let mut race = Box::pin(Race::new(Some(DELAY), tokio::time::sleep).run(
             SocketAddrs::new((1..=4).map(|port| SocketAddr::new(V4.ip(), port)).collect()),
             bindings,
-            Some(DELAY),
             |_| {
                 launched += 1;
                 let guard = Active::new(&active);
@@ -385,7 +385,6 @@ mod tests {
                 }
                 .boxed())
             },
-            tokio::time::sleep,
         ));
         assert!(poll!(race.as_mut()).is_pending());
         tokio::time::advance(DELAY).await;

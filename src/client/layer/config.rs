@@ -7,7 +7,12 @@ use futures_util::future::{self, Either, Ready};
 use http::{HeaderMap, Request, Response};
 use tower::{Layer, Service};
 
-use crate::{Error, config::RequestConfig, ext::UriExt, header::OrigHeaderMap};
+use crate::{
+    Error,
+    config::request::{RequestConfig, impl_request_config_value},
+    ext::UriExt,
+    header::OrigHeaderMap,
+};
 
 /// A marker type for the default headers configuration value.
 #[derive(Clone, Copy)]
@@ -41,13 +46,14 @@ impl_request_config_value!(DefaultHeaders, bool);
 
 impl ConfigServiceLayer {
     /// Creates a new [`ConfigServiceLayer`].
+    #[must_use]
     pub fn new(https_only: bool, headers: HeaderMap, orig_headers: OrigHeaderMap) -> Self {
-        let org_headers = (!orig_headers.is_empty()).then_some(orig_headers);
+        let orig_headers = (!orig_headers.is_empty()).then_some(orig_headers);
         ConfigServiceLayer {
             config: Arc::new(Config {
                 https_only,
                 headers,
-                orig_headers: RequestConfig::new(org_headers),
+                orig_headers: RequestConfig::new(orig_headers),
                 default_headers: RequestConfig::new(Some(true)),
             }),
         }
@@ -83,7 +89,7 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        let uri = req.uri().clone();
+        let uri = req.uri();
 
         // check if the request URI scheme is valid.
         if !(uri.is_http() || uri.is_https()) || (self.config.https_only && !uri.is_https()) {

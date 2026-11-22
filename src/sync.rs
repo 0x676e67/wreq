@@ -1,16 +1,9 @@
-//! Synchronization primitives: [`Mutex`] and [`RwLock`] that never poison.
+//! Non-poisoning [`Mutex`] and [`RwLock`] types.
 //!
-//! These types expose APIs identical to [`std::sync::Mutex`] and [`std::sync::RwLock`],
-//! but **do not return** [`std::sync::PoisonError`] even if a thread panics while holding the lock.
-//!
-//! This is useful in high-availability systems where panic recovery is done externally,
-//! or poisoning is not meaningful in context.
-//!
-//! ## Implementation
-//! - When the `parking_lot` feature is enabled, it uses [`parking_lot::Mutex`] and
-//!   [`parking_lot::RwLock`].
-//! - Otherwise, it wraps [`std::sync::Mutex`] and [`std::sync::RwLock`], using `.unwrap_or_else(|e|
-//!   e.into_inner())` to silently recover from poisoning.
+//! With the `parking_lot` feature, this module re-exports that crate's locks.
+//! Otherwise it wraps the standard library's [`Mutex`](::std::sync::Mutex) and
+//! [`RwLock`](::std::sync::RwLock), recovering the guard from a
+//! [`PoisonError`](::std::sync::PoisonError) after a panic.
 
 #[cfg(feature = "parking_lot")]
 pub use parking_lot::*;

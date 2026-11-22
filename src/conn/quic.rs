@@ -7,97 +7,189 @@ mod masque;
 mod socks;
 
 use std::{
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use endpoint::Endpoints;
-#[cfg(test)]
-pub(crate) use endpoint::test_server_config;
 use futures_util::future::{self, BoxFuture, Either, Ready};
+use http::Request;
 #[cfg(feature = "socks")]
-use netty::proxy::socks::Version;
+use netty::proxy::socks::DnsResolve;
+use socket2::{Domain, Protocol, Socket, Type};
 use tower::{BoxError, Service};
 
+#[cfg(feature = "socks")]
+use crate::conn::dialer::Dialer;
 use crate::{
-    conn::{Conn, dialer::Dialer, route::Route, svc::TransportRequest},
+    config::connect::ConnectConfig,
+    conn::{
+        Conn,
+        dialer::{ConnectError, bind_interface},
+    },
+    dns::DynResolver,
     error::{ProxyConnect, ProxyMismatch},
-    proxy::{Matcher, quic_port},
+    proxy::{Intercepted, Matcher, quic_port},
+    rt::DynRuntime,
     tls::quic::QuicTls,
 };
 
-/// Selects the request's route from its proxy rules and connects HTTP/3 origins over it:
-/// directly, through a `quic://` MASQUE proxy, or through SOCKS5 UDP. Other proxy routes fail
-/// before DNS. Clones share the proxy rules and endpoints.
+type ConnectFuture = BoxFuture<'static, Result<Conn, BoxError>>;
+
+/// UDP payload a tunnel must carry for QUIC, which pads client Initial datagrams to 1200 bytes
+/// ([RFC 9000 Section 14.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-14.1)).
+pub(super) const TUNNEL_MTU: u16 = 1200;
+
+const QUIC_PROXY_REQUIRED: &str =
+    "HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature";
+
+/// Connects HTTP/3 origins over a selected route: directly, through a `quic://` MASQUE proxy, or
+/// through SOCKS5 UDP. Clones share the endpoints.
 #[derive(Clone)]
-pub(crate) struct QuicRouter {
-    inner: Arc<Inner>,
-}
-
-/// The client's proxy rules and the endpoints every route connects through.
-struct Inner {
+pub(crate) struct Connect {
+    endpoints: Arc<Endpoints>,
     proxies: Arc<Vec<Matcher>>,
-    endpoints: Endpoints,
+    #[cfg(feature = "socks")]
+    dialer: Dialer,
 }
 
-// ===== impl QuicRouter =====
+// ===== impl Connect =====
 
-impl QuicRouter {
-    /// Creates the QUIC path over `dialer` with the client's QUIC TLS and proxy rules.
-    /// Endpoints open on the first connection that needs them.
-    pub(crate) fn new(
-        dialer: Dialer,
-        tls: QuicTls,
+impl Connect {
+    /// Builds the QUIC path. Endpoints open on the first connection that needs them.
+    pub(super) fn new(
+        runtime: DynRuntime,
+        resolver: DynResolver,
         proxies: Arc<Vec<Matcher>>,
+        happy_eyeballs_timeout: Option<Duration>,
+        tls: QuicTls,
+        connect_config: &ConnectConfig,
+        #[cfg(feature = "socks")] dialer: Dialer,
     ) -> crate::Result<Self> {
         Ok(Self {
-            inner: Arc::new(Inner {
-                proxies,
-                endpoints: Endpoints::new(dialer, tls)?,
-            }),
+            endpoints: Arc::new(Endpoints::new(
+                runtime,
+                resolver,
+                happy_eyeballs_timeout,
+                tls,
+                connect_config,
+            )?),
+            proxies,
+            #[cfg(feature = "socks")]
+            dialer,
         })
     }
 }
 
-impl Service<TransportRequest> for QuicRouter {
+impl Service<Request<ConnectConfig>> for Connect {
     type Response = Conn;
     type Error = BoxError;
-    type Future = Either<BoxFuture<'static, Result<Conn, BoxError>>, Ready<Result<Conn, BoxError>>>;
+    type Future = Either<ConnectFuture, Ready<Result<Conn, BoxError>>>;
 
     #[inline]
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, TransportRequest { request, deadline }: TransportRequest) -> Self::Future {
-        let inner = self.inner.clone();
-        match Route::select(&request, &inner.proxies) {
-            Route::Direct => {
-                Either::Left(Box::pin(
-                    async move { inner.endpoints.connect(&request).await },
-                ))
-            }
-            #[cfg(feature = "socks")]
-            Route::Socks {
-                proxy,
-                version: Version::V5,
-                dns,
-            } => Either::Left(Box::pin(async move {
-                socks::connect(&inner.endpoints, request, proxy, dns, deadline).await
-            })),
-            Route::Quic(proxy) => {
-                // Environment proxy entries reach this point without builder validation.
-                if let Err(message) = quic_port(proxy.uri()) {
-                    return Either::Right(future::err(ProxyConnect::Message(message).into()));
+    fn call(&mut self, request: Request<ConnectConfig>) -> Self::Future {
+        let Some(intercepted) = request
+            .body()
+            .get_ref::<Matcher>()
+            .and_then(|proxy| proxy.intercept(request.uri()))
+            .or_else(|| {
+                self.proxies
+                    .iter()
+                    .find_map(|proxy| proxy.intercept(request.uri()))
+            })
+        else {
+            return Either::Left(Box::pin(self.endpoints.clone().connect(request)));
+        };
+
+        match intercepted {
+            Intercepted::Proxy(proxy) => match proxy.uri().scheme_str() {
+                // Keep the proxy error for invalid authorities from environment rules.
+                Some("quic") if let Err(error) = quic_port(proxy.uri()) => {
+                    Either::Right(future::err(ProxyConnect::Message(error).into()))
                 }
-                Either::Left(Box::pin(async move {
-                    masque::connect(&inner.endpoints, request, proxy, deadline).await
-                }))
+                Some("quic") => Either::Left(Box::pin(masque::connect(
+                    self.endpoints.clone(),
+                    request,
+                    proxy,
+                ))),
+                #[cfg(feature = "socks")]
+                Some(scheme @ ("socks5" | "socks5h")) => {
+                    let dns = if scheme == "socks5h" {
+                        DnsResolve::Remote
+                    } else {
+                        DnsResolve::Local
+                    };
+                    Either::Left(Box::pin(socks::connect(
+                        self.endpoints.clone(),
+                        self.dialer.clone(),
+                        request,
+                        proxy,
+                        dns,
+                    )))
+                }
+                _ => Either::Right(future::err(ProxyMismatch(QUIC_PROXY_REQUIRED).into())),
+            },
+            #[cfg(unix)]
+            Intercepted::Unix(_) => {
+                Either::Right(future::err(ProxyMismatch(QUIC_PROXY_REQUIRED).into()))
             }
-            _ => Either::Right(future::err(
-                ProxyMismatch("HTTP/3 requires a quic:// proxy or SOCKS5 with the socks feature")
-                    .into(),
-            )),
         }
     }
+}
+
+/// Binds a UDP socket for the address family of `remote` before the runtime registers it.
+fn bind_udp(connect_config: &ConnectConfig, remote: SocketAddr) -> Result<UdpSocket, ConnectError> {
+    let address = match remote {
+        SocketAddr::V4(_) => SocketAddr::from((
+            connect_config
+                .get_ref::<Ipv4Addr>()
+                .copied()
+                .unwrap_or(Ipv4Addr::UNSPECIFIED),
+            0,
+        )),
+        SocketAddr::V6(_) => SocketAddr::from((
+            connect_config
+                .get_ref::<Ipv6Addr>()
+                .copied()
+                .unwrap_or(Ipv6Addr::UNSPECIFIED),
+            0,
+        )),
+    };
+
+    // Create a new UDP socket for the appropriate address family.
+    let socket = Socket::new(
+        Domain::for_address(address),
+        Type::DGRAM,
+        Some(Protocol::UDP),
+    )
+    .map_err(ConnectError::m("quic open error"))?;
+
+    // Set the socket to non-blocking mode before binding it to an interface.
+    socket
+        .set_nonblocking(true)
+        .map_err(ConnectError::m("quic set_nonblocking error"))?;
+
+    // If the address is IPv6, set the socket to only accept IPv6 connections.
+    if address.is_ipv6() {
+        socket
+            .set_only_v6(true)
+            .map_err(ConnectError::m("quic set_only_v6 error"))?;
+    }
+
+    // Bind the socket to the specified interface, if provided.
+    let interface = connect_config.get_ref::<Arc<str>>().map(Arc::as_ref);
+    bind_interface(&socket, address, interface)
+        .map_err(ConnectError::m("quic bind interface error"))?;
+
+    // Bind the socket to the local address.
+    socket
+        .bind(&address.into())
+        .map_err(ConnectError::m("quic bind local error"))?;
+    Ok(socket.into())
 }

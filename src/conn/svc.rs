@@ -1,43 +1,35 @@
-//! The connector's terminal service: the stream and QUIC paths behind [`TransportConnector`],
-//! which sends each request down the path its protocol runs over, and the [`Transport`] a path
-//! returns.
+//! [`Connect`] dispatches each connection request to the stream or QUIC service.
 
 use std::{
     sync::Arc,
     task::{Context, Poll, ready},
-    time::Instant,
 };
 
+#[cfg(feature = "http3")]
+use futures_util::future::Either;
+use http::Request;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Service, ServiceBuilder};
-#[cfg(feature = "http3")]
-use {super::quic::QuicRouter, crate::protocol::TransportKind, futures_util::future::Either};
 
 use super::{
-    Conn,
+    Config, Conn,
     dialer::Dialer,
     layer::verbose::{self, Verbose},
-    request::ConnectRequest,
-    stream::StreamConnector,
+    stream,
 };
-use crate::{config::connect::ConfigSet, proxy::Matcher, tls};
+#[cfg(feature = "http3")]
+use super::{ConnectRequestExt, quic};
+#[cfg(feature = "http3")]
+use crate::protocol::Protocol;
+use crate::{config::connect::ConnectConfig, dns::DynResolver, rt::DynRuntime};
 
-/// Connects every transport behind one service. Each request goes to the stream or QUIC path
-/// its protocol runs over; how a path is composed stays private. Clones share each path's
-/// state.
+/// Dispatches connection requests to the stream or QUIC transport service.
+/// Clones share the state of both transport connection services.
 #[derive(Clone)]
-pub(crate) struct TransportConnector {
-    stream: Verbose<StreamConnector>,
+pub(crate) struct Connect {
+    stream: Verbose<stream::Connect>,
     #[cfg(feature = "http3")]
-    quic: QuicRouter,
-}
-
-/// What [`TransportConnector`] connects: a request and the instant its connect timeout expires.
-/// The deadline layer sets the instant once per call. A dial can report its own timeout,
-/// letting a proxy route classify it as a proxy failure.
-pub(crate) struct TransportRequest {
-    pub(super) request: ConnectRequest,
-    pub(super) deadline: Option<Instant>,
+    quic: quic::Connect,
 }
 
 /// Transport carried by a [`Conn`]: a byte stream for HTTP/1 and HTTP/2, or QUIC for HTTP/3.
@@ -60,47 +52,75 @@ pub(crate) trait Io: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
 
 impl<T> Io for T where T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static {}
 
-// ===== impl TransportConnector =====
+// ===== impl Connect =====
 
-impl TransportConnector {
-    /// Compiles client TLS and composes both paths over `dialer` with the client's proxy rules.
-    /// QUIC endpoints remain lazy until a connection future is polled.
-    pub(crate) fn new(
-        dialer: Dialer,
-        tls: tls::Config,
-        proxies: Vec<Matcher>,
-        verbose: bool,
-        config_set: &ConfigSet,
+impl Connect {
+    /// Builds the available transports with the client's proxy rules and bindings.
+    pub(super) fn new(
+        runtime: &DynRuntime,
+        resolver: DynResolver,
+        Config {
+            tcp,
+            tls,
+            proxies,
+            happy_eyeballs_timeout,
+            verbose,
+            ..
+        }: Config,
+        connect_config: &ConnectConfig,
     ) -> crate::Result<Self> {
+        let tcp_nodelay = tcp.nodelay;
         let proxies = Arc::new(proxies);
+        let dialer = Dialer::new(
+            runtime.clone(),
+            resolver.clone(),
+            tcp,
+            happy_eyeballs_timeout,
+        );
+
+        #[cfg(feature = "http3")]
+        let quic = quic::Connect::new(
+            runtime.clone(),
+            resolver.clone(),
+            proxies.clone(),
+            happy_eyeballs_timeout,
+            tls.clone().quic(connect_config)?,
+            connect_config,
+            #[cfg(feature = "socks")]
+            dialer.clone(),
+        )?;
+
+        let stream = stream::Connect::new(
+            dialer,
+            proxies,
+            tls.stream(connect_config)?,
+            tcp_nodelay,
+            #[cfg(feature = "socks")]
+            resolver,
+        );
+
         Ok(Self {
             #[cfg(feature = "http3")]
-            quic: QuicRouter::new(
-                dialer.clone(),
-                tls.clone().quic(config_set)?,
-                proxies.clone(),
-            )?,
+            quic,
             stream: ServiceBuilder::new()
                 .option_layer(verbose::layer(verbose))
-                .service(StreamConnector::new(
-                    dialer,
-                    proxies,
-                    tls.stream(config_set)?,
-                )),
+                .service(stream),
         })
     }
 }
 
-impl Service<TransportRequest> for TransportConnector {
+impl Service<Request<ConnectConfig>> for Connect {
     type Response = Conn;
     type Error = BoxError;
-    #[cfg(feature = "http3")]
-    type Future = Either<
-        <Verbose<StreamConnector> as Service<TransportRequest>>::Future,
-        <QuicRouter as Service<TransportRequest>>::Future,
-    >;
-    #[cfg(not(feature = "http3"))]
-    type Future = <Verbose<StreamConnector> as Service<TransportRequest>>::Future;
+    type Future = cfg_select! {
+        feature = "http3" => {
+            Either<
+                <Verbose<stream::Connect> as Service<Request<ConnectConfig>>>::Future,
+                <quic::Connect as Service<Request<ConnectConfig>>>::Future,
+            >
+        }
+        _ => { <Verbose<stream::Connect> as Service<Request<ConnectConfig>>>::Future }
+    };
 
     #[inline]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -110,13 +130,16 @@ impl Service<TransportRequest> for TransportConnector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: TransportRequest) -> Self::Future {
+    fn call(&mut self, request: Request<ConnectConfig>) -> Self::Future {
         cfg_select! {
-            feature = "http3" => match req.request.resolved_protocol().transport() {
-                TransportKind::Stream => Either::Left(self.stream.call(req)),
-                TransportKind::Quic => Either::Right(self.quic.call(req)),
-            },
-            _ => self.stream.call(req),
+            feature = "http3" => {
+                if request.protocol() == Protocol::Http3 {
+                    Either::Right(self.quic.call(request))
+                } else {
+                    Either::Left(self.stream.call(request))
+                }
+            }
+            _ => self.stream.call(request),
         }
     }
 }

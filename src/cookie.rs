@@ -17,7 +17,7 @@ use http::{Uri, Version};
 use url::Host;
 
 pub use self::jar::Jar;
-use crate::{error::Error, header::HeaderValue};
+use crate::{config::request::impl_request_config_value, error::Error, header::HeaderValue};
 
 /// A parsed HTTP cookie with optional [`Jar`] storage metadata.
 #[derive(Debug, Clone)]
@@ -198,32 +198,10 @@ pub trait CookieStore: Send + Sync {
     fn cookies(&self, uri: &Uri, version: Version) -> Cookies;
 }
 
-/// Converts cookie stores into a shared [`CookieStore`].
-pub trait IntoCookieStore {
-    /// Converts this value into a shared cookie store.
-    fn into_shared(self) -> Arc<dyn CookieStore>;
-}
-
-impl IntoCookieStore for Arc<dyn CookieStore> {
-    #[inline]
-    fn into_shared(self) -> Arc<dyn CookieStore> {
-        self
-    }
-}
-
-impl<S: CookieStore + 'static> IntoCookieStore for Arc<S> {
-    #[inline]
-    fn into_shared(self) -> Arc<dyn CookieStore> {
-        self
-    }
-}
-
-impl<S: CookieStore + 'static> IntoCookieStore for S {
-    #[inline]
-    fn into_shared(self) -> Arc<dyn CookieStore> {
-        Arc::new(self)
-    }
-}
+impl_into_shared!(
+    /// Converts cookie stores into a shared [`CookieStore`].
+    pub trait IntoCookieStore => CookieStore
+);
 
 impl_request_config_value!(Arc<dyn CookieStore>);
 

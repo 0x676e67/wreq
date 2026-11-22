@@ -1,7 +1,6 @@
 //! Maps connection destinations to independently managed pool services.
 //!
-//! [`Map`] is the outer routing component of the pool. [`Target`] derives a
-//! complete connection compatibility key and constructs the service for a new key.
+//! [`Map`] routes each connection compatibility key to its pool service.
 //!
 //! Entries are created lazily in an unbounded routing map. An optional LRU tracks
 //! only entries that currently retain reusable connection state.
@@ -20,35 +19,14 @@ use lru::LruCache;
 /// to the caller so connection senders can be dropped only after that outer
 /// lock has been released.
 ///
-/// A miss creates one service through the borrowed [`Target`]. Successful
-/// lookups refresh the optional idle-group LRU only when that key is already
-/// tracked. The pool coordinator decides when a service gains or loses reusable
-/// state and performs any resulting eviction outside this type.
+/// Lookups refresh the optional idle-group LRU when the key is already tracked.
+/// The pool coordinator decides when a service gains or loses reusable state
+/// and performs any resulting eviction outside this type.
 pub(super) struct Map<K, S> {
     /// Services indexed by connection compatibility key.
     entries: HashMap<K, S>,
-
     /// Retained-group LRU; stale markers are reconciled before capacity eviction.
     retained: Option<LruCache<K, ()>>,
-}
-
-/// Defines how destinations are grouped and how each group service is created.
-///
-/// `Key` must include every setting that affects physical connection reuse.
-/// Destinations with the same key share a `Service`; destinations with different
-/// keys remain isolated even when their URI origins match.
-pub(super) trait Target<Dst> {
-    /// Stable key shared by destinations with compatible connections.
-    type Key;
-
-    /// Service responsible for one compatibility group.
-    type Service;
-
-    /// Derives the lookup key for `dst`.
-    fn key(&self, dst: &Dst) -> Self::Key;
-
-    /// Creates the service used for a previously unseen destination.
-    fn service(&self, dst: &Dst) -> Self::Service;
 }
 
 impl<K, S> Map<K, S>
@@ -56,33 +34,27 @@ where
     K: Eq + Hash,
 {
     /// Creates a lazy map with an optional retained-group LRU limit.
-    pub(super) fn new(max_retained: Option<NonZeroUsize>) -> Self {
+    #[must_use]
+    pub(super) fn new(max_size: Option<NonZeroUsize>) -> Self {
         Self {
             entries: HashMap::new(),
-            retained: max_retained.map(LruCache::new),
+            retained: max_size.map(LruCache::new),
         }
     }
 
-    /// Applies `operation` to the service for `dst`, creating it on a miss.
-    /// The coordinator supplies its factory without copying it into the map.
-    pub(super) fn with_service<T, Dst, R, F>(&mut self, targeter: &T, dst: Dst, operation: F) -> R
+    /// Returns the service for `key`, creating it on a miss.
+    pub(super) fn get_or_insert_with(&mut self, key: &K, make: impl FnOnce() -> S) -> &mut S
     where
-        T: Target<Dst, Key = K, Service = S>,
-        F: FnOnce(&mut S, Dst) -> R,
+        K: Clone,
     {
-        let key = targeter.key(&dst);
         if let Some(retained) = &mut self.retained {
-            let _ = retained.get(&key);
+            let _ = retained.get(key);
         }
-
-        let service = self
-            .entries
-            .entry(key)
-            .or_insert_with(|| targeter.service(&dst));
-        operation(service, dst)
+        self.entries.entry(key.clone()).or_insert_with(make)
     }
 
     /// Returns the service stored for `key` without changing idle LRU order.
+    #[must_use]
     pub(super) fn get_mut(&mut self, key: &K) -> Option<&mut S> {
         self.entries.get_mut(key)
     }
@@ -120,6 +92,7 @@ where
     /// A full LRU first removes markers rejected by `predicate` and returns their
     /// keys, then the remaining least recently used group displaced by the limit.
     /// An unbounded map returns neither.
+    #[must_use]
     pub(super) fn mark_retained<F>(&mut self, key: &K, predicate: F) -> (Vec<K>, Option<K>)
     where
         K: Clone,
@@ -157,6 +130,7 @@ where
     }
 
     /// Retains entries selected by `predicate` and returns removed services.
+    #[must_use]
     pub(super) fn retain<F>(&mut self, mut predicate: F) -> Vec<S>
     where
         F: FnMut(&K, &mut S) -> bool,
@@ -179,12 +153,13 @@ where
         self.entries.iter_mut()
     }
 
-    /// Removes `key` when its current service satisfies `predicate`.
+    /// Gives `predicate` the current service and removes it if it returns `true`.
+    #[must_use]
     pub(super) fn remove_if<F>(&mut self, key: &K, predicate: F) -> Option<S>
     where
-        F: FnOnce(&S) -> bool,
+        F: FnOnce(&mut S) -> bool,
     {
-        let remove = self.entries.get(key).is_some_and(predicate);
+        let remove = self.entries.get_mut(key).is_some_and(predicate);
         if remove {
             self.unmark_retained(key);
             self.entries.remove(key)
@@ -220,33 +195,15 @@ mod tests {
         }
     }
 
-    /// Creates one drop probe for each numeric destination.
-    /// Uses the destination unchanged as the map key.
-    /// All probes share a counter that remains readable after their removal.
-    struct ProbeTarget(Arc<AtomicUsize>);
-
-    impl Target<usize> for ProbeTarget {
-        type Key = usize;
-        type Service = DropProbe;
-
-        fn key(&self, dst: &usize) -> Self::Key {
-            *dst
-        }
-
-        fn service(&self, _dst: &usize) -> Self::Service {
-            DropProbe(self.0.clone(), true)
-        }
-    }
-
     #[test]
     fn removed_services_are_returned_for_deferred_drop() {
         let drops = Arc::new(AtomicUsize::new(0));
-        let targeter = ProbeTarget(drops.clone());
+        let make = || DropProbe(drops.clone(), true);
         let mut map = Map::new(NonZeroUsize::new(1));
 
-        map.with_service(&targeter, 1, |_, _| ());
+        map.get_or_insert_with(&1, make);
         assert_eq!(map.mark_retained(&1, |probe| probe.1), (vec![], None));
-        map.with_service(&targeter, 2, |_, _| ());
+        map.get_or_insert_with(&2, make);
         assert_eq!(drops.load(Ordering::SeqCst), 0);
 
         let (pruned, evicted) = map.mark_retained(&2, |probe| probe.1);
@@ -267,7 +224,7 @@ mod tests {
     #[test]
     fn retained_lru_checks_stale_markers_only_before_eviction() {
         let drops = Arc::new(AtomicUsize::new(0));
-        let targeter = ProbeTarget(drops.clone());
+        let make = || DropProbe(drops.clone(), true);
         let mut map = Map::new(NonZeroUsize::new(3));
         let inspected = AtomicUsize::new(0);
         let retains = |probe: &DropProbe| {
@@ -276,7 +233,7 @@ mod tests {
         };
 
         for key in 1..=3 {
-            map.with_service(&targeter, key, |_, _| ());
+            map.get_or_insert_with(&key, make);
             assert_eq!(map.mark_retained(&key, retains), (vec![], None));
         }
         for _ in 0..100 {
@@ -287,13 +244,13 @@ mod tests {
         // Lose the most recent group's idle state without removing its entry.
         // Its stale marker is reported for cleanup and must not evict the
         // healthy least recent group (2).
-        map.with_service(&targeter, 3, |probe, _| probe.1 = false);
-        map.with_service(&targeter, 4, |_, _| ());
+        map.get_or_insert_with(&3, make).1 = false;
+        map.get_or_insert_with(&4, make);
         assert_eq!(map.mark_retained(&4, retains), (vec![3], None));
         assert_eq!(inspected.load(Ordering::Relaxed), 3);
         assert_eq!(drops.load(Ordering::Relaxed), 0);
 
-        map.with_service(&targeter, 5, |_, _| ());
+        map.get_or_insert_with(&5, make);
         assert_eq!(map.mark_retained(&5, retains), (vec![], Some(2)));
         assert_eq!(inspected.load(Ordering::Relaxed), 6);
         assert_eq!(

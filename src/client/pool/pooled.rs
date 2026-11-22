@@ -14,7 +14,7 @@ use netty::body::Incoming;
 use tower::Service;
 
 #[cfg(any(feature = "http2", feature = "http3"))]
-use super::entry::MuxPooled;
+use super::entry::MuxSingled;
 use super::{
     cache::Cached,
     entry::{EntryCleanupGuard, EntryUse},
@@ -25,31 +25,27 @@ use crate::{
     conn::Connected,
 };
 
-/// Protocol-agnostic sender checked out from one pool entry.
+/// A sender checked out from a pool entry.
 ///
-/// HTTP/1 owns an exclusive [`Cached`] sender that returns to its cache on drop.
-/// HTTP/2 and HTTP/3 own a [`Singled`](super::singleton::Singled) clone and count
-/// checkouts until response headers. The wrapper presents one request interface to
-/// the client and records whether a healthy sender may be retained after dispatch.
-///
-/// Dropping this value marks HTTP/1 idle or ends the HTTP/2 or HTTP/3 checkout.
-/// Poisoned or closed senders are removed instead of being reused.
+/// HTTP/1 returns a healthy, ready sender to its cache. HTTP/2 and HTTP/3 release
+/// a shared checkout at response headers, on error, or on cancellation. The protocol
+/// driver keeps open streams running after the checkout ends.
 pub(in crate::client) struct Pooled {
     /// HTTP/1 cache checkout or HTTP/2 or HTTP/3 singleton checkout.
     inner: PooledInner,
-
     /// Whether healthy senders should return to their pool.
     pool_enabled: bool,
-
-    /// Runs after `inner` is dropped when this checkout discarded its sender.
+    /// Runs pending entry maintenance after `inner` drops.
     cleanup: EntryCleanupGuard,
 }
 
 /// HTTP sender selected for one pool checkout.
 enum PooledInner {
+    /// HTTP/1 sender.
     Http1(Cached<http1::Connection>),
+    /// HTTP/2 or HTTP/3 sender.
     #[cfg(any(feature = "http2", feature = "http3"))]
-    Mux(MuxPooled),
+    Mux(MuxSingled),
 }
 
 // ===== impl Pooled =====
@@ -59,6 +55,7 @@ impl Pooled {
     ///
     /// HTTP/2 and HTTP/3 checkout accounting starts first; with pooling enabled the
     /// entry is then reconciled with empty cleanup and the idle-group LRU.
+    #[must_use]
     fn new(inner: PooledInner, pool_enabled: bool, usage: EntryUse) -> Self {
         #[cfg(any(feature = "http2", feature = "http3"))]
         if let PooledInner::Mux(service) = &inner {
@@ -76,7 +73,8 @@ impl Pooled {
     }
 
     /// Wraps an HTTP/1 sender, maintaining its entry when pooling is enabled.
-    pub(super) fn new_h1(
+    #[must_use]
+    pub(super) fn new_http1(
         service: Cached<http1::Connection>,
         pool_enabled: bool,
         usage: EntryUse,
@@ -85,12 +83,14 @@ impl Pooled {
     }
 
     /// Wraps an HTTP/2 or HTTP/3 sender, maintaining its entry when pooling is enabled.
+    #[must_use]
     #[cfg(any(feature = "http2", feature = "http3"))]
-    pub(super) fn new_mux(service: MuxPooled, pool_enabled: bool, usage: EntryUse) -> Self {
+    pub(super) fn new_mux(service: MuxSingled, pool_enabled: bool, usage: EntryUse) -> Self {
         Self::new(PooledInner::Mux(service), pool_enabled, usage)
     }
 
     /// Returns the HTTP version of this checkout's connection; HTTP/1 reports HTTP/1.1.
+    #[must_use]
     pub(in crate::client) fn version(&self) -> Version {
         match &self.inner {
             PooledInner::Http1(_) => Version::HTTP_11,
@@ -101,6 +101,7 @@ impl Pooled {
 
     /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS.
     /// HTTP/1 never supports it.
+    #[must_use]
     #[cfg(any(feature = "http2", feature = "http3"))]
     pub(in crate::client) fn extended_connect(&self) -> Option<bool> {
         match &self.inner {
@@ -110,6 +111,7 @@ impl Pooled {
     }
 
     /// Returns whether the sender came from an existing pooled connection.
+    #[must_use]
     pub(in crate::client) fn is_reused(&self) -> bool {
         match &self.inner {
             PooledInner::Http1(service) => service.is_reused(),
@@ -119,11 +121,13 @@ impl Pooled {
     }
 
     /// Returns whether completed senders may be retained for reuse.
+    #[must_use]
     pub(in crate::client) fn is_pool_enabled(&self) -> bool {
         self.pool_enabled
     }
 
     /// Returns whether the protocol sender can accept a request immediately.
+    #[must_use]
     pub(in crate::client) fn is_ready(&self) -> bool {
         match &self.inner {
             PooledInner::Http1(service) => service.inner().is_ready(),
@@ -133,6 +137,7 @@ impl Pooled {
     }
 
     /// Returns metadata for the underlying physical connection.
+    #[must_use]
     pub(in crate::client) fn connected(&self) -> &Connected {
         match &self.inner {
             PooledInner::Http1(service) => service.inner().connected(),
@@ -183,15 +188,13 @@ impl Drop for Pooled {
             }
             #[cfg(any(feature = "http2", feature = "http3"))]
             PooledInner::Mux(service) => {
-                let discard = {
-                    let connection = service.inner();
-                    connection.finish_checkout();
-                    connection.connected().poisoned() || connection.is_closed()
-                };
+                let connection = service.inner();
+                let became_idle = connection.finish_checkout();
+                let discard = !connection.is_open();
                 if discard {
                     service.discard_shared();
                 }
-                if self.pool_enabled && discard {
+                if self.pool_enabled && (discard || became_idle && self.cleanup.needs_tracking()) {
                     self.cleanup.arm();
                 }
             }
