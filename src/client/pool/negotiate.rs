@@ -233,13 +233,15 @@ where
             && fallback_empty(&group)
     }
 
-    /// Takes a ready upgrade or an idle fallback if there is no upgraded work.
+    /// Takes a ready service and maps it after releasing the group lock.
     #[must_use]
-    pub(super) fn checkout_ready<T>(
+    pub(super) fn checkout_ready<F, T>(
         &self,
         upgrade: impl FnOnce(&M::Response, &G) -> bool,
-        fallback: impl FnOnce(&L, &mut G) -> Option<T>,
-    ) -> Option<Negotiated<T, Upgraded<M, S>>>
+        fallback: impl FnOnce(&L, &mut G) -> Option<F>,
+        map_upgrade: impl FnOnce(Upgraded<M, S>) -> T,
+        map_fallback: impl FnOnce(F) -> T,
+    ) -> Option<T>
     where
         G: AsRef<Shared<S, M::Future, M::Response>>,
     {
@@ -253,8 +255,15 @@ where
             .upgrade
             .checkout_ready(Some(&state.upgrade), |service| upgrade(service, &group))
         {
-            Ready::Made(service) => Some(Negotiated::Right(service)),
-            Ready::Empty => fallback(&self.fallback, &mut group).map(Negotiated::Left),
+            Ready::Made(service) => {
+                drop(group);
+                Some(map_upgrade(service))
+            }
+            Ready::Empty => {
+                let service = fallback(&self.fallback, &mut group)?;
+                drop(group);
+                Some(map_fallback(service))
+            }
             Ready::Unavailable => None,
         }
     }
@@ -798,6 +807,15 @@ mod tests {
             transport: PhantomData,
         };
 
+        assert_eq!(
+            negotiate.checkout_ready(
+                |_, _| true,
+                |_, _| Some("idle"),
+                |service| *service.inner(),
+                |service| service,
+            ),
+            Some("idle")
+        );
         std::assert_matches!(
             Oneshot::new(negotiate, ()).await.unwrap(),
             Negotiated::Left("fallback")
@@ -819,13 +837,20 @@ mod tests {
             transport: PhantomData,
         };
 
-        let checkout_ready = || negotiate.checkout_ready(|_, _| true, |_, _| Some("fallback"));
+        let checkout_ready = || {
+            negotiate.checkout_ready(
+                |_, _| true,
+                |_, _| Some("fallback"),
+                |service| *service.inner(),
+                |service| service,
+            )
+        };
         assert!(checkout_ready().is_none());
         let (existing, discarded) = negotiate.checkout_existing().unwrap();
         assert_eq!(discarded, ["redundant-a", "redundant-b"]);
         assert_eq!(*existing.await.unwrap().inner(), "existing");
         assert!(group.lock().pending.is_empty());
-        std::assert_matches!(checkout_ready(), Some(Negotiated::Right(_)));
+        assert_eq!(checkout_ready(), Some("existing"));
         group.lock().pending.extend(["redundant-a", "redundant-b"]);
 
         let Negotiated::Right(service) = Oneshot::new(negotiate, ()).await.unwrap() else {

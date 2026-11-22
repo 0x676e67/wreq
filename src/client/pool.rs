@@ -1203,7 +1203,7 @@ where
 
     fn checkout_ready(&self, now: Instant, timeout: Option<Duration>) -> Option<Pooled> {
         let upgrade_timeout = timeout.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
-        let service = self.service.checkout_ready(
+        self.service.checkout_ready(
             |connection, state| {
                 // The regular path prunes any remaining HTTP/1 idle state.
                 !state.cache.has_idle() && try_checkout_mux(connection, now, upgrade_timeout)
@@ -1213,12 +1213,9 @@ where
                     connection.is_reusable(now, timeout)
                 })
             },
-        )?;
-        let inner = match service {
-            Negotiated::Left(service) => PooledInner::Http1(service),
-            Negotiated::Right(service) => PooledInner::Mux(service),
-        };
-        Some(Pooled::reuse(inner, self.state.clone()))
+            |service| Pooled::reuse(PooledInner::Mux(service), self.state.clone()),
+            |service| Pooled::reuse(PooledInner::Http1(service), self.state.clone()),
+        )
     }
 
     fn checkout(&self, target: &T, pool_enabled: bool) -> (CheckoutFuture, Option<Discarded>) {
