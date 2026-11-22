@@ -7,22 +7,23 @@ use std::{
 use futures_util::future::BoxFuture;
 use http::Request;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-#[cfg(feature = "http2")]
-use {
-    super::entry::CheckoutFuture, bytes::Bytes, http::Response, http_body_util::Empty,
-    tower::util::Oneshot,
-};
 #[cfg(feature = "http3")]
 use {
     crate::conn::{Connected, Transport},
     ::quic::crypto::rustls::{QuicClientConfig, QuicServerConfig},
     std::net::{Ipv4Addr, SocketAddr},
 };
+#[cfg(feature = "http2")]
+use {
+    bytes::Bytes, http::Response, http_body_util::Empty, netty::http1::Http1Options,
+    tower::util::Oneshot,
+};
 
 use super::*;
 use crate::{
     conn,
     reuse::{self, Group},
+    rt::{DynRuntime, tokio::TokioRuntime},
 };
 
 /// Mock connector covering failure, stall, keep-alive, HTTP/2, and HTTP/3 scenarios.
@@ -169,21 +170,39 @@ fn grouped_request(group: Group, protocol: Protocol) -> conn::Request<ConnectCon
     request(protocol, connect_config)
 }
 
-/// Creates a pool without periodic cleanup so empty-entry removal is explicit.
-fn test_pool(connector: TestConnector) -> Pool<reuse::Key, TestConnector> {
+fn new_pool<C>(
+    connector: C,
+    config: Config,
+    connect_config: &ConnectConfig,
+) -> Pool<reuse::Key, C, TokioRuntime>
+where
+    C: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
     Pool::new(
         connector,
-        DynRuntime::new(crate::rt::tokio::TokioRuntime),
+        TokioRuntime,
+        config,
+        Handshakes::new(DynRuntime::new(TokioRuntime), connect_config, true),
+    )
+}
+
+/// Creates a pool without periodic cleanup so empty-entry removal is explicit.
+fn test_pool(connector: TestConnector) -> Pool<reuse::Key, TestConnector, TokioRuntime> {
+    new_pool(
+        connector,
         Config {
             idle_timeout: None,
             ..Config::default()
         },
         &ConnectConfig::default(),
-        true,
     )
 }
 
-impl Pool<reuse::Key, TestConnector> {
+impl Pool<reuse::Key, TestConnector, TokioRuntime> {
     async fn test_checkout(
         &self,
         request: conn::Request<ConnectConfig>,
@@ -259,13 +278,7 @@ fn protocol_modes_clone_connector_once() {
         let _counter = &counter;
         std::future::pending::<Result<Conn, BoxError>>()
     });
-    let pool = Pool::new(
-        connector,
-        DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        Config::default(),
-        &ConnectConfig::default(),
-        true,
-    );
+    let pool = new_pool(connector, Config::default(), &ConnectConfig::default());
     assert_eq!(clones.load(Ordering::Relaxed), 0);
 
     for (index, protocol) in [
@@ -315,15 +328,13 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
                 }
             })
             .service(TestConnector::Http2(calls.clone(), gate.clone()));
-        let pool = Pool::new(
+        let pool = new_pool(
             connector,
-            DynRuntime::new(crate::rt::tokio::TokioRuntime),
             Config {
                 idle_timeout: None,
                 ..Config::default()
             },
             &connect_config,
-            true,
         );
         let mut driver_connect_config = ConnectConfig::default().with_base(&connect_config);
         driver_connect_config
@@ -348,7 +359,10 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
             let mut entries = pool.inner.entries.lock();
             let entry =
                 entries.get_or_insert_with(key, || pool.inner.new_entry(Some(key), request));
-            entry.checkout(request, true)
+            let (future, discarded) = entry.checkout(request, true);
+            drop(entries);
+            drop(discarded);
+            future
         };
         let checkout = || checkout_with(&equivalent_key, &waiter_request);
 
@@ -392,7 +406,13 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert_eq!(*observed.lock(), [Some(DialOption::Driver)]);
 
+        let hot = pool
+            .checkout(Some(&equivalent_key), &waiter_request)
+            .await
+            .unwrap();
+        assert!(hot.is_reused());
         let pending = checkout();
+
         let completed = checkout().await.unwrap();
         let connected = completed.connected().clone();
         drop(completed);
@@ -419,6 +439,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         assert!(!replacement.is_reused());
         drop(pending);
         drop(held);
+        drop(hot);
         let reuse = checkout();
         assert!(matches!(reuse, CheckoutFuture::Mux { .. }));
         let reused = reuse.await.unwrap();
@@ -441,8 +462,15 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         .await
         .unwrap();
         assert_eq!(response.version(), http::Version::HTTP_2);
-        replacement.connected().poison();
+        let hot = pool
+            .checkout(Some(&equivalent_key), &waiter_request)
+            .await
+            .unwrap();
+        assert!(hot.is_reused());
         drop(replacement);
+        hot.connected().poison();
+        drop(hot);
+
         assert!(pool.inner.entries.lock().is_empty());
 
         let mut driver = tokio_test::task::spawn(checkout());
@@ -467,15 +495,13 @@ async fn idle_task_tracks_reusable_state() {
             ),
         ),
     ] {
-        let pool = Pool::new(
+        let pool = new_pool(
             connector,
-            DynRuntime::new(crate::rt::tokio::TokioRuntime),
             Config {
                 idle_timeout: Some(Duration::from_millis(10)),
                 ..Config::default()
             },
             &ConnectConfig::default(),
-            true,
         );
         let request = connect_request(protocol);
         let pooled = pool.test_checkout(request.clone()).await.unwrap();
@@ -491,6 +517,9 @@ async fn idle_task_tracks_reusable_state() {
         tokio::time::advance(Duration::from_millis(100)).await;
         tokio::task::yield_now().await;
         assert!(!pool.inner.entries.lock().is_empty());
+        if protocol == Protocol::Http1 {
+            assert!(!pool.inner.expire.is_running());
+        }
 
         drop(reused);
         tokio::task::yield_now().await;
@@ -502,15 +531,13 @@ async fn idle_task_tracks_reusable_state() {
         assert!(!pool.inner.expire.is_running());
     }
 
-    let pool = Pool::new(
+    let pool = new_pool(
         TestConnector::KeepsAlive,
-        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         Config {
             idle_timeout: Some(Duration::ZERO),
             ..Config::default()
         },
         &ConnectConfig::default(),
-        true,
     );
     let pooled = pool
         .test_checkout(connect_request(Protocol::Http1))
@@ -527,11 +554,20 @@ async fn idle_task_tracks_reusable_state() {
 
 #[tokio::test]
 #[cfg(all(feature = "ws", feature = "http2"))]
-async fn extended_connect_checkout_only_clones_established_senders() {
+async fn extended_connect_checkout_only_leases_established_senders() {
     for protocol in [Protocol::Http2, Protocol::Auto] {
         let calls = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
-        let pool = test_pool(TestConnector::Http2(calls.clone(), gate.clone()));
+        let idle_timeout = Duration::from_secs(60);
+        let pool = new_pool(
+            TestConnector::Http2(calls.clone(), gate.clone()),
+            Config {
+                idle_timeout: Some(idle_timeout),
+                max_size: NonZeroUsize::new(1),
+                ..Config::default()
+            },
+            &ConnectConfig::default(),
+        );
         let request = connect_request(protocol);
         let key = request.reuse_key(protocol);
 
@@ -559,6 +595,10 @@ async fn extended_connect_checkout_only_clones_established_senders() {
         assert!(probed.version() == http::Version::HTTP_2 && probed.is_reused());
         assert_eq!(probed.extended_connect(), Some(true));
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        // An active probe lease protects the sender even past its idle deadline.
+        let _ = pool.inner.retain(pool.inner.now() + idle_timeout * 2);
+        assert!(pool.inner.entries.lock().get_mut(&key).is_some());
 
         // Unusable senders are skipped without the probe evicting them.
         probed.connected().poison();
@@ -721,15 +761,13 @@ async fn pool_max_size_evicts_only_idle_groups() {
             .expect("successful request");
     }
 
-    let pool = Pool::new(
+    let pool = new_pool(
         TestConnector::KeepsAlive,
-        DynRuntime::new(crate::rt::tokio::TokioRuntime),
         Config {
             max_size: NonZeroUsize::new(1),
             ..Config::default()
         },
         &ConnectConfig::default(),
-        true,
     );
     let first_request = grouped_request(Group::new("first"), Protocol::Http1);
     let second_request = grouped_request(Group::new("second"), Protocol::Http1);
@@ -778,16 +816,14 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
         (Protocol::Http3, http3_connector()),
     ] {
         let make_pool = |max_size| {
-            Pool::new(
+            new_pool(
                 connector.clone(),
-                DynRuntime::new(crate::rt::tokio::TokioRuntime),
                 Config {
                     idle_timeout: None,
                     max_size: NonZeroUsize::new(max_size),
                     ..Config::default()
                 },
                 &ConnectConfig::default(),
-                true,
             )
         };
         let pool = make_pool(2);

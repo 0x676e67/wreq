@@ -47,12 +47,21 @@ where
     /// Returns the service stored for `key` without changing idle LRU order.
     #[must_use]
     pub(super) fn get_mut(&mut self, key: &K) -> Option<&mut S> {
+        // Compare the only key directly without scanning a large sparse table.
+        if self.entries.len() == 1 && self.entries.capacity() <= 3 {
+            return self
+                .entries
+                .iter_mut()
+                .next()
+                .and_then(|(stored, service)| (stored == key).then_some(service));
+        }
         self.entries.get_mut(key)
     }
 
     /// Removes idle markers whose services no longer satisfy `predicate`.
     ///
     /// Returns the pruned keys so the caller can reconcile entries that remain.
+    #[must_use]
     pub(super) fn prune_retained<F>(&mut self, mut predicate: F) -> Vec<K>
     where
         K: Clone,
@@ -158,12 +167,6 @@ where
             None
         }
     }
-
-    /// Returns whether the map contains no service entries.
-    #[cfg(test)]
-    pub(super) fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
 }
 
 #[cfg(test)]
@@ -174,6 +177,13 @@ mod tests {
     };
 
     use super::*;
+
+    impl<K, S> Map<K, S> {
+        #[must_use]
+        pub(in crate::client::pool) fn is_empty(&self) -> bool {
+            self.entries.is_empty()
+        }
+    }
 
     /// Counts drops while letting tests toggle retained state.
     struct DropProbe(Arc<AtomicUsize>, bool);
@@ -191,6 +201,8 @@ mod tests {
         let mut map = Map::new(NonZeroUsize::new(1));
 
         map.get_or_insert_with(&1, make);
+        assert!(map.get_mut(&1).is_some());
+        assert!(map.get_mut(&2).is_none());
         assert_eq!(map.mark_retained(&1, |probe| probe.1), (vec![], None));
         map.get_or_insert_with(&2, make);
         assert_eq!(drops.load(Ordering::SeqCst), 0);

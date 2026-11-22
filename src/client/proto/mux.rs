@@ -40,13 +40,14 @@ pub enum Sender {
 pub struct Connection {
     tx: Sender,
     state: Arc<ConnectionState>,
-    connected: Connected,
-    runtime: DynRuntime,
 }
 
-/// Checkout state shared by every clone of one [`Connection`].
+/// Connection metadata and checkout state shared by every sender clone.
+///
 /// `idle_at` records when the last checkout ended, even if streams remain open.
 struct ConnectionState {
+    connected: Connected,
+    runtime: DynRuntime,
     checkouts: AtomicUsize,
     idle_at: Mutex<Instant>,
 }
@@ -58,16 +59,14 @@ impl Connection {
     pub(super) fn new(tx: Sender, connected: Connected, runtime: DynRuntime) -> Self {
         Self {
             tx,
-            state: Arc::new(ConnectionState::new(runtime.now())),
-            connected,
-            runtime,
+            state: Arc::new(ConnectionState::new(connected, runtime)),
         }
     }
 
     /// Returns metadata for the underlying transport.
     #[must_use]
     pub fn connected(&self) -> &Connected {
-        &self.connected
+        &self.state.connected
     }
 
     /// Returns the HTTP version spoken by the protocol sender.
@@ -106,7 +105,7 @@ impl Connection {
     /// Returns whether the shared sender is open and unpoisoned.
     #[must_use]
     pub(in crate::client) fn is_open(&self) -> bool {
-        !self.connected.poisoned() && !self.is_closed()
+        !self.connected().poisoned() && !self.is_closed()
     }
 
     /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS.
@@ -153,7 +152,7 @@ impl Connection {
     #[must_use]
     #[inline(always)]
     pub fn finish_checkout(&self) -> bool {
-        self.state.release(self.runtime.now())
+        self.state.release(self.state.runtime.now())
     }
 
     /// Returns whether the shared sender is healthy and reusable.
@@ -179,7 +178,7 @@ impl Service<Request<Body>> for Connection {
         };
 
         if matches!(ready, Poll::Ready(Err(_))) {
-            self.connected.poison();
+            self.connected().poison();
         }
 
         ready.map_err(|error| SendError::Request(Error::closed(error)))
@@ -202,10 +201,13 @@ impl Service<Request<Body>> for Connection {
 // ===== impl ConnectionState =====
 
 impl ConnectionState {
-    /// Creates idle checkout state for a newly established connection.
+    /// Stores the metadata and initializes the checkout state for a new connection.
     #[must_use]
-    fn new(idle_at: Instant) -> Self {
+    fn new(connected: Connected, runtime: DynRuntime) -> Self {
+        let idle_at = runtime.now();
         Self {
+            connected,
+            runtime,
             checkouts: AtomicUsize::new(0),
             idle_at: Mutex::new(idle_at),
         }

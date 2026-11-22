@@ -15,7 +15,7 @@ use std::{
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Weak},
     task::{self, Poll, ready},
 };
 
@@ -29,7 +29,7 @@ use tower::{
 
 use super::{
     cache::Started,
-    singleton::{Singled, Singleton, SingletonFuture},
+    singleton::{self, Ready, Singled, Singleton, SingletonFuture},
 };
 use crate::sync::Mutex;
 
@@ -44,8 +44,7 @@ pub(super) struct Negotiate<L, R, S> {
     fallback: L,
     /// Pool handling connections diverted by inspection.
     upgrade: R,
-    /// Upgraded transports waiting to enter `upgrade`.
-    pending: Arc<Mutex<VecDeque<S>>>,
+    transport: PhantomData<fn(S)>,
 }
 
 /// A checked-out service selected by [`Negotiate`].
@@ -69,8 +68,7 @@ pin_project! {
         state: State<Dst, L, Either<L::Future, Oneshot<L, Dst>>, R::Future>,
         // Upgraded pool clone used to join or start the singleton on handoff.
         upgrade: R,
-        // Shared queue of inspected upgraded transports.
-        pending: Arc<Mutex<VecDeque<S>>>,
+        transport: PhantomData<fn(S)>,
     }
 }
 
@@ -99,7 +97,69 @@ pin_project! {
 }
 
 /// Future joining a completed or in-progress upgraded singleton generation.
-type UpgradeFuture<M, S> = SingletonFuture<<M as Service<S>>::Future, <M as Service<S>>::Response>;
+type UpgradeFuture<M, S, G> =
+    SingletonFuture<<M as Service<S>>::Future, <M as Service<S>>::Response, G>;
+
+/// Checked-out service from a completed upgrade.
+type Upgraded<M, S> = Singled<<M as Service<S>>::Response>;
+
+/// Upgraded work synchronized with the fallback cache by the group lock.
+#[derive(Debug)]
+pub(super) struct Shared<S, F, U> {
+    pending: VecDeque<S>,
+    upgrade: singleton::State<F, U>,
+}
+
+// ===== impl Shared =====
+
+impl<S, F, U> Default for Shared<S, F, U> {
+    fn default() -> Self {
+        Self {
+            pending: VecDeque::new(),
+            upgrade: singleton::State::Empty,
+        }
+    }
+}
+
+impl<S, F, U> Shared<S, F, U> {
+    /// Returns whether an upgraded transport is waiting for handoff.
+    #[must_use]
+    pub(super) fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// Detaches queued upgraded transports rejected by the predicate.
+    #[must_use]
+    pub(super) fn retain_pending(&mut self, mut predicate: impl FnMut(&S) -> bool) -> VecDeque<S> {
+        let mut discarded = VecDeque::new();
+        for _ in 0..self.pending.len() {
+            match self.pending.pop_front() {
+                Some(service) if predicate(&service) => self.pending.push_back(service),
+                Some(service) => discarded.push_back(service),
+                None => break,
+            }
+        }
+        discarded
+    }
+
+    /// Detaches every queued upgraded transport.
+    #[must_use]
+    pub(super) fn drain_pending(&mut self) -> VecDeque<S> {
+        std::mem::take(&mut self.pending)
+    }
+}
+
+impl<S, F, U> AsMut<VecDeque<S>> for Shared<S, F, U> {
+    fn as_mut(&mut self) -> &mut VecDeque<S> {
+        &mut self.pending
+    }
+}
+
+impl<S, F, U> AsMut<singleton::State<F, U>> for Shared<S, F, U> {
+    fn as_mut(&mut self) -> &mut singleton::State<F, U> {
+        &mut self.upgrade
+    }
+}
 
 /// Existing upgraded work selected before falling back to a new connection.
 enum Selection<F, S> {
@@ -118,110 +178,97 @@ impl<L: Clone, R: Clone, S> Clone for Negotiate<L, R, S> {
         Self {
             fallback: self.fallback.clone(),
             upgrade: self.upgrade.clone(),
-            pending: self.pending.clone(),
+            transport: PhantomData,
         }
     }
 }
 
 impl<L, R, S> Negotiate<L, R, S> {
-    /// Composes the fallback and upgrade pools around an inspected connector.
-    ///
-    /// `fallback` wraps `connect`, whose results `inspect` may divert to the
-    /// pending queue; `upgrade` wraps the identity maker those results enter.
-    #[must_use]
-    pub(super) fn new<C, I, LL, RR>(connect: C, inspect: I, fallback: LL, upgrade: RR) -> Self
-    where
-        I: Fn(&S) -> bool,
-        LL: Layer<Inspector<C, S, I>, Service = L>,
-        RR: Layer<Provided<S>, Service = R>,
-    {
-        let pending = Arc::new(Mutex::new(VecDeque::new()));
-        let fallback = fallback.layer(Inspector {
-            service: connect,
-            inspect,
-            pending: pending.clone(),
-            signal: UpgradeSignal::new(),
-        });
-        Self {
-            fallback,
-            upgrade: upgrade.layer(Provided(PhantomData)),
-            pending,
-        }
-    }
-
-    /// Borrows the fallback pool.
-    #[must_use]
-    pub(super) fn fallback(&self) -> &L {
-        &self.fallback
-    }
-
-    /// Mutably borrows the fallback pool.
-    #[must_use]
-    pub(super) fn fallback_mut(&mut self) -> &mut L {
-        &mut self.fallback
-    }
-
     /// Borrows the upgraded pool.
     #[must_use]
     pub(super) fn upgrade(&self) -> &R {
         &self.upgrade
     }
-
-    /// Mutably borrows the upgraded pool.
-    #[must_use]
-    pub(super) fn upgrade_mut(&mut self) -> &mut R {
-        &mut self.upgrade
-    }
-
-    /// Retains queued upgraded connections selected by `predicate`.
-    #[must_use]
-    pub(super) fn retain_pending<F>(&mut self, predicate: F) -> VecDeque<S>
-    where
-        F: FnMut(&S) -> bool,
-    {
-        let mut predicate = predicate;
-        let mut pending = self.pending.lock();
-        let mut discarded = VecDeque::new();
-
-        for _ in 0..pending.len() {
-            match pending.pop_front() {
-                Some(service) if predicate(&service) => pending.push_back(service),
-                Some(service) => discarded.push_back(service),
-                None => break,
-            }
-        }
-
-        discarded
-    }
-
-    /// Removes every queued upgraded connection for unlocked destruction.
-    #[must_use]
-    pub(super) fn drain_pending(&mut self) -> VecDeque<S> {
-        std::mem::take(&mut *self.pending.lock())
-    }
-
-    /// Returns whether no upgraded connection is waiting for handoff.
-    #[must_use]
-    pub(super) fn pending_is_empty(&self) -> bool {
-        self.pending.lock().is_empty()
-    }
 }
 
-impl<L, M, S> Negotiate<L, Singleton<M, S>, S>
+impl<L, M, S, G> Negotiate<L, Singleton<M, S, G>, S>
 where
     M: Service<S>,
     M::Response: Clone,
+    G: AsMut<singleton::State<M::Future, M::Response>> + AsMut<Shared<S, M::Future, M::Response>>,
 {
+    /// Composes the fallback and upgrade pools around an inspected connector.
+    #[must_use]
+    pub(super) fn new<C, I, LL, RR>(connect: C, inspect: I, fallback: LL, upgrade: RR) -> Self
+    where
+        I: Fn(&S) -> bool,
+        LL: Layer<Inspector<C, S, I, G>, Service = L>,
+        RR: Layer<Provided<S>, Service = Singleton<M, S, G>>,
+    {
+        let upgrade = upgrade.layer(Provided(PhantomData));
+        let fallback = fallback.layer(Inspector {
+            service: connect,
+            inspect,
+            state: Arc::downgrade(upgrade.shared()),
+            signal: UpgradeSignal::new(),
+            transport: PhantomData,
+        });
+        Self {
+            fallback,
+            upgrade,
+            transport: PhantomData,
+        }
+    }
+
+    /// Checks both branches before an empty group is removed from the map.
+    #[must_use]
+    pub(super) fn is_empty(&self, fallback_empty: impl FnOnce(&G) -> bool) -> bool
+    where
+        G: AsRef<Shared<S, M::Future, M::Response>>,
+    {
+        let group = self.upgrade.shared().lock();
+        let state = (*group).as_ref();
+        state.pending.is_empty()
+            && matches!(state.upgrade, singleton::State::Empty)
+            && fallback_empty(&group)
+    }
+
+    /// Takes a ready upgrade or an idle fallback if there is no upgraded work.
+    #[must_use]
+    pub(super) fn checkout_ready<T>(
+        &self,
+        upgrade: impl FnOnce(&M::Response, &G) -> bool,
+        fallback: impl FnOnce(&L, &mut G) -> Option<T>,
+    ) -> Option<Negotiated<T, Upgraded<M, S>>>
+    where
+        G: AsRef<Shared<S, M::Future, M::Response>>,
+    {
+        let mut group = self.upgrade.shared().lock();
+        let state = (*group).as_ref();
+        // A newly queued transport must not be bypassed by a fallback checkout.
+        if !state.pending.is_empty() {
+            return None;
+        }
+        match self
+            .upgrade
+            .checkout_ready(Some(&state.upgrade), |service| upgrade(service, &group))
+        {
+            Ready::Made(service) => Some(Negotiated::Right(service)),
+            Ready::Empty => fallback(&self.fallback, &mut group).map(Negotiated::Left),
+            Ready::Unavailable => None,
+        }
+    }
+
     /// Joins existing upgraded work without invoking the fallback service.
     ///
     /// Returns redundant queued transports for drop outside any caller-held lock.
     #[must_use]
-    pub(super) fn checkout_existing(&self) -> Option<(UpgradeFuture<M, S>, VecDeque<S>)> {
-        checkout_existing(&self.upgrade, &mut self.pending.lock())
+    pub(super) fn checkout_existing(&self) -> Option<(UpgradeFuture<M, S, G>, VecDeque<S>)> {
+        checkout_existing(&self.upgrade, self.upgrade.shared().lock().as_mut())
     }
 }
 
-impl<L, M, S, Dst> Service<Dst> for Negotiate<L, Singleton<M, S>, S>
+impl<L, M, S, Dst, G> Service<Dst> for Negotiate<L, Singleton<M, S, G>, S>
 where
     L: Service<Dst> + Clone,
     L::Error: Into<BoxError>,
@@ -230,10 +277,11 @@ where
     M::Error: Into<BoxError>,
     Dst: Clone,
     S: Send + 'static,
+    G: AsMut<singleton::State<M::Future, M::Response>> + AsMut<Shared<S, M::Future, M::Response>>,
 {
-    type Response = Negotiated<L::Response, Singled<M::Future, M::Response>>;
+    type Response = Negotiated<L::Response, Upgraded<M, S>>;
     type Error = BoxError;
-    type Future = Negotiating<Dst, L, Singleton<M, S>, S>;
+    type Future = Negotiating<Dst, L, Singleton<M, S, G>, S>;
 
     #[inline]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -241,7 +289,7 @@ where
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
-        let state = match select_upgrade(&self.upgrade, &self.pending) {
+        let state = match select_upgrade(&self.upgrade) {
             Selection::Existing(future) => State::Upgrade { future },
             Selection::Pending(service) => State::Upgrade {
                 future: self.upgrade.call(service),
@@ -259,14 +307,14 @@ where
         Negotiating {
             state,
             upgrade: self.upgrade.clone(),
-            pending: self.pending.clone(),
+            transport: PhantomData,
         }
     }
 }
 
 // ===== impl Negotiating =====
 
-impl<Dst, L, M, S> Future for Negotiating<Dst, L, Singleton<M, S>, S>
+impl<Dst, L, M, S, G> Future for Negotiating<Dst, L, Singleton<M, S, G>, S>
 where
     L: Service<Dst> + Clone,
     L::Error: Into<BoxError>,
@@ -275,8 +323,9 @@ where
     M::Error: Into<BoxError>,
     Dst: Clone,
     S: Send + 'static,
+    G: AsMut<singleton::State<M::Future, M::Response>> + AsMut<Shared<S, M::Future, M::Response>>,
 {
-    type Output = Result<Negotiated<L::Response, Singled<M::Future, M::Response>>, BoxError>;
+    type Output = Result<Negotiated<L::Response, Upgraded<M, S>>, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
@@ -294,7 +343,7 @@ where
                             return Poll::Ready(Err(error));
                         }
 
-                        match select_upgrade(this.upgrade, this.pending) {
+                        match select_upgrade(this.upgrade) {
                             Selection::Existing(future) => {
                                 this.state.set(State::Upgrade { future });
                             }
@@ -329,42 +378,45 @@ where
 
 /// Selects upgraded work atomically and destroys redundant transports unlocked.
 #[must_use]
-fn select_upgrade<M, S>(
-    upgrade: &Singleton<M, S>,
-    pending: &Mutex<VecDeque<S>>,
-) -> Selection<UpgradeFuture<M, S>, S>
+fn select_upgrade<M, S, G>(upgrade: &Singleton<M, S, G>) -> Selection<UpgradeFuture<M, S, G>, S>
 where
     M: Service<S>,
     M::Response: Clone,
+    G: AsMut<singleton::State<M::Future, M::Response>> + AsMut<Shared<S, M::Future, M::Response>>,
 {
-    let mut pending = pending.lock();
-    let (selection, discarded) = match checkout_existing(upgrade, &mut pending) {
+    let mut group = upgrade.shared().lock();
+    let state: &mut Shared<S, M::Future, M::Response> = group.as_mut();
+    let (selection, discarded) = match checkout_existing(upgrade, state) {
         Some((future, discarded)) => (Selection::Existing(future), discarded),
         None => {
-            let Some(service) = pending.pop_front() else {
+            let Some(service) = state.pending.pop_front() else {
                 return Selection::Fallback;
             };
-            (Selection::Pending(service), std::mem::take(&mut *pending))
+            (
+                Selection::Pending(service),
+                std::mem::take(&mut state.pending),
+            )
         }
     };
-    drop(pending);
+    drop(group);
     drop(discarded);
     selection
 }
 
 /// Selects an existing generation and detaches transports made redundant by it.
 #[must_use]
-fn checkout_existing<M, S>(
-    upgrade: &Singleton<M, S>,
-    pending: &mut VecDeque<S>,
-) -> Option<(UpgradeFuture<M, S>, VecDeque<S>)>
+fn checkout_existing<M, S, G>(
+    upgrade: &Singleton<M, S, G>,
+    state: &mut Shared<S, M::Future, M::Response>,
+) -> Option<(UpgradeFuture<M, S, G>, VecDeque<S>)>
 where
     M: Service<S>,
     M::Response: Clone,
+    G: AsMut<singleton::State<M::Future, M::Response>>,
 {
     upgrade
-        .checkout()
-        .map(|future| (future, std::mem::take(pending)))
+        .checkout(Some(&mut state.upgrade))
+        .map(|future| (future, std::mem::take(&mut state.pending)))
 }
 
 /// Broadcasts that an upgraded connection has entered the pending queue.
@@ -417,13 +469,14 @@ impl UpgradeSignal {
 /// A fallback result passes through unchanged. An upgraded result is queued,
 /// followed by a signal to sibling attempts, and the current future returns the
 /// private [`UseOther`] marker so [`Negotiating`] switches to the singleton.
-pub(super) struct Inspector<M, S, I> {
+pub(super) struct Inspector<M, S, I, G> {
     /// Underlying connector producing raw transports.
     service: M,
     /// Predicate returning `true` for upgraded protocols.
     inspect: I,
-    /// Shared queue receiving upgraded transports.
-    pending: Arc<Mutex<VecDeque<S>>>,
+    /// Points into the group without keeping a detached background dial alive.
+    state: Weak<Mutex<G>>,
+    transport: PhantomData<fn(S)>,
     /// Signal waking sibling fallback attempts after an upgrade is queued.
     signal: UpgradeSignal,
 }
@@ -434,7 +487,7 @@ pin_project! {
     /// Checks for upgrades queued before subscription on the first poll, then polls the
     /// notification before the connection future. When its own connection finishes first,
     /// returns fallback transports directly or queues upgraded ones with [`UseOther`].
-    pub(super) struct InspectFuture<F, S, I> {
+    pub(super) struct InspectFuture<F, S, I, G> {
         // Underlying connection future.
         #[pin]
         future: F,
@@ -444,8 +497,9 @@ pin_project! {
         notified: BoxFuture<'static, ()>,
         // Predicate selecting upgraded transports.
         inspect: I,
-        // Shared queue receiving upgraded transports.
-        pending: Arc<Mutex<VecDeque<S>>>,
+        // Weak handle to the group receiving upgraded transports.
+        state: Weak<Mutex<G>>,
+        transport: PhantomData<fn(S)>,
         // Signal advanced after pushing to `pending`.
         signal: UpgradeSignal,
     }
@@ -453,27 +507,29 @@ pin_project! {
 
 // ===== impl Inspector =====
 
-impl<M: Clone, S, I: Clone> Clone for Inspector<M, S, I> {
+impl<M: Clone, S, I: Clone, G> Clone for Inspector<M, S, I, G> {
     fn clone(&self) -> Self {
         Self {
             service: self.service.clone(),
             inspect: self.inspect.clone(),
-            pending: self.pending.clone(),
+            state: self.state.clone(),
+            transport: PhantomData,
             signal: self.signal.clone(),
         }
     }
 }
 
-impl<M, S, I, Dst> Service<Dst> for Inspector<M, S, I>
+impl<M, S, I, Dst, G> Service<Dst> for Inspector<M, S, I, G>
 where
     M: Service<Dst, Response = S>,
     M::Error: Into<BoxError>,
     S: Send + 'static,
     I: Fn(&S) -> bool + Clone,
+    G: AsMut<VecDeque<S>>,
 {
     type Response = S;
     type Error = BoxError;
-    type Future = InspectFuture<M::Future, S, I>;
+    type Future = InspectFuture<M::Future, S, I, G>;
 
     #[inline]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -486,7 +542,8 @@ where
             check_pending: true,
             notified: self.signal.notified(),
             inspect: self.inspect.clone(),
-            pending: self.pending.clone(),
+            state: self.state.clone(),
+            transport: PhantomData,
             signal: self.signal.clone(),
         }
     }
@@ -494,18 +551,24 @@ where
 
 // ===== impl InspectFuture =====
 
-impl<F, S, I, E> Future for InspectFuture<F, S, I>
+impl<F, S, I, E, G> Future for InspectFuture<F, S, I, G>
 where
     F: Future<Output = Result<S, E>>,
     E: Into<BoxError>,
     S: Send + 'static,
     I: Fn(&S) -> bool,
+    G: AsMut<VecDeque<S>>,
 {
     type Output = Result<S, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
-        if std::mem::take(this.check_pending) && !this.pending.lock().is_empty() {
+        if std::mem::take(this.check_pending)
+            && this
+                .state
+                .upgrade()
+                .is_some_and(|group| !group.lock().as_mut().is_empty())
+        {
             return Poll::Ready(Err(UseOther.into()));
         }
         if this.notified.as_mut().poll(cx).is_ready() {
@@ -514,8 +577,10 @@ where
 
         let service = ready!(this.future.poll(cx)).map_err(Into::into)?;
         if (this.inspect)(&service) {
-            this.pending.lock().push_back(service);
-            this.signal.notify();
+            if let Some(group) = this.state.upgrade() {
+                group.lock().as_mut().push_back(service);
+                this.signal.notify();
+            }
             Poll::Ready(Err(UseOther.into()))
         } else {
             Poll::Ready(Ok(service))
@@ -523,12 +588,13 @@ where
     }
 }
 
-impl<F, S, I, E> Started for InspectFuture<F, S, I>
+impl<F, S, I, E, G> Started for InspectFuture<F, S, I, G>
 where
     F: Started + Future<Output = Result<S, E>>,
     E: Into<BoxError>,
     S: Send + 'static,
     I: Fn(&S) -> bool,
+    G: AsMut<VecDeque<S>>,
 {
     fn started(&self) -> bool {
         Started::started(&self.future)
@@ -611,6 +677,18 @@ mod tests {
 
     use super::*;
 
+    impl<S, F, U> AsMut<Self> for Shared<S, F, U> {
+        fn as_mut(&mut self) -> &mut Self {
+            self
+        }
+    }
+
+    impl<S, F, U> AsRef<Self> for Shared<S, F, U> {
+        fn as_ref(&self) -> &Self {
+            self
+        }
+    }
+
     /// Returns a fixed protocol label immediately.
     #[derive(Clone, Copy)]
     struct ReadyConnector(&'static str);
@@ -688,7 +766,7 @@ mod tests {
                 ReadyConnector(protocol),
                 |protocol: &&str| *protocol == "h2",
                 LayerFn(|service| service),
-                LayerFn(Singleton::new),
+                LayerFn(|maker| Singleton::new(maker, Arc::new(Mutex::new(Shared::default())))),
             );
 
             let selected = Oneshot::new(negotiate, ()).await.unwrap();
@@ -712,11 +790,12 @@ mod tests {
             calls: calls.clone(),
             ready: false,
         };
-        let upgrade = Singleton::new(Provided(PhantomData::<fn(&'static str)>));
+        let group = Arc::new(Mutex::new(Shared::default()));
+        let upgrade = Singleton::new(Provided(PhantomData::<fn(&'static str)>), group.clone());
         let negotiate = Negotiate {
             fallback,
             upgrade,
-            pending: Arc::new(Mutex::new(VecDeque::new())),
+            transport: PhantomData,
         };
 
         std::assert_matches!(
@@ -730,37 +809,43 @@ mod tests {
             calls: calls.clone(),
             ready: false,
         };
-        let upgrade = Singleton::new(Provided(PhantomData::<fn(&'static str)>));
-        drop(Oneshot::new(upgrade.clone(), "existing").await.unwrap());
-        let pending = Arc::new(Mutex::new(VecDeque::from(["redundant-a", "redundant-b"])));
+        let group = Arc::new(Mutex::new(Shared::default()));
+        let upgrade = Singleton::new(Provided(PhantomData::<fn(&'static str)>), group.clone());
+        let _ = Oneshot::new(upgrade.clone(), "existing").await.unwrap();
+        group.lock().pending.extend(["redundant-a", "redundant-b"]);
         let negotiate = Negotiate {
             fallback,
             upgrade,
-            pending: pending.clone(),
+            transport: PhantomData,
         };
 
+        let checkout_ready = || negotiate.checkout_ready(|_, _| true, |_, _| Some("fallback"));
+        assert!(checkout_ready().is_none());
         let (existing, discarded) = negotiate.checkout_existing().unwrap();
         assert_eq!(discarded, ["redundant-a", "redundant-b"]);
         assert_eq!(*existing.await.unwrap().inner(), "existing");
-        assert!(pending.lock().is_empty());
-        pending.lock().extend(["redundant-a", "redundant-b"]);
+        assert!(group.lock().pending.is_empty());
+        std::assert_matches!(checkout_ready(), Some(Negotiated::Right(_)));
+        group.lock().pending.extend(["redundant-a", "redundant-b"]);
 
         let Negotiated::Right(service) = Oneshot::new(negotiate, ()).await.unwrap() else {
             panic!("existing upgraded service should be preferred");
         };
         assert_eq!(*service.inner(), "existing");
-        assert!(pending.lock().is_empty());
+        assert!(group.lock().pending.is_empty());
         assert_eq!(calls.load(Ordering::SeqCst), 0);
 
         let signal = UpgradeSignal::new();
         signal.notify();
-        let pending = Arc::new(Mutex::new(VecDeque::from(["queued-before-subscribe"])));
+        let group = Arc::new(Mutex::new(Shared::<_, (), ()>::default()));
+        group.lock().pending.push_back("queued-before-subscribe");
         let error = InspectFuture {
             future: std::future::pending::<Result<&'static str, BoxError>>(),
             check_pending: true,
             notified: signal.notified(),
             inspect: |_: &&str| false,
-            pending,
+            state: Arc::downgrade(&group),
+            transport: PhantomData,
             signal,
         }
         .await

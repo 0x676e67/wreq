@@ -125,7 +125,7 @@ async fn https_proxy_keeps_transport_and_target_alpn_separate() {
     use wreq::{
         Version,
         dns::Resolve,
-        rt::{BoxSleep, Connecting, Runtime, Timer, tokio::TokioRuntime},
+        rt::{BoxSleep, Connecting, Executor, Runtime, Timer, tokio::TokioRuntime},
         tls::{AlpnProtocol, TlsOptions},
     };
 
@@ -142,11 +142,13 @@ async fn https_proxy_keeps_transport_and_target_alpn_separate() {
         }
     }
 
-    impl Runtime for ObserveSocket {
+    impl Executor for ObserveSocket {
         fn execute(&self, future: BoxFuture<'static, ()>) {
             TokioRuntime.execute(future);
         }
+    }
 
+    impl Runtime for ObserveSocket {
         fn resolver(&self) -> Arc<dyn Resolve> {
             TokioRuntime.resolver()
         }

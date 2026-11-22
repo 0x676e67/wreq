@@ -27,7 +27,9 @@ use netty::conn::TrySendError;
 use super::error::{Error, ErrorKind};
 use crate::{
     Body,
+    config::ConnectConfig,
     conn::{Connected, Io},
+    rt::DynRuntime,
 };
 
 /// Shares the client's builder unless the request overrides its protocol options.
@@ -41,6 +43,17 @@ pub(super) fn configure<B: Clone, O: Clone>(
         Some(options) => Arc::new(apply(B::clone(builder), options.clone())),
         None => builder.clone(),
     }
+}
+
+/// Client-wide handshake builders and their protocol runtime.
+pub(super) struct Handshakes {
+    runtime: DynRuntime,
+    set_host: bool,
+    http1: Arc<netty::conn::http1::Builder>,
+    #[cfg(feature = "http2")]
+    http2: Arc<netty::conn::http2::Builder<DynRuntime>>,
+    #[cfg(feature = "http3")]
+    http3: Arc<netty::conn::http3::Builder<DynRuntime>>,
 }
 
 /// Established byte stream and transport metadata passed to an HTTP handshake.
@@ -61,6 +74,71 @@ pub(super) struct Established {
 pub enum SendError<R = Request<Body>> {
     Request(Error),
     Protocol(Box<TrySendError<R>>),
+}
+
+// ===== impl Handshakes =====
+
+impl Handshakes {
+    /// Builds the default protocol settings for the client.
+    #[must_use]
+    pub(super) fn new(runtime: DynRuntime, config: &ConnectConfig, set_host: bool) -> Self {
+        let http1 = netty::conn::http1::Builder::default();
+        let http1 = match config.get_ref::<netty::http1::Http1Options>() {
+            Some(options) => http1.options(options.clone()),
+            None => http1,
+        };
+
+        #[cfg(feature = "http2")]
+        let http2 = {
+            let builder = netty::conn::http2::Builder::new(runtime.clone()).timer(runtime.clone());
+            match config.get_ref::<netty::http2::Http2Options>() {
+                Some(options) => builder.options(options.clone()),
+                None => builder,
+            }
+        };
+
+        #[cfg(feature = "http3")]
+        let http3 = {
+            let builder = netty::conn::http3::Builder::new(runtime.clone());
+            match config.get_ref::<netty::http3::Http3Options>() {
+                Some(options) => builder.options(options.clone()),
+                None => builder,
+            }
+        };
+
+        Self {
+            runtime,
+            set_host,
+            http1: Arc::new(http1),
+            #[cfg(feature = "http2")]
+            http2: Arc::new(http2),
+            #[cfg(feature = "http3")]
+            http3: Arc::new(http3),
+        }
+    }
+
+    /// Applies the request's HTTP/1 handshake overrides.
+    #[must_use]
+    pub(super) fn http1<'a>(&'a self, config: &'a ConnectConfig) -> http1::ConnectLayer<'a> {
+        let options = config.override_if_different(PartialEq::eq).map(Arc::as_ref);
+        http1::ConnectLayer::new(&self.runtime, &self.http1, options, self.set_host)
+    }
+
+    /// Applies the request's HTTP/2 handshake overrides.
+    #[cfg(feature = "http2")]
+    #[must_use]
+    pub(super) fn http2<'a>(&'a self, config: &'a ConnectConfig) -> http2::ConnectLayer<'a> {
+        let options = config.override_if_different(PartialEq::eq).map(Arc::as_ref);
+        http2::ConnectLayer::new(&self.runtime, &self.http2, options)
+    }
+
+    /// Applies the request's HTTP/3 handshake overrides.
+    #[cfg(feature = "http3")]
+    #[must_use]
+    pub(super) fn http3<'a>(&'a self, config: &'a ConnectConfig) -> http3::ConnectLayer<'a> {
+        let options = config.override_if_different(PartialEq::eq).map(Arc::as_ref);
+        http3::ConnectLayer::new(&self.runtime, &self.http3, options)
+    }
 }
 
 // ===== impl Established =====

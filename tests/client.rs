@@ -2335,7 +2335,7 @@ async fn runtime_resolver_is_used_without_dns_configuration() {
     use futures_util::future::BoxFuture;
     use wreq::{
         dns::{Addrs, Name, Resolve, Resolving},
-        rt::{BoxSleep, Connecting, Runtime, Timer, tokio::TokioRuntime},
+        rt::{BoxSleep, Connecting, Executor, Runtime, Timer, tokio::TokioRuntime},
     };
 
     #[derive(Clone, Debug)]
@@ -2355,11 +2355,13 @@ async fn runtime_resolver_is_used_without_dns_configuration() {
         }
     }
 
-    impl Runtime for SelectedRuntime {
+    impl Executor for SelectedRuntime {
         fn execute(&self, future: BoxFuture<'static, ()>) {
             TokioRuntime.execute(future);
         }
+    }
 
+    impl Runtime for SelectedRuntime {
         fn connect_tcp(&self, socket: std::net::TcpStream, address: SocketAddr) -> Connecting {
             Runtime::connect_tcp(&TokioRuntime, socket, address)
         }

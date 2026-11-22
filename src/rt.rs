@@ -37,63 +37,12 @@ use crate::dns::Resolve;
 /// Longest delay [`deadline_after`] adds: about 30 years, Tokio's far-future deadline.
 const MAX_DELAY: Duration = Duration::from_secs(86_400 * 365 * 30);
 
-/// Runtime facilities selected when constructing a client.
-///
-/// Supplies background execution, timers through [`Timer`], socket I/O and a default
-/// DNS resolver. Blocking DNS lookups should be offloaded by the resolver implementation.
-/// Callers can replace the resolver with
-/// [`ClientBuilder::dns_resolver`](crate::ClientBuilder::dns_resolver).
-///
-/// Poll and drop in-flight request futures in the selected runtime's context.
-/// Dropping a request can schedule idle connection cleanup.
-///
-/// A runtime that wraps another must also forward `connect_unix` and `udp_socket`,
-/// whose defaults ignore the wrapped runtime.
-pub trait Runtime: Timer + Debug + 'static {
-    /// Schedules a task to run in the background.
+/// Runs background tasks for a client runtime.
+pub trait Executor {
+    /// Schedules a boxed task to run in the background.
     #[track_caller]
-    fn execute(&self, fut: BoxFuture<'static, ()>);
-
-    /// Returns the resolver used unless the client builder overrides DNS.
-    #[must_use]
-    fn resolver(&self) -> Arc<dyn Resolve>;
-
-    /// Connects an unconnected, nonblocking socket to `address`.
-    /// The socket already has the client's TCP and local binding options applied.
-    fn connect_tcp(&self, socket: TcpStream, addr: SocketAddr) -> Connecting;
-
-    /// Connects a Unix domain socket.
-    /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error.
-    #[cfg(unix)]
-    fn connect_unix(&self, _path: Arc<std::path::Path>) -> Connecting {
-        const UNSUPPORTED_UNIX_SOCKETS: &str = "runtime does not support Unix domain sockets";
-        Box::pin(std::future::ready(Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            UNSUPPORTED_UNIX_SOCKETS,
-        ))))
-    }
-
-    /// Registers a bound, nonblocking UDP socket for HTTP/3 over QUIC.
-    /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error, which fails
-    /// HTTP/3 connections without affecting HTTP/1 or HTTP/2.
-    ///
-    /// Direct HTTP/3 connections with the client's bindings can reuse the socket.
-    /// Keep the receive task spawned with [`execute`](Self::execute) running while the socket
-    /// is in use.
-    #[cfg(feature = "http3")]
-    fn udp_socket(&self, _socket: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
-        const UNSUPPORTED_UDP_SOCKETS: &str = "runtime does not support UDP sockets";
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            UNSUPPORTED_UDP_SOCKETS,
-        ))
-    }
+    fn execute(&self, future: BoxFuture<'static, ()>);
 }
-
-impl_into_shared!(
-    /// Accepts a runtime value or an existing shared runtime for a client.
-    pub trait IntoRuntime => Runtime
-);
 
 /// An established transport with address metadata and socket controls.
 /// By default, transports report no IP addresses and ignore TCP options.
@@ -162,6 +111,60 @@ pin_project! {
         inner: S,
     }
 }
+
+/// Runtime facilities selected when constructing a client.
+///
+/// Combines [`Executor`] and [`Timer`] with socket I/O and a default DNS resolver.
+/// Blocking DNS lookups should be offloaded by the resolver implementation.
+/// Callers can replace the resolver with
+/// [`ClientBuilder::dns_resolver`](crate::ClientBuilder::dns_resolver).
+///
+/// Poll and drop in-flight request futures in the selected runtime's context.
+/// Dropping a request can schedule idle connection cleanup.
+///
+/// A runtime that wraps another must also forward `connect_unix` and `udp_socket`,
+/// whose defaults ignore the wrapped runtime.
+pub trait Runtime: Executor + Timer + Debug + 'static {
+    /// Returns the resolver used unless the client builder overrides DNS.
+    #[must_use]
+    fn resolver(&self) -> Arc<dyn Resolve>;
+
+    /// Connects an unconnected, nonblocking socket to `address`.
+    /// The socket already has the client's TCP and local binding options applied.
+    fn connect_tcp(&self, socket: TcpStream, addr: SocketAddr) -> Connecting;
+
+    /// Connects a Unix domain socket.
+    /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error.
+    #[cfg(unix)]
+    fn connect_unix(&self, _path: Arc<std::path::Path>) -> Connecting {
+        const UNSUPPORTED_UNIX_SOCKETS: &str = "runtime does not support Unix domain sockets";
+        Box::pin(std::future::ready(Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            UNSUPPORTED_UNIX_SOCKETS,
+        ))))
+    }
+
+    /// Registers a bound, nonblocking UDP socket for HTTP/3 over QUIC.
+    /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error, which fails
+    /// HTTP/3 connections without affecting HTTP/1 or HTTP/2.
+    ///
+    /// Direct HTTP/3 connections with the client's bindings can reuse the socket.
+    /// Keep the receive task spawned with [`Executor::execute`] running while the socket
+    /// is in use.
+    #[cfg(feature = "http3")]
+    fn udp_socket(&self, _socket: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
+        const UNSUPPORTED_UDP_SOCKETS: &str = "runtime does not support UDP sockets";
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            UNSUPPORTED_UDP_SOCKETS,
+        ))
+    }
+}
+
+impl_into_shared!(
+    /// Accepts a runtime value or an existing shared runtime for a client.
+    pub trait IntoRuntime => Runtime
+);
 
 // ===== impl Connection =====
 

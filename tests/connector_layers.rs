@@ -68,7 +68,7 @@ async fn total_connect_timeout_does_not_reach_connector_layer() {
     use futures_util::future::BoxFuture;
     use wreq::{
         dns::{Name, Resolve, Resolving},
-        rt::{BoxSleep, Connecting, Runtime, Timer, tokio::TokioRuntime},
+        rt::{BoxSleep, Connecting, Executor, Runtime, Timer, tokio::TokioRuntime},
     };
 
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -98,11 +98,13 @@ async fn total_connect_timeout_does_not_reach_connector_layer() {
         }
     }
 
-    impl Runtime for CoarseTimerRuntime {
+    impl Executor for CoarseTimerRuntime {
         fn execute(&self, task: BoxFuture<'static, ()>) {
             TokioRuntime.execute(task);
         }
+    }
 
+    impl Runtime for CoarseTimerRuntime {
         fn resolver(&self) -> Arc<dyn Resolve> {
             Arc::new(PendingResolver)
         }

@@ -32,6 +32,7 @@ use {
 use super::{
     error::{Error, ErrorKind},
     pool,
+    proto::Handshakes,
     request::RequestVersion,
 };
 use crate::{
@@ -42,7 +43,7 @@ use crate::{
     ext::UriExt,
     protocol::Protocol,
     reuse,
-    rt::DynRuntime,
+    rt::{DynRuntime, Executor},
 };
 
 /// Client-wide settings assembled by [`ClientBuilder`](crate::ClientBuilder) to construct
@@ -67,8 +68,8 @@ pub(super) struct Config {
 pub(super) struct Client<S = Dispatch<conn::ConnectService>> {
     inner: S,
     protocol: Protocol,
-    connect_config: ConnectConfig,
     retry_unsent: bool,
+    config: ConnectConfig,
 }
 
 /// Requests a dedicated HTTP/1 connection that bypasses the pool.
@@ -129,10 +130,9 @@ pub(super) struct Request<B> {
 /// Multiplexed senders release on response headers; busy HTTP/1 senders are returned by a
 /// background readiness task. Returns [`DispatchError::Unsent`] when encoding never started.
 pub(super) struct Dispatch<C> {
-    pool: pool::Pool<reuse::Key, C>,
+    pool: pool::Pool<reuse::Key, C, DynRuntime>,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
-    runtime: DynRuntime,
 }
 
 /// Failure returned by a [`Dispatch`] pool checkout or send attempt.
@@ -168,7 +168,7 @@ struct Http1Upgrade {
 /// Separated into a struct because the `upgrade` field exists only when WebSocket and
 /// HTTP/2 or HTTP/3 are both enabled.
 struct CheckedOut {
-    pooled: pool::pooled::Pooled,
+    pooled: pool::Pooled,
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
     upgrade: Option<Http1Upgrade>,
 }
@@ -216,7 +216,7 @@ impl Client {
         Ok(Self {
             inner: dispatch,
             protocol: config.protocol,
-            connect_config: config.connect_config,
+            config: config.connect_config,
             retry_unsent: true,
         })
     }
@@ -298,9 +298,7 @@ impl<S> Client<S> {
         }
 
         // Attach client defaults to any request-level connection overrides.
-        let config = connect_config
-            .unwrap_or_default()
-            .with_base(&self.connect_config);
+        let config = connect_config.unwrap_or_default().with_base(&self.config);
         let connect = conn::Request::new(origin, protocol, config);
         let pool_key = cfg_select! {
             feature = "ws" => dedicated.is_none(),
@@ -447,12 +445,10 @@ where
                 connector,
                 runtime.clone(),
                 pool_config,
-                connect_config,
-                true,
+                Handshakes::new(runtime, connect_config, true),
             ),
             #[cfg(feature = "cookies")]
             cookie_store: RequestConfig::new(cookie_store),
-            runtime,
         }
     }
 
@@ -465,7 +461,7 @@ where
     ) -> Result<(Request<Body>, CheckedOut), DispatchError<Body>> {
         // RFC 8441 §3 and RFC 9220 §3: extended CONNECT only after the peer enabled it. A
         // miss keeps the dedicated HTTP/1.1 upgrade, so no HTTP/2 or HTTP/3 connection opens.
-        let reused: Option<pool::pooled::Pooled> = cfg_select! {
+        let reused: Option<pool::Pooled> = cfg_select! {
             all(feature = "ws", any(feature = "http2", feature = "http3")) => request
                 .extended_connect_key
                 .as_ref()
@@ -602,7 +598,7 @@ where
         if pooled.version() != Version::HTTP_11 || !pooled.is_pool_enabled() || pooled.is_ready() {
             drop(pooled);
         } else {
-            self.runtime.execute(Box::pin(async move {
+            self.pool.execute(Box::pin(async move {
                 let _ = pooled.ready().await;
             }));
         }
@@ -615,7 +611,6 @@ impl<C> Clone for Dispatch<C> {
     fn clone(&self) -> Self {
         Self {
             pool: self.pool.clone(),
-            runtime: self.runtime.clone(),
             #[cfg(feature = "cookies")]
             cookie_store: self.cookie_store.clone(),
         }
@@ -729,7 +724,7 @@ fn with_h2_alpn_context(error: Error, unnegotiated_h2: bool) -> Error {
 /// versions on HTTP/1, and fills in the default port for plain CONNECT targets.
 fn reconcile(
     request: &mut http::Request<Body>,
-    pooled: &pool::pooled::Pooled,
+    pooled: &pool::Pooled,
     negotiable: bool,
 ) -> Result<bool, Error> {
     let extended = cfg_select! {
@@ -772,7 +767,7 @@ fn reconcile(
 #[cfg(any(feature = "http2", feature = "http3"))]
 fn matched_extended_connect<B>(
     request: &http::Request<B>,
-    pooled: &pool::pooled::Pooled,
+    pooled: &pool::Pooled,
 ) -> Result<bool, Error> {
     let extensions = request.extensions();
     let http2 = cfg_select! {
@@ -800,7 +795,7 @@ fn matched_extended_connect<B>(
 /// Rejects extended CONNECT unless the peer enabled it (RFC 8441 §3, RFC 9220 §3).
 #[must_use]
 #[cfg(any(feature = "http2", feature = "http3"))]
-fn extended_connect_disabled(pooled: &pool::pooled::Pooled) -> Error {
+fn extended_connect_disabled(pooled: &pool::Pooled) -> Error {
     warn!("peer did not enable extended CONNECT");
     Error::from_kind(ErrorKind::UserUnsupportedVersion)
         .with_context("peer did not enable extended CONNECT")
@@ -909,7 +904,7 @@ mod tests {
         Client {
             inner: service,
             protocol,
-            connect_config: ConnectConfig::default(),
+            config: ConnectConfig::default(),
             retry_unsent,
         }
     }
@@ -1106,7 +1101,7 @@ mod tests {
             None,
         );
         let mut client = client(dispatch, Protocol::Http1, true);
-        client.connect_config = connect_config;
+        client.config = connect_config;
 
         for (uri, option) in [
             ("http://localhost/", None),

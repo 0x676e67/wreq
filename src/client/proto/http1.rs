@@ -30,7 +30,7 @@ use super::{Established, SendError, configure, is_expired};
 use crate::{
     client::{
         error::{Error, ErrorKind},
-        pool::cache::Started,
+        pool::Started,
     },
     conn::Connected,
     rt::{DynRuntime, Timer as _},
