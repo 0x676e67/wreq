@@ -147,16 +147,15 @@ impl Connection {
 
     /// Checks health and idle expiry while acquiring the next checkout lease.
     ///
-    /// Calls `defer_expiry` only when the connection is idle and past `timeout`, allowing
+    /// Calls `defer_expiry` only when the connection is idle and past `expiry`, allowing
     /// callers to avoid reading pending-checkout counters on hot hits.
     #[must_use]
     pub(in crate::client) fn try_checkout(
         &self,
-        now: Instant,
-        timeout: Option<Duration>,
+        expiry: Option<(Instant, Duration)>,
         defer_expiry: impl FnOnce() -> bool,
     ) -> bool {
-        self.is_open() && self.state.leases.acquire(now, timeout, defer_expiry)
+        self.is_open() && self.state.leases.acquire(expiry, defer_expiry)
     }
 
     /// Marks the shared sender checked out until response headers are returned.
@@ -177,8 +176,8 @@ impl Connection {
     ///
     /// Idle expiry starts when the final checkout ends.
     #[must_use]
-    pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
-        self.is_open() && self.state.leases.reusable(now, timeout)
+    pub fn is_reusable(&self, expiry: Option<(Instant, Duration)>) -> bool {
+        self.is_open() && self.state.leases.reusable(expiry)
     }
 
     /// Polls the multiplexed sender until it can accept a request, poisoning it on error.
@@ -266,34 +265,33 @@ impl Leases {
             .min(Self::MAX_IDLE)
     }
 
-    /// Returns whether an encoded `idle` timestamp has exceeded `timeout` at `now`.
+    /// Returns whether an encoded `idle` timestamp has exceeded `expiry`.
     #[inline]
     #[must_use]
-    fn expired(&self, idle: u64, now: Instant, timeout: Option<Duration>) -> bool {
-        timeout.is_some_and(|timeout| {
+    fn expired(&self, idle: u64, expiry: Option<(Instant, Duration)>) -> bool {
+        expiry.is_some_and(|(now, timeout)| {
             now.saturating_duration_since(self.epoch)
                 .checked_sub(timeout)
                 .is_some_and(|cutoff| cutoff.as_nanos() > u128::from(idle))
         })
     }
 
-    /// Reports whether the connection is active or has not exceeded `timeout`.
+    /// Reports whether the connection is active or has not exceeded `expiry`.
     #[must_use]
-    fn reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
+    fn reusable(&self, expiry: Option<(Instant, Duration)>) -> bool {
         let word = self.word.load(Ordering::Acquire);
-        word >= Self::ACTIVE || !self.expired(word, now, timeout)
+        word >= Self::ACTIVE || !self.expired(word, expiry)
     }
 
     /// Checks idle expiry (calling `defer_expiry` only if expired) and registers one lease.
     #[must_use]
     fn acquire(
         &self,
-        now: Instant,
-        timeout: Option<Duration>,
+        expiry: Option<(Instant, Duration)>,
         defer_expiry: impl FnOnce() -> bool,
     ) -> bool {
         let word = self.word.load(Ordering::Acquire);
-        if word < Self::ACTIVE && self.expired(word, now, timeout) && !defer_expiry() {
+        if word < Self::ACTIVE && self.expired(word, expiry) && !defer_expiry() {
             return false;
         }
         self.register();
@@ -357,25 +355,26 @@ mod tests {
     fn expiry_lazy_release_and_clock_clamping() {
         let epoch = Instant::now() + Duration::from_secs(1);
         let ns = Duration::from_nanos;
-        let ttl = Some(ns(20));
+        let ttl = ns(20);
+        let at = |now| Some((now, ttl));
 
         let leases = Leases::new(epoch);
         let deferred_calls = AtomicUsize::new(0);
-        assert!(!leases.acquire(epoch + ns(21), ttl, || {
+        assert!(!leases.acquire(at(epoch + ns(21)), || {
             deferred_calls.fetch_add(1, Ordering::Relaxed);
             false
         }));
         assert_eq!(deferred_calls.load(Ordering::Relaxed), 1);
 
         // An unexpired idle connection must not evaluate `defer_expiry`.
-        assert!(leases.acquire(epoch + ns(20), ttl, || {
+        assert!(leases.acquire(at(epoch + ns(20)), || {
             deferred_calls.fetch_add(1, Ordering::Relaxed);
             false
         }));
         assert_eq!(deferred_calls.load(Ordering::Relaxed), 1);
 
         // Active checkouts skip expiry checks; non-final releases skip clock reads.
-        assert!(leases.acquire(epoch + ns(32), ttl, || {
+        assert!(leases.acquire(at(epoch + ns(32)), || {
             deferred_calls.fetch_add(1, Ordering::Relaxed);
             false
         }));
@@ -394,24 +393,24 @@ mod tests {
         }));
         assert_eq!(clock_reads.load(Ordering::Relaxed), 1);
 
-        assert!(leases.reusable(release_at + ns(20), ttl));
-        assert!(!leases.reusable(release_at + ns(21), ttl));
-        assert!(!leases.acquire(release_at + ns(21), ttl, || false));
+        assert!(leases.reusable(at(release_at + ns(20))));
+        assert!(!leases.reusable(at(release_at + ns(21))));
+        assert!(!leases.acquire(at(release_at + ns(21)), || false));
         // `defer_expiry` rescues an expired idle connection.
-        assert!(leases.acquire(release_at + ns(21), ttl, || true));
+        assert!(leases.acquire(at(release_at + ns(21)), || true));
         // A backwards clock clamps cleanly to `epoch` without setting `ACTIVE`.
         assert!(!leases.release(|| epoch - Duration::from_secs(1)));
         assert_eq!(leases.word.load(Ordering::Relaxed), 0);
-        assert!(leases.reusable(epoch + ns(20), ttl));
-        assert!(!leases.reusable(epoch + ns(21), ttl));
+        assert!(leases.reusable(at(epoch + ns(20))));
+        assert!(!leases.reusable(at(epoch + ns(21))));
 
         // A concurrent final release after an accepted snapshot still registers cleanly.
-        assert!(leases.acquire(epoch + ns(20), ttl, || false));
+        assert!(leases.acquire(at(epoch + ns(20)), || false));
         assert!(!leases.release(|| release_at));
         let after_expiry = release_at + ns(42);
-        assert!(!leases.reusable(after_expiry, ttl));
+        assert!(!leases.reusable(at(after_expiry)));
         leases.register();
-        assert!(leases.reusable(after_expiry, ttl));
+        assert!(leases.reusable(at(after_expiry)));
         assert!(!leases.release(|| after_expiry));
     }
 
@@ -421,7 +420,7 @@ mod tests {
         let now = epoch + Duration::from_nanos(1);
         let leases = Leases::new(epoch);
         for _ in 0..128 {
-            assert!(leases.acquire(epoch, None, || false));
+            assert!(leases.acquire(None, || false));
             let gate = Barrier::new(2);
             let (deferred, armed) = thread::scope(|scope| {
                 let release = scope.spawn(|| {

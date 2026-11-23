@@ -178,8 +178,10 @@ impl<B> Connection<B> {
 
     /// Returns whether the sender is healthy and within its idle timeout.
     #[must_use]
-    pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
-        self.is_open() && timeout.is_none_or(|t| now.saturating_duration_since(self.idle_at) <= t)
+    pub fn is_reusable(&self, expiry: Option<(Instant, Duration)>) -> bool {
+        self.is_open()
+            && expiry
+                .is_none_or(|(now, timeout)| now.saturating_duration_since(self.idle_at) <= timeout)
     }
 
     /// Polls the HTTP/1 sender until it can accept another request.

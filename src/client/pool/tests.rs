@@ -416,13 +416,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         // Response::forbid_recycle poisons after dispatch releases its checkout.
         // Another unpolled checkout must not suppress this health check.
         connected.poison();
-        let discarded = pool
-            .inner
-            .entries
-            .lock()
-            .get_mut(&key)
-            .unwrap()
-            .prune(pool.inner.now(), None);
+        let discarded = pool.inner.entries.lock().get_mut(&key).unwrap().prune(None);
         assert!(
             discarded.is_some(),
             "{protocol:?}: poisoned sender was retained"
@@ -720,7 +714,7 @@ async fn checkouts_remove_empty_map_entries() {
         let mut entries = pool.inner.entries.lock();
         let mut discarded = Vec::new();
         let removed = entries.retain(|_, entry| {
-            discarded.extend(entry.prune(pool.inner.now(), Some(Duration::ZERO)));
+            discarded.extend(entry.prune(Some((pool.inner.now(), Duration::ZERO))));
             !entry.is_empty()
         });
         (removed, discarded)
@@ -791,9 +785,74 @@ async fn pool_max_size_evicts_only_idle_groups() {
 
     drop(first);
 
-    let mut entries = pool.inner.entries.lock();
-    assert!(entries.get_mut(&first_key).is_some());
-    assert!(entries.get_mut(&second_key).is_none());
+    {
+        let mut entries = pool.inner.entries.lock();
+        assert!(entries.get_mut(&first_key).is_some());
+        assert!(entries.get_mut(&second_key).is_none());
+    }
+
+    // Bounded hits without idle_timeout must resolve on the first poll without reading the clock.
+    #[derive(Clone, Default)]
+    struct CountingRuntime {
+        now_calls: Arc<AtomicUsize>,
+    }
+
+    impl Executor for CountingRuntime {
+        fn execute(&self, future: BoxFuture<'static, ()>) {
+            TokioRuntime.execute(future);
+        }
+    }
+
+    impl Timer for CountingRuntime {
+        fn now(&self) -> Instant {
+            self.now_calls.fetch_add(1, Ordering::SeqCst);
+            TokioRuntime.now()
+        }
+
+        fn sleep(&self, duration: Duration) -> crate::rt::BoxSleep {
+            TokioRuntime.sleep(duration)
+        }
+
+        fn sleep_until(&self, deadline: Instant) -> crate::rt::BoxSleep {
+            TokioRuntime.sleep_until(deadline)
+        }
+    }
+
+    let runtime = CountingRuntime::default();
+    let config = ConnectConfig::default();
+    let pool = Pool::new(
+        TestConnector::KeepsAlive,
+        runtime.clone(),
+        Config {
+            idle_timeout: None,
+            max_size: NonZeroUsize::new(2),
+            ..Config::default()
+        },
+        proto::Builder::new(DynRuntime::new(TokioRuntime), &config, true),
+    );
+    let [a, b, c] = ["a", "b", "c"].map(|name| grouped_request(Group::new(name), Protocol::Http1));
+    let [key_a, key_b, key_c] = [&a, &b, &c].map(|request| request.reuse_key(Protocol::Http1));
+    drop(pool.checkout(Some(&key_b), &b).await.unwrap());
+
+    let older = pool.checkout(Some(&key_a), &a).await.unwrap();
+    let newer = pool.checkout(Some(&key_a), &a).await.unwrap();
+    let connected = older.connected().clone();
+    drop(older);
+    drop(newer);
+    connected.poison();
+
+    let before = runtime.now_calls.load(Ordering::SeqCst);
+    let mut hit = tokio_test::task::spawn(Box::pin(pool.checkout(Some(&key_a), &a)));
+    let Poll::Ready(Ok(reused)) = hit.poll() else {
+        panic!("bounded warm hit must resolve synchronously on the first poll");
+    };
+    assert_eq!(runtime.now_calls.load(Ordering::SeqCst), before);
+    assert!(reused.is_reused());
+
+    // A's dead sender below the healthy one must not count against capacity.
+    drop(pool.checkout(Some(&key_c), &c).await.unwrap());
+    assert!(pool.checkout(Some(&key_b), &b).await.unwrap().is_reused());
+    drop(reused);
 }
 
 #[tokio::test]

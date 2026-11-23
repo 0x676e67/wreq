@@ -27,7 +27,7 @@ pub(super) trait Entry<T>: Send + Sync {
 
     /// Takes a reusable sender without parking a waiter or calling the connector.
     #[must_use]
-    fn checkout_ready(&self, now: Instant, timeout: Option<Duration>) -> Option<Self::Sender>;
+    fn checkout_ready(&self, expiry: Option<(Instant, Duration)>) -> Option<Self::Sender>;
 
     /// Checks out an established sender that supports extended CONNECT.
     ///
@@ -36,8 +36,7 @@ pub(super) trait Entry<T>: Send + Sync {
     #[must_use]
     fn checkout_extended_connect(
         &self,
-        _now: Instant,
-        _timeout: Option<Duration>,
+        _expiry: Option<(Instant, Duration)>,
     ) -> Option<Self::Sender> {
         None
     }
@@ -52,7 +51,7 @@ pub(super) trait Entry<T>: Send + Sync {
     ///
     /// Pending or active multiplexed checkouts defer idle expiry.
     #[must_use]
-    fn prune(&self, now: Instant, timeout: Option<Duration>) -> Option<Self::Discarded>;
+    fn prune(&self, expiry: Option<(Instant, Duration)>) -> Option<Self::Discarded>;
 
     /// Returns whether the entry holds connection state for reuse.
     #[must_use]
@@ -127,11 +126,11 @@ pub(super) struct EntryState {
     /// Number of checkout futures keeping the entry active.
     pub(super) uses: AtomicUsize,
     /// Successful returns update the LRU when the pool caps retained groups.
-    pub(super) has_group_limit: bool,
+    pub(super) has_max_size: bool,
     /// Expiration watcher status, present only when proactive expiration is enabled.
     pub(super) idle_watch_running: Option<Arc<AtomicBool>>,
-    /// Performs the requested maintenance for this exact entry.
-    pub(super) maintain: EntryMaintenance,
+    /// Performs the requested maintenance for this exact entry; `None` for unpooled entries.
+    pub(super) maintain: Option<EntryMaintenance>,
 }
 
 // ===== impl EntryUse =====
@@ -177,8 +176,11 @@ impl Drop for EntryUse {
             .update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 count.saturating_sub(1)
             });
-        if self.armed && previous == 1 {
-            (state.maintain)(state, Maintenance::Reconcile);
+        if self.armed
+            && previous == 1
+            && let Some(maintain) = &state.maintain
+        {
+            maintain(state, Maintenance::Reconcile);
         }
     }
 }
@@ -205,22 +207,25 @@ impl EntryCleanupGuard {
     /// nor expiration-watcher updates.
     pub(super) fn maintain(&self, known_live: bool) {
         if let Some(state) = &self.state
+            && let Some(maintain) = &state.maintain
             && (!known_live
-                || state.has_group_limit
+                || state.has_max_size
                 || state
                     .idle_watch_running
                     .as_ref()
                     .is_some_and(|flag| !flag.load(Ordering::Acquire)))
         {
-            (state.maintain)(state, Maintenance::Touch);
+            maintain(state, Maintenance::Touch);
         }
     }
 
     /// Clears the completed generation without looking up the entry in the map.
     #[cfg(any(feature = "http2", feature = "http3"))]
     pub(super) fn discard(&self, generation: u64) {
-        if let Some(state) = &self.state {
-            (state.maintain)(state, Maintenance::Discard(generation));
+        if let Some(state) = &self.state
+            && let Some(maintain) = &state.maintain
+        {
+            maintain(state, Maintenance::Discard(generation));
         }
     }
 
@@ -234,8 +239,9 @@ impl Drop for EntryCleanupGuard {
     fn drop(&mut self) {
         if self.armed
             && let Some(state) = &self.state
+            && let Some(maintain) = &state.maintain
         {
-            (state.maintain)(state, Maintenance::Reconcile);
+            maintain(state, Maintenance::Reconcile);
         }
     }
 }

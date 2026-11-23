@@ -215,8 +215,6 @@ where
 
     #[inline(always)]
     fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // Checkouts must register in `State::Making` before waiting on connector admission so
-        // same-group peers join this batch instead of queueing behind unrelated dials.
         Poll::Ready(Ok(()))
     }
 

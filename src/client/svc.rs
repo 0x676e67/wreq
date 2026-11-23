@@ -24,7 +24,7 @@ use tower::{BoxError, Service};
 use {
     crate::cookie::{CookieStore, Cookies},
     http::header::COOKIE,
-    std::sync::Arc,
+    std::{borrow::Cow, sync::Arc},
 };
 
 use super::{
@@ -220,21 +220,22 @@ impl Client {
         // Cookies keep the request URI; only the wire target of a CONNECT changes.
         let is_https = request.inner.uri().is_https();
         #[cfg(feature = "cookies")]
-        let uri = request.inner.uri().clone();
+        let cookie_store = RequestConfig::<Arc<dyn CookieStore>>::get(request.inner.extensions())
+            .cloned()
+            .map(Cow::Owned)
+            .or_else(|| cookie_store.map(Cow::Borrowed));
+        #[cfg(feature = "cookies")]
+        let cookie_uri = cookie_store.is_some().then(|| request.inner.uri().clone());
+
         let _extended =
             reconcile(&mut request.inner, &pooled, request.negotiable).map_err(Error::Terminal)?;
 
         #[cfg(feature = "cookies")]
-        let cookie_store = RequestConfig::<Arc<dyn CookieStore>>::get(request.inner.extensions())
-            .or(cookie_store)
-            .cloned();
-
-        #[cfg(feature = "cookies")]
-        if let Some(ref cookie_store) = cookie_store {
+        if let (Some(cookie_store), Some(uri)) = (cookie_store.as_deref(), cookie_uri.as_ref()) {
             apply_request_cookies(
                 &mut request.inner,
                 cookie_store.as_ref(),
-                &uri,
+                uri,
                 pooled.version(),
             );
         }
@@ -287,8 +288,8 @@ impl Client {
         };
 
         #[cfg(feature = "cookies")]
-        if let Some(cookie_store) = cookie_store {
-            store_response_cookies(&response, cookie_store.as_ref(), &uri);
+        if let (Some(cookie_store), Some(uri)) = (cookie_store.as_deref(), cookie_uri.as_ref()) {
+            store_response_cookies(&response, cookie_store.as_ref(), uri);
         }
 
         pooled.connected().set_extras(response.extensions_mut());

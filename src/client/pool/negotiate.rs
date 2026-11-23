@@ -300,14 +300,10 @@ where
 
     #[inline(always)]
     fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // Subscribe to upgrade notifications inside `call` before polling fallback readiness so
-        // an H2 upgrade still wakes checkouts waiting on connector admission.
         Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
-        // Subscribe before checking upgraded state so any upgrade published after
-        // `select_upgrade` wakes this checkout even while `fallback` waits on readiness or delay.
         let notified = self.signal.notified();
         let state = match select_upgrade(&self.upgrade) {
             Some(future) => State::Upgrade { future },
@@ -568,7 +564,6 @@ where
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
-        // Subscribe before checking the queue so a later publication also reaches the future.
         let notified = self.signal.notified();
         let upgrade_pending = self
             .state

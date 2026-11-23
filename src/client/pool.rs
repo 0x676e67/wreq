@@ -40,7 +40,7 @@ use futures_util::future::BoxFuture;
 use futures_util::future::Either;
 use http::{Response, Version};
 use netty::body::Incoming;
-use tower::{BoxError, Layer, Service, ServiceBuilder, ServiceExt, util::Oneshot};
+use tower::{BoxError, Layer, Service, ServiceBuilder, ServiceExt};
 #[cfg(feature = "http2")]
 use {
     self::negotiate::{Negotiate, Negotiated},
@@ -160,7 +160,7 @@ struct PoolInner<K, C, R> {
     /// Idle timeout applied during checkout pruning and periodic expiration sweeps.
     idle_timeout: Option<Duration>,
     /// Whether `entries` enforces a retained-group LRU cap (reused hits must refresh LRU).
-    has_group_limit: bool,
+    has_max_size: bool,
     /// Single background watcher sweeping expired entries across the whole pool.
     expire: Expire<Self>,
     /// Factory composing the protocol service stack when a new map entry is created.
@@ -328,7 +328,7 @@ where
             PoolInner {
                 enabled: config.is_enabled(),
                 idle_timeout: config.idle_timeout,
-                has_group_limit: config.max_size.is_some(),
+                has_max_size: config.max_size.is_some(),
                 expire: Expire::new(pool.clone()),
                 entries: Mutex::new(Map::new(config.max_size)),
                 targeter,
@@ -356,14 +356,14 @@ where
 
         // The guard needs a lexical scope outside await for this future to remain Send.
         let future = {
-            let now = self.inner.now();
+            let expiry = self.inner.expiry();
             let mut entries = self.inner.entries.lock();
-            // Bounded pools keep lookup and LRU reconciliation together.
-            if !self.inner.has_group_limit
+            // Bounded checkout and pruning must stay serialized with LRU eviction.
+            if !self.inner.has_max_size
                 && let Some(entry) = entries.get_mut(key).cloned()
             {
                 drop(entries);
-                if let Some(pooled) = entry.checkout_ready(now, self.inner.idle_timeout) {
+                if let Some(pooled) = entry.checkout_ready(expiry) {
                     if !self.inner.expire.is_running() {
                         self.inner.schedule_expiration();
                     }
@@ -376,7 +376,7 @@ where
             // would add O(group count) work and nested locking to every pool hit.
             let entry =
                 entries.get_or_insert_with(key, || self.inner.new_entry(Some(key), request));
-            let discarded = entry.prune(now, self.inner.idle_timeout);
+            let discarded = entry.prune(expiry);
             let (future, redundant) = entry.checkout(request, true);
             drop(entries);
             drop(discarded);
@@ -396,12 +396,10 @@ where
         if !self.inner.enabled {
             return None;
         }
-        let now = self.inner.now();
+        let expiry = self.inner.expiry();
         let pooled = {
             let mut entries = self.inner.entries.lock();
-            entries
-                .get_mut(key)?
-                .checkout_extended_connect(now, self.inner.idle_timeout)?
+            entries.get_mut(key)?.checkout_extended_connect(expiry)?
         };
         // Retained-group maintenance may lock the map again.
         pooled.cleanup.maintain(true);
@@ -623,40 +621,37 @@ where
         let shared = Arc::new(Mutex::new(EntryState::default()));
         let state = Arc::new(entry::EntryState {
             uses: AtomicUsize::new(0),
-            has_group_limit: self.has_group_limit,
+            has_max_size: self.has_max_size,
             idle_watch_running: key
                 .and(self.expiration_interval(true))
                 .map(|_| self.expire.running_flag()),
-            maintain: match key {
-                Some(key) => {
-                    let pool = Arc::downgrade(self);
-                    let key = key.clone();
-                    // Keep a weak handle to the group mutex for direct mux generation
-                    // discard without locking the outer map; HTTP/1 never uses it.
+            maintain: key.map(|key| {
+                let pool = Arc::downgrade(self);
+                let key = key.clone();
+                // Keep a weak handle to the group mutex for direct mux generation
+                // discard without locking the outer map; HTTP/1 never uses it.
+                #[cfg(any(feature = "http2", feature = "http3"))]
+                let group = if request.protocol() == Protocol::Http1 {
+                    std::sync::Weak::new()
+                } else {
+                    Arc::downgrade(&shared)
+                };
+                Box::new(move |state: &Arc<entry::EntryState>, action| match action {
                     #[cfg(any(feature = "http2", feature = "http3"))]
-                    let group = if request.protocol() == Protocol::Http1 {
-                        std::sync::Weak::new()
-                    } else {
-                        Arc::downgrade(&shared)
-                    };
-                    Box::new(move |state, action| match action {
-                        #[cfg(any(feature = "http2", feature = "http3"))]
-                        entry::Maintenance::Discard(generation) => {
-                            singleton::discard_generation(&group, generation);
+                    entry::Maintenance::Discard(generation) => {
+                        singleton::discard_generation(&group, generation);
+                    }
+                    entry::Maintenance::Touch | entry::Maintenance::Reconcile => {
+                        if let Some(pool) = pool.upgrade() {
+                            pool.update_entry(
+                                &key,
+                                state,
+                                matches!(action, entry::Maintenance::Touch),
+                            );
                         }
-                        entry::Maintenance::Touch | entry::Maintenance::Reconcile => {
-                            if let Some(pool) = pool.upgrade() {
-                                pool.update_entry(
-                                    &key,
-                                    state,
-                                    matches!(action, entry::Maintenance::Touch),
-                                );
-                            }
-                        }
-                    })
-                }
-                None => Box::new(|_, _| {}),
-            },
+                    }
+                }) as _
+            }),
         });
         self.targeter.service(request, state, shared)
     }
@@ -665,6 +660,12 @@ where
     #[must_use]
     fn now(&self) -> Instant {
         self.targeter.runtime.now()
+    }
+
+    /// Pairs the runtime clock with `idle_timeout`, skipping clock reads when disabled.
+    #[must_use]
+    fn expiry(&self) -> Option<(Instant, Duration)> {
+        self.idle_timeout.map(|timeout| (self.now(), timeout))
     }
 
     /// Returns the proactive idle-check interval when retained state exists.
@@ -735,10 +736,10 @@ where
                 move |entries, (removed, evicted_entry, discarded, evicted_state)| {
                     // Busy senders stay pooled and resume tracking when idle.
                     if !pruned.is_empty() {
-                        let now = self.now();
+                        let expiry = self.expiry();
                         for key in &pruned {
                             removed.extend(entries.remove_if(key, |entry| {
-                                discarded.extend(entry.prune(now, self.idle_timeout));
+                                discarded.extend(entry.prune(expiry));
                                 entry.is_empty()
                             }));
                         }
@@ -765,13 +766,14 @@ where
     R: Executor + Timer + Clone + 'static,
 {
     fn retain(&self, now: Instant) -> Option<Duration> {
+        let expiry = self.idle_timeout.map(|timeout| (now, timeout));
         let has_retained = Self::with_entries(
             self.entries.lock(),
             (Vec::new(), Vec::new()),
             |entries, (removed, discarded)| {
                 let mut has_retained = false;
                 *removed = entries.retain(|_, entry| {
-                    discarded.extend(entry.prune(now, self.idle_timeout));
+                    discarded.extend(entry.prune(expiry));
                     let keep = !entry.is_empty();
                     has_retained |= keep && entry.has_retained();
                     keep
@@ -828,7 +830,9 @@ impl<C, R: Executor + Timer + Clone + 'static> PoolTargeter<C, R> {
                     .runtime(self.runtime.clone())
                     .reuse_delay(self.reuse_delay)
                     .on_background_complete(move || {
-                        (state.maintain)(&state, entry::Maintenance::Touch);
+                        if let Some(maintain) = &state.maintain {
+                            maintain(&state, entry::Maintenance::Touch);
+                        }
                     })
                     .max_idle(self.max_idle_per_host)
                     .build_in(service, shared.clone())
@@ -949,30 +953,27 @@ impl AsMut<singleton::State<mux::Connection>> for EntryState {
 impl EntryState {
     /// Prunes both sides of an Auto entry under the same group lock.
     #[must_use]
-    fn prune(
-        &mut self,
-        now: Instant,
-        timeout: Option<Duration>,
-        in_use: bool,
-    ) -> Option<Discarded> {
+    fn prune(&mut self, expiry: Option<(Instant, Duration)>, in_use: bool) -> Option<Discarded> {
         let upgrade: &mut singleton::State<_> = self.mux.as_mut();
         // Queued transports are redundant once the upgrade is established.
         let pending = if upgrade.service().is_some() {
             self.mux.drain_pending()
         } else if !in_use {
             self.mux.retain_pending(|connection| {
-                timeout.is_none_or(|t| now.saturating_duration_since(connection.idle_at()) <= t)
+                expiry.is_none_or(|(now, timeout)| {
+                    now.saturating_duration_since(connection.idle_at()) <= timeout
+                })
             })
         } else {
             Default::default()
         };
         let fallback = self
             .cache
-            .retain_idle(|connection| connection.is_reusable(now, timeout));
+            .retain_idle(|connection| connection.is_reusable(expiry));
         // In-flight checkouts defer expiry, not health checks.
-        let timeout = timeout.filter(|_| !in_use);
+        let expiry = expiry.filter(|_| !in_use);
         let upgrade: &mut singleton::State<_> = self.mux.as_mut();
-        let upgrade = upgrade.retain(|connection| connection.is_reusable(now, timeout));
+        let upgrade = upgrade.retain(|connection| connection.is_reusable(expiry));
         Discarded::negotiated(pending, fallback, upgrade)
     }
 
@@ -1012,11 +1013,11 @@ where
     type Checkout = CheckoutFuture;
     type Discarded = Discarded;
 
-    fn checkout_ready(&self, now: Instant, timeout: Option<Duration>) -> Option<Pooled> {
+    fn checkout_ready(&self, expiry: Option<(Instant, Duration)>) -> Option<Pooled> {
         let service = self
             .service
             .checkout_idle(&mut self.service.shared().lock().cache, |connection| {
-                connection.is_reusable(now, timeout)
+                connection.is_reusable(expiry)
             })?;
         Some(Pooled::reuse(
             PooledInner::Http1(service),
@@ -1026,11 +1027,12 @@ where
 
     fn checkout(&self, target: &T, pool_enabled: bool) -> (CheckoutFuture, Option<Discarded>) {
         let target = target.clone();
-        let service = self.service.clone();
+        let mut service = self.service.clone();
         let usage = EntryUse::new(self.state.clone());
         (
             CheckoutFuture::Service(Box::pin(async move {
-                Oneshot::new(service, target)
+                service
+                    .call(target)
                     .await
                     .map(|service| Pooled::new_http1(service, pool_enabled, usage))
             })),
@@ -1038,10 +1040,10 @@ where
         )
     }
 
-    fn prune(&self, now: Instant, timeout: Option<Duration>) -> Option<Discarded> {
+    fn prune(&self, expiry: Option<(Instant, Duration)>) -> Option<Discarded> {
         Discarded::http1(
             self.service
-                .retain_idle(|connection| connection.is_reusable(now, timeout)),
+                .retain_idle(|connection| connection.is_reusable(expiry)),
         )
     }
 
@@ -1076,13 +1078,11 @@ where
     type Checkout = CheckoutFuture;
     type Discarded = Discarded;
 
-    fn checkout_ready(&self, now: Instant, timeout: Option<Duration>) -> Option<Pooled> {
+    fn checkout_ready(&self, expiry: Option<(Instant, Duration)>) -> Option<Pooled> {
         self.service
             .with_state(|state| {
                 state.checkout_ready(|connection| {
-                    connection.try_checkout(now, timeout, || {
-                        self.state.uses.load(Ordering::Acquire) != 0
-                    })
+                    connection.try_checkout(expiry, || self.state.uses.load(Ordering::Acquire) != 0)
                 })
             })
             .into_made()
@@ -1090,8 +1090,8 @@ where
     }
 
     #[cfg(feature = "ws")]
-    fn checkout_extended_connect(&self, now: Instant, timeout: Option<Duration>) -> Option<Pooled> {
-        checkout_extended_connect(&self.service, &self.state, now, timeout)
+    fn checkout_extended_connect(&self, expiry: Option<(Instant, Duration)>) -> Option<Pooled> {
+        checkout_extended_connect(&self.service, &self.state, expiry)
     }
 
     fn checkout(&self, target: &T, pool_enabled: bool) -> (CheckoutFuture, Option<Discarded>) {
@@ -1107,21 +1107,21 @@ where
             );
         }
         let target = target.clone();
-        let service = self.service.clone();
+        let mut service = self.service.clone();
         (
             CheckoutFuture::Service(Box::pin(async move {
-                let service = Oneshot::new(service, target).await?;
+                let service = service.call(target).await?;
                 Ok(Pooled::new_mux(service, pool_enabled, usage))
             })),
             None,
         )
     }
 
-    fn prune(&self, now: Instant, timeout: Option<Duration>) -> Option<Discarded> {
+    fn prune(&self, expiry: Option<(Instant, Duration)>) -> Option<Discarded> {
         // A checkout waiting on the singleton may not hold a sender yet.
-        let timeout = timeout.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
+        let expiry = expiry.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
         self.service
-            .with_state(|state| state.retain(|connection| connection.is_reusable(now, timeout)))
+            .with_state(|state| state.retain(|connection| connection.is_reusable(expiry)))
             .map(|sender| Discarded::Mux { _sender: sender })
     }
 
@@ -1180,18 +1180,17 @@ where
     type Checkout = CheckoutFuture;
     type Discarded = Discarded;
 
-    fn checkout_ready(&self, now: Instant, timeout: Option<Duration>) -> Option<Pooled> {
+    fn checkout_ready(&self, expiry: Option<(Instant, Duration)>) -> Option<Pooled> {
         self.service.checkout_ready(
             |connection, state| {
                 // The regular path prunes any remaining HTTP/1 idle state.
                 !state.cache.has_idle()
-                    && connection.try_checkout(now, timeout, || {
-                        self.state.uses.load(Ordering::Acquire) != 0
-                    })
+                    && connection
+                        .try_checkout(expiry, || self.state.uses.load(Ordering::Acquire) != 0)
             },
             |fallback, state| {
                 fallback.checkout_idle(&mut state.cache, |connection| {
-                    connection.is_reusable(now, timeout)
+                    connection.is_reusable(expiry)
                 })
             },
             |service| Pooled::reuse(PooledInner::Mux(service), self.state.clone()),
@@ -1212,34 +1211,26 @@ where
             );
         }
         let target = target.clone();
-        let service = self.service.clone();
+        let mut service = self.service.clone();
         (
             CheckoutFuture::Service(Box::pin(async move {
-                Oneshot::new(service, target)
-                    .await
-                    .map(|service| match service {
-                        Negotiated::Left(service) => {
-                            Pooled::new_http1(service, pool_enabled, usage)
-                        }
-                        Negotiated::Right(service) => Pooled::new_mux(service, pool_enabled, usage),
-                    })
+                service.call(target).await.map(|service| match service {
+                    Negotiated::Left(service) => Pooled::new_http1(service, pool_enabled, usage),
+                    Negotiated::Right(service) => Pooled::new_mux(service, pool_enabled, usage),
+                })
             })),
             None,
         )
     }
 
     #[cfg(feature = "ws")]
-    fn checkout_extended_connect(&self, now: Instant, timeout: Option<Duration>) -> Option<Pooled> {
-        checkout_extended_connect(self.service.upgrade(), &self.state, now, timeout)
+    fn checkout_extended_connect(&self, expiry: Option<(Instant, Duration)>) -> Option<Pooled> {
+        checkout_extended_connect(self.service.upgrade(), &self.state, expiry)
     }
 
-    fn prune(&self, now: Instant, timeout: Option<Duration>) -> Option<Discarded> {
+    fn prune(&self, expiry: Option<(Instant, Duration)>) -> Option<Discarded> {
         let in_use = self.state.uses.load(Ordering::Acquire) != 0;
-        self.service
-            .upgrade()
-            .shared()
-            .lock()
-            .prune(now, timeout, in_use)
+        self.service.upgrade().shared().lock().prune(expiry, in_use)
     }
 
     fn has_retained(&self) -> bool {
@@ -1269,8 +1260,7 @@ where
 fn checkout_extended_connect<M, T>(
     singleton: &Singleton<M, T, EntryState>,
     state: &Arc<entry::EntryState>,
-    now: Instant,
-    timeout: Option<Duration>,
+    expiry: Option<(Instant, Duration)>,
 ) -> Option<Pooled>
 where
     M: Service<T, Response = mux::Connection>,
@@ -1278,8 +1268,7 @@ where
     singleton
         .with_state(|state| {
             state.checkout_ready(|sender| {
-                sender.extended_connect() == Some(true)
-                    && sender.try_checkout(now, timeout, || false)
+                sender.extended_connect() == Some(true) && sender.try_checkout(expiry, || false)
             })
         })
         .into_made()
