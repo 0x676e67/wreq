@@ -4,7 +4,6 @@ mod svc;
 pub(super) mod body;
 pub(super) mod emulate;
 pub(super) mod error;
-pub(super) mod future;
 pub(super) mod layer;
 pub(super) mod pool;
 pub(super) mod request;
@@ -22,16 +21,18 @@ use std::{
     convert::TryInto,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroUsize,
+    pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
     time::Duration,
 };
 
 use http::{
-    Request as HttpRequest,
+    Request as HttpRequest, Uri,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
 use netty::body::Incoming;
+use pin_project_lite::pin_project;
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
@@ -50,7 +51,6 @@ use self::ws::WebSocketRequestBuilder;
 use self::{
     body::Body,
     emulate::IntoEmulation,
-    future::Pending,
     layer::{
         config::{ConfigService, ConfigServiceLayer},
         redirect::{FollowRedirect, FollowRedirectLayer},
@@ -92,32 +92,28 @@ cfg_select! {
         feature = "brotli",
         feature = "deflate"
     ) => {
-        type MaybeDecompression<T> = self::layer::decoder::Decompression<T>;
-        type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>;
+        type Decompression<T> = self::layer::decoder::Decompression<T>;
+        type DecompressionBody<T> = tower_http::decompression::DecompressionBody<T>;
     }
     _ => {
-        type MaybeDecompression<T> = T;
-        type MaybeDecompressionBody<T> = T;
+        type Decompression<T> = T;
+        type DecompressionBody<T> = T;
     }
 }
 
 type ClientService =
-    Timeout<ConfigService<MaybeDecompression<FollowRedirect<Retry<RetryPolicy, svc::Client>>>>>;
+    Timeout<ConfigService<Decompression<FollowRedirect<Retry<RetryPolicy, svc::Client>>>>>;
 
 type BoxedClientService = BoxCloneSyncService<
     http::Request<Body>,
-    http::Response<TimeoutBody<MaybeDecompressionBody<Incoming>>>,
+    http::Response<TimeoutBody<DecompressionBody<Incoming>>>,
     BoxError,
 >;
 
 type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
-    BoxCloneSyncService<
-        http::Request<Body>,
-        http::Response<MaybeDecompressionBody<Incoming>>,
-        BoxError,
-    >,
+    BoxCloneSyncService<http::Request<Body>, http::Response<DecompressionBody<Incoming>>, BoxError>,
     http::Request<Body>,
-    http::Response<MaybeDecompressionBody<Incoming>>,
+    http::Response<DecompressionBody<Incoming>>,
     BoxError,
 >;
 
@@ -144,9 +140,23 @@ pub struct ClientBuilder {
     runtime: DynRuntime,
 }
 
-/// Configuration collected before the client service stack is built.
-/// Holds transport settings, protocol selection, and request defaults.
-/// Building consumes it into the shared services and their middleware.
+pin_project! {
+    /// The future returned by [`Client::execute`].
+    #[project = PendingProj]
+    pub enum Pending {
+        Request {
+            uri: Option<Uri>,
+            // Keep the composed Tower state machine out of the public future.
+            // An outer box bounds its size, not every inner poll frame:
+            // https://github.com/seanmonstar/reqwest/issues/2718
+            fut: Pin<Box<Oneshot<Either<ClientService, BoxedClientService>, HttpRequest<Body>>>>,
+        },
+        Error {
+            error: Option<Error>,
+        },
+    }
+}
+
 struct Config {
     error: Option<Error>,
     headers: HeaderMap,
@@ -208,7 +218,6 @@ impl Client {
                     feature = "deflate",
                 ))]
                 accept_encoding: AcceptEncoding::default(),
-
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
                 redirect_policy: redirect::Policy::none(),
@@ -385,6 +394,43 @@ impl tower::Service<Request> for &'_ Client {
     #[inline(always)]
     fn call(&mut self, req: Request) -> Self::Future {
         self.execute(req)
+    }
+}
+
+// ===== impl Pending =====
+
+impl Future for Pending {
+    type Output = Result<Response, Error>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let (uri, res) = match self.project() {
+            PendingProj::Request { uri, fut } => (uri, fut.as_mut().poll(cx)),
+            PendingProj::Error { error } => {
+                let err = error
+                    .take()
+                    .expect("Pending::Error polled after completion");
+                return Poll::Ready(Err(err));
+            }
+        };
+
+        let res = ready!(res);
+        let uri = uri
+            .take()
+            .expect("Pending::Request polled after completion");
+        let res = match res {
+            Ok(res) => Ok(Response::new(res, uri)),
+            Err(err) => {
+                let mut err = err
+                    .downcast::<Error>()
+                    .map_or_else(Error::request, |err| *err);
+                if err.uri().is_none() {
+                    err = err.with_uri(uri);
+                }
+                Err(err)
+            }
+        };
+
+        Poll::Ready(res)
     }
 }
 
@@ -1522,7 +1568,7 @@ impl ClientBuilder {
         L: Layer<
                 BoxCloneSyncService<
                     http::Request<Body>,
-                    http::Response<MaybeDecompressionBody<Incoming>>,
+                    http::Response<DecompressionBody<Incoming>>,
                     BoxError,
                 >,
             > + Send
@@ -1530,7 +1576,7 @@ impl ClientBuilder {
             + 'static,
         L::Service: Service<
                 http::Request<Body>,
-                Response = http::Response<MaybeDecompressionBody<Incoming>>,
+                Response = http::Response<DecompressionBody<Incoming>>,
                 Error = BoxError,
                 Future: Send + 'static,
             > + Clone
@@ -1596,5 +1642,25 @@ impl ClientBuilder {
         let emulate::Emulation(headers, orig_headers, connect_config) = emulation.into_emulation();
         self.config.svc.connect_config.extend(connect_config);
         self.default_headers(headers).orig_headers(orig_headers)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_future_size() {
+        let s = std::mem::size_of::<super::Pending>();
+        assert!(s <= 360, "size_of::<Pending>() == {s}, too big");
+    }
+
+    #[tokio::test]
+    async fn error_has_url() {
+        let u = "http://does.not.exist.local/ever";
+        let err = crate::Client::new(crate::rt::tokio::TokioRuntime)
+            .get(u)
+            .send()
+            .await
+            .unwrap_err();
+        assert_eq!(err.uri().unwrap(), u, "{err:?}");
     }
 }
