@@ -1,8 +1,8 @@
 //! Periodic idle expiration for pooled connections.
 //!
 //! Follows the split proposed in <https://github.com/hyperium/hyper/issues/3948>:
-//! protocol pools expose retention hooks, while a single outer watcher owns the runtime
-//! timer and drives sweeps across the whole [`Map`](super::map::Map).
+//! protocol pools expose retention hooks, while a single outer watcher schedules sweeps
+//! on the caller's runtime across the whole [`Map`](super::map::Map).
 //!
 //! [`Expire`] holds only a weak reference to its target so it never keeps the pool alive;
 //! dropping the last pool handle closes the shutdown channel to cancel any pending sleep.

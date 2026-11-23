@@ -36,7 +36,7 @@ use super::{
 use crate::{
     Body,
     config::{ConnectConfig, RequestConfig},
-    conn::{self, BoxedConnectLayer},
+    conn,
     dns::DynResolver,
     ext::UriExt,
     protocol::Protocol,
@@ -50,17 +50,10 @@ use crate::{
 /// Bundles transport connector settings, pool policy, default connection options, protocol
 /// mode, and optional cookie storage.
 pub(super) struct Config {
-    /// Transport connector settings (TCP, TLS, QUIC, proxy, and timeouts).
     pub(super) connect: conn::Config,
-    /// Connection pool retention, capacity, and reuse-strategy policy.
     pub(super) pool_config: pool::Config,
-    /// Client-wide default connection options merged under per-request overrides.
     pub(super) connect_config: ConnectConfig,
-    /// Middleware layers wrapped around the base transport connector.
-    pub(super) connector_layers: Vec<BoxedConnectLayer>,
-    /// Default HTTP protocol mode used when a request does not specify a version.
     pub(super) protocol: Protocol,
-    /// Client-wide default cookie store, overridable per request.
     #[cfg(feature = "cookies")]
     pub(super) cookie_store: Option<Arc<dyn CookieStore>>,
 }
@@ -71,13 +64,9 @@ pub(super) struct Config {
 /// reconciliation, and retries unsent failures without cloning bodies.
 #[derive(Clone)]
 pub(super) struct Client {
-    /// Shared connection pool keyed by compatibility [`reuse::Key`].
     pool: pool::Pool<reuse::Key, conn::ConnectService, DynRuntime>,
-    /// Default HTTP protocol mode applied when a request omits a version override.
     protocol: Protocol,
-    /// Client-wide connection options attached as the base for every request.
-    connect_config: ConnectConfig,
-    /// Client-wide default cookie store, overridable via request extensions.
+    config: ConnectConfig,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn CookieStore>>,
 }
@@ -89,7 +78,6 @@ pub(super) struct Client {
 #[cfg(feature = "ws")]
 #[derive(Clone, Copy)]
 pub(super) struct DedicatedConnection {
-    /// Probes the default group for an established extended CONNECT sender before dialing HTTP/1.
     #[cfg(any(feature = "http2", feature = "http3"))]
     pub(super) extended_connect: bool,
 }
@@ -141,10 +129,7 @@ enum Error {
 ///
 /// Restored in order if the request returns unsent so a retry can fall back to HTTP/1.1.
 #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-struct Http1Upgrade {
-    /// Original HTTP/1.1 upgrade headers preserved in order for unsent fallback.
-    headers: HeaderMap,
-}
+struct Http1Upgrade(HeaderMap);
 
 // ===== impl Config =====
 
@@ -154,7 +139,6 @@ impl Default for Config {
             connect: conn::Config::default(),
             connect_config: ConnectConfig::default(),
             pool_config: pool::Config::default(),
-            connector_layers: Vec::new(),
             protocol: Protocol::Auto,
             #[cfg(feature = "cookies")]
             cookie_store: None,
@@ -176,7 +160,6 @@ impl Client {
             resolver,
             config.connect,
             &config.connect_config,
-            config.connector_layers,
         )?;
         Ok(Self {
             pool: pool::Pool::new(
@@ -186,7 +169,7 @@ impl Client {
                 Handshakes::new(runtime, &config.connect_config, true),
             ),
             protocol: config.protocol,
-            connect_config: config.connect_config,
+            config: config.connect_config,
             #[cfg(feature = "cookies")]
             cookie_store: config.cookie_store,
         })
@@ -339,7 +322,7 @@ impl Service<http::Request<Body>> for Client {
     }
 
     fn call(&mut self, request: http::Request<Body>) -> Self::Future {
-        let request = match Request::prepare(request, self.protocol, &self.connect_config) {
+        let request = match Request::prepare(request, self.protocol, &self.config) {
             Ok(request) => request,
             Err(error) => return Either::Right(future::err(error.into())),
         };
@@ -407,7 +390,6 @@ impl Request {
         }
 
         let extensions = request.extensions_mut();
-        let overrides = extensions.remove::<ConnectConfig>();
         #[cfg(feature = "ws")]
         let dedicated = extensions.remove::<DedicatedConnection>();
 
@@ -450,7 +432,11 @@ impl Request {
         }
 
         // Attach client defaults to any request-level connection overrides.
-        let config = overrides.unwrap_or_default().with_base(connect_config);
+        let config = request
+            .extensions_mut()
+            .remove::<ConnectConfig>()
+            .unwrap_or_default()
+            .with_base(connect_config);
         let connect = conn::Request::new(origin, protocol, config);
         let pool_key = cfg_select! {
             feature = "ws" => dedicated.is_none(),
@@ -466,7 +452,7 @@ impl Request {
                 #[cfg(feature = "http2")]
                 Protocol::Auto | Protocol::Http2 => true,
                 #[cfg(feature = "http3")]
-                Protocol::Http3 => uri.is_https(),
+                Protocol::Http3 => request.uri().is_https(),
                 _ => false,
             })
         .then(|| connect.reuse_key(client_protocol));
@@ -583,7 +569,7 @@ impl Http1Upgrade {
                 extended.append(name, value.clone());
             }
         }
-        Self { headers }
+        Self(headers)
     }
 
     /// Restores the RFC 6455 GET after an unsent extended CONNECT, removing either marker.
@@ -594,7 +580,7 @@ impl Http1Upgrade {
         request.extensions_mut().remove::<http2::ext::Protocol>();
         #[cfg(feature = "http3")]
         request.extensions_mut().remove::<netty::http3::Protocol>();
-        *request.headers_mut() = self.headers;
+        *request.headers_mut() = self.0;
     }
 }
 
@@ -792,14 +778,15 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::conn::{Conn, Unnameable};
+    use crate::conn::{BoxedConnectLayer, Conn, Unnameable};
 
     fn client(
         mut config: Config,
         connect: impl Fn(Unnameable) -> Ready<Result<Conn, BoxError>> + Clone + Send + Sync + 'static,
     ) -> Client {
         config
-            .connector_layers
+            .connect
+            .layers
             .push(BoxedConnectLayer::new(tower::layer::layer_fn(move |_| {
                 tower::service_fn(connect.clone())
             })));

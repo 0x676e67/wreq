@@ -129,11 +129,13 @@ pub trait Runtime: Executor + Timer + Debug + 'static {
     #[must_use]
     fn resolver(&self) -> Arc<dyn Resolve>;
 
-    /// Connects an unconnected, nonblocking socket to `address`.
+    /// Connects an unconnected, nonblocking socket to `addr`.
+    ///
     /// The socket already has the client's TCP and local binding options applied.
     fn connect_tcp(&self, socket: TcpStream, addr: SocketAddr) -> Connecting;
 
     /// Connects a Unix domain socket.
+    ///
     /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error.
     #[cfg(unix)]
     fn connect_unix(&self, _path: Arc<std::path::Path>) -> Connecting {
@@ -145,6 +147,7 @@ pub trait Runtime: Executor + Timer + Debug + 'static {
     }
 
     /// Registers a bound, nonblocking UDP socket for HTTP/3 over QUIC.
+    ///
     /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error, which fails
     /// HTTP/3 connections without affecting HTTP/1 or HTTP/2.
     ///

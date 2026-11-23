@@ -167,6 +167,7 @@ struct PoolInner<K, C, R> {
     targeter: PoolTargeter<C, R>,
 }
 
+/// Reference-counted type-erased pool entry stored in [`Map`].
 type SharedEntry = Arc<
     dyn Entry<
             Request<ConnectConfig>,
@@ -193,12 +194,18 @@ struct PoolTargeter<C, R> {
     handshakes: Handshakes,
 }
 
-/// Reuse state of one map entry, shared by its fallback and upgrade services.
+/// Per-group connection reuse state shared under a single entry mutex.
+///
+/// The HTTP/1 cache and multiplexed state share this lock so an `Auto` entry can
+/// inspect both together. Pending checkouts and maintenance are tracked by [`entry::EntryState`].
 #[derive(Default)]
 struct EntryState {
+    /// Exclusive HTTP/1 idle connections, FIFO waiters, and active count.
     cache: cache::Shared<http1::Connection>,
+    /// Queued ALPN-upgraded transports and multiplexed singleton state.
     #[cfg(feature = "http2")]
     mux: negotiate::Shared<Established, MuxHandshake, mux::Connection>,
+    /// Shared HTTP/3 singleton state when HTTP/2 is disabled.
     #[cfg(all(feature = "http3", not(feature = "http2")))]
     mux: singleton::State<MuxHandshake, mux::Connection>,
 }
@@ -207,9 +214,14 @@ struct EntryState {
 #[cfg(any(feature = "http2", feature = "http3"))]
 type MuxHandshake = BoxFuture<'static, Result<mux::Connection, BoxError>>;
 
-/// Adapts a protocol service stack to the pool's entry and maintenance interface.
+/// Adapts a protocol service stack to the pool's [`Entry`] interface.
+///
+/// Pairs the protocol-specific pool service (`Cache`, `Singleton`, or `Negotiate`) with
+/// the entry's shared checkout counter and identity-aware maintenance state.
 struct ServiceEntry<S> {
+    /// Protocol pool service handling checkouts and connection reuse.
     service: S,
+    /// Checkout counter, capacity flags, and identity-checked maintenance callback.
     state: Arc<entry::EntryState>,
 }
 
@@ -324,15 +336,10 @@ where
     ///
     /// The idle-cleanup task stays dormant until an entry retains idle state.
     #[must_use]
-    pub(super) fn new(
-        connector: C,
-        runtime: R,
-        pool_config: Config,
-        handshakes: Handshakes,
-    ) -> Self {
-        let reuse_delay = match pool_config.strategy {
+    pub(super) fn new(connector: C, runtime: R, config: Config, handshakes: Handshakes) -> Self {
+        let reuse_delay = match config.strategy {
             PoolStrategy::ReuseFirst(duration)
-                if pool_config.is_enabled() && duration != Duration::ZERO =>
+                if config.is_enabled() && duration != Duration::ZERO =>
             {
                 Some(duration)
             }
@@ -342,18 +349,18 @@ where
         let inner = Arc::new_cyclic(|pool| {
             let targeter = PoolTargeter {
                 connector,
-                max_idle_per_host: pool_config.max_idle_per_host,
+                max_idle_per_host: config.max_idle_per_host,
                 reuse_delay,
                 runtime,
                 handshakes,
             };
 
             PoolInner {
-                enabled: pool_config.is_enabled(),
-                idle_timeout: pool_config.idle_timeout,
-                has_group_limit: pool_config.max_size.is_some(),
+                enabled: config.is_enabled(),
+                idle_timeout: config.idle_timeout,
+                has_group_limit: config.max_size.is_some(),
                 expire: Expire::new(pool.clone()),
-                entries: Mutex::new(Map::new(pool_config.max_size)),
+                entries: Mutex::new(Map::new(config.max_size)),
                 targeter,
             }
         });
@@ -450,6 +457,7 @@ impl<K, C, R: Executor> Executor for Pool<K, C, R> {
 // ===== impl Pooled =====
 
 impl Pooled {
+    /// Wraps a checked-out sender and transfers pending entry tracking from `usage`.
     #[must_use]
     fn new(inner: PooledInner, pool_enabled: bool, usage: EntryUse) -> Self {
         // Register the sender before releasing the pending entry lease.
@@ -650,6 +658,8 @@ where
                 Some(key) => {
                     let pool = Arc::downgrade(self);
                     let key = key.clone();
+                    // Keep a weak handle to the group mutex for direct mux generation
+                    // discard without locking the outer map; HTTP/1 never uses it.
                     #[cfg(any(feature = "http2", feature = "http3"))]
                     let group = if request.protocol() == Protocol::Http1 {
                         std::sync::Weak::new()
@@ -1288,6 +1298,8 @@ where
     }
 }
 
+/// Verifies that a multiplexed sender is still reusable and registers a checkout under the group
+/// lock.
 #[must_use]
 #[cfg(any(feature = "http2", feature = "http3"))]
 fn try_checkout_mux(sender: &mux::Connection, now: Instant, timeout: Option<Duration>) -> bool {
@@ -1299,6 +1311,7 @@ fn try_checkout_mux(sender: &mux::Connection, now: Instant, timeout: Option<Dura
     true
 }
 
+/// Probes `singleton` for an established, reusable sender whose peer enabled extended CONNECT.
 #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
 fn checkout_extended_connect<M, T>(
     singleton: &Singleton<M, T, EntryState>,

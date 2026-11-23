@@ -72,10 +72,10 @@ pub(crate) struct Connect {
     quic: quic::Connect,
 }
 
-/// Client-wide transport, TLS, proxy, and timeout settings assembled at client build time.
+/// Client-wide transport and middleware settings assembled at client build time.
 ///
 /// Consumed by [`Connect::new`] to initialize the shared TCP dialer, TLS contexts, and
-/// outer timeout layer.
+/// connector layer stack.
 pub(crate) struct Config {
     pub(crate) tcp_config: tcp::Config,
     pub(crate) tls_config: tls::Config,
@@ -83,6 +83,7 @@ pub(crate) struct Config {
     pub(crate) connect_timeout: Option<Duration>,
     pub(crate) happy_eyeballs_timeout: Option<Duration>,
     pub(crate) verbose: bool,
+    pub(crate) layers: Vec<BoxedConnectLayer>,
 }
 
 /// Connection request carrying the normalized origin URI, selected [`Protocol`], and options.
@@ -151,6 +152,7 @@ impl Default for Config {
             connect_timeout: None,
             happy_eyeballs_timeout: Some(Duration::from_millis(300)),
             verbose: false,
+            layers: Vec::new(),
         }
     }
 }
@@ -169,9 +171,9 @@ impl Connect {
             connect_timeout,
             happy_eyeballs_timeout,
             verbose,
+            layers,
         }: Config,
         connect_config: &ConnectConfig,
-        layers: Vec<BoxedConnectLayer>,
     ) -> crate::Result<ConnectService> {
         let dialer = Dialer::new(
             runtime.clone(),
@@ -479,7 +481,6 @@ mod tests {
                 resolver.clone(),
                 config,
                 &ConnectConfig::default(),
-                Vec::new(),
             )
             .unwrap();
             let request = test_connect_request(
@@ -538,7 +539,6 @@ mod tests {
                 DynResolver::new(Arc::new(NoDns)),
                 config,
                 &ConnectConfig::default(),
-                Vec::new(),
             )
             .unwrap();
             let request = test_connect_request(

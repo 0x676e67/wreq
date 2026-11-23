@@ -47,7 +47,7 @@ where
     /// Returns the service stored for `key` without changing idle LRU order.
     #[must_use]
     pub(super) fn get_mut(&mut self, key: &K) -> Option<&mut S> {
-        // Compare the only key directly without scanning a large sparse table.
+        // Skip hashing for the single-entry fast path without scanning a sparse table.
         if self.entries.len() == 1 && self.entries.capacity() <= 3 {
             return self
                 .entries

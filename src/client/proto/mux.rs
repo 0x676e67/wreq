@@ -23,7 +23,7 @@ use crate::{
     sync::Mutex,
 };
 
-/// Protocol request sender of one multiplexed connection.
+/// Protocol request sender for a multiplexed HTTP/2 or HTTP/3 connection.
 #[derive(Clone)]
 pub enum Sender {
     #[cfg(feature = "http2")]
@@ -32,13 +32,15 @@ pub enum Sender {
     Http3(conn::http3::SendRequest<Body>),
 }
 
-/// Cloneable request-side handle for one HTTP/2 or HTTP/3 connection.
+/// Cloneable request-side handle for a shared HTTP/2 or HTTP/3 connection.
 ///
 /// The pool singleton stores one instance and gives each checkout a sender clone.
 /// Netty drives the protocol streams independently of the checkout.
 #[derive(Clone)]
 pub struct Connection {
+    /// Underlying HTTP/2 or HTTP/3 protocol sender.
     tx: Sender,
+    /// Shared connection metadata, clock, and checkout accounting.
     state: Arc<ConnectionState>,
 }
 
@@ -46,9 +48,13 @@ pub struct Connection {
 ///
 /// `idle_at` records when the last checkout ended, even if streams remain open.
 struct ConnectionState {
+    /// Transport metadata and shared poison flag.
     connected: Connected,
+    /// Runtime clock used to stamp `idle_at` when checkouts end.
     runtime: DynRuntime,
+    /// Number of active checkouts currently using this connection.
     checkouts: AtomicUsize,
+    /// Timestamp when `checkouts` last reached zero.
     idle_at: Mutex<Instant>,
 }
 

@@ -67,12 +67,12 @@ where
 {
     /// Underlying maker polled and called on a cache miss.
     maker: M,
-    /// Shared idle list, FIFO waiters, and shutdown channel.
+    /// Shared per-group lock containing [`Shared`] idle connections, waiters, and active count.
     shared: Arc<Mutex<G>>,
     /// Policy handling maker futures that lose the reuse race.
     events: Ev,
 
-    /// Idle service reserved for this clone's next `call`.
+    /// Idle service reserved for this clone's next `call`; drop releases the reservation.
     ready: Option<Cached<M::Response, G>>,
     /// Waiter registered while this clone's `poll_ready` is pending.
     ready_waiter: Option<WaiterId>,
@@ -157,7 +157,7 @@ pub(super) struct Shared<S> {
     max_idle: usize,
     /// Reserved or checked-out services and background connects keeping the entry non-empty.
     active: usize,
-    /// Closed when `Shared` drops, signaling background connects to exit.
+    /// Initialized by [`Builder::build_in`] and closed on drop to stop background connects.
     shutdown: Option<watch::Sender<()>>,
 }
 
@@ -263,7 +263,10 @@ where
         &self.shared
     }
 
-    /// Takes an unreserved service with the caller already holding the group lock.
+    /// Takes an unreserved idle service while the caller holds the group lock.
+    ///
+    /// Returns `None` if any idle service fails `reusable` so the regular checkout path
+    /// prunes stale entries instead of leaving them behind live LIFO hits.
     #[must_use]
     pub(super) fn checkout_idle(
         &self,
@@ -287,7 +290,7 @@ where
         self.shared.lock().as_mut().retain_idle(predicate)
     }
 
-    /// Removes all unreserved idle services for unlocked destruction.
+    /// Removes all unreserved idle services for unlocked drop.
     #[must_use]
     pub(super) fn drain_idle(&self) -> Vec<M::Response> {
         self.shared.lock().as_mut().drain_idle()

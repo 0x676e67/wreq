@@ -43,7 +43,7 @@ where
 {
     /// Underlying maker called when the singleton is empty.
     maker: M,
-    /// Shared lifecycle state across all singleton clones.
+    /// Shared per-group lock containing the singleton [`State`].
     state: Arc<Mutex<G>>,
     /// Destination type marker.
     _dst: PhantomData<fn(Dst)>,
@@ -51,8 +51,11 @@ where
 
 /// Ready-checkout result, distinguishing an empty singleton from one with existing work.
 pub(super) enum Ready<S> {
+    /// No service or in-flight creation exists, so a negotiated entry may fall back.
     Empty,
+    /// A creation batch is running or the completed service failed its reuse check.
     Unavailable,
+    /// A reusable service clone was checked out immediately.
     Made(S),
 }
 
@@ -288,6 +291,7 @@ pub(super) enum SingletonFuture<F, S, G: AsMut<State<F, S>>> {
         service: Option<S>,
         /// Generation token paired with `service`.
         generation: u64,
+        /// Retains the maker future type parameter `F`.
         future: PhantomData<fn() -> F>,
     },
 }
@@ -760,7 +764,7 @@ where
     }
 }
 
-/// Clears a completed singleton generation and drops it outside the lock.
+/// Clears `State::Made` if its generation matches `generation`, dropping it outside the lock.
 pub(super) fn discard_generation<F, S, G: AsMut<State<F, S>>>(
     state: &Weak<Mutex<G>>,
     generation: u64,

@@ -81,7 +81,7 @@ pub(super) trait Entry<T>: Send + Sync {
     fn is_empty(&self) -> bool;
 }
 
-/// Reconciles one map entry, or discards a completed singleton generation.
+/// Reconciles a map entry (`None`), or discards a completed singleton generation (`Some`).
 type EntryMaintenance = Box<dyn Fn(&Arc<EntryState>, Option<u64>) + Send + Sync>;
 
 /// RAII guard keeping a map entry alive while a checkout is in flight.
@@ -122,7 +122,7 @@ pub(super) struct EntryState {
     pub(super) has_group_limit: bool,
     /// Expiration watcher status, present only when proactive expiration is enabled.
     pub(super) idle_watch_running: Option<Arc<AtomicBool>>,
-    /// Reconciles this exact entry with cleanup and idle-group limits.
+    /// Reconciles this exact entry (`None`) or discards a completed mux generation (`Some`).
     pub(super) maintain: EntryMaintenance,
 }
 
@@ -178,6 +178,7 @@ impl Drop for EntryUse {
 // ===== impl EntryCleanupGuard =====
 
 impl EntryCleanupGuard {
+    /// Creates an unarmed guard for a mapped (`Some`) or unpooled (`None`) checkout.
     #[must_use]
     pub(super) fn new(state: Option<Arc<EntryState>>) -> Self {
         Self {
@@ -192,7 +193,8 @@ impl EntryCleanupGuard {
         self.state.is_some()
     }
 
-    /// Skips the map when a live sender needs neither LRU nor watcher maintenance.
+    /// Reconciles entry state, skipping the map lock when `known_live` needs neither LRU
+    /// nor expiration-watcher updates.
     pub(super) fn maintain(&self, known_live: bool) {
         if let Some(state) = &self.state
             && (!known_live

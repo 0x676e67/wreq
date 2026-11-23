@@ -1628,7 +1628,7 @@ impl ClientBuilder {
             + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
-        self.config.svc.connector_layers.push(layer);
+        self.config.svc.connect.layers.push(layer);
         self
     }
 

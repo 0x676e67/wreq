@@ -45,21 +45,36 @@ pub(super) fn configure<B: Clone, O: Clone>(
     }
 }
 
-/// Client-wide handshake builders and their protocol runtime.
+/// Client-wide HTTP handshake builders and shared protocol runtime.
+///
+/// Constructed once per client from default [`ConnectConfig`] options and queried when
+/// creating a pool entry so per-request protocol overrides only clone a builder when they
+/// actually differ from the client defaults.
 pub(super) struct Handshakes {
+    /// Runtime spawning HTTP connection drivers and timers.
     runtime: DynRuntime,
+    /// Whether the HTTP/1 sender supplies a missing `Host` header.
     set_host: bool,
+    /// Client-wide default HTTP/1 handshake builder.
     http1: Arc<netty::conn::http1::Builder>,
+    /// Client-wide default HTTP/2 handshake builder.
     #[cfg(feature = "http2")]
     http2: Arc<netty::conn::http2::Builder<DynRuntime>>,
+    /// Client-wide default HTTP/3 handshake builder.
     #[cfg(feature = "http3")]
     http3: Arc<netty::conn::http3::Builder<DynRuntime>>,
 }
 
 /// Established byte stream and transport metadata passed to an HTTP handshake.
+///
+/// An ALPN-upgraded transport may wait in the negotiation queue before the HTTP/2
+/// handshake starts.
 pub(super) struct Established {
+    /// Type-erased transport stream ready for an HTTP/1 or HTTP/2 handshake.
     io: Box<dyn Io>,
+    /// Connection metadata including negotiated protocol and poison state.
     connected: Connected,
+    /// Time when the transport became available for protocol selection.
     #[cfg(feature = "http2")]
     idle_at: Instant,
 }
@@ -72,7 +87,9 @@ pub(super) struct Established {
 /// begin.
 #[derive(Debug)]
 pub enum SendError<R = Request<Body>> {
+    /// Local request preparation or readiness failure with no recoverable request.
     Request(Error),
+    /// Protocol send failure that may carry the unsent request for retry.
     Protocol(Box<TrySendError<R>>),
 }
 

@@ -6,8 +6,8 @@
 //!
 //! Upgraded transports enter the pending queue before [`UpgradeSignal`] wakes concurrent
 //! fallback attempts. Selection checks the singleton and detaches redundant queued
-//! transports under the pending lock; maker calls and polling run unlocked, and a stale
-//! wake falls back to a fresh attempt if no upgraded work remains.
+//! transports under the shared group lock; maker calls and polling run unlocked, and a
+//! stale wake falls back to a fresh attempt if no upgraded work remains.
 
 use std::{
     collections::VecDeque,
@@ -36,14 +36,15 @@ use crate::sync::Mutex;
 /// Selects a fallback or upgraded pool from an inspected connection.
 ///
 /// `fallback` owns the connector and inspector, while `upgrade` wraps transports diverted
-/// into the shared `pending` queue so it never reconnects. Clones share both child pools
-/// and `pending`, checking for an existing upgraded service or queued transport before
-/// starting a fallback attempt; redundant transports are dropped outside the lock.
+/// into the group's [`Shared`] pending queue so it never reconnects. Clones share both
+/// child pools and the group lock, checking for an existing upgraded service or queued
+/// transport before starting a fallback attempt; redundant transports drop unlocked.
 pub(super) struct Negotiate<L, R, S> {
     /// Pool handling non-upgraded connections.
     fallback: L,
     /// Pool handling connections diverted by inspection.
     upgrade: R,
+    /// Intermediate transport type bridged between `fallback` and `upgrade`.
     transport: PhantomData<fn(S)>,
 }
 
@@ -68,6 +69,7 @@ pin_project! {
         state: State<Dst, L, Either<L::Future, Oneshot<L, Dst>>, R::Future>,
         // Upgraded pool clone used to join or start the singleton on handoff.
         upgrade: R,
+        // Intermediate transport type passed into `upgrade`.
         transport: PhantomData<fn(S)>,
     }
 }
@@ -103,10 +105,15 @@ type UpgradeFuture<M, S, G> =
 /// Checked-out service from a completed upgrade.
 type Upgraded<M, S> = Singled<<M as Service<S>>::Response>;
 
-/// Upgraded work synchronized with the fallback cache by the group lock.
+/// Upgraded transport queue and singleton state synchronized under the group lock.
+///
+/// Embedded in the entry's shared state alongside the fallback cache so `checkout_ready`,
+/// pruning, and eviction inspect both sides atomically.
 #[derive(Debug)]
 pub(super) struct Shared<S, F, U> {
+    /// Inspected upgraded transports waiting to enter the singleton.
     pending: VecDeque<S>,
+    /// Shared lifecycle state of the upgraded singleton.
     upgrade: singleton::State<F, U>,
 }
 
@@ -233,7 +240,10 @@ where
             && fallback_empty(&group)
     }
 
-    /// Takes a ready service and maps it after releasing the group lock.
+    /// Takes a ready service under the group lock and maps it after unlocking.
+    ///
+    /// Prefers a reusable upgraded service, refuses when upgraded transports are pending
+    /// handoff, and checks `fallback` only when the upgraded singleton is `Empty`.
     #[must_use]
     pub(super) fn checkout_ready<F, T>(
         &self,
@@ -483,8 +493,9 @@ pub(super) struct Inspector<M, S, I, G> {
     service: M,
     /// Predicate returning `true` for upgraded protocols.
     inspect: I,
-    /// Points into the group without keeping a detached background dial alive.
+    /// Weak handle to the group so a detached background dial never keeps the group alive.
     state: Weak<Mutex<G>>,
+    /// Intermediate transport type queued in `state`.
     transport: PhantomData<fn(S)>,
     /// Signal waking sibling fallback attempts after an upgrade is queued.
     signal: UpgradeSignal,
@@ -508,6 +519,7 @@ pin_project! {
         inspect: I,
         // Weak handle to the group receiving upgraded transports.
         state: Weak<Mutex<G>>,
+        // Intermediate transport type queued in `state`.
         transport: PhantomData<fn(S)>,
         // Signal advanced after pushing to `pending`.
         signal: UpgradeSignal,
