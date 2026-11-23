@@ -71,7 +71,6 @@ where
     shared: Arc<Mutex<G>>,
     /// Policy handling maker futures that lose the reuse race.
     events: Ev,
-
     /// Idle service reserved for this clone's next `call`; drop releases the reservation.
     ready: Option<Cached<M::Response, G>>,
     /// Waiter registered while this clone's `poll_ready` is pending.
