@@ -426,8 +426,10 @@ impl Response {
 
     /// Marks the underlying connection for removal from the pool.
     ///
-    /// A checked-out HTTP/1 sender is discarded on return. A later checkout or cleanup
-    /// removes a sender already in the pool, including shared HTTP/2 and HTTP/3 senders.
+    /// A checked-out HTTP/1 sender is discarded on return. A pooled sender is removed
+    /// when checked for reuse or during a background sweep. Without periodic cleanup,
+    /// an idle HTTP/1 sender may stay in the pool until a checkout reaches it.
+    ///
     /// Open streams can finish. This only affects responses with client connection metadata.
     #[inline]
     pub fn forbid_recycle(&self) {

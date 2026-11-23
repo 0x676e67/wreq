@@ -87,13 +87,18 @@ where
         pruned
     }
 
-    /// Marks `key` as the most recently used retained group.
+    /// Ensures `key` is tracked as a retained group, promoting it to MRU when `promote` is `true`.
     ///
     /// A full LRU first removes markers rejected by `predicate` and returns their
     /// keys, then the remaining least recently used group displaced by the limit.
     /// An unbounded map returns neither.
     #[must_use]
-    pub(super) fn mark_retained<F>(&mut self, key: &K, predicate: F) -> (Vec<K>, Option<K>)
+    pub(super) fn mark_retained<F>(
+        &mut self,
+        key: &K,
+        promote: bool,
+        predicate: F,
+    ) -> (Vec<K>, Option<K>)
     where
         K: Clone,
         F: FnMut(&S) -> bool,
@@ -101,7 +106,12 @@ where
         let Some(retained) = &mut self.retained else {
             return (Vec::new(), None);
         };
-        if retained.get(key).is_some() {
+        let present = if promote {
+            retained.get(key).is_some()
+        } else {
+            retained.contains(key)
+        };
+        if present {
             return (Vec::new(), None);
         }
 
@@ -203,11 +213,11 @@ mod tests {
         map.get_or_insert_with(&1, make);
         assert!(map.get_mut(&1).is_some());
         assert!(map.get_mut(&2).is_none());
-        assert_eq!(map.mark_retained(&1, |probe| probe.1), (vec![], None));
+        assert_eq!(map.mark_retained(&1, true, |probe| probe.1), (vec![], None));
         map.get_or_insert_with(&2, make);
         assert_eq!(drops.load(Ordering::SeqCst), 0);
 
-        let (pruned, evicted) = map.mark_retained(&2, |probe| probe.1);
+        let (pruned, evicted) = map.mark_retained(&2, true, |probe| probe.1);
         assert!(pruned.is_empty());
         assert_eq!(evicted, Some(1));
         assert_eq!(drops.load(Ordering::SeqCst), 0);
@@ -235,10 +245,10 @@ mod tests {
 
         for key in 1..=3 {
             map.get_or_insert_with(&key, make);
-            assert_eq!(map.mark_retained(&key, retains), (vec![], None));
+            assert_eq!(map.mark_retained(&key, true, retains), (vec![], None));
         }
         for _ in 0..100 {
-            assert_eq!(map.mark_retained(&1, retains), (vec![], None));
+            assert_eq!(map.mark_retained(&1, true, retains), (vec![], None));
         }
         assert_eq!(inspected.load(Ordering::Relaxed), 0);
 
@@ -247,12 +257,12 @@ mod tests {
         // healthy least recent group (2).
         map.get_or_insert_with(&3, make).1 = false;
         map.get_or_insert_with(&4, make);
-        assert_eq!(map.mark_retained(&4, retains), (vec![3], None));
+        assert_eq!(map.mark_retained(&4, true, retains), (vec![3], None));
         assert_eq!(inspected.load(Ordering::Relaxed), 3);
         assert_eq!(drops.load(Ordering::Relaxed), 0);
 
         map.get_or_insert_with(&5, make);
-        assert_eq!(map.mark_retained(&5, retains), (vec![], Some(2)));
+        assert_eq!(map.mark_retained(&5, true, retains), (vec![], Some(2)));
         assert_eq!(inspected.load(Ordering::Relaxed), 6);
         assert_eq!(
             map.retained

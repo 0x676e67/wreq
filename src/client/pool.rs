@@ -589,8 +589,9 @@ impl Drop for Pooled {
     fn drop(&mut self) {
         match &mut self.inner {
             PooledInner::Http1(service) => {
-                service.inner_mut().mark_idle();
-                if !service.inner().is_open() {
+                if service.inner().is_open() {
+                    service.inner_mut().mark_idle();
+                } else {
                     service.discard_on_drop();
                 }
                 let returned = service.return_to_cache();
@@ -605,14 +606,12 @@ impl Drop for Pooled {
             #[cfg(any(feature = "http2", feature = "http3"))]
             PooledInner::Mux(service) => {
                 let connection = service.inner();
-                let became_idle = connection.finish_checkout();
+                let needs_tracking = connection.finish_checkout();
                 let discard = !connection.is_open();
                 if discard {
                     self.cleanup.discard(service.generation());
                 }
-                if self.is_pool_enabled()
-                    && (discard || became_idle && self.cleanup.needs_tracking())
-                {
+                if self.is_pool_enabled() && (discard || needs_tracking) {
                     self.cleanup.arm();
                 }
             }
@@ -648,8 +647,6 @@ where
         let shared = Arc::new(Mutex::new(EntryState::default()));
         let state = Arc::new(entry::EntryState {
             uses: AtomicUsize::new(0),
-            #[cfg(any(feature = "http2", feature = "http3"))]
-            track_on_idle: AtomicBool::new(false),
             has_group_limit: self.has_group_limit,
             idle_watch_running: key
                 .and(self.expiration_interval(true))
@@ -666,15 +663,19 @@ where
                     } else {
                         Arc::downgrade(&shared)
                     };
-                    Box::new(move |state, _generation| {
+                    Box::new(move |state, action| match action {
                         #[cfg(any(feature = "http2", feature = "http3"))]
-                        if let Some(generation) = _generation {
+                        entry::Maintenance::Discard(generation) => {
                             singleton::discard_generation(&group, generation);
-                            return;
                         }
-
-                        if let Some(pool) = pool.upgrade() {
-                            pool.update_entry(&key, state);
+                        entry::Maintenance::Touch | entry::Maintenance::Reconcile => {
+                            if let Some(pool) = pool.upgrade() {
+                                pool.update_entry(
+                                    &key,
+                                    state,
+                                    matches!(action, entry::Maintenance::Touch),
+                                );
+                            }
                         }
                     })
                 }
@@ -721,7 +722,7 @@ where
     }
 
     /// Removes an empty entry or reconciles its idle-group capacity tracking.
-    fn update_entry(self: &Arc<Self>, key: &K, state: &Arc<entry::EntryState>) {
+    fn update_entry(self: &Arc<Self>, key: &K, state: &Arc<entry::EntryState>, promote: bool) {
         let mut entries = self.entries.lock();
         let Some((empty, retained)) = entries
             .get_mut(key)
@@ -744,12 +745,8 @@ where
         }
 
         // Check other entries only when making room for this retained group.
-        let (pruned, evicted) = entries.mark_retained(key, |entry| entry.prepare_eviction());
-        // A later checkout may restore the record before the final release.
-        #[cfg(any(feature = "http2", feature = "http3"))]
-        if state.track_on_idle.load(Ordering::Relaxed) {
-            state.track_on_idle.store(false, Ordering::Relaxed);
-        }
+        let (pruned, evicted) =
+            entries.mark_retained(key, promote, |entry| entry.prepare_eviction());
 
         if pruned.is_empty() && evicted.is_none() {
             drop(entries);
@@ -850,7 +847,9 @@ impl<C, R: Executor + Timer + Clone + 'static> PoolTargeter<C, R> {
                 let state = state.clone();
                 cache::builder()
                     .runtime(self.runtime.clone())
-                    .on_background_complete(move || (state.maintain)(&state, None))
+                    .on_background_complete(move || {
+                        (state.maintain)(&state, entry::Maintenance::Touch);
+                    })
                     .max_idle(self.max_idle_per_host)
                     .build_in(service, shared.clone())
             })
@@ -995,16 +994,14 @@ impl EntryState {
         Discarded::negotiated(pending, fallback, upgrade)
     }
 
-    /// Checks retained state and optionally records deferred LRU tracking.
+    /// Checks retained state and optionally marks active multiplexed connections for deferred LRU.
     #[must_use]
-    fn retained(&mut self, track_on_idle: Option<&AtomicBool>) -> bool {
+    fn retained(&mut self, defer_busy: bool) -> bool {
         let queued = self.mux.has_pending() || self.cache.has_idle();
         let upgrade: &mut singleton::State<_, _> = self.mux.as_mut();
         let connection = upgrade.service();
         (queued || connection.is_some_and(mux::Connection::is_open))
-            && !track_on_idle.is_some_and(|flag| {
-                connection.is_some_and(|connection| connection.defer_until_idle(flag))
-            })
+            && !(defer_busy && connection.is_some_and(mux::Connection::defer_until_idle))
     }
 
     /// Detaches retained Auto connections for drop outside the pool locks.
@@ -1103,10 +1100,11 @@ where
     type Discarded = Discarded;
 
     fn checkout_ready(&self, now: Instant, timeout: Option<Duration>) -> Option<Pooled> {
-        let timeout = timeout.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
         self.service
             .checkout_ready(None, |connection| {
-                try_checkout_mux(connection, now, timeout)
+                connection.try_checkout(now, timeout, || {
+                    self.state.uses.load(Ordering::Acquire) != 0
+                })
             })
             .into_made()
             .map(|service| Pooled::reuse(PooledInner::Mux(service), self.state.clone()))
@@ -1156,9 +1154,9 @@ where
 
     fn prepare_eviction(&self) -> bool {
         self.service.with_state(|state| {
-            state.service().is_some_and(|connection| {
-                connection.is_open() && !connection.defer_until_idle(&self.state.track_on_idle)
-            })
+            state
+                .service()
+                .is_some_and(|connection| connection.is_open() && !connection.defer_until_idle())
         })
     }
 
@@ -1212,11 +1210,13 @@ where
     type Discarded = Discarded;
 
     fn checkout_ready(&self, now: Instant, timeout: Option<Duration>) -> Option<Pooled> {
-        let upgrade_timeout = timeout.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
         self.service.checkout_ready(
             |connection, state| {
                 // The regular path prunes any remaining HTTP/1 idle state.
-                !state.cache.has_idle() && try_checkout_mux(connection, now, upgrade_timeout)
+                !state.cache.has_idle()
+                    && connection.try_checkout(now, timeout, || {
+                        self.state.uses.load(Ordering::Acquire) != 0
+                    })
             },
             |fallback, state| {
                 fallback.checkout_idle(&mut state.cache, |connection| {
@@ -1273,15 +1273,11 @@ where
     }
 
     fn has_retained(&self) -> bool {
-        self.service.upgrade().shared().lock().retained(None)
+        self.service.upgrade().shared().lock().retained(false)
     }
 
     fn prepare_eviction(&self) -> bool {
-        self.service
-            .upgrade()
-            .shared()
-            .lock()
-            .retained(Some(&self.state.track_on_idle))
+        self.service.upgrade().shared().lock().retained(true)
     }
 
     fn evict(&self) -> Option<Discarded> {
@@ -1298,19 +1294,6 @@ where
     }
 }
 
-/// Verifies that a multiplexed sender is still reusable and registers a checkout under the group
-/// lock.
-#[must_use]
-#[cfg(any(feature = "http2", feature = "http3"))]
-fn try_checkout_mux(sender: &mux::Connection, now: Instant, timeout: Option<Duration>) -> bool {
-    if !sender.is_reusable(now, timeout) {
-        return false;
-    }
-    // Expiry can see this sender as soon as the group lock is released.
-    sender.begin_checkout();
-    true
-}
-
 /// Probes `singleton` for an established, reusable sender whose peer enabled extended CONNECT.
 #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
 fn checkout_extended_connect<M, T>(
@@ -1324,7 +1307,7 @@ where
 {
     singleton
         .checkout_ready(None, |sender| {
-            sender.extended_connect() == Some(true) && try_checkout_mux(sender, now, timeout)
+            sender.extended_connect() == Some(true) && sender.try_checkout(now, timeout, || false)
         })
         .into_made()
         .map(|service| Pooled::reuse(PooledInner::Mux(service), state.clone()))

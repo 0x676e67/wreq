@@ -263,21 +263,22 @@ where
         &self.shared
     }
 
-    /// Takes an unreserved idle service while the caller holds the group lock.
+    /// Takes the newest unreserved idle service while the caller holds the group lock.
     ///
-    /// Returns `None` if any idle service fails `reusable` so the regular checkout path
-    /// prunes stale entries instead of leaving them behind live LIFO hits.
+    /// Inspects only the LIFO candidate at the back of `idle`; if it is not reusable,
+    /// returns `None` so the regular checkout path prunes stale connections.
     #[must_use]
     pub(super) fn checkout_idle(
         &self,
         shared: &mut Shared<M::Response>,
-        reusable: impl FnMut(&M::Response) -> bool,
+        reusable: impl FnOnce(&M::Response) -> bool,
     ) -> Option<Cached<M::Response, G>> {
-        if !shared.idle.iter().all(reusable) {
+        if !shared.waiters.is_empty() || !shared.idle.last().is_some_and(reusable) {
             return None;
         }
         shared
-            .take_available()
+            .idle
+            .pop()
             .map(|service| Cached::new(service, &self.shared, shared, true))
     }
 
@@ -1111,7 +1112,7 @@ mod tests {
             ..Shared::default()
         }));
         let shutdown = cache_shutdown(shared.lock().shutdown.as_ref().unwrap().subscribe());
-        let mut connect = Box::pin(BackgroundConnect {
+        let mut connect = std::pin::pin!(BackgroundConnect {
             future: CountingPending(polls.clone()),
             shared: Arc::downgrade(&shared),
             shutdown,

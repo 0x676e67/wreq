@@ -889,16 +889,42 @@ async fn pool_max_size_skips_dead_and_busy_mux_groups() {
             "{protocol:?}"
         );
         drop(last);
+        {
+            let mut entries = pool.inner.entries.lock();
+            assert!(
+                entries
+                    .get_mut(&live_key)
+                    .is_some_and(|entry| entry.has_retained()),
+                "{protocol:?}: the returning sender must remain reusable"
+            );
+            assert!(
+                entries.get_mut(&next_key).is_none(),
+                "{protocol:?}: retained two idle groups"
+            );
+        }
+
+        // A deferred final release must not promote a group already re-registered in the LRU.
+        drop(pool);
+        let pool = make_pool(2);
+        let [(a_key, a), (b_key, b), (c_key, c), (d_key, d)] = ["a", "b", "c", "d"].map(group);
+        let checkout = |key, request| pool.checkout(Some(key), request);
+        let busy_a = checkout(&a_key, &a).await.expect("a checkout");
+        drop(checkout(&b_key, &b).await.expect("b checkout"));
+        drop(checkout(&c_key, &c).await.expect("c checkout"));
+        // Re-register `a`, then touch `c` so LRU order is [a, c].
+        drop(checkout(&a_key, &a).await.expect("a re-register"));
+        drop(checkout(&c_key, &c).await.expect("c touch"));
+        // Final release of `a` clears DEFERRED but must keep `a` behind `c`.
+        drop(busy_a);
+        drop(checkout(&d_key, &d).await.expect("d checkout"));
         let mut entries = pool.inner.entries.lock();
         assert!(
-            entries
-                .get_mut(&live_key)
-                .is_some_and(|entry| entry.has_retained()),
-            "{protocol:?}: the returning sender must remain reusable"
+            entries.get_mut(&a_key).is_none(),
+            "{protocol:?}: deferred release must not promote already-tracked group"
         );
         assert!(
-            entries.get_mut(&next_key).is_none(),
-            "{protocol:?}: retained two idle groups"
+            entries.get_mut(&c_key).is_some() && entries.get_mut(&d_key).is_some(),
+            "{protocol:?}: more recently used groups must survive eviction"
         );
     }
 }

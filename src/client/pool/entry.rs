@@ -81,8 +81,19 @@ pub(super) trait Entry<T>: Send + Sync {
     fn is_empty(&self) -> bool;
 }
 
-/// Reconciles a map entry (`None`), or discards a completed singleton generation (`Some`).
-type EntryMaintenance = Box<dyn Fn(&Arc<EntryState>, Option<u64>) + Send + Sync>;
+/// Maintenance operation requested by a checkout guard or background connection.
+pub(super) enum Maintenance {
+    /// Reconciles entry state and promotes retained entries to MRU.
+    Touch,
+    /// Reconciles entry state and tracks retained entries only if not already tracked.
+    Reconcile,
+    /// Discards a completed mux generation without locking the outer map.
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    Discard(u64),
+}
+
+/// Callback reconciling an entry in the map or discarding a completed mux generation.
+type EntryMaintenance = Box<dyn Fn(&Arc<EntryState>, Maintenance) + Send + Sync>;
 
 /// RAII guard keeping a map entry alive while a checkout is in flight.
 ///
@@ -115,14 +126,11 @@ pub(super) struct EntryCleanupGuard {
 pub(super) struct EntryState {
     /// Number of checkout futures keeping the entry active.
     pub(super) uses: AtomicUsize,
-    /// Whether to track the entry again when the last checkout returns.
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    pub(super) track_on_idle: AtomicBool,
     /// Successful returns update the LRU when the pool caps retained groups.
     pub(super) has_group_limit: bool,
     /// Expiration watcher status, present only when proactive expiration is enabled.
     pub(super) idle_watch_running: Option<Arc<AtomicBool>>,
-    /// Reconciles this exact entry (`None`) or discards a completed mux generation (`Some`).
+    /// Performs the requested maintenance for this exact entry.
     pub(super) maintain: EntryMaintenance,
 }
 
@@ -170,7 +178,7 @@ impl Drop for EntryUse {
                 count.saturating_sub(1)
             });
         if self.armed && previous == 1 {
-            (state.maintain)(state, None);
+            (state.maintain)(state, Maintenance::Reconcile);
         }
     }
 }
@@ -204,24 +212,15 @@ impl EntryCleanupGuard {
                     .as_ref()
                     .is_some_and(|flag| !flag.load(Ordering::Acquire)))
         {
-            (state.maintain)(state, None);
+            (state.maintain)(state, Maintenance::Touch);
         }
-    }
-
-    /// Returns whether this entry needs to be tracked again.
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    #[must_use]
-    pub(super) fn needs_tracking(&self) -> bool {
-        self.state
-            .as_ref()
-            .is_some_and(|state| state.track_on_idle.load(Ordering::Acquire))
     }
 
     /// Clears the completed generation without looking up the entry in the map.
     #[cfg(any(feature = "http2", feature = "http3"))]
     pub(super) fn discard(&self, generation: u64) {
         if let Some(state) = &self.state {
-            (state.maintain)(state, Some(generation));
+            (state.maintain)(state, Maintenance::Discard(generation));
         }
     }
 
@@ -236,7 +235,7 @@ impl Drop for EntryCleanupGuard {
         if self.armed
             && let Some(state) = &self.state
         {
-            (state.maintain)(state, None);
+            (state.maintain)(state, Maintenance::Reconcile);
         }
     }
 }
