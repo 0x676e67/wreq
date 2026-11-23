@@ -19,7 +19,7 @@ use std::{
     task::{self, Poll, ready},
 };
 
-use futures_util::future::{BoxFuture, Either};
+use futures_util::future::BoxFuture;
 use pin_project_lite::pin_project;
 use tokio::sync::watch;
 use tower::{
@@ -27,10 +27,7 @@ use tower::{
     util::{Either as ServiceEither, Oneshot},
 };
 
-use super::{
-    cache::Started,
-    singleton::{self, Ready, Singled, Singleton, SingletonFuture},
-};
+use super::singleton::{self, Ready, Singled, Singleton, SingletonFuture};
 use crate::sync::Mutex;
 
 /// Selects a fallback or upgraded pool from an inspected connection.
@@ -44,6 +41,8 @@ pub(super) struct Negotiate<L, R, S> {
     fallback: L,
     /// Pool handling connections diverted by inspection.
     upgrade: R,
+    /// Signal waking fallback attempts (including ReuseFirst waits) when an upgrade publishes.
+    signal: UpgradeSignal,
     /// Intermediate transport type bridged between `fallback` and `upgrade`.
     transport: PhantomData<fn(S)>,
 }
@@ -56,9 +55,9 @@ pub(super) type Negotiated<L, R> = ServiceEither<L, R>;
 pin_project! {
     /// Future driving the active fallback or upgrade checkout branch.
     ///
-    /// While in the fallback branch, retains a fallback pool clone and destination only for
-    /// retrying with fresh readiness after a stale upgrade notification. Once handed off,
-    /// polls the upgraded singleton future directly.
+    /// While in the fallback branch, races upgrade notifications against a `Oneshot`
+    /// fallback attempt so connector readiness never blocks observing a sibling H2 upgrade.
+    /// Once handed off, polls the upgraded singleton future directly.
     pub(super) struct Negotiating<Dst, L, R, S>
     where
         L: Service<Dst>,
@@ -66,9 +65,11 @@ pin_project! {
     {
         // Active fallback or upgrade future.
         #[pin]
-        state: State<Dst, L, Either<L::Future, Oneshot<L, Dst>>, R::Future>,
+        state: State<Dst, L, Oneshot<L, Dst>, R::Future>,
         // Upgraded pool clone used to join or start the singleton on handoff.
         upgrade: R,
+        // Signal subscribed before entering fallback so delayed dials observe upgrades.
+        signal: UpgradeSignal,
         // Intermediate transport type passed into `upgrade`.
         transport: PhantomData<fn(S)>,
     }
@@ -89,6 +90,8 @@ pin_project! {
             fallback: L,
             // Destination cloned for a stale-signal retry.
             destination: Dst,
+            // Resolves when a sibling publishes an upgraded transport while fallback waits.
+            notified: BoxFuture<'static, ()>,
         },
         /// Builds or joins the upgraded service.
         Upgrade {
@@ -99,8 +102,7 @@ pin_project! {
 }
 
 /// Future joining a completed or in-progress upgraded singleton generation.
-type UpgradeFuture<M, S, G> =
-    SingletonFuture<<M as Service<S>>::Future, <M as Service<S>>::Response, G>;
+type UpgradeFuture<M, S, G> = SingletonFuture<<M as Service<S>>::Response, G>;
 
 /// Checked-out service from a completed upgrade.
 type Upgraded<M, S> = Singled<<M as Service<S>>::Response>;
@@ -110,16 +112,16 @@ type Upgraded<M, S> = Singled<<M as Service<S>>::Response>;
 /// Embedded in the entry's shared state alongside the fallback cache so `checkout_ready`,
 /// pruning, and eviction inspect both sides atomically.
 #[derive(Debug)]
-pub(super) struct Shared<S, F, U> {
+pub(super) struct Shared<S, U> {
     /// Inspected upgraded transports waiting to enter the singleton.
     pending: VecDeque<S>,
     /// Shared lifecycle state of the upgraded singleton.
-    upgrade: singleton::State<F, U>,
+    upgrade: singleton::State<U>,
 }
 
 // ===== impl Shared =====
 
-impl<S, F, U> Default for Shared<S, F, U> {
+impl<S, U> Default for Shared<S, U> {
     fn default() -> Self {
         Self {
             pending: VecDeque::new(),
@@ -128,7 +130,7 @@ impl<S, F, U> Default for Shared<S, F, U> {
     }
 }
 
-impl<S, F, U> Shared<S, F, U> {
+impl<S, U> Shared<S, U> {
     /// Returns whether an upgraded transport is waiting for handoff.
     #[must_use]
     pub(super) fn has_pending(&self) -> bool {
@@ -156,26 +158,16 @@ impl<S, F, U> Shared<S, F, U> {
     }
 }
 
-impl<S, F, U> AsMut<VecDeque<S>> for Shared<S, F, U> {
+impl<S, U> AsMut<VecDeque<S>> for Shared<S, U> {
     fn as_mut(&mut self) -> &mut VecDeque<S> {
         &mut self.pending
     }
 }
 
-impl<S, F, U> AsMut<singleton::State<F, U>> for Shared<S, F, U> {
-    fn as_mut(&mut self) -> &mut singleton::State<F, U> {
+impl<S, U> AsMut<singleton::State<U>> for Shared<S, U> {
+    fn as_mut(&mut self) -> &mut singleton::State<U> {
         &mut self.upgrade
     }
-}
-
-/// Existing upgraded work selected before falling back to a new connection.
-enum Selection<F, S> {
-    /// Future joining a completed or in-progress upgraded service.
-    Existing(F),
-    /// Queued upgraded transport ready to enter the upgraded pool.
-    Pending(S),
-    /// No upgraded work is currently available.
-    Fallback,
 }
 
 // ===== impl Negotiate =====
@@ -185,6 +177,7 @@ impl<L: Clone, R: Clone, S> Clone for Negotiate<L, R, S> {
         Self {
             fallback: self.fallback.clone(),
             upgrade: self.upgrade.clone(),
+            signal: self.signal.clone(),
             transport: PhantomData,
         }
     }
@@ -202,7 +195,7 @@ impl<L, M, S, G> Negotiate<L, Singleton<M, S, G>, S>
 where
     M: Service<S>,
     M::Response: Clone,
-    G: AsMut<singleton::State<M::Future, M::Response>> + AsMut<Shared<S, M::Future, M::Response>>,
+    G: AsMut<singleton::State<M::Response>> + AsMut<Shared<S, M::Response>>,
 {
     /// Composes the fallback and upgrade pools around an inspected connector.
     #[must_use]
@@ -212,17 +205,19 @@ where
         LL: Layer<Inspector<C, S, I, G>, Service = L>,
         RR: Layer<Provided<S>, Service = Singleton<M, S, G>>,
     {
+        let signal = UpgradeSignal::new();
         let upgrade = upgrade.layer(Provided(PhantomData));
         let fallback = fallback.layer(Inspector {
             service: connect,
             inspect,
             state: Arc::downgrade(upgrade.shared()),
-            signal: UpgradeSignal::new(),
+            signal: signal.clone(),
             transport: PhantomData,
         });
         Self {
             fallback,
             upgrade,
+            signal,
             transport: PhantomData,
         }
     }
@@ -231,7 +226,7 @@ where
     #[must_use]
     pub(super) fn is_empty(&self, fallback_empty: impl FnOnce(&G) -> bool) -> bool
     where
-        G: AsRef<Shared<S, M::Future, M::Response>>,
+        G: AsRef<Shared<S, M::Response>>,
     {
         let group = self.upgrade.shared().lock();
         let state = (*group).as_ref();
@@ -253,7 +248,7 @@ where
         map_fallback: impl FnOnce(F) -> T,
     ) -> Option<T>
     where
-        G: AsRef<Shared<S, M::Future, M::Response>>,
+        G: AsRef<Shared<S, M::Response>>,
     {
         let mut group = self.upgrade.shared().lock();
         let state = (*group).as_ref();
@@ -291,41 +286,43 @@ impl<L, M, S, Dst, G> Service<Dst> for Negotiate<L, Singleton<M, S, G>, S>
 where
     L: Service<Dst> + Clone,
     L::Error: Into<BoxError>,
-    M: Service<S> + Clone,
-    M::Response: Clone,
+    M: Service<S> + Clone + Send + 'static,
+    M::Response: Clone + Send + 'static,
     M::Error: Into<BoxError>,
+    M::Future: Send + 'static,
     Dst: Clone,
     S: Send + 'static,
-    G: AsMut<singleton::State<M::Future, M::Response>> + AsMut<Shared<S, M::Future, M::Response>>,
+    G: AsMut<singleton::State<M::Response>> + AsMut<Shared<S, M::Response>>,
 {
     type Response = Negotiated<L::Response, Upgraded<M, S>>;
     type Error = BoxError;
     type Future = Negotiating<Dst, L, Singleton<M, S, G>, S>;
 
-    #[inline]
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.fallback.poll_ready(cx).map_err(Into::into)
+    #[inline(always)]
+    fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        // Subscribe to upgrade notifications inside `call` before polling fallback readiness so
+        // an H2 upgrade still wakes checkouts waiting on connector admission.
+        Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
+        // Subscribe before checking upgraded state so any upgrade published after
+        // `select_upgrade` wakes this checkout even while `fallback` waits on readiness or delay.
+        let notified = self.signal.notified();
         let state = match select_upgrade(&self.upgrade) {
-            Selection::Existing(future) => State::Upgrade { future },
-            Selection::Pending(service) => State::Upgrade {
-                future: self.upgrade.call(service),
+            Some(future) => State::Upgrade { future },
+            None => State::Fallback {
+                future: Oneshot::new(self.fallback.clone(), dst.clone()),
+                fallback: self.fallback.clone(),
+                destination: dst,
+                notified,
             },
-            Selection::Fallback => {
-                let destination = dst.clone();
-                State::Fallback {
-                    future: Either::Left(self.fallback.call(dst)),
-                    fallback: self.fallback.clone(),
-                    destination,
-                }
-            }
         };
 
         Negotiating {
             state,
             upgrade: self.upgrade.clone(),
+            signal: self.signal.clone(),
             transport: PhantomData,
         }
     }
@@ -337,12 +334,13 @@ impl<Dst, L, M, S, G> Future for Negotiating<Dst, L, Singleton<M, S, G>, S>
 where
     L: Service<Dst> + Clone,
     L::Error: Into<BoxError>,
-    M: Service<S>,
-    M::Response: Clone,
+    M: Service<S> + Clone + Send + 'static,
+    M::Response: Clone + Send + 'static,
     M::Error: Into<BoxError>,
+    M::Future: Send + 'static,
     Dst: Clone,
     S: Send + 'static,
-    G: AsMut<singleton::State<M::Future, M::Response>> + AsMut<Shared<S, M::Future, M::Response>>,
+    G: AsMut<singleton::State<M::Response>> + AsMut<Shared<S, M::Response>>,
 {
     type Output = Result<Negotiated<L::Response, Upgraded<M, S>>, BoxError>;
 
@@ -354,35 +352,56 @@ where
                     future,
                     fallback,
                     destination,
-                } => match ready!(future.poll(cx)) {
-                    Ok(service) => return Poll::Ready(Ok(Negotiated::Left(service))),
-                    Err(error) => {
-                        let error = error.into();
-                        if !UseOther::is(&*error) {
-                            return Poll::Ready(Err(error));
-                        }
-
+                    notified,
+                } => {
+                    if notified.as_mut().poll(cx).is_ready() {
+                        let next_notified = this.signal.notified();
                         match select_upgrade(this.upgrade) {
-                            Selection::Existing(future) => {
+                            Some(future) => {
                                 this.state.set(State::Upgrade { future });
                             }
-                            Selection::Pending(service) => {
-                                let future = this.upgrade.call(service);
-                                this.state.set(State::Upgrade { future });
+                            None => {
+                                *notified = next_notified;
                             }
-                            Selection::Fallback => {
-                                let fallback = (*fallback).clone();
-                                let destination = (*destination).clone();
-                                let future = Oneshot::new(fallback.clone(), destination.clone());
-                                this.state.set(State::Fallback {
-                                    future: Either::Right(future),
-                                    fallback,
-                                    destination,
-                                });
+                        }
+                        continue;
+                    }
+
+                    match ready!(future.poll(cx)) {
+                        Ok(service) => return Poll::Ready(Ok(Negotiated::Left(service))),
+                        Err(error) => {
+                            let error = error.into();
+                            if !UseOther::is(&*error) {
+                                // A sibling may have published an H2 upgrade during `future.poll`
+                                // before this fallback attempt failed; prefer the upgrade.
+                                if let Some(future) = select_upgrade(this.upgrade) {
+                                    this.state.set(State::Upgrade { future });
+                                    continue;
+                                }
+                                return Poll::Ready(Err(error));
+                            }
+
+                            let next_notified = this.signal.notified();
+                            match select_upgrade(this.upgrade) {
+                                Some(future) => {
+                                    this.state.set(State::Upgrade { future });
+                                }
+                                None => {
+                                    let fallback = (*fallback).clone();
+                                    let destination = (*destination).clone();
+                                    let future =
+                                        Oneshot::new(fallback.clone(), destination.clone());
+                                    this.state.set(State::Fallback {
+                                        future,
+                                        fallback,
+                                        destination,
+                                        notified: next_notified,
+                                    });
+                                }
                             }
                         }
                     }
-                },
+                }
                 StateProj::Upgrade { future } => {
                     return Poll::Ready(
                         ready!(future.poll(cx))
@@ -395,43 +414,36 @@ where
     }
 }
 
-/// Selects upgraded work atomically and destroys redundant transports unlocked.
+/// Selects or atomically starts upgraded work under one group lock and drops redundant transports
+/// unlocked.
 #[must_use]
-fn select_upgrade<M, S, G>(upgrade: &Singleton<M, S, G>) -> Selection<UpgradeFuture<M, S, G>, S>
+fn select_upgrade<M, S, G>(upgrade: &Singleton<M, S, G>) -> Option<UpgradeFuture<M, S, G>>
 where
-    M: Service<S>,
-    M::Response: Clone,
-    G: AsMut<singleton::State<M::Future, M::Response>> + AsMut<Shared<S, M::Future, M::Response>>,
+    M: Service<S> + Clone + Send + 'static,
+    S: Send + 'static,
+    M::Response: Clone + Send + 'static,
+    M::Error: Into<BoxError>,
+    M::Future: Send + 'static,
+    G: AsMut<singleton::State<M::Response>> + AsMut<Shared<S, M::Response>>,
 {
-    let mut group = upgrade.shared().lock();
-    let state: &mut Shared<S, M::Future, M::Response> = group.as_mut();
-    let (selection, discarded) = match checkout_existing(upgrade, state) {
-        Some((future, discarded)) => (Selection::Existing(future), discarded),
-        None => {
-            let Some(service) = state.pending.pop_front() else {
-                return Selection::Fallback;
-            };
-            (
-                Selection::Pending(service),
-                std::mem::take(&mut state.pending),
-            )
-        }
-    };
-    drop(group);
-    drop(discarded);
-    selection
+    upgrade.try_call_with(|group, empty| {
+        let state: &mut Shared<S, M::Response> = group.as_mut();
+        let service = empty.then(|| state.pending.pop_front()).flatten();
+        let discarded = (!empty || service.is_some()).then(|| std::mem::take(&mut state.pending));
+        (service, discarded)
+    })
 }
 
 /// Selects an existing generation and detaches transports made redundant by it.
 #[must_use]
 fn checkout_existing<M, S, G>(
     upgrade: &Singleton<M, S, G>,
-    state: &mut Shared<S, M::Future, M::Response>,
+    state: &mut Shared<S, M::Response>,
 ) -> Option<(UpgradeFuture<M, S, G>, VecDeque<S>)>
 where
     M: Service<S>,
     M::Response: Clone,
-    G: AsMut<singleton::State<M::Future, M::Response>>,
+    G: AsMut<singleton::State<M::Response>>,
 {
     state
         .upgrade
@@ -505,15 +517,12 @@ pub(super) struct Inspector<M, S, I, G> {
 pin_project! {
     /// Future that races connection completion against another observed upgrade.
     ///
-    /// Checks for upgrades queued before subscription on the first poll, then polls the
-    /// notification before the connection future. When its own connection finishes first,
-    /// returns fallback transports directly or queues upgraded ones with [`UseOther`].
+    /// Yields to an upgrade before polling the connection. When its own connection finishes
+    /// first, returns fallback transports directly or queues upgraded ones with [`UseOther`].
     pub(super) struct InspectFuture<F, S, I, G> {
-        // Underlying connection future.
+        // No connection is started if an upgrade was already queued at `call`.
         #[pin]
-        future: F,
-        // One-shot check on first poll for upgrades queued before subscribing.
-        check_pending: bool,
+        future: Option<F>,
         // Resolves when a sibling attempt publishes an upgraded transport.
         notified: BoxFuture<'static, ()>,
         // Predicate selecting upgraded transports.
@@ -559,10 +568,15 @@ where
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
+        // Subscribe before checking the queue so a later publication also reaches the future.
+        let notified = self.signal.notified();
+        let upgrade_pending = self
+            .state
+            .upgrade()
+            .is_some_and(|group| !group.lock().as_mut().is_empty());
         InspectFuture {
-            future: self.service.call(dst),
-            check_pending: true,
-            notified: self.signal.notified(),
+            future: (!upgrade_pending).then(|| self.service.call(dst)),
+            notified,
             inspect: self.inspect.clone(),
             state: self.state.clone(),
             transport: PhantomData,
@@ -585,19 +599,14 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
-        if std::mem::take(this.check_pending)
-            && this
-                .state
-                .upgrade()
-                .is_some_and(|group| !group.lock().as_mut().is_empty())
-        {
+        let Some(future) = this.future.as_pin_mut() else {
             return Poll::Ready(Err(UseOther.into()));
-        }
+        };
         if this.notified.as_mut().poll(cx).is_ready() {
             return Poll::Ready(Err(UseOther.into()));
         }
 
-        let service = ready!(this.future.poll(cx)).map_err(Into::into)?;
+        let service = ready!(future.poll(cx)).map_err(Into::into)?;
         if (this.inspect)(&service) {
             if let Some(group) = this.state.upgrade() {
                 group.lock().as_mut().push_back(service);
@@ -607,19 +616,6 @@ where
         } else {
             Poll::Ready(Ok(service))
         }
-    }
-}
-
-impl<F, S, I, E, G> Started for InspectFuture<F, S, I, G>
-where
-    F: Started + Future<Output = Result<S, E>>,
-    E: Into<BoxError>,
-    S: Send + 'static,
-    I: Fn(&S) -> bool,
-    G: AsMut<VecDeque<S>>,
-{
-    fn started(&self) -> bool {
-        Started::started(&self.future)
     }
 }
 
@@ -699,13 +695,13 @@ mod tests {
 
     use super::*;
 
-    impl<S, F, U> AsMut<Self> for Shared<S, F, U> {
+    impl<S, U> AsMut<Self> for Shared<S, U> {
         fn as_mut(&mut self) -> &mut Self {
             self
         }
     }
 
-    impl<S, F, U> AsRef<Self> for Shared<S, F, U> {
+    impl<S, U> AsRef<Self> for Shared<S, U> {
         fn as_ref(&self) -> &Self {
             self
         }
@@ -817,6 +813,7 @@ mod tests {
         let negotiate = Negotiate {
             fallback,
             upgrade,
+            signal: UpgradeSignal::new(),
             transport: PhantomData,
         };
 
@@ -847,6 +844,7 @@ mod tests {
         let negotiate = Negotiate {
             fallback,
             upgrade,
+            signal: UpgradeSignal::new(),
             transport: PhantomData,
         };
 
@@ -874,20 +872,172 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
 
         let signal = UpgradeSignal::new();
-        signal.notify();
-        let group = Arc::new(Mutex::new(Shared::<_, (), ()>::default()));
+        let group = Arc::new(Mutex::new(Shared::<_, ()>::default()));
         group.lock().pending.push_back("queued-before-subscribe");
-        let error = InspectFuture {
-            future: std::future::pending::<Result<&'static str, BoxError>>(),
-            check_pending: true,
-            notified: signal.notified(),
+        signal.notify();
+        let inspector = Inspector {
+            service: ReadyConnector("http/1.1"),
             inspect: |_: &&str| false,
             state: Arc::downgrade(&group),
             transport: PhantomData,
             signal,
-        }
-        .await
-        .expect_err("the queued upgrade should win despite the missed notification");
+        };
+        let error = Oneshot::new(inspector, ())
+            .await
+            .expect_err("the queued upgrade should win despite the missed notification");
         assert!(UseOther::is(&*error));
+    }
+
+    #[tokio::test]
+    async fn upgrade_wakes_pending_fallback_readiness_and_registers_making_atomically() {
+        #[derive(Clone, Copy)]
+        struct PendingReadyFallback;
+
+        impl Service<()> for PendingReadyFallback {
+            type Response = &'static str;
+            type Error = BoxError;
+            type Future = std::future::Pending<Result<Self::Response, Self::Error>>;
+
+            fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                Poll::Pending
+            }
+
+            fn call(&mut self, _target: ()) -> Self::Future {
+                panic!("fallback whose poll_ready is pending must not be called");
+            }
+        }
+
+        #[derive(Clone)]
+        struct GatedUpgradeMaker {
+            gate: Arc<tokio::sync::Notify>,
+            calls: Arc<AtomicUsize>,
+        }
+
+        impl Service<&'static str> for GatedUpgradeMaker {
+            type Response = &'static str;
+            type Error = BoxError;
+            type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+            fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                Poll::Ready(Ok(()))
+            }
+
+            fn call(&mut self, target: &'static str) -> Self::Future {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let gate = self.gate.clone();
+                Box::pin(async move {
+                    gate.notified().await;
+                    Ok(target)
+                })
+            }
+        }
+
+        // Finding 2 (P1): An Auto checkout blocked in fallback readiness must still wake
+        // when a sibling queues an H2 upgrade and notifies UpgradeSignal.
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let upgrade_calls = Arc::new(AtomicUsize::new(0));
+        let group = Arc::new(Mutex::new(Shared::default()));
+        let signal = UpgradeSignal::new();
+        let upgrade = Singleton::new(
+            GatedUpgradeMaker {
+                gate: gate.clone(),
+                calls: upgrade_calls.clone(),
+            },
+            group.clone(),
+        );
+        let negotiate = Negotiate {
+            fallback: PendingReadyFallback,
+            upgrade,
+            signal: signal.clone(),
+            transport: PhantomData,
+        };
+
+        let mut first = tokio_test::task::spawn(Oneshot::new(negotiate.clone(), ()));
+        assert!(first.poll().is_pending());
+
+        // Publish an upgraded transport while `first` is blocked in fallback `poll_ready`.
+        group.lock().pending.push_back("h2");
+        signal.notify();
+        assert!(first.is_woken());
+        assert!(first.poll().is_pending());
+
+        // Finding 4 (P2): `select_upgrade` must pop `pending` and register `State::Making`
+        // under the same lock so a concurrent checkout joins the batch instead of falling back.
+        {
+            let locked = group.lock();
+            assert!(locked.pending.is_empty());
+            assert!(matches!(locked.upgrade, singleton::State::Making(_)));
+        }
+        let mut second = tokio_test::task::spawn(Oneshot::new(negotiate, ()));
+        assert!(second.poll().is_pending());
+
+        gate.notify_one();
+        let first = tokio::time::timeout(std::time::Duration::from_secs(1), first.into_inner())
+            .await
+            .expect("first checkout should finish upgrade")
+            .unwrap();
+        let second = tokio::time::timeout(std::time::Duration::from_secs(1), second.into_inner())
+            .await
+            .expect("second checkout should join the atomically registered upgrade batch")
+            .unwrap();
+        let (Negotiated::Right(first), Negotiated::Right(second)) = (first, second) else {
+            panic!("both checkouts should receive the upgraded H2 service");
+        };
+        assert_eq!(*first.inner(), "h2");
+        assert_eq!(*second.inner(), "h2");
+        assert_eq!(upgrade_calls.load(Ordering::SeqCst), 1);
+
+        // An upgrade queued during fallback readiness wins whether readiness succeeds or fails.
+        #[derive(Clone)]
+        struct PublishDuringReadiness {
+            group: Arc<Mutex<Shared<&'static str, &'static str>>>,
+            signal: UpgradeSignal,
+            fail: bool,
+        }
+
+        impl Service<()> for PublishDuringReadiness {
+            type Response = &'static str;
+            type Error = BoxError;
+            type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
+
+            fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                self.group.lock().pending.push_back("h2-during-readiness");
+                self.signal.notify();
+                Poll::Ready(if self.fail {
+                    Err("fallback readiness failed".into())
+                } else {
+                    Ok(())
+                })
+            }
+
+            fn call(&mut self, _target: ()) -> Self::Future {
+                panic!("the fallback connector must not be called once H2 is queued")
+            }
+        }
+
+        for fail in [true, false] {
+            let group = Arc::new(Mutex::new(Shared::default()));
+            let signal = UpgradeSignal::new();
+            let negotiate = Negotiate {
+                fallback: Inspector {
+                    service: PublishDuringReadiness {
+                        group: group.clone(),
+                        signal: signal.clone(),
+                        fail,
+                    },
+                    inspect: |_: &&str| false,
+                    state: Arc::downgrade(&group),
+                    transport: PhantomData,
+                    signal: signal.clone(),
+                },
+                upgrade: Singleton::new(Provided(PhantomData), group),
+                signal,
+                transport: PhantomData,
+            };
+            let Negotiated::Right(upgraded) = Oneshot::new(negotiate, ()).await.unwrap() else {
+                panic!("the upgrade published during fallback readiness should win");
+            };
+            assert_eq!(*upgraded.inner(), "h2-during-readiness");
+        }
     }
 }

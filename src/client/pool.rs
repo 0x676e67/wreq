@@ -29,20 +29,21 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     task::{self, Poll},
     time::{Duration, Instant},
 };
 
 use futures_util::future::BoxFuture;
+#[cfg(any(feature = "http2", feature = "http3"))]
+use futures_util::future::Either;
 use http::{Response, Version};
 use netty::body::Incoming;
 use tower::{BoxError, Layer, Service, ServiceBuilder, ServiceExt, util::Oneshot};
 #[cfg(feature = "http2")]
 use {
     self::negotiate::{Negotiate, Negotiated},
-    super::proto::is_expired,
     std::collections::VecDeque,
 };
 #[cfg(any(feature = "http2", feature = "http3"))]
@@ -51,7 +52,6 @@ use {
     super::proto::mux,
 };
 
-pub(super) use self::cache::Started;
 use self::{
     cache::{Cache, Cached},
     entry::{Entry, EntryCleanupGuard, EntryUse},
@@ -186,7 +186,7 @@ struct PoolTargeter<C, R> {
     connector: C,
     /// Per-entry HTTP/1 idle connection cap passed into [`Cache`].
     max_idle_per_host: usize,
-    /// Non-zero reuse-first delay passed into [`StreamMaker`], if enabled.
+    /// Non-zero reuse-first delay passed into [`Cache`], if enabled.
     reuse_delay: Option<Duration>,
     /// Runtime driving pool timers and background tasks.
     runtime: R,
@@ -204,15 +204,11 @@ struct EntryState {
     cache: cache::Shared<http1::Connection>,
     /// Queued ALPN-upgraded transports and multiplexed singleton state.
     #[cfg(feature = "http2")]
-    mux: negotiate::Shared<Established, MuxHandshake, mux::Connection>,
+    mux: negotiate::Shared<Established, mux::Connection>,
     /// Shared HTTP/3 singleton state when HTTP/2 is disabled.
     #[cfg(all(feature = "http3", not(feature = "http2")))]
-    mux: singleton::State<MuxHandshake, mux::Connection>,
+    mux: singleton::State<mux::Connection>,
 }
-
-/// Handshake future for an HTTP/2 or HTTP/3 connection.
-#[cfg(any(feature = "http2", feature = "http3"))]
-type MuxHandshake = BoxFuture<'static, Result<mux::Connection, BoxError>>;
 
 /// Adapts a protocol service stack to the pool's [`Entry`] interface.
 ///
@@ -225,17 +221,6 @@ struct ServiceEntry<S> {
     state: Arc<entry::EntryState>,
 }
 
-/// Owned connection input paired with whether the checkout may wait for reuse.
-///
-/// Passed into [`StreamMaker`] so dedicated or unpooled checkouts skip any reuse-first delay.
-#[derive(Clone)]
-struct Checkout<T> {
-    /// Connection request forwarded to the underlying connector on a dial.
-    target: T,
-    /// Whether this checkout may wait out a reuse-first delay before dialing.
-    wait_for_reuse: bool,
-}
-
 /// Deferred checkout future polled after the pool map lock is released.
 ///
 /// Existing HTTP/2 and HTTP/3 generations avoid an extra box by holding their singleton
@@ -246,7 +231,7 @@ enum CheckoutFuture {
     #[cfg(any(feature = "http2", feature = "http3"))]
     Mux {
         /// Singleton checkout future for the active or completed generation.
-        future: SingletonFuture<MuxHandshake, mux::Connection, EntryState>,
+        future: SingletonFuture<mux::Connection, EntryState>,
         /// Dropped after `future` so cleanup observes the final singleton state.
         usage: Option<EntryUse>,
         /// Whether the checked-out sender participates in pool retention.
@@ -272,31 +257,16 @@ enum Discarded {
     },
 }
 
-/// Connector wrapper that defers dialing until its future is polled.
-///
-/// Optionally waits out a reuse-first window, then runs a cloned connector through `Oneshot`
-/// so readiness and `call` happen on the same service instance.
+/// Connector adapter converting a dialed [`Conn`] into a stream-ready [`Established`].
 #[derive(Clone)]
 struct StreamMaker<C, T> {
-    /// Underlying connector cloned for each dial attempt.
+    /// Underlying transport connector.
     connector: C,
-    /// Reuse-first delay applied when `Checkout::wait_for_reuse` is set.
-    reuse_delay: Option<Duration>,
-    /// Timer for the reuse delay and connection establishment timestamp.
+    /// Timer recording the transport establishment timestamp for HTTP/2 negotiation queues.
+    #[cfg(feature = "http2")]
     timer: T,
-}
-
-/// Dial future that tracks whether physical connection work has started.
-///
-/// `started` flips to `true` right before awaiting the connector (after any reuse delay),
-/// letting the HTTP/1 cache decide whether a lost race is worth finishing in the background.
-struct MakeFuture<T> {
-    /// Boxed async dial pipeline (optional delay followed by connector `Oneshot`).
-    future: BoxFuture<'static, Result<T, BoxError>>,
-    /// Shared flag set right after the reuse delay finishes and dialing begins.
-    started: Option<Arc<AtomicBool>>,
-    /// Tracks first poll when there is no reuse delay (`started` is `None`).
-    polled: bool,
+    #[cfg(not(feature = "http2"))]
+    _timer: std::marker::PhantomData<T>,
 }
 
 // ===== impl Config =====
@@ -558,16 +528,14 @@ impl Pooled {
             PooledInner::Mux(service) => service.inner().connected(),
         }
     }
-}
 
-impl Service<http::Request<Body>> for Pooled {
-    type Response = Response<Incoming>;
-    type Error = SendError;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+    /// Polls the underlying sender for readiness, discarding dead connections on error.
+    pub(super) fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), SendError>> {
         match &mut self.inner {
-            PooledInner::Http1(service) => service.poll_ready(cx),
+            PooledInner::Http1(service) => service.inner_mut().poll_ready(cx).map_err(|error| {
+                service.discard_on_drop();
+                error
+            }),
             #[cfg(any(feature = "http2", feature = "http3"))]
             PooledInner::Mux(service) => service.inner_mut().poll_ready(cx).map_err(|error| {
                 self.cleanup.discard(service.generation());
@@ -576,11 +544,19 @@ impl Service<http::Request<Body>> for Pooled {
         }
     }
 
-    fn call(&mut self, req: http::Request<Body>) -> Self::Future {
-        match &mut self.inner {
-            PooledInner::Http1(service) => service.call(req),
-            #[cfg(any(feature = "http2", feature = "http3"))]
-            PooledInner::Mux(service) => service.inner_mut().call(req),
+    /// Dispatches `req` over the checked-out connection without boxing the response future.
+    pub(super) fn send_request(
+        &mut self,
+        req: http::Request<Body>,
+    ) -> impl Future<Output = Result<Response<Incoming>, SendError>> + use<> {
+        cfg_select! {
+            any(feature = "http2", feature = "http3") => match &mut self.inner {
+                PooledInner::Http1(service) => Either::Left(service.inner_mut().send_request(req)),
+                PooledInner::Mux(service) => Either::Right(service.inner_mut().send_request(req)),
+            },
+            _ => match &mut self.inner {
+                PooledInner::Http1(service) => service.inner_mut().send_request(req),
+            },
         }
     }
 }
@@ -832,21 +808,25 @@ impl<C, R: Executor + Timer + Clone + 'static> PoolTargeter<C, R> {
         S,
         Service = Cache<
             http1::Connect<S>,
-            Checkout<Request<ConnectConfig>>,
+            Request<ConnectConfig>,
             cache::events::WithRuntime<R>,
             EntryState,
         >,
     > + use<'layer, C, R, S>
     where
-        S: Service<Checkout<Request<ConnectConfig>>, Response = Established, Error = BoxError>
-            + Clone,
-        S::Future: Started + Unpin,
+        S: Service<
+                Request<ConnectConfig>,
+                Response = Established,
+                Error = BoxError,
+                Future: Send + 'static,
+            > + Clone,
     {
         ServiceBuilder::new()
             .layer_fn(move |service| {
                 let state = state.clone();
                 cache::builder()
                     .runtime(self.runtime.clone())
+                    .reuse_delay(self.reuse_delay)
                     .on_background_complete(move || {
                         (state.maintain)(&state, entry::Maintenance::Touch);
                     })
@@ -869,11 +849,13 @@ impl<C, R: Executor + Timer + Clone + 'static> PoolTargeter<C, R> {
         C: Service<Unnameable, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
         C::Future: Send + 'static,
     {
-        let connector = || self.connector.clone().map_request(Unnameable::from);
+        let connector = || self.connector.clone().map_request(Unnameable);
         let connect = || StreamMaker {
-            timer: self.runtime.clone(),
             connector: connector(),
-            reuse_delay: self.reuse_delay,
+            #[cfg(feature = "http2")]
+            timer: self.runtime.clone(),
+            #[cfg(not(feature = "http2"))]
+            _timer: std::marker::PhantomData::<R>,
         };
         let config = request.body();
 
@@ -933,15 +915,15 @@ impl AsMut<cache::Shared<http1::Connection>> for EntryState {
 }
 
 #[cfg(feature = "http2")]
-impl AsRef<negotiate::Shared<Established, MuxHandshake, mux::Connection>> for EntryState {
-    fn as_ref(&self) -> &negotiate::Shared<Established, MuxHandshake, mux::Connection> {
+impl AsRef<negotiate::Shared<Established, mux::Connection>> for EntryState {
+    fn as_ref(&self) -> &negotiate::Shared<Established, mux::Connection> {
         &self.mux
     }
 }
 
 #[cfg(feature = "http2")]
-impl AsMut<negotiate::Shared<Established, MuxHandshake, mux::Connection>> for EntryState {
-    fn as_mut(&mut self) -> &mut negotiate::Shared<Established, MuxHandshake, mux::Connection> {
+impl AsMut<negotiate::Shared<Established, mux::Connection>> for EntryState {
+    fn as_mut(&mut self) -> &mut negotiate::Shared<Established, mux::Connection> {
         &mut self.mux
     }
 }
@@ -954,8 +936,8 @@ impl AsMut<VecDeque<Established>> for EntryState {
 }
 
 #[cfg(any(feature = "http2", feature = "http3"))]
-impl AsMut<singleton::State<MuxHandshake, mux::Connection>> for EntryState {
-    fn as_mut(&mut self) -> &mut singleton::State<MuxHandshake, mux::Connection> {
+impl AsMut<singleton::State<mux::Connection>> for EntryState {
+    fn as_mut(&mut self) -> &mut singleton::State<mux::Connection> {
         cfg_select! {
             feature = "http2" => self.mux.as_mut(),
             _ => &mut self.mux,
@@ -973,13 +955,14 @@ impl EntryState {
         timeout: Option<Duration>,
         in_use: bool,
     ) -> Option<Discarded> {
-        let upgrade: &mut singleton::State<_, _> = self.mux.as_mut();
+        let upgrade: &mut singleton::State<_> = self.mux.as_mut();
         // Queued transports are redundant once the upgrade is established.
         let pending = if upgrade.service().is_some() {
             self.mux.drain_pending()
         } else if !in_use {
-            self.mux
-                .retain_pending(|connection| !is_expired(connection.idle_at(), now, timeout))
+            self.mux.retain_pending(|connection| {
+                timeout.is_none_or(|t| now.saturating_duration_since(connection.idle_at()) <= t)
+            })
         } else {
             Default::default()
         };
@@ -988,7 +971,7 @@ impl EntryState {
             .retain_idle(|connection| connection.is_reusable(now, timeout));
         // In-flight checkouts defer expiry, not health checks.
         let timeout = timeout.filter(|_| !in_use);
-        let upgrade: &mut singleton::State<_, _> = self.mux.as_mut();
+        let upgrade: &mut singleton::State<_> = self.mux.as_mut();
         let upgrade = upgrade.retain(|connection| connection.is_reusable(now, timeout));
         Discarded::negotiated(pending, fallback, upgrade)
     }
@@ -997,7 +980,7 @@ impl EntryState {
     #[must_use]
     fn retained(&mut self, defer_busy: bool) -> bool {
         let queued = self.mux.has_pending() || self.cache.has_idle();
-        let upgrade: &mut singleton::State<_, _> = self.mux.as_mut();
+        let upgrade: &mut singleton::State<_> = self.mux.as_mut();
         let connection = upgrade.service();
         (queued || connection.is_some_and(mux::Connection::is_open))
             && !(defer_busy && connection.is_some_and(mux::Connection::defer_until_idle))
@@ -1008,23 +991,19 @@ impl EntryState {
     fn evict(&mut self) -> Option<Discarded> {
         let pending = self.mux.drain_pending();
         let fallback = self.cache.drain_idle();
-        let upgrade: &mut singleton::State<_, _> = self.mux.as_mut();
+        let upgrade: &mut singleton::State<_> = self.mux.as_mut();
         Discarded::negotiated(pending, fallback, upgrade.take())
     }
 }
 
 // ===== impl ServiceEntry =====
 
-impl<M, T, Ev> Entry<T> for ServiceEntry<Cache<M, Checkout<T>, Ev, EntryState>>
+impl<M, T, Ev> Entry<T> for ServiceEntry<Cache<M, T, Ev, EntryState>>
 where
     T: Clone + Send + 'static,
-    M: Service<Checkout<T>, Response = http1::Connection>,
-    Cache<M, Checkout<T>, Ev, EntryState>: Service<
-            Checkout<T>,
-            Response = Cached<http1::Connection, EntryState>,
-            Error = BoxError,
-            Future: Send,
-        > + Clone
+    M: Service<T, Response = http1::Connection>,
+    Cache<M, T, Ev, EntryState>: Service<T, Response = Cached<http1::Connection, EntryState>, Error = BoxError, Future: Send>
+        + Clone
         + Send
         + Sync
         + 'static,
@@ -1046,13 +1025,12 @@ where
     }
 
     fn checkout(&self, target: &T, pool_enabled: bool) -> (CheckoutFuture, Option<Discarded>) {
-        // Only enable reuse-first delay when existing work may yield a sender.
-        let checkout = Checkout::new(target.clone(), pool_enabled && !Entry::<T>::is_empty(self));
+        let target = target.clone();
         let service = self.service.clone();
         let usage = EntryUse::new(self.state.clone());
         (
             CheckoutFuture::Service(Box::pin(async move {
-                Oneshot::new(service, checkout)
+                Oneshot::new(service, target)
                     .await
                     .map(|service| Pooled::new_http1(service, pool_enabled, usage))
             })),
@@ -1085,10 +1063,10 @@ where
 }
 
 #[cfg(any(feature = "http2", feature = "http3"))]
-impl<M, T> Entry<T> for ServiceEntry<Singleton<M, Checkout<T>, EntryState>>
+impl<M, T> Entry<T> for ServiceEntry<Singleton<M, T, EntryState>>
 where
     T: Clone + Send + 'static,
-    M: Service<Checkout<T>, Response = mux::Connection, Error = BoxError, Future = MuxHandshake>
+    M: Service<T, Response = mux::Connection, Error = BoxError, Future: Send + 'static>
         + Clone
         + Send
         + Sync
@@ -1128,11 +1106,11 @@ where
                 None,
             );
         }
-        let checkout = Checkout::new(target.clone(), false);
+        let target = target.clone();
         let service = self.service.clone();
         (
             CheckoutFuture::Service(Box::pin(async move {
-                let service = Oneshot::new(service, checkout).await?;
+                let service = Oneshot::new(service, target).await?;
                 Ok(Pooled::new_mux(service, pool_enabled, usage))
             })),
             None,
@@ -1182,25 +1160,17 @@ where
 #[cfg(feature = "http2")]
 impl<M, U, T, Ev> Entry<T>
     for ServiceEntry<
-        Negotiate<
-            Cache<M, Checkout<T>, Ev, EntryState>,
-            Singleton<U, Established, EntryState>,
-            Established,
-        >,
+        Negotiate<Cache<M, T, Ev, EntryState>, Singleton<U, Established, EntryState>, Established>,
     >
 where
     T: Clone + Send + 'static,
-    M: Service<Checkout<T>, Response = http1::Connection>,
-    Cache<M, Checkout<T>, Ev, EntryState>: Service<
-            Checkout<T>,
-            Response = Cached<http1::Connection, EntryState>,
-            Error = BoxError,
-            Future: Send,
-        > + Clone
+    M: Service<T, Response = http1::Connection>,
+    Cache<M, T, Ev, EntryState>: Service<T, Response = Cached<http1::Connection, EntryState>, Error = BoxError, Future: Send>
+        + Clone
         + Send
         + Sync
         + 'static,
-    U: Service<Established, Response = mux::Connection, Error = BoxError, Future = MuxHandshake>
+    U: Service<Established, Response = mux::Connection, Error = BoxError, Future: Send + 'static>
         + Clone
         + Send
         + Sync
@@ -1230,7 +1200,6 @@ where
     }
 
     fn checkout(&self, target: &T, pool_enabled: bool) -> (CheckoutFuture, Option<Discarded>) {
-        let wait_for_reuse = pool_enabled && !Entry::<T>::is_empty(self);
         let usage = EntryUse::new(self.state.clone());
         if let Some((future, pending)) = self.service.checkout_existing() {
             return (
@@ -1242,11 +1211,11 @@ where
                 Discarded::negotiated(pending, Vec::new(), None),
             );
         }
-        let checkout = Checkout::new(target.clone(), wait_for_reuse);
+        let target = target.clone();
         let service = self.service.clone();
         (
             CheckoutFuture::Service(Box::pin(async move {
-                Oneshot::new(service, checkout)
+                Oneshot::new(service, target)
                     .await
                     .map(|service| match service {
                         Negotiated::Left(service) => {
@@ -1304,7 +1273,7 @@ fn checkout_extended_connect<M, T>(
     timeout: Option<Duration>,
 ) -> Option<Pooled>
 where
-    M: Service<T, Response = mux::Connection, Future = MuxHandshake>,
+    M: Service<T, Response = mux::Connection>,
 {
     singleton
         .with_state(|state| {
@@ -1315,24 +1284,6 @@ where
         })
         .into_made()
         .map(|service| Pooled::reuse(PooledInner::Mux(service), state.clone()))
-}
-
-// ===== impl Checkout =====
-
-impl<T> Checkout<T> {
-    #[must_use]
-    fn new(target: T, wait_for_reuse: bool) -> Self {
-        Self {
-            target,
-            wait_for_reuse,
-        }
-    }
-}
-
-impl From<Checkout<Request<ConnectConfig>>> for Unnameable {
-    fn from(checkout: Checkout<Request<ConnectConfig>>) -> Self {
-        Self(checkout.target)
-    }
 }
 
 // ===== impl CheckoutFuture =====
@@ -1394,48 +1345,30 @@ impl Discarded {
 
 // ===== impl StreamMaker =====
 
-impl<C, R, T> Service<Checkout<T>> for StreamMaker<C, R>
+impl<C, R, T> Service<T> for StreamMaker<C, R>
 where
-    C: Service<Checkout<T>, Response = Conn, Error = BoxError, Future: Send + 'static>
-        + Clone
-        + Send
-        + 'static,
+    C: Service<T, Response = Conn, Error = BoxError, Future: Send + 'static>,
     R: Timer + Clone + 'static,
-    T: Send + 'static,
 {
     type Response = Established;
     type Error = BoxError;
-    type Future = MakeFuture<Self::Response>;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
-    fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
+    #[inline(always)]
+    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.connector.poll_ready(cx)
     }
 
-    fn call(&mut self, checkout: Checkout<T>) -> Self::Future {
-        let reuse_delay = if checkout.wait_for_reuse {
-            self.reuse_delay
-        } else {
-            None
-        };
-        let started = reuse_delay
-            .is_some()
-            .then(|| Arc::new(AtomicBool::new(false)));
-        let start_signal = started.clone();
-        let connector = self.connector.clone();
+    fn call(&mut self, target: T) -> Self::Future {
+        let future = self.connector.call(target);
+        #[cfg(feature = "http2")]
         let timer = self.timer.clone();
 
-        let future = Box::pin(async move {
-            if let Some(duration) = reuse_delay {
-                timer.sleep(duration).await;
-            }
-            if let Some(started) = &start_signal {
-                started.store(true, Ordering::Release);
-            }
-
+        Box::pin(async move {
             let Conn {
                 transport,
                 connected,
-            } = Oneshot::new(connector, checkout).await?;
+            } = future.await?;
 
             Ok(Established::new(
                 transport.into_stream()?,
@@ -1443,32 +1376,7 @@ where
                 #[cfg(feature = "http2")]
                 timer.now(),
             ))
-        });
-
-        MakeFuture {
-            future,
-            polled: false,
-            started,
-        }
-    }
-}
-
-// ===== impl MakeFuture =====
-
-impl<T> Future for MakeFuture<T> {
-    type Output = Result<T, BoxError>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        self.polled = true;
-        self.future.as_mut().poll(cx)
-    }
-}
-
-impl<T> Started for MakeFuture<T> {
-    fn started(&self) -> bool {
-        self.started
-            .as_ref()
-            .map_or(self.polled, |started| started.load(Ordering::Acquire))
+        })
     }
 }
 

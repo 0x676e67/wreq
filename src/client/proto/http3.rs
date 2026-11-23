@@ -7,7 +7,7 @@ use std::{
 
 use futures_util::future::BoxFuture;
 use netty::{conn, http3::Http3Options, rt::quic::Compat};
-use tower::{BoxError, Layer, Service, ServiceExt};
+use tower::{BoxError, Layer, Service};
 
 use super::{
     configure,
@@ -26,8 +26,8 @@ pub struct ConnectLayer<'a> {
 /// Handshakes use the entry's builder and do not wait for the peer, so, as for HTTP/2,
 /// the connector's deadline is the only connect timeout.
 #[derive(Clone)]
-pub struct Connect<C> {
-    connector: C,
+pub struct Connect<S> {
+    inner: S,
     builder: Arc<conn::http3::Builder<DynRuntime>>,
     runtime: DynRuntime,
 }
@@ -50,12 +50,12 @@ impl<'a> ConnectLayer<'a> {
     }
 }
 
-impl<C> Layer<C> for ConnectLayer<'_> {
-    type Service = Connect<C>;
+impl<S> Layer<S> for ConnectLayer<'_> {
+    type Service = Connect<S>;
 
-    fn layer(&self, connector: C) -> Self::Service {
+    fn layer(&self, inner: S) -> Self::Service {
         Connect {
-            connector,
+            inner,
             builder: configure(self.builder, self.options, conn::http3::Builder::options),
             runtime: self.runtime.clone(),
         }
@@ -64,34 +64,29 @@ impl<C> Layer<C> for ConnectLayer<'_> {
 
 // ===== impl Connect =====
 
-impl<C, Dst> Service<Dst> for Connect<C>
+impl<S, Dst> Service<Dst> for Connect<S>
 where
-    C: Service<Dst, Response = Conn, Error = BoxError, Future: Send + 'static>
-        + Clone
-        + Send
-        + 'static,
-    Dst: Send + 'static,
+    S: Service<Dst, Response = Conn, Error = BoxError, Future: Send + 'static>,
 {
     type Response = Connection;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     #[inline(always)]
-    fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
+    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
-        let mut connector = self.connector.clone();
+        let future = self.inner.call(dst);
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
 
         Box::pin(async move {
-            connector.ready().await?;
             let Conn {
                 transport,
                 connected,
-            } = connector.call(dst).await?;
+            } = future.await?;
 
             // Convert the transport into a QUIC connection and endpoint.
             let (quic, endpoint) = transport.into_quic()?;

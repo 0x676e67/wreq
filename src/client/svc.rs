@@ -19,7 +19,7 @@ use http::{
 };
 use http::{HeaderValue, Method, Response, Uri, Version, header::HOST, uri::Authority};
 use netty::body::Incoming;
-use tower::{BoxError, Service, ServiceExt};
+use tower::{BoxError, Service};
 #[cfg(feature = "cookies")]
 use {
     crate::cookie::{CookieStore, Cookies},
@@ -239,7 +239,7 @@ impl Client {
             );
         }
 
-        let mut response = match pooled.call(request.inner).await {
+        let mut response = match pooled.send_request(request.inner).await {
             Ok(response) => response,
             Err(mut error) => {
                 let connection_reused = pooled.is_reused();
@@ -300,7 +300,7 @@ impl Client {
             drop(pooled);
         } else {
             pool.execute(Box::pin(async move {
-                let _ = pooled.ready().await;
+                let _ = poll_fn(|cx| pooled.poll_ready(cx)).await;
             }));
         }
 

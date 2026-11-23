@@ -7,15 +7,14 @@
 
 use std::{
     future::Future,
-    pin::Pin,
     sync::Arc,
-    task::{self, Poll, ready},
+    task::{self, Poll},
     time::{Duration, Instant},
 };
 
 use futures_util::{
     TryFutureExt,
-    future::{self, BoxFuture},
+    future::{self, BoxFuture, Either},
 };
 use http::{
     HeaderValue, Method, Request, Response, Uri,
@@ -26,12 +25,9 @@ use netty::{body::Incoming, conn, http1::Http1Options};
 use tokio::sync::oneshot;
 use tower::{BoxError, Layer, Service};
 
-use super::{Established, SendError, configure, is_expired};
+use super::{Established, SendError, configure};
 use crate::{
-    client::{
-        error::{Error, ErrorKind},
-        pool::Started,
-    },
+    client::error::{Error, ErrorKind},
     conn::Connected,
     rt::{DynRuntime, Timer as _},
 };
@@ -60,38 +56,12 @@ pub struct ConnectLayer<'a> {
 }
 
 /// Connects a transport and performs an HTTP/1 handshake.
-///
-/// The inner service may include a reuse delay before connecting. Its
-/// [`Started`] state is preserved so the HTTP/1 cache can decide whether a lost
-/// reuse race should finish in the background.
 #[derive(Clone)]
 pub struct Connect<S> {
-    service: S,
+    inner: S,
     builder: Arc<conn::http1::Builder>,
     set_host: bool,
     runtime: DynRuntime,
-}
-
-/// Connects a transport and then advances the HTTP/1 handshake.
-///
-/// The explicit state machine keeps the connector's [`Started`] signal visible
-/// to the cache while the operation moves from transport creation to the boxed
-/// protocol handshake future.
-pub struct ConnectFuture<F> {
-    state: ConnectState<F>,
-    builder: Arc<conn::http1::Builder>,
-    set_host: bool,
-    runtime: DynRuntime,
-}
-
-/// Phases of an HTTP/1 connection service call.
-enum ConnectState<F> {
-    /// Waiting for the physical transport.
-    Connecting(F),
-    /// Performing the protocol handshake.
-    Handshaking(BoxFuture<'static, Result<Connection, BoxError>>),
-    /// Future has completed and owns no reusable state.
-    Done,
 }
 
 // ===== impl ConnectLayer =====
@@ -117,9 +87,9 @@ impl<'a> ConnectLayer<'a> {
 impl<S> Layer<S> for ConnectLayer<'_> {
     type Service = Connect<S>;
 
-    fn layer(&self, service: S) -> Self::Service {
+    fn layer(&self, inner: S) -> Self::Service {
         Connect {
-            service,
+            inner,
             builder: configure(self.builder, self.options, conn::http1::Builder::options),
             runtime: self.runtime.clone(),
             set_host: self.set_host,
@@ -131,124 +101,57 @@ impl<S> Layer<S> for ConnectLayer<'_> {
 
 impl<S, Dst> Service<Dst> for Connect<S>
 where
-    S: Service<Dst, Response = Established, Error = BoxError> + Clone,
-    S::Future: Started + Unpin,
+    S: Service<Dst, Response = Established, Error = BoxError, Future: Send + 'static>,
 {
     type Response = Connection;
     type Error = BoxError;
-    type Future = ConnectFuture<S::Future>;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     #[inline(always)]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.service.poll_ready(cx)
+        self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, target: Dst) -> Self::Future {
-        ConnectFuture {
-            state: ConnectState::Connecting(self.service.call(target)),
-            builder: self.builder.clone(),
-            runtime: self.runtime.clone(),
-            set_host: self.set_host,
-        }
-    }
-}
-
-// ===== impl ConnectFuture =====
-
-impl<F> Future for ConnectFuture<F>
-where
-    F: Future<Output = Result<Established, BoxError>> + Started + Unpin,
-{
-    type Output = Result<Connection, BoxError>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        loop {
-            match &mut self.state {
-                ConnectState::Connecting(future) => {
-                    let established = match ready!(Pin::new(future).poll(cx)) {
-                        Ok(established) => established,
-                        Err(error) => {
-                            self.state = ConnectState::Done;
-                            return Poll::Ready(Err(error));
-                        }
-                    };
-                    self.state = ConnectState::Handshaking(Box::pin(Connection::handshake(
-                        established,
-                        self.builder.clone(),
-                        self.runtime.clone(),
-                        self.set_host,
-                    )));
+        let future = self.inner.call(target);
+        let builder = self.builder.clone();
+        let runtime = self.runtime.clone();
+        let set_host = self.set_host;
+        Box::pin(async move {
+            let Established { io, connected, .. } = future.await?;
+            let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
+            let (error_tx, error_rx) = oneshot::channel();
+            runtime.execute(Box::pin(async move {
+                if let Err(error) = connection.with_upgrades().await {
+                    debug!("client connection error: {error:?}");
+                    let _ = error_tx.send(error);
                 }
-                ConnectState::Handshaking(future) => {
-                    let result = ready!(future.as_mut().poll(cx));
-                    self.state = ConnectState::Done;
-                    return Poll::Ready(result);
-                }
-                ConnectState::Done => return Poll::Pending,
+            }));
+
+            // Wait for the sender to become ready, preserving the driver's error if it closed.
+            match tx.ready().await {
+                Ok(()) => drop(error_rx),
+                Err(error) if error.is_closed() => match error_rx.await {
+                    Ok(connection_error) => return Err(connection_error.into()),
+                    Err(_) => return Err(error.into()),
+                },
+                Err(error) => return Err(error.into()),
             }
-        }
-    }
-}
 
-impl<F> Started for ConnectFuture<F>
-where
-    F: Future<Output = Result<Established, BoxError>> + Started + Unpin,
-{
-    fn started(&self) -> bool {
-        match &self.state {
-            ConnectState::Connecting(future) => future.started(),
-            ConnectState::Handshaking(_) | ConnectState::Done => true,
-        }
+            Ok(Connection {
+                tx,
+                connected,
+                set_host,
+                idle_at: runtime.now(),
+                runtime,
+            })
+        })
     }
 }
 
 // ===== impl Connection =====
 
 impl<B> Connection<B> {
-    /// Handshakes a transport and returns a ready HTTP/1 sender.
-    /// Starts the driver before waiting for readiness, preserving its error if
-    /// the sender closes during setup.
-    async fn handshake(
-        established: Established,
-        builder: Arc<conn::http1::Builder>,
-        runtime: DynRuntime,
-        set_host: bool,
-    ) -> Result<Self, BoxError>
-    where
-        B: Body + Send + 'static,
-        B::Data: Send,
-        B::Error: Into<BoxError>,
-    {
-        // Extract the established transport and connection metadata.
-        let Established { io, connected, .. } = established;
-        let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
-        let (error_tx, error_rx) = oneshot::channel();
-        runtime.execute(Box::pin(async move {
-            if let Err(error) = connection.with_upgrades().await {
-                debug!("client connection error: {error:?}");
-                let _ = error_tx.send(error);
-            }
-        }));
-
-        // Wait for the sender to become ready, handling any connection errors.
-        match tx.ready().await {
-            Ok(()) => drop(error_rx),
-            Err(error) if error.is_closed() => match error_rx.await {
-                Ok(connection_error) => return Err(connection_error.into()),
-                Err(_) => return Err(error.into()),
-            },
-            Err(error) => return Err(error.into()),
-        }
-
-        Ok(Self {
-            tx,
-            connected,
-            set_host,
-            idle_at: runtime.now(),
-            runtime,
-        })
-    }
-
     /// Returns metadata for the underlying transport.
     #[must_use]
     pub fn connected(&self) -> &Connected {
@@ -276,26 +179,28 @@ impl<B> Connection<B> {
     /// Returns whether the sender is healthy and within its idle timeout.
     #[must_use]
     pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
-        self.is_open() && !is_expired(self.idle_at, now, timeout)
+        self.is_open() && timeout.is_none_or(|t| now.saturating_duration_since(self.idle_at) <= t)
     }
-}
 
-impl<B> Service<Request<B>> for Connection<B>
-where
-    B: Body + Send + 'static,
-{
-    type Response = Response<Incoming>;
-    type Error = SendError<Request<B>>;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
+    /// Polls the HTTP/1 sender until it can accept another request.
     #[inline(always)]
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+    pub fn poll_ready(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), SendError<Request<B>>>> {
         self.tx
             .poll_ready(cx)
             .map_err(|error| SendError::Request(Error::closed(error)))
     }
 
-    fn call(&mut self, mut req: Request<B>) -> Self::Future {
+    /// Prepares the HTTP/1 wire headers and target, then dispatches `req` without boxing.
+    pub fn send_request(
+        &mut self,
+        mut req: Request<B>,
+    ) -> impl Future<Output = Result<Response<Incoming>, SendError<Request<B>>>> + use<B>
+    where
+        B: Body + Send + 'static,
+    {
         // Host must be derived before the absolute URI becomes a wire target.
         if self.set_host
             && !req.headers().contains_key(HOST)
@@ -322,9 +227,8 @@ where
         };
 
         match result {
-            Ok(()) => Box::pin(self.tx.try_send_request(req).map_err(SendError::protocol)),
-            // Boxing this rare local error lets every pooled sender share one future type.
-            Err(error) => Box::pin(future::err(error.into())),
+            Ok(()) => Either::Left(self.tx.try_send_request(req).map_err(SendError::protocol)),
+            Err(error) => Either::Right(future::err(error.into())),
         }
     }
 }

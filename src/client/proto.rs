@@ -16,10 +16,9 @@ pub(super) mod http3;
 #[cfg(any(feature = "http2", feature = "http3"))]
 pub(super) mod mux;
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
+#[cfg(feature = "http2")]
+use std::time::Instant;
 
 use http::Request;
 use netty::conn::TrySendError;
@@ -230,10 +229,4 @@ impl<R> SendError<R> {
             Self::Protocol(error) => Error::new(kind, (*error).into_error()),
         }
     }
-}
-
-/// Returns whether an idle timestamp exceeds the configured timeout.
-#[must_use]
-pub(super) fn is_expired(idle_at: Instant, now: Instant, timeout: Option<Duration>) -> bool {
-    timeout.is_some_and(|timeout| now.saturating_duration_since(idle_at) > timeout)
 }

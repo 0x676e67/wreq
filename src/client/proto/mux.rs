@@ -1,6 +1,7 @@
 //! Shared sender and checkout state for multiplexed HTTP/2 and HTTP/3 connections.
 
 use std::{
+    future::Future,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -9,10 +10,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures_util::{TryFutureExt, future::BoxFuture};
+use futures_util::TryFutureExt;
+#[cfg(all(feature = "http2", feature = "http3"))]
+use futures_util::future::Either;
 use http::{Request, Response, Version};
 use netty::{body::Incoming, conn};
-use tower::Service;
 
 use super::SendError;
 use crate::{
@@ -71,6 +73,7 @@ struct Leases {
 
 impl Connection {
     /// Wraps a handshaken sender whose connection driver is already running.
+    #[must_use]
     pub(super) fn new(tx: Sender, connected: Connected, runtime: DynRuntime) -> Self {
         Self {
             tx,
@@ -177,14 +180,9 @@ impl Connection {
     pub fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
         self.is_open() && self.state.leases.reusable(now, timeout)
     }
-}
 
-impl Service<Request<Body>> for Connection {
-    type Response = Response<Incoming>;
-    type Error = SendError;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+    /// Polls the multiplexed sender until it can accept a request, poisoning it on error.
+    pub fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), SendError>> {
         let ready = match &mut self.tx {
             #[cfg(feature = "http2")]
             Sender::Http2(sender) => sender.poll_ready(cx),
@@ -199,16 +197,26 @@ impl Service<Request<Body>> for Connection {
         ready.map_err(|error| SendError::Request(Error::closed(error)))
     }
 
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
-        match &mut self.tx {
-            #[cfg(feature = "http2")]
-            Sender::Http2(sender) => {
-                Box::pin(sender.try_send_request(req).map_err(SendError::protocol))
-            }
-            #[cfg(feature = "http3")]
-            Sender::Http3(sender) => {
-                Box::pin(sender.try_send_request(req).map_err(SendError::protocol))
-            }
+    /// Dispatches `req` over the shared HTTP/2 or HTTP/3 sender without boxing.
+    pub fn send_request(
+        &mut self,
+        req: Request<Body>,
+    ) -> impl Future<Output = Result<Response<Incoming>, SendError>> + use<> {
+        cfg_select! {
+            all(feature = "http2", feature = "http3") => match &mut self.tx {
+                Sender::Http2(sender) => {
+                    Either::Left(sender.try_send_request(req).map_err(SendError::protocol))
+                }
+                Sender::Http3(sender) => {
+                    Either::Right(sender.try_send_request(req).map_err(SendError::protocol))
+                }
+            },
+            feature = "http2" => match &mut self.tx {
+                Sender::Http2(sender) => sender.try_send_request(req).map_err(SendError::protocol),
+            },
+            feature = "http3" => match &mut self.tx {
+                Sender::Http3(sender) => sender.try_send_request(req).map_err(SendError::protocol),
+            },
         }
     }
 }
