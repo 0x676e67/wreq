@@ -332,6 +332,17 @@ pub fn domain_match(host: &CanonicalHost, domain: &CanonicalHost) -> bool {
         && host.ends_with(domain.as_ref())
 }
 
+/// Checks the public suffix list, including its private entries, for a DNS domain.
+/// https://www.rfc-editor.org/rfc/rfc6265.html#section-5.3
+#[cfg(feature = "cookies-psl")]
+pub fn is_public_suffix(domain: &CanonicalHost) -> bool {
+    let Host::Domain(domain) = domain else {
+        return false;
+    };
+    let domain = domain.strip_suffix('.').unwrap_or(domain);
+    psl::suffix_str(domain).is_some_and(|suffix| suffix == domain)
+}
+
 /// Determines whether `request_path` path-matches `cookie_path` under RFC 6265 section 5.1.4.
 ///
 /// https://www.rfc-editor.org/rfc/rfc6265.html#section-5.1.4

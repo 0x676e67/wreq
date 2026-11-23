@@ -222,6 +222,8 @@
 //! enabled or disabled:
 //!
 //! - **cookies**: Provides cookie session support.
+//! - **cookies-psl**: Enables `cookies` and restricts cookie `Domain` attributes using the Public
+//!   Suffix List. If the suffix is the request host, the cookie is stored as host-only.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **brotli**: Provides response body brotli decompression.
 //! - **zstd**: Provides response body zstd decompression.
