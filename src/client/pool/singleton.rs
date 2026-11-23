@@ -22,7 +22,7 @@ use std::{
     task::{self, Poll},
 };
 
-use futures_util::future::BoxFuture;
+use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
 use tokio::sync::oneshot;
 use tower::{BoxError, Service, util::Oneshot};
 
@@ -180,12 +180,9 @@ where
             receiver: None,
             reused: false,
         };
-        let maker = self.maker.clone();
-        let future: BatchFuture<M::Response> = Box::pin(async move {
-            Oneshot::new(maker, dst)
-                .await
-                .map_err(|error| SingletonError::new(error.into()))
-        });
+        let future = Oneshot::new(self.maker.clone(), dst)
+            .map_err(|error| SingletonError::new(error.into()))
+            .boxed();
         let mut guard = self.state.lock();
         let state = guard.as_mut();
         let unused = match &mut *state {

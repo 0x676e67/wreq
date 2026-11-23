@@ -110,7 +110,7 @@ where
         /// Target forwarded to `maker` once ready.
         target: Option<Dst>,
     },
-    /// Polling a cloned maker for readiness after the reuse-first delay elapsed.
+    /// Polling a cloned maker for readiness before starting the dial.
     Preparing {
         /// Cloned maker waiting to become ready.
         maker: M,
@@ -133,8 +133,8 @@ pin_project! {
     ///
     /// `Racing` polls a FIFO reservation before advancing the maker on every wake, handing
     /// started maker work to the event policy if reuse wins; dropping it cancels its waiter
-    /// and reassigns any reserved service. `Cached` yields a service already reserved during
-    /// readiness.
+    /// and reassigns any reserved service. `Cached` yields an idle service taken immediately
+    /// in `call`.
     #[project = CacheFutureProj]
     pub(super) enum CacheFuture<M, Dst, Ev, G>
     where
@@ -152,7 +152,7 @@ pin_project! {
             events: Ev,
         },
         Cached {
-            // Service already reserved during `poll_ready`.
+            // Idle service taken immediately in `call`.
             service: Option<Cached<M::Response, G>>,
         },
     }
@@ -889,6 +889,8 @@ fn cache_shutdown(mut receiver: watch::Receiver<()>) -> BoxFuture<'static, ()> {
 pub(super) mod events {
     use std::{future::Future, sync::Arc, time::Duration};
 
+    use futures_util::FutureExt;
+
     use super::{BoxSleep, Executor, Timer};
 
     /// Policy that cancels maker futures after another service wins the race.
@@ -941,12 +943,15 @@ pub(super) mod events {
 
         fn on_race_lost(&self, future: F) {
             let on_complete = self.on_complete.clone();
-            self.runtime.execute(Box::pin(async move {
-                future.await;
-                if let Some(on_complete) = on_complete {
-                    on_complete();
-                }
-            }));
+            self.runtime.execute(
+                future
+                    .map(move |()| {
+                        if let Some(on_complete) = on_complete {
+                            on_complete();
+                        }
+                    })
+                    .boxed(),
+            );
         }
     }
 }

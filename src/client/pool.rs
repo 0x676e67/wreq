@@ -35,9 +35,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures_util::future::BoxFuture;
 #[cfg(any(feature = "http2", feature = "http3"))]
 use futures_util::future::Either;
+use futures_util::{
+    FutureExt, TryFutureExt,
+    future::{BoxFuture, lazy},
+};
 use http::{Response, Version};
 use netty::body::Incoming;
 use tower::{BoxError, Layer, Service, ServiceBuilder, ServiceExt};
@@ -1030,12 +1033,12 @@ where
         let mut service = self.service.clone();
         let usage = EntryUse::new(self.state.clone());
         (
-            CheckoutFuture::Service(Box::pin(async move {
-                service
-                    .call(target)
-                    .await
-                    .map(|service| Pooled::new_http1(service, pool_enabled, usage))
-            })),
+            CheckoutFuture::Service(
+                lazy(move |_| service.call(target))
+                    .flatten()
+                    .map_ok(move |service| Pooled::new_http1(service, pool_enabled, usage))
+                    .boxed(),
+            ),
             None,
         )
     }
@@ -1109,16 +1112,18 @@ where
         let target = target.clone();
         let mut service = self.service.clone();
         (
-            CheckoutFuture::Service(Box::pin(async move {
-                let service = service.call(target).await?;
-                Ok(Pooled::new_mux(service, pool_enabled, usage))
-            })),
+            CheckoutFuture::Service(
+                lazy(move |_| service.call(target))
+                    .flatten()
+                    .err_into()
+                    .map_ok(move |service| Pooled::new_mux(service, pool_enabled, usage))
+                    .boxed(),
+            ),
             None,
         )
     }
 
     fn prune(&self, expiry: Option<(Instant, Duration)>) -> Option<Discarded> {
-        // A checkout waiting on the singleton may not hold a sender yet.
         let expiry = expiry.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
         self.service
             .with_state(|state| state.retain(|connection| connection.is_reusable(expiry)))
@@ -1126,7 +1131,6 @@ where
     }
 
     fn has_retained(&self) -> bool {
-        // Check health because a peer may close an idle connection between sweeps.
         self.service
             .with_state(|state| state.service().is_some_and(mux::Connection::is_open))
     }
@@ -1213,12 +1217,17 @@ where
         let target = target.clone();
         let mut service = self.service.clone();
         (
-            CheckoutFuture::Service(Box::pin(async move {
-                service.call(target).await.map(|service| match service {
-                    Negotiated::Left(service) => Pooled::new_http1(service, pool_enabled, usage),
-                    Negotiated::Right(service) => Pooled::new_mux(service, pool_enabled, usage),
-                })
-            })),
+            CheckoutFuture::Service(
+                lazy(move |_| service.call(target))
+                    .flatten()
+                    .map_ok(move |service| match service {
+                        Negotiated::Left(service) => {
+                            Pooled::new_http1(service, pool_enabled, usage)
+                        }
+                        Negotiated::Right(service) => Pooled::new_mux(service, pool_enabled, usage),
+                    })
+                    .boxed(),
+            ),
             None,
         )
     }
