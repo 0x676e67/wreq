@@ -29,8 +29,7 @@ use {
 
 use super::{
     error::{self, ErrorKind},
-    pool,
-    proto::Handshakes,
+    pool, proto,
     request::RequestVersion,
 };
 use crate::{
@@ -166,7 +165,7 @@ impl Client {
                 connector,
                 runtime.clone(),
                 config.pool_config,
-                Handshakes::new(runtime, &config.connect_config, true),
+                proto::Builder::new(runtime, &config.connect_config, true),
             ),
             protocol: config.protocol,
             config: config.connect_config,

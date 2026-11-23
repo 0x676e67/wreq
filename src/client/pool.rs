@@ -58,7 +58,7 @@ use self::{
     expire::{Expire, Retain},
     map::Map,
 };
-use super::proto::{Established, Handshakes, SendError, http1};
+use super::proto::{self, Established, SendError, http1};
 use crate::{
     Body,
     config::ConnectConfig,
@@ -190,8 +190,8 @@ struct PoolTargeter<C, R> {
     reuse_delay: Option<Duration>,
     /// Runtime driving pool timers and background tasks.
     runtime: R,
-    /// Client-wide builders for the protocol handshake layers.
-    handshakes: Handshakes,
+    /// Client-wide builder for the protocol handshake layers.
+    proto: proto::Builder,
 }
 
 /// Per-group connection reuse state shared under a single entry mutex.
@@ -332,11 +332,11 @@ where
         + 'static,
     R: Executor + Timer + Clone + 'static,
 {
-    /// Creates a connection pool with the client's configured handshake builders.
+    /// Creates a connection pool with the client's configured protocol builder.
     ///
     /// The idle-cleanup task stays dormant until an entry retains idle state.
     #[must_use]
-    pub(super) fn new(connector: C, runtime: R, config: Config, handshakes: Handshakes) -> Self {
+    pub(super) fn new(connector: C, runtime: R, config: Config, proto: proto::Builder) -> Self {
         let reuse_delay = match config.strategy {
             PoolStrategy::ReuseFirst(duration)
                 if config.is_enabled() && duration != Duration::ZERO =>
@@ -352,7 +352,7 @@ where
                 max_idle_per_host: config.max_idle_per_host,
                 reuse_delay,
                 runtime,
-                handshakes,
+                proto,
             };
 
             PoolInner {
@@ -853,7 +853,7 @@ impl<C, R: Executor + Timer + Clone + 'static> PoolTargeter<C, R> {
                     .max_idle(self.max_idle_per_host)
                     .build_in(service, shared.clone())
             })
-            .layer(self.handshakes.http1(config))
+            .layer(self.proto.http1(config))
             .into_inner()
     }
 
@@ -888,7 +888,7 @@ impl<C, R: Executor + Timer + Clone + 'static> PoolTargeter<C, R> {
             Protocol::Http2 => Arc::new(ServiceEntry {
                 service: ServiceBuilder::new()
                     .layer_fn(|maker| Singleton::new(maker, shared.clone()))
-                    .layer(self.handshakes.http2(config))
+                    .layer(self.proto.http2(config))
                     .service(connect()),
                 state,
             }),
@@ -896,7 +896,7 @@ impl<C, R: Executor + Timer + Clone + 'static> PoolTargeter<C, R> {
             Protocol::Http3 => Arc::new(ServiceEntry {
                 service: ServiceBuilder::new()
                     .layer_fn(|maker| Singleton::new(maker, shared.clone()))
-                    .layer(self.handshakes.http3(config))
+                    .layer(self.proto.http3(config))
                     .service(connector()),
                 state,
             }),
@@ -906,7 +906,7 @@ impl<C, R: Executor + Timer + Clone + 'static> PoolTargeter<C, R> {
                     |established| established.connected().is_negotiated_h2();
                 let upgrade = ServiceBuilder::new()
                     .layer_fn(|maker| Singleton::new(maker, shared.clone()))
-                    .layer(self.handshakes.http2(config));
+                    .layer(self.proto.http2(config));
                 let service = Negotiate::new(
                     connect(),
                     inspect,

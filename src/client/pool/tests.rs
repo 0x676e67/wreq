@@ -186,7 +186,7 @@ where
         connector,
         TokioRuntime,
         config,
-        Handshakes::new(DynRuntime::new(TokioRuntime), connect_config, true),
+        proto::Builder::new(DynRuntime::new(TokioRuntime), connect_config, true),
     )
 }
 

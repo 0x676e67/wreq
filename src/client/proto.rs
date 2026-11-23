@@ -45,12 +45,12 @@ pub(super) fn configure<B: Clone, O: Clone>(
     }
 }
 
-/// Client-wide HTTP handshake builders and shared protocol runtime.
+/// Client-wide HTTP handshake builder and shared protocol runtime.
 ///
 /// Constructed once per client from default [`ConnectConfig`] options and queried when
 /// creating a pool entry so per-request protocol overrides only clone a builder when they
 /// actually differ from the client defaults.
-pub(super) struct Handshakes {
+pub(super) struct Builder {
     /// Runtime spawning HTTP connection drivers and timers.
     runtime: DynRuntime,
     /// Whether the HTTP/1 sender supplies a missing `Host` header.
@@ -93,9 +93,9 @@ pub enum SendError<R = Request<Body>> {
     Protocol(Box<TrySendError<R>>),
 }
 
-// ===== impl Handshakes =====
+// ===== impl Builder =====
 
-impl Handshakes {
+impl Builder {
     /// Builds the default protocol settings for the client.
     #[must_use]
     pub(super) fn new(runtime: DynRuntime, config: &ConnectConfig, set_host: bool) -> Self {
