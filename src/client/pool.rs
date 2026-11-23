@@ -726,7 +726,7 @@ where
         let mut entries = self.entries.lock();
         let Some((empty, retained)) = entries
             .get_mut(key)
-            .filter(|entry| entry.has_state(state))
+            .filter(|entry| Arc::ptr_eq(entry.state(), state))
             .map(|entry| (entry.is_empty(), entry.has_retained()))
         else {
             return;
@@ -900,27 +900,26 @@ impl<C, R: Executor + Timer + Clone + 'static> PoolTargeter<C, R> {
                     .service(connector()),
                 state,
             }),
-            Protocol::Auto => cfg_select! {
-                feature = "http2" => Arc::new({
-                    let inspect: fn(&Established) -> bool =
-                        |established| established.connected().is_negotiated_h2();
-                    let upgrade = ServiceBuilder::new()
-                        .layer_fn(|maker| Singleton::new(maker, shared.clone()))
-                        .layer(self.handshakes.http2(config));
-                    let service = Negotiate::new(
-                        connect(),
-                        inspect,
-                        self.http1_pool(&state, &shared, config),
-                        upgrade,
-                    );
-
-                    ServiceEntry { service, state }
-                }),
-                _ => Arc::new({
-                    let service = self.http1_pool(&state, &shared, config).layer(connect());
-                    ServiceEntry { service, state }
-                }),
-            },
+            #[cfg(feature = "http2")]
+            Protocol::Auto => {
+                let inspect: fn(&Established) -> bool =
+                    |established| established.connected().is_negotiated_h2();
+                let upgrade = ServiceBuilder::new()
+                    .layer_fn(|maker| Singleton::new(maker, shared.clone()))
+                    .layer(self.handshakes.http2(config));
+                let service = Negotiate::new(
+                    connect(),
+                    inspect,
+                    self.http1_pool(&state, &shared, config),
+                    upgrade,
+                );
+                Arc::new(ServiceEntry { service, state })
+            }
+            #[cfg(not(feature = "http2"))]
+            Protocol::Auto => {
+                let service = self.http1_pool(&state, &shared, config).layer(connect());
+                Arc::new(ServiceEntry { service, state })
+            }
         }
     }
 }
@@ -1076,8 +1075,8 @@ where
         Discarded::http1(self.service.drain_idle())
     }
 
-    fn has_state(&self, state: &Arc<entry::EntryState>) -> bool {
-        Arc::ptr_eq(&self.state, state)
+    fn state(&self) -> &Arc<entry::EntryState> {
+        &self.state
     }
 
     fn is_empty(&self) -> bool {
@@ -1101,9 +1100,11 @@ where
 
     fn checkout_ready(&self, now: Instant, timeout: Option<Duration>) -> Option<Pooled> {
         self.service
-            .checkout_ready(None, |connection| {
-                connection.try_checkout(now, timeout, || {
-                    self.state.uses.load(Ordering::Acquire) != 0
+            .with_state(|state| {
+                state.checkout_ready(|connection| {
+                    connection.try_checkout(now, timeout, || {
+                        self.state.uses.load(Ordering::Acquire) != 0
+                    })
                 })
             })
             .into_made()
@@ -1117,7 +1118,7 @@ where
 
     fn checkout(&self, target: &T, pool_enabled: bool) -> (CheckoutFuture, Option<Discarded>) {
         let usage = EntryUse::new(self.state.clone());
-        if let Some(future) = self.service.checkout(None) {
+        if let Some(future) = self.service.checkout() {
             return (
                 CheckoutFuture::Mux {
                     future,
@@ -1166,8 +1167,8 @@ where
             .map(|sender| Discarded::Mux { _sender: sender })
     }
 
-    fn has_state(&self, state: &Arc<entry::EntryState>) -> bool {
-        Arc::ptr_eq(&self.state, state)
+    fn state(&self) -> &Arc<entry::EntryState> {
+        &self.state
     }
 
     fn is_empty(&self) -> bool {
@@ -1284,8 +1285,8 @@ where
         self.service.upgrade().shared().lock().evict()
     }
 
-    fn has_state(&self, state: &Arc<entry::EntryState>) -> bool {
-        Arc::ptr_eq(&self.state, state)
+    fn state(&self) -> &Arc<entry::EntryState> {
+        &self.state
     }
 
     fn is_empty(&self) -> bool {
@@ -1306,8 +1307,11 @@ where
     M: Service<T, Response = mux::Connection, Future = MuxHandshake>,
 {
     singleton
-        .checkout_ready(None, |sender| {
-            sender.extended_connect() == Some(true) && sender.try_checkout(now, timeout, || false)
+        .with_state(|state| {
+            state.checkout_ready(|sender| {
+                sender.extended_connect() == Some(true)
+                    && sender.try_checkout(now, timeout, || false)
+            })
         })
         .into_made()
         .map(|service| Pooled::reuse(PooledInner::Mux(service), state.clone()))

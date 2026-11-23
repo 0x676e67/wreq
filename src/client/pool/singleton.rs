@@ -106,71 +106,10 @@ where
         f(self.state.lock().as_mut())
     }
 
-    /// Checks and clones a completed service without joining or starting creation.
-    ///
-    /// Pass the state from a held group lock, or `None` to acquire the lock here.
+    /// Joins an existing service or in-progress creation without starting the maker.
     #[must_use]
-    pub(super) fn checkout_ready(
-        &self,
-        locked: Option<&State<M::Future, M::Response>>,
-        reusable: impl FnOnce(&M::Response) -> bool,
-    ) -> Ready<Singled<M::Response>> {
-        let mut guard;
-        let state = match locked {
-            Some(state) => state,
-            None => {
-                guard = self.state.lock();
-                guard.as_mut()
-            }
-        };
-        match state {
-            State::Made {
-                service,
-                generation,
-            } if reusable(service) => Ready::Made(Singled::new(service.clone(), *generation, true)),
-            State::Empty => Ready::Empty,
-            State::Making(_) | State::Made { .. } => Ready::Unavailable,
-        }
-    }
-
-    /// Joins an existing service or in-progress creation.
-    ///
-    /// Returns `None` instead of starting the maker when the singleton is empty.
-    /// Pass the state from a held group lock, or `None` to acquire the lock here.
-    #[must_use]
-    pub(super) fn checkout(
-        &self,
-        locked: Option<&mut State<M::Future, M::Response>>,
-    ) -> Option<SingletonFuture<M::Future, M::Response, G>> {
-        let mut guard;
-        let state = match locked {
-            Some(state) => state,
-            None => {
-                guard = self.state.lock();
-                guard.as_mut()
-            }
-        };
-        match state {
-            State::Empty => None,
-            State::Making(batch) => {
-                let (id, receiver) = batch.register_waiter();
-                Some(SingletonFuture::Participating {
-                    id,
-                    generation: batch.generation,
-                    state: self.state.clone(),
-                    receiver: Some(receiver),
-                    reused: true,
-                })
-            }
-            State::Made {
-                service,
-                generation,
-            } => Some(SingletonFuture::Made {
-                service: Some(service.clone()),
-                generation: *generation,
-                future: PhantomData,
-            }),
-        }
+    pub(super) fn checkout(&self) -> Option<SingletonFuture<M::Future, M::Response, G>> {
+        self.with_state(|state| state.checkout(&self.state))
     }
 }
 
@@ -355,6 +294,52 @@ impl<F, S> State<F, S> {
                 *self = previous;
                 None
             }
+        }
+    }
+
+    /// Checks and clones a completed service while the caller holds the group lock.
+    #[must_use]
+    pub(super) fn checkout_ready(&self, reusable: impl FnOnce(&S) -> bool) -> Ready<Singled<S>>
+    where
+        S: Clone,
+    {
+        match self {
+            Self::Made {
+                service,
+                generation,
+            } if reusable(service) => Ready::Made(Singled::new(service.clone(), *generation, true)),
+            Self::Empty => Ready::Empty,
+            Self::Making(_) | Self::Made { .. } => Ready::Unavailable,
+        }
+    }
+
+    /// Joins an existing service or in-progress creation while the caller holds the group lock.
+    #[must_use]
+    pub(super) fn checkout<G>(&mut self, shared: &Arc<Mutex<G>>) -> Option<SingletonFuture<F, S, G>>
+    where
+        S: Clone,
+        G: AsMut<Self>,
+    {
+        match self {
+            Self::Empty => None,
+            Self::Making(batch) => {
+                let (id, receiver) = batch.register_waiter();
+                Some(SingletonFuture::Participating {
+                    id,
+                    generation: batch.generation,
+                    state: shared.clone(),
+                    receiver: Some(receiver),
+                    reused: true,
+                })
+            }
+            Self::Made {
+                service,
+                generation,
+            } => Some(SingletonFuture::Made {
+                service: Some(service.clone()),
+                generation: *generation,
+                future: PhantomData,
+            }),
         }
     }
 }

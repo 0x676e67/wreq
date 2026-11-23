@@ -261,9 +261,9 @@ where
         if !state.pending.is_empty() {
             return None;
         }
-        match self
+        match state
             .upgrade
-            .checkout_ready(Some(&state.upgrade), |service| upgrade(service, &group))
+            .checkout_ready(|service| upgrade(service, &group))
         {
             Ready::Made(service) => {
                 drop(group);
@@ -433,8 +433,9 @@ where
     M::Response: Clone,
     G: AsMut<singleton::State<M::Future, M::Response>>,
 {
-    upgrade
-        .checkout(Some(&mut state.upgrade))
+    state
+        .upgrade
+        .checkout(upgrade.shared())
         .map(|future| (future, std::mem::take(&mut state.pending)))
 }
 

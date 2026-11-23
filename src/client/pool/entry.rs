@@ -72,9 +72,9 @@ pub(super) trait Entry<T>: Send + Sync {
     #[must_use]
     fn evict(&self) -> Option<Self::Discarded>;
 
-    /// Returns whether this entry holds the given state instance.
+    /// Borrows the entry's shared checkout and maintenance state.
     #[must_use]
-    fn has_state(&self, state: &Arc<EntryState>) -> bool;
+    fn state(&self) -> &Arc<EntryState>;
 
     /// Returns whether the entry has no active, pending, or idle work.
     #[must_use]
