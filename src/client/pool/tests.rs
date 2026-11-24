@@ -257,18 +257,18 @@ fn http3_connector() -> TestConnector {
     )
 }
 
+/// Counts connector clones.
+struct CloneCounter(Arc<AtomicUsize>);
+
+impl Clone for CloneCounter {
+    fn clone(&self) -> Self {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Self(self.0.clone())
+    }
+}
+
 #[test]
 fn protocol_modes_clone_connector_once() {
-    /// Counts connector clones made during protocol entry construction.
-    struct CloneCounter(Arc<AtomicUsize>);
-
-    impl Clone for CloneCounter {
-        fn clone(&self) -> Self {
-            self.0.fetch_add(1, Ordering::Relaxed);
-            Self(self.0.clone())
-        }
-    }
-
     let clones = Arc::new(AtomicUsize::new(0));
     let counter = CloneCounter(clones.clone());
     let connector = tower::service_fn(move |_: Unnameable| {
@@ -820,8 +820,16 @@ async fn pool_max_size_evicts_only_idle_groups() {
 
     let runtime = CountingRuntime::default();
     let config = ConnectConfig::default();
+    let clones = Arc::new(AtomicUsize::new(0));
+    let counter = CloneCounter(clones.clone());
+    let connector = ServiceBuilder::new()
+        .map_request(move |request: Unnameable| {
+            let _counter = &counter;
+            request
+        })
+        .service(TestConnector::KeepsAlive);
     let pool = Pool::new(
-        TestConnector::KeepsAlive,
+        connector,
         runtime.clone(),
         Config {
             idle_timeout: None,
@@ -830,8 +838,12 @@ async fn pool_max_size_evicts_only_idle_groups() {
         },
         proto::Builder::new(DynRuntime::new(TokioRuntime), &config, true),
     );
-    let [a, b, c] = ["a", "b", "c"].map(|name| grouped_request(Group::new(name), Protocol::Http1));
-    let [key_a, key_b, key_c] = [&a, &b, &c].map(|request| request.reuse_key(Protocol::Http1));
+    let protocol = cfg_select! {
+        feature = "http2" => Protocol::Auto,
+        _ => Protocol::Http1,
+    };
+    let [a, b, c] = ["a", "b", "c"].map(|name| grouped_request(Group::new(name), protocol));
+    let [key_a, key_b, key_c] = [&a, &b, &c].map(|request| request.reuse_key(protocol));
     drop(pool.checkout(Some(&key_b), &b).await.unwrap());
 
     let older = pool.checkout(Some(&key_a), &a).await.unwrap();
@@ -842,11 +854,15 @@ async fn pool_max_size_evicts_only_idle_groups() {
     connected.poison();
 
     let before = runtime.now_calls.load(Ordering::SeqCst);
+    #[cfg(feature = "http2")]
+    let clones_before = clones.load(Ordering::Relaxed);
     let mut hit = tokio_test::task::spawn(Box::pin(pool.checkout(Some(&key_a), &a)));
     let Poll::Ready(Ok(reused)) = hit.poll() else {
         panic!("bounded warm hit must resolve synchronously on the first poll");
     };
     assert_eq!(runtime.now_calls.load(Ordering::SeqCst), before);
+    #[cfg(feature = "http2")]
+    assert_eq!(clones.load(Ordering::Relaxed), clones_before);
     assert!(reused.is_reused());
 
     // A's dead sender below the healthy one must not count against capacity.

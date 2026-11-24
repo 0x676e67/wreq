@@ -380,6 +380,17 @@ where
             let entry =
                 entries.get_or_insert_with(key, || self.inner.new_entry(Some(key), request));
             let discarded = entry.prune(expiry);
+            #[cfg(feature = "http2")]
+            if self.inner.has_max_size
+                && request.protocol() == Protocol::Auto
+                && let Some(pooled) = entry.checkout_ready(expiry)
+            {
+                // An established sender does not need an upgrade notification.
+                drop(entries);
+                drop(discarded);
+                pooled.cleanup.maintain(true);
+                return Ok(pooled);
+            }
             let (future, redundant) = entry.checkout(request, true);
             drop(entries);
             drop(discarded);
