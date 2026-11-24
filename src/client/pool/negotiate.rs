@@ -19,7 +19,7 @@ use std::{
     task::{self, Poll, ready},
 };
 
-use futures_util::future::BoxFuture;
+use futures_util::{FutureExt, future::BoxFuture};
 use pin_project_lite::pin_project;
 use tokio::sync::watch;
 use tower::{
@@ -311,7 +311,7 @@ where
                 future: Oneshot::new(self.fallback.clone(), dst.clone()),
                 fallback: self.fallback.clone(),
                 destination: dst,
-                notified,
+                notified: notified.boxed(),
             },
         };
 
@@ -357,7 +357,7 @@ where
                                 this.state.set(State::Upgrade { future });
                             }
                             None => {
-                                *notified = next_notified;
+                                *notified = next_notified.boxed();
                             }
                         }
                         continue;
@@ -391,7 +391,7 @@ where
                                         future,
                                         fallback,
                                         destination,
-                                        notified: next_notified,
+                                        notified: next_notified.boxed(),
                                     });
                                 }
                             }
@@ -469,11 +469,11 @@ impl UpgradeSignal {
         Self { generation }
     }
 
-    /// Waits until a generation newer than this subscription is published.
-    fn notified(&self) -> BoxFuture<'static, ()> {
+    /// Subscribes immediately and waits for a later generation when polled.
+    fn notified(&self) -> impl Future<Output = ()> + Send + 'static {
         let mut generation = self.generation.subscribe();
         let current = *generation.borrow_and_update();
-        Box::pin(async move {
+        async move {
             loop {
                 if generation.changed().await.is_err() {
                     return;
@@ -482,7 +482,7 @@ impl UpgradeSignal {
                     return;
                 }
             }
-        })
+        }
     }
 
     /// Advances the generation and wakes fallback attempts.
@@ -564,7 +564,7 @@ where
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
-        let notified = self.signal.notified();
+        let notified = self.signal.notified().boxed();
         let upgrade_pending = self
             .state
             .upgrade()
