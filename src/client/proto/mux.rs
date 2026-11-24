@@ -1,10 +1,9 @@
 //! Shared sender and checkout state for multiplexed HTTP/2 and HTTP/3 connections.
 
+#[cfg(target_has_atomic = "64")]
+use std::sync::atomic::AtomicU64;
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, atomic::Ordering},
     task::{self, Poll},
     time::{Duration, Instant},
 };
@@ -12,6 +11,8 @@ use std::{
 use futures_util::{TryFutureExt, future::BoxFuture};
 use http::{Request, Response, Version};
 use netty::{body::Incoming, conn};
+#[cfg(not(target_has_atomic = "64"))]
+use portable_atomic::AtomicU64;
 use tower::Service;
 
 use super::SendError;
@@ -52,14 +53,14 @@ struct ConnectionState {
     connected: Connected,
     /// Runtime clock used to stamp idle time on final release.
     runtime: DynRuntime,
-    /// Lock-free active checkout count and idle timestamp packed into one atomic word.
+    /// Active checkout count and idle timestamp packed into one atomic word.
     leases: Leases,
 }
 
 /// Active checkout count and last-idle timestamp packed into a single atomic word.
 ///
 /// The high bit distinguishes idle nanosecond offsets from active lease counts; bit 62
-/// records deferred LRU tracking so `0 -> 1` and `1 -> 0` transitions remain lock-free.
+/// records deferred LRU tracking so the transitions use the same atomic word.
 struct Leases {
     /// Connection creation timestamp used as the zero origin for encoded idle times.
     epoch: Instant,
@@ -294,23 +295,19 @@ impl Leases {
 
     /// Registers a checked-out sender after the expiry snapshot has been accepted.
     fn register(&self) {
-        self.word
-            .update(Ordering::AcqRel, Ordering::Acquire, |word| {
-                if word < Self::ACTIVE {
-                    Self::LAST
-                } else {
-                    word + u64::from(word & Self::MAX_COUNT != Self::MAX_COUNT)
-                }
-            });
+        let _ = self.update_word(|word| {
+            Some(if word < Self::ACTIVE {
+                Self::LAST
+            } else {
+                word + u64::from(word & Self::MAX_COUNT != Self::MAX_COUNT)
+            })
+        });
     }
 
     /// Marks an active lease with `DEFERRED` so the final release triggers capacity tracking.
     #[must_use]
     fn defer_until_idle(&self) -> bool {
-        self.word
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |word| {
-                (word >= Self::ACTIVE).then_some(word | Self::DEFERRED)
-            })
+        self.update_word(|word| (word >= Self::ACTIVE).then_some(word | Self::DEFERRED))
             .is_ok()
     }
 
@@ -319,17 +316,29 @@ impl Leases {
     #[must_use]
     fn release(&self, mut now: impl FnMut() -> Instant) -> bool {
         let mut sampled = None;
-        self.word
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |word| {
-                if word < Self::ACTIVE {
-                    None
-                } else if word & !Self::DEFERRED == Self::LAST {
-                    Some(self.encode(*sampled.get_or_insert_with(&mut now)))
-                } else {
-                    Some(word - 1)
-                }
-            })
-            .is_ok_and(|prev| prev == (Self::LAST | Self::DEFERRED))
+        self.update_word(|word| {
+            if word < Self::ACTIVE {
+                None
+            } else if word & !Self::DEFERRED == Self::LAST {
+                Some(self.encode(*sampled.get_or_insert_with(&mut now)))
+            } else {
+                Some(word - 1)
+            }
+        })
+        .is_ok_and(|prev| prev == (Self::LAST | Self::DEFERRED))
+    }
+
+    #[inline]
+    fn update_word(&self, update: impl FnMut(u64) -> Option<u64>) -> Result<u64, u64> {
+        cfg_select! {
+            target_has_atomic = "64" => {
+                self.word
+                    .try_update(Ordering::AcqRel, Ordering::Acquire, update)
+            }
+            _ => self
+                .word
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, update),
+        }
     }
 }
 
