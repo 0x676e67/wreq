@@ -390,24 +390,28 @@ where
             }
         };
 
-        let maker = if had_work && let Some(sleep) = self.events.reuse_delay() {
-            RaceMaker::Waiting {
-                sleep,
-                maker: self.maker.clone(),
-                target: Some(target),
-            }
-        } else {
-            RaceMaker::Preparing {
-                maker: self.maker.clone(),
-                target: Some(target),
-            }
-        };
-        CacheFuture::Racing {
+        // Own the waiter before creating a timer, which can panic without a time driver.
+        let mut checkout = CacheFuture::Racing {
             shared: self.shared.clone(),
             waiter,
-            maker,
+            maker: RaceMaker::Done,
             events: self.events.clone(),
+        };
+        if let CacheFuture::Racing { maker, .. } = &mut checkout {
+            *maker = if had_work && let Some(sleep) = self.events.reuse_delay() {
+                RaceMaker::Waiting {
+                    sleep,
+                    maker: self.maker.clone(),
+                    target: Some(target),
+                }
+            } else {
+                RaceMaker::Preparing {
+                    maker: self.maker.clone(),
+                    target: Some(target),
+                }
+            };
         }
+        checkout
     }
 }
 
@@ -1251,6 +1255,31 @@ mod tests {
             discarded,
             (0..64).filter(|value| value % 3 != 0).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn reuse_delay_panic_does_not_leave_a_waiter() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut cache = builder()
+                .runtime(crate::rt::tokio::TokioRuntime)
+                .reuse_delay(Some(Duration::from_millis(50)))
+                .build(StrictConnector::default());
+            let held = cache.call(1).await.unwrap();
+
+            // This runtime deliberately has no time driver.
+            let checkout = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cache.call(2)));
+            assert!(checkout.is_err());
+            drop(held);
+
+            assert!(
+                cache.has_idle(),
+                "the returned service must not be reserved for a dead waiter"
+            );
+            assert!(cache.call(3).await.unwrap().is_reused());
+        });
     }
 
     #[tokio::test]
