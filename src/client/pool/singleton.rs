@@ -10,19 +10,20 @@
 //! with every participant, and a failed checkout can invalidate only its own generation so
 //! a stale sender never clears a newer replacement.
 
+#[cfg(target_has_atomic = "64")]
+use std::sync::atomic::AtomicU64;
 use std::{
     fmt,
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    sync::{
-        Arc, Weak,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Weak, atomic::Ordering},
     task::{self, Poll},
 };
 
 use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
+#[cfg(not(target_has_atomic = "64"))]
+use portable_atomic::AtomicU64;
 use tokio::sync::oneshot;
 use tower::{BoxError, Service, util::Oneshot};
 

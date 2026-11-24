@@ -1216,12 +1216,14 @@ mod tests {
         let mut reserved = cache.clone();
         drop(reserved.call(30));
         let before = poll_ready_count.load(Ordering::SeqCst);
-        let reused = cache.call(31).await.unwrap();
-        assert!(reused.is_reused());
+        let reserved = cache.call(31);
+        assert_eq!(cache.retain_idle(|_| false), vec![0]);
+        let mut service = reserved.await.unwrap();
+        assert!(service.is_reused());
+        assert_eq!(*service.inner(), 1);
         assert_eq!(poll_ready_count.load(Ordering::SeqCst), before);
-        drop(reused);
-
-        drop(cache.retain_idle(|_| false));
+        service.discard_on_drop();
+        drop(service);
         assert!(cache.is_empty());
         let dialed = cache.call(32).await.unwrap();
         assert!(!dialed.is_reused());
