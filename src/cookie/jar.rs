@@ -5,6 +5,8 @@ use cookie::{
 };
 use http::{Uri, Version};
 
+#[cfg(feature = "cookies-psl")]
+use super::store::is_public_suffix;
 use super::{
     Cookie, CookieStore, Cookies, IntoCookie,
     store::{DEFAULT_PATH, Store, canonical_host, cookie_is_expired, domain_match, normalize_path},
@@ -242,8 +244,6 @@ impl Jar {
             let Some(host) = uri.host().and_then(canonical_host) else {
                 return;
             };
-            let host_only = cookie.domain().is_none();
-
             // If the canonicalized request-host does not domain-match the
             // domain-attribute:
             //    Ignore the cookie entirely and abort these steps.
@@ -259,11 +259,24 @@ impl Jar {
                     return;
                 }
 
-                cookie.set_domain(domain.to_string());
+                #[cfg(feature = "cookies-psl")]
+                let public_suffix = is_public_suffix(&domain);
+                #[cfg(not(feature = "cookies-psl"))]
+                let public_suffix = false;
+
+                if public_suffix {
+                    if domain != host {
+                        return;
+                    }
+                    cookie.unset_domain();
+                } else {
+                    cookie.set_domain(domain.to_string());
+                }
                 domain
             } else {
                 host
             };
+            let host_only = cookie.domain().is_none();
 
             // Max-Age takes precedence over Expires and is relative to when the cookie is
             // received. Store its effective deadline so every read path applies the same
@@ -527,6 +540,37 @@ mod tests {
         let cookies = jar.get_all().collect::<Vec<_>>();
         assert_eq!(cookies.len(), 1);
         assert_eq!(cookies[0].domain(), Some("example.com"));
+    }
+
+    #[test]
+    fn jar_applies_public_suffix_policy_only_with_psl() {
+        let psl_enabled = cfg!(feature = "cookies-psl");
+        for (cookie, uri) in [
+            ("session=abc; Domain=com", "https://example.com/"),
+            ("session=abc; Domain=com.", "https://example.com./"),
+            ("session=abc; Domain=co.uk", "https://example.co.uk/"),
+            (
+                "session=abc; Domain=github.io",
+                "https://example.github.io/",
+            ),
+        ] {
+            let jar = Jar::default();
+            jar.add(cookie, uri);
+            assert_eq!(jar.is_empty(), psl_enabled, "{cookie} from {uri}");
+        }
+
+        let jar = Jar::default();
+        let origin = "https://co.uk/";
+        jar.add("session=abc; Domain=co.uk", origin);
+        let cookie = jar.get("session", origin).unwrap();
+        assert_eq!(cookie.domain().is_none(), psl_enabled);
+        assert_eq!(
+            jar.matches("https://sub.co.uk/").next().is_none(),
+            psl_enabled
+        );
+
+        jar.add("session=abc; Domain=co.uk; Max-Age=0", origin);
+        assert!(jar.is_empty());
     }
 
     #[test]
