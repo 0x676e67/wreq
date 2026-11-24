@@ -978,33 +978,6 @@ mod tests {
         }
     }
 
-    impl<M, Dst, Ev> Cache<M, Dst, Ev, Shared<M::Response>>
-    where
-        M: Service<Dst>,
-    {
-        /// Removes rejected idle services and this clone's readiness reservation.
-        #[must_use]
-        fn retain<F>(&mut self, mut predicate: F) -> Vec<M::Response>
-        where
-            F: FnMut(&mut M::Response) -> bool,
-        {
-            let discard_ready = self
-                .ready
-                .as_mut()
-                .is_some_and(|service| !predicate(service.inner_mut()));
-            let mut shared = self.shared.lock();
-            let mut discarded = shared.retain_idle(predicate);
-            if discard_ready
-                && let Some(mut service) = self.ready.take()
-                && let Some(inner) = service.inner.take()
-            {
-                shared.active -= 1;
-                discarded.push(inner);
-            }
-            discarded
-        }
-    }
-
     /// Pending future that counts polls to verify shutdown stops polling.
     struct CountingPending(Arc<AtomicUsize>);
 
@@ -1265,7 +1238,13 @@ mod tests {
             .unwrap();
         assert_eq!(poll_ready_count.load(Ordering::SeqCst), before);
 
-        drop(cache.retain(|_| false));
+        assert_eq!(cache.retain_idle(|_| false), vec![0]);
+        let mut service = cache.call(30).await.unwrap();
+        assert!(service.is_reused());
+        assert_eq!(*service.inner(), 1);
+        assert_eq!(poll_ready_count.load(Ordering::SeqCst), before);
+        service.discard_on_drop();
+        drop(service);
         assert!(cache.is_empty());
         std::future::poll_fn(|cx| cache.poll_ready(cx))
             .await
