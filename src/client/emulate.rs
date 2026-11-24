@@ -4,9 +4,7 @@ use http::HeaderMap;
 
 #[cfg(feature = "http2")]
 use crate::http2::Http2Options;
-use crate::{
-    config::connect::ConnectConfig, header::OrigHeaderMap, http1::Http1Options, tls::TlsOptions,
-};
+use crate::{config::ConnectConfig, header::OrigHeaderMap, http1::Http1Options, tls::TlsOptions};
 #[cfg(feature = "http3")]
 use crate::{http3::Http3Options, quic::QuicOptions};
 
@@ -16,18 +14,19 @@ pub trait IntoEmulation {
     fn into_emulation(self) -> Emulation;
 }
 
-/// Collects default headers, header order, and protocol options for an [`Emulation`].
-/// Later settings replace earlier values of the same type.
+/// Builder for [`Emulation`].
+///
+/// Later calls replace earlier values of the same option type or header name.
 #[must_use]
 #[derive(Debug)]
 pub struct EmulationBuilder {
     emulation: Emulation,
 }
 
-/// HTTP emulation settings: default headers, header order, and protocol options.
+/// Emulation profile combining default headers, header order, and protocol options.
 ///
-/// Built with [`Emulation::builder`] or converted from protocol option types.
-/// Protocol options partition connection reuse while headers do not; clones share options.
+/// Construct via [`Emulation::builder`] or convert directly from protocol option types.
+/// Protocol options partition connection reuse, whereas headers do not.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct Emulation(
@@ -39,8 +38,9 @@ pub struct Emulation(
 // ===== impl EmulationBuilder =====
 
 impl EmulationBuilder {
-    /// Applies protocol options or another [`Emulation`], replacing matching option types and
-    /// headers while appending original header names.
+    /// Merges protocol options or another [`Emulation`] into this builder.
+    ///
+    /// Replaces matching option types and headers, and appends original header names.
     #[inline]
     pub fn config<T: IntoEmulation>(mut self, value: T) -> Self {
         let Emulation(headers, orig_headers, connect_config) = value.into_emulation();

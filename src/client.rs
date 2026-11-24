@@ -413,13 +413,11 @@ impl ClientBuilder {
                     Some(dns_resolver) => dns_resolver,
                     None => self.runtime.resolver(),
                 };
-
                 if !self.config.dns_overrides.is_empty() {
                     resolver = Arc::new(OverrideResolver::new(resolver, self.config.dns_overrides));
                 }
                 DynResolver::new(resolver)
             };
-
             svc::Client::new(self.runtime.clone(), resolver, self.config.svc)?
         };
 
@@ -859,9 +857,11 @@ impl ClientBuilder {
     ///
     /// The timer starts after connector readiness and covers connector layers, DNS resolution,
     /// proxy setup, TCP and Unix dialing, TLS, and QUIC handshakes.
-    /// A timeout returned by a TCP or QUIC proxy dial is a [proxy connect
-    /// error](Error::is_proxy_connect). If the outer deadline expires first, including
-    /// while waiting for a Unix proxy socket, the error is a [connect error](Error::is_connect).
+    /// After DNS resolution, the TCP address race also uses this limit, including when opening a
+    /// SOCKS UDP control connection. QUIC handshakes use only the outer timer.
+    /// If the outer timer expires first, the result is a [connect error](Error::is_connect),
+    /// even when connecting through a proxy. Errors returned by a proxy dial or tunnel
+    /// retain their [proxy connect classification](Error::is_proxy_connect).
     ///
     /// By default there is no connection timeout.
     #[inline]
@@ -896,7 +896,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.pool.idle_timeout = val.into();
+        self.config.svc.pool_config.idle_timeout = val.into();
         self
     }
 
@@ -905,7 +905,7 @@ impl ClientBuilder {
     /// The default is unlimited. Set `0` to disable pooling for all protocols.
     #[inline]
     pub fn pool_max_idle_per_host(mut self, max: usize) -> ClientBuilder {
-        self.config.svc.pool.max_idle_per_host = max;
+        self.config.svc.pool_config.max_idle_per_host = max;
         self
     }
 
@@ -918,14 +918,14 @@ impl ClientBuilder {
     /// Open streams can finish after eviction. The default and `0` are unlimited.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
-        self.config.svc.pool.max_size = NonZeroUsize::new(max);
+        self.config.svc.pool_config.max_size = NonZeroUsize::new(max);
         self
     }
 
     /// Sets when the pool dials on a reuse miss. Defaults to [`PoolStrategy::Race`].
     #[inline]
     pub fn pool_strategy(mut self, strategy: PoolStrategy) -> ClientBuilder {
-        self.config.svc.pool.strategy = strategy;
+        self.config.svc.pool_config.strategy = strategy;
         self
     }
 
@@ -1014,8 +1014,10 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the QUIC transport and TLS options of HTTP/3 connections, `quic://` proxy hops
-    /// included. TCP connections use [`tls_options`](Self::tls_options) instead.
+    /// Sets the QUIC transport and TLS options for HTTP/3 connections, including `quic://`
+    /// proxy hops.
+    ///
+    /// For TCP and Unix connections, use [`tls_options`](Self::tls_options) instead.
     #[cfg(feature = "http3")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
     pub fn quic_options<T>(mut self, options: T) -> ClientBuilder
@@ -1033,7 +1035,7 @@ impl ClientBuilder {
     /// Default is `true`.
     #[inline]
     pub fn tcp_nodelay(mut self, enabled: bool) -> ClientBuilder {
-        self.config.svc.connect.tcp.nodelay = enabled;
+        self.config.svc.connect.tcp_config.nodelay = enabled;
         self
     }
 
@@ -1047,7 +1049,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.connect.tcp.keepalive = val.into();
+        self.config.svc.connect.tcp_config.keepalive = val.into();
         self
     }
 
@@ -1061,7 +1063,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.connect.tcp.keepalive_interval = val.into();
+        self.config.svc.connect.tcp_config.keepalive_interval = val.into();
         self
     }
 
@@ -1075,7 +1077,7 @@ impl ClientBuilder {
     where
         C: Into<Option<u32>>,
     {
-        self.config.svc.connect.tcp.keepalive_retries = retries.into();
+        self.config.svc.connect.tcp_config.keepalive_retries = retries.into();
         self
     }
 
@@ -1097,14 +1099,14 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.connect.tcp.tcp_user_timeout = val.into();
+        self.config.svc.connect.tcp_config.tcp_user_timeout = val.into();
         self
     }
 
     /// Set whether sockets have `SO_REUSEADDR` enabled.
     #[inline]
     pub fn tcp_reuse_address(mut self, enabled: bool) -> ClientBuilder {
-        self.config.svc.connect.tcp.reuse_address = enabled;
+        self.config.svc.connect.tcp_config.reuse_address = enabled;
         self
     }
 
@@ -1125,7 +1127,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.connect.tcp.linger = val.into();
+        self.config.svc.connect.tcp_config.linger = val.into();
         self
     }
 
@@ -1137,7 +1139,7 @@ impl ClientBuilder {
     where
         S: Into<Option<usize>>,
     {
-        self.config.svc.connect.tcp.send_buffer_size = size.into();
+        self.config.svc.connect.tcp_config.send_buffer_size = size.into();
         self
     }
 
@@ -1149,7 +1151,7 @@ impl ClientBuilder {
     where
         S: Into<Option<usize>>,
     {
-        self.config.svc.connect.tcp.recv_buffer_size = size.into();
+        self.config.svc.connect.tcp_config.recv_buffer_size = size.into();
         self
     }
 
@@ -1323,7 +1325,7 @@ impl ClientBuilder {
     /// The identity is also offered to `https://` and `quic://` proxies that request one.
     #[inline]
     pub fn tls_identity(mut self, identity: Identity) -> ClientBuilder {
-        self.config.svc.connect.tls.identity = Some(identity);
+        self.config.svc.connect.tls_config.identity = Some(identity);
         self
     }
 
@@ -1333,7 +1335,7 @@ impl ClientBuilder {
     /// `https://` and `quic://` proxies.
     #[inline]
     pub fn tls_cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.svc.connect.tls.cert_store = Some(store);
+        self.config.svc.connect.tls_config.cert_store = Some(store);
         self
     }
 
@@ -1350,7 +1352,7 @@ impl ClientBuilder {
     /// as a last resort.
     #[inline]
     pub fn tls_cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
-        self.config.svc.connect.tls.cert_verification = cert_verification;
+        self.config.svc.connect.tls_config.cert_verification = cert_verification;
         self
     }
 
@@ -1366,7 +1368,7 @@ impl ClientBuilder {
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     #[inline]
     pub fn tls_verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.svc.connect.tls.verify_hostname = verify_hostname;
+        self.config.svc.connect.tls_config.verify_hostname = verify_hostname;
         self
     }
 
@@ -1376,14 +1378,14 @@ impl ClientBuilder {
     /// are never sent. Defaults to `true`.
     #[inline]
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.svc.connect.tls.sni = tls_sni;
+        self.config.svc.connect.tls_config.sni = tls_sni;
         self
     }
 
     /// Configures TLS key logging for the client.
     #[inline]
     pub fn tls_keylog(mut self, keylog: KeyLog) -> ClientBuilder {
-        self.config.svc.connect.tls.keylog = Some(keylog);
+        self.config.svc.connect.tls_config.keylog = Some(keylog);
         self
     }
 
@@ -1393,7 +1395,7 @@ impl ClientBuilder {
     /// TLS 1.3 and ignores this setting.
     #[inline]
     pub fn tls_min_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.svc.connect.tls.min_version = Some(version);
+        self.config.svc.connect.tls_config.min_version = Some(version);
         self
     }
 
@@ -1403,7 +1405,7 @@ impl ClientBuilder {
     /// maximum makes every HTTP/3 connection fail.
     #[inline]
     pub fn tls_max_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.svc.connect.tls.max_version = Some(version);
+        self.config.svc.connect.tls_config.max_version = Some(version);
         self
     }
 
@@ -1414,21 +1416,24 @@ impl ClientBuilder {
     /// feature to be enabled.
     #[inline]
     pub fn tls_info(mut self, tls_info: bool) -> ClientBuilder {
-        self.config.svc.connect.tls.tls_info = tls_info;
+        self.config.svc.connect.tls_config.tls_info = tls_info;
         self
     }
 
-    /// Replaces the built-in store of 1024 connection keys with two tickets each.
-    /// The supplied store controls retention when ticket-based resumption is enabled.
-    /// Session keys remain scoped to this client and its request configuration.
+    /// Replaces the built-in TLS session store (1024 keys, up to two tickets per key).
+    ///
+    /// TCP/Unix TLS and QUIC share the store with separate keys scoped to this client and its
+    /// session settings. Setting a store does not enable session resumption on its own.
     #[inline]
     pub fn tls_session_store<S: IntoTlsSessionStore>(mut self, store: S) -> ClientBuilder {
-        self.config.svc.connect.tls.tickets = Arc::new(Tickets::new(Some(store.into_shared())));
+        self.config.svc.connect.tls_config.tickets =
+            Arc::new(Tickets::new(Some(store.into_shared())));
         self
     }
 
-    /// Sets the TLS options of TCP connections, `https://` proxy hops included; proxy hops offer
-    /// no ALPN. HTTP/3 connections use `quic_options` instead.
+    /// Sets the TLS options for TCP and Unix streams, including `https://` proxy hops.
+    ///
+    /// ALPN is not offered on proxy hops. For HTTP/3 connections, use `quic_options` instead.
     #[inline]
     pub fn tls_options<T>(mut self, options: T) -> ClientBuilder
     where
@@ -1544,9 +1549,9 @@ impl ClientBuilder {
     ///
     /// Each subsequent invocation of this function will wrap previous layers.
     ///
-    /// A TCP dial can return its timeout through the layer stack. The outer
-    /// [`connection timeout`](Self::connect_timeout) cancels a call that is still pending
-    /// when the deadline expires.
+    /// Connector errors pass through these layers. If the outer
+    /// [`connection timeout`](Self::connect_timeout) cancels a pending call, that timeout is
+    /// returned outside the layer stack.
     ///
     /// Example usage:
     /// ```
@@ -1557,7 +1562,7 @@ impl ClientBuilder {
     /// use wreq::Client;
     ///
     /// let client = Client::builder_tokio()
-    ///     // The outer connection deadline starts after concurrency admission.
+    ///     // The outer connection timeout starts after concurrency admission.
     ///     .connect_timeout(Duration::from_millis(200))
     ///     // underneath the concurrency check, so only after concurrency limit lets us through
     ///     .connector_layer(TimeoutLayer::new(Duration::from_millis(50)))

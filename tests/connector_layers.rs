@@ -57,10 +57,21 @@ async fn non_op_layer_with_timeout() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn direct_dial_timeout_reaches_connector_layer() {
-    use std::{future, io};
+async fn total_connect_timeout_does_not_reach_connector_layer() {
+    use std::{
+        future,
+        net::{SocketAddr, TcpStream},
+        sync::Arc,
+        time::Instant,
+    };
 
-    use wreq::dns::{Name, Resolve, Resolving};
+    use futures_util::future::BoxFuture;
+    use wreq::{
+        dns::{Name, Resolve, Resolving},
+        rt::{BoxSleep, Connecting, Runtime, Timer, tokio::TokioRuntime},
+    };
+
+    const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 
     struct PendingResolver;
 
@@ -70,36 +81,65 @@ async fn direct_dial_timeout_reaches_connector_layer() {
         }
     }
 
+    #[derive(Debug)]
+    struct CoarseTimerRuntime;
+
+    impl Timer for CoarseTimerRuntime {
+        fn sleep(&self, duration: Duration) -> BoxSleep {
+            TokioRuntime.sleep(duration.saturating_add(CONNECT_TIMEOUT))
+        }
+
+        fn sleep_until(&self, deadline: Instant) -> BoxSleep {
+            TokioRuntime.sleep_until(deadline)
+        }
+
+        fn now(&self) -> Instant {
+            TokioRuntime.now()
+        }
+    }
+
+    impl Runtime for CoarseTimerRuntime {
+        fn execute(&self, task: BoxFuture<'static, ()>) {
+            TokioRuntime.execute(task);
+        }
+
+        fn resolver(&self) -> Arc<dyn Resolve> {
+            Arc::new(PendingResolver)
+        }
+
+        fn connect_tcp(&self, socket: TcpStream, addr: SocketAddr) -> Connecting {
+            TokioRuntime.connect_tcp(socket, addr)
+        }
+    }
+
     let (observed, mut errors) = tokio::sync::mpsc::unbounded_channel();
-    let client = Client::builder_tokio()
+    let client = Client::builder(CoarseTimerRuntime)
         .no_proxy()
-        .dns_resolver(PendingResolver)
-        .connect_timeout(Duration::from_secs(1))
+        .connect_timeout(CONNECT_TIMEOUT)
         .connector_layer(
             tower::ServiceBuilder::new().map_err(move |error: tower::BoxError| {
-                let kind = error
-                    .source()
-                    .and_then(|cause| cause.downcast_ref::<io::Error>())
-                    .map(io::Error::kind);
-                observed.send(kind).unwrap();
+                observed.send(()).unwrap();
                 error
             }),
         )
         .build()
         .unwrap();
 
+    let started = tokio::time::Instant::now();
     let error = client
         .get("http://origin.invalid/")
         .send()
         .await
         .unwrap_err();
-    assert!(error.is_connect() && error.is_timeout(), "{error:?}");
-    assert_eq!(
-        errors
-            .try_recv()
-            .expect("connector layer did not receive the dial error"),
-        Some(io::ErrorKind::TimedOut)
+    assert_eq!(started.elapsed(), CONNECT_TIMEOUT);
+    assert!(
+        error.is_connect() && error.is_timeout() && !error.is_proxy_connect(),
+        "{error:?}"
     );
+    assert!(matches!(
+        errors.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
 }
 
 #[tokio::test]

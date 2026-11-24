@@ -35,9 +35,9 @@ pub enum Codec {
 /// Provides methods for compressing and decompressing certificate data,
 /// as well as identifying the algorithm in use.
 ///
-/// The algorithm must remain stable for the object's lifetime, and both codecs
-/// must implement it. Implementations reporting the same algorithm are treated
-/// as interchangeable for connection, TLS session and compiled context identity.
+/// `algorithm()` must return a consistent value for the lifetime of the compressor, and
+/// both codecs must implement it. Implementations reporting the same algorithm are treated
+/// as interchangeable for connection pooling, session resumption, and context caching.
 ///
 /// See [RFC 8879, §3](https://www.rfc-editor.org/rfc/rfc8879.html#name-compression-algorithms)
 /// for the list of IANA-assigned compression algorithm identifiers.
@@ -52,16 +52,26 @@ pub trait CertificateCompressor: Debug + Sync + Send + 'static {
     fn algorithm(&self) -> CertificateCompressionAlgorithm;
 }
 
-/// Compressors in offer order. Their recorded algorithms are the cache identity.
+/// Configured certificate compressors in offer order, compared and hashed by algorithm.
+///
+/// Empty lists collapse to `None` so an empty list and an unset option share the same cache
+/// and pool identity.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) struct Compressors(Option<Arc<[ConfiguredCompressor]>>);
 
+/// Single compressor entry paired with the algorithm snapshot read at configuration time.
+///
+/// Equality and hashing inspect only `algorithm` so comparing options never re-invokes
+/// [`CertificateCompressor::algorithm`].
 #[derive(Debug)]
 struct ConfiguredCompressor {
     algorithm: CertificateCompressionAlgorithm,
     compressor: &'static dyn CertificateCompressor,
 }
 
+/// BoringSSL [`ssl::CertificateCompressor`] adapter specialized by IANA algorithm constant.
+///
+/// Bridges a dynamic [`Codec`] pair to `btls`'s const-generic compressor registration API.
 struct Compressor<const ALGORITHM: i32> {
     compress: Codec,
     decompress: Codec,
@@ -94,7 +104,7 @@ impl Compressors {
         }))
     }
 
-    pub(super) fn register(&self, builder: &mut SslContextBuilder) -> Result<(), ErrorStack> {
+    pub(crate) fn register(&self, builder: &mut SslContextBuilder) -> Result<(), ErrorStack> {
         for compressor in self.0.as_deref().unwrap_or_default() {
             compressor.register(builder)?;
         }
@@ -180,22 +190,25 @@ impl<const ALGORITHM: i32> ssl::CertificateCompressor for Compressor<ALGORITHM> 
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{
-        hash::BuildHasher,
-        sync::atomic::{AtomicUsize, Ordering},
-    };
+pub(crate) mod tests {
+    use std::{cell::Cell, hash::BuildHasher};
 
     use super::*;
 
-    #[test]
-    fn options_compare_compressors_by_algorithm_in_order() {
+    pub(crate) fn compare_options<T: Debug + Eq + Hash>(
+        default: T,
+        with: impl Fn(Vec<&'static dyn CertificateCompressor>) -> T,
+    ) {
+        std::thread_local! {
+            static ALGORITHM_CALLS: Cell<usize> = const { Cell::new(0) };
+        }
+
         #[derive(Debug)]
-        struct TestCompressor(CertificateCompressionAlgorithm, AtomicUsize);
+        struct TestCompressor(CertificateCompressionAlgorithm);
 
         impl CertificateCompressor for TestCompressor {
             fn algorithm(&self) -> CertificateCompressionAlgorithm {
-                self.1.fetch_add(1, Ordering::Relaxed);
+                ALGORITHM_CALLS.with(|calls| calls.set(calls.get() + 1));
                 self.0
             }
 
@@ -208,49 +221,31 @@ mod tests {
             }
         }
 
-        fn check<T: Debug + Eq + Hash>(
-            default: T,
-            with: impl Fn(Vec<&'static dyn CertificateCompressor>) -> T,
-        ) {
-            static ZLIB: TestCompressor =
-                TestCompressor(CertificateCompressionAlgorithm::ZLIB, AtomicUsize::new(0));
-            static OTHER_ZLIB: TestCompressor =
-                TestCompressor(CertificateCompressionAlgorithm::ZLIB, AtomicUsize::new(0));
-            static BROTLI: TestCompressor =
-                TestCompressor(CertificateCompressionAlgorithm::BROTLI, AtomicUsize::new(0));
+        static ZLIB: TestCompressor = TestCompressor(CertificateCompressionAlgorithm::ZLIB);
+        static OTHER_ZLIB: TestCompressor = TestCompressor(CertificateCompressionAlgorithm::ZLIB);
+        static BROTLI: TestCompressor = TestCompressor(CertificateCompressionAlgorithm::BROTLI);
 
-            let hasher = std::hash::RandomState::new();
-            let empty = with(Vec::new());
-            let first = with(vec![&ZLIB, &BROTLI]);
-            let same = with(vec![&OTHER_ZLIB, &BROTLI]);
-            let reversed = with(vec![&BROTLI, &ZLIB]);
-            let algorithm_calls = || {
-                [&ZLIB, &OTHER_ZLIB, &BROTLI].map(|compressor| compressor.1.load(Ordering::Relaxed))
-            };
-            let before = algorithm_calls();
-            assert_eq!(default, empty);
-            assert_eq!(hasher.hash_one(&default), hasher.hash_one(&empty));
-            assert_eq!(first, same);
-            assert_eq!(hasher.hash_one(&first), hasher.hash_one(&same));
-            assert_ne!(first, reversed);
-            assert_eq!(algorithm_calls(), before);
-        }
+        let hasher = std::hash::RandomState::new();
+        let empty = with(Vec::new());
+        let first = with(vec![&ZLIB, &BROTLI]);
+        let same = with(vec![&OTHER_ZLIB, &BROTLI]);
+        let reversed = with(vec![&BROTLI, &ZLIB]);
+        let before = ALGORITHM_CALLS.with(Cell::get);
+        assert_eq!(default, empty);
+        assert_eq!(hasher.hash_one(&default), hasher.hash_one(&empty));
+        assert_eq!(first, same);
+        assert_eq!(hasher.hash_one(&first), hasher.hash_one(&same));
+        assert_ne!(first, reversed);
+        assert_eq!(ALGORITHM_CALLS.with(Cell::get), before);
+    }
 
+    #[test]
+    fn options_compare_compressors_by_algorithm_in_order() {
         use crate::tls::TlsOptions;
-        check(TlsOptions::default(), |compressors| {
+        compare_options(TlsOptions::default(), |compressors| {
             TlsOptions::builder()
                 .certificate_compressors(compressors)
                 .build()
         });
-
-        #[cfg(feature = "http3")]
-        {
-            use crate::quic::QuicOptions;
-            check(QuicOptions::default(), |compressors| {
-                QuicOptions::builder()
-                    .certificate_compressors(compressors)
-                    .build()
-            });
-        }
     }
 }

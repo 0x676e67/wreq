@@ -1,7 +1,6 @@
-//! Stream dialing resolves names, races addresses and applies local bindings and TCP socket
-//! options. This module also provides the socket and address helpers used by QUIC.
+//! TCP and Unix socket dialing, DNS resolution, and Happy Eyeballs address racing.
 //!
-//! DNS completes before the [`Race`], and the connector's deadline covers both.
+//! Also provides socket binding and address resolution helpers shared with QUIC.
 
 mod race;
 
@@ -18,7 +17,7 @@ use std::{
     pin::pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[cfg(unix)]
@@ -27,35 +26,37 @@ use futures_util::{
     TryFutureExt,
     future::{BoxFuture, Either, select},
 };
-use http::{Request, Uri};
+use http::Uri;
 use tower::Service;
 
 pub(super) use self::race::Race;
 use crate::{
-    config::connect::ConnectConfig,
-    conn::ConnectRequestExt,
+    config::ConnectConfig,
     dns::{self, DynResolver, SocketAddrs},
     error::BoxError,
-    rt::{Connection, DynRuntime, Timer as _},
+    rt::{Connection, DynRuntime, Timer as _, deadline_after},
 };
 
 const CONNECT_TIMEOUT: &str = "connect timeout";
 
-/// A physical stream dial. Unix dials use the outer connector's deadline.
+/// Target and socket options for a TCP or Unix dial.
+///
+/// Unix dials rely on the outer connector's timeout.
 pub(super) enum Dial {
     Tcp {
         uri: Uri,
         addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
         interface: Option<Arc<str>>,
-        /// Disables Nagle for this dial even when the client leaves it enabled.
         nodelay: bool,
-        deadline: Option<Instant>,
     },
     #[cfg(unix)]
     Unix(Arc<Path>),
 }
 
-/// Connection failure with an optional attempted address and underlying cause.
+/// Connection failure carrying a stage label, optional attempted socket address, and cause.
+///
+/// When `terminal` is set, [`Race`] stops trying remaining addresses and surfaces this error
+/// immediately.
 pub(super) struct ConnectError {
     pub(super) msg: &'static str,
     pub(super) addr: Option<SocketAddr>,
@@ -63,8 +64,9 @@ pub(super) struct ConnectError {
     pub(super) terminal: bool,
 }
 
-/// Resolves one host through `lookup`, preserving custom DNS ports unless the URI supplies a
-/// port. IP literals bypass the lookup; brackets are stripped from IPv6 hosts.
+/// Resolves `host` via `lookup`, keeping custom DNS ports unless `explicit_port` is set.
+///
+/// IP literals bypass DNS lookup; brackets are stripped from IPv6 literals.
 pub(super) async fn resolve<F, A, E>(
     host: &str,
     port: u16,
@@ -96,15 +98,21 @@ where
     ))
 }
 
-/// The runtime, resolver and client socket settings every dial shares.
+/// Shared runtime, DNS resolver, TCP socket options, and race timers used by [`Dialer`].
+///
+/// Constructed once per client and shared across every stream and SOCKS dial attempt.
 struct State {
     runtime: DynRuntime,
     resolver: DynResolver,
-    tcp: tcp::Config,
+    config: tcp::Config,
+    timeout: Option<Duration>,
     happy_eyeballs_timeout: Option<Duration>,
 }
 
-/// Opens TCP and Unix sockets. Clones share the runtime, resolver and socket settings.
+/// Tower [`Service`] that opens TCP and Unix domain sockets.
+///
+/// Resolves hostnames, applies Happy Eyeballs racing and socket bindings, and shares client
+/// dial configuration across clones.
 #[derive(Clone)]
 pub(super) struct Dialer {
     state: Arc<State>,
@@ -113,18 +121,14 @@ pub(super) struct Dialer {
 // ===== impl Dial =====
 
 impl Dial {
-    /// Prepares the socket dial for `uri`, which may be a proxy rather than the origin.
-    pub(super) fn tcp(request: &Request<ConnectConfig>, uri: Uri, nodelay: bool) -> Self {
-        let connect_config = request.body();
+    /// Builds a TCP dial using the effective local socket bindings.
+    #[must_use]
+    pub(super) fn tcp(uri: Uri, config: &ConnectConfig, nodelay: bool) -> Self {
         Self::Tcp {
             uri,
-            addresses: (
-                connect_config.get_ref::<Ipv4Addr>().copied(),
-                connect_config.get_ref::<Ipv6Addr>().copied(),
-            ),
-            interface: connect_config.get_ref::<Arc<str>>().cloned(),
+            addresses: (config.get_ref().copied(), config.get_ref().copied()),
+            interface: config.get_ref().cloned(),
             nodelay,
-            deadline: request.deadline(),
         }
     }
 }
@@ -132,21 +136,31 @@ impl Dial {
 // ===== impl Dialer =====
 
 impl Dialer {
+    /// Creates a dialer with an optional timeout for the entire TCP address race after DNS.
     #[must_use]
     pub(super) fn new(
         runtime: DynRuntime,
         resolver: DynResolver,
-        tcp: tcp::Config,
+        config: tcp::Config,
+        timeout: Option<Duration>,
         happy_eyeballs_timeout: Option<Duration>,
     ) -> Self {
         Self {
             state: Arc::new(State {
                 runtime,
                 resolver,
-                tcp,
+                config,
+                timeout,
                 happy_eyeballs_timeout,
             }),
         }
+    }
+
+    /// Returns the client's TCP_NODELAY setting.
+    #[inline]
+    #[must_use]
+    pub(super) fn nodelay(&self) -> bool {
+        self.state.config.nodelay
     }
 }
 
@@ -174,48 +188,44 @@ impl Service<Dial> for Dialer {
                 uri,
                 addresses,
                 interface,
-                deadline,
                 nodelay,
             } => {
-                let nodelay = nodelay || self.state.tcp.nodelay;
+                let nodelay = nodelay || self.state.config.nodelay;
                 let state = self.state.clone();
-                // Start the TCP connection attempt with Happy Eyeballs and deadline handling.
-                let connect = async move {
+                let future = Box::pin(async move {
                     let (host, port) = tcp::get_host_port(&uri)?;
                     let addrs = resolve(host, port, uri.port().is_some(), |name| {
                         state.resolver.resolve(name)
                     })
                     .await?;
 
-                    Race::new(state.happy_eyeballs_timeout, |duration| {
+                    let race = Race::new(state.happy_eyeballs_timeout, |duration| {
                         state.runtime.sleep(duration)
                     })
                     .run(addrs, addresses, |addr| {
-                        tcp::connect_socket(
+                        tcp::connect(
                             &addr,
-                            &state.tcp,
+                            &state.config,
                             addresses,
                             interface.as_deref(),
                             nodelay,
                             &state.runtime,
                         )
                         .map(|future| future.map_err(ConnectError::m("tcp connect error")))
-                    })
-                    .await
-                    .map_err(BoxError::from)
-                };
+                    });
 
-                // Start the deadline timer if a deadline is specified.
-                let sleep = deadline.map(|deadline| self.state.runtime.sleep_until(deadline));
-                let future = Box::pin(async move {
-                    let Some(sleep) = sleep else {
-                        return connect.await;
+                    let result = match state.timeout {
+                        Some(timeout) => {
+                            let deadline = deadline_after(state.runtime.now(), timeout);
+                            let sleep = state.runtime.sleep_until(deadline);
+                            match select(pin!(race), sleep).await {
+                                Either::Left((result, _)) => result,
+                                Either::Right(_) => Err(ConnectError::timeout()),
+                            }
+                        }
+                        None => race.await,
                     };
-                    // A dial that completes at the deadline wins.
-                    match select(pin!(connect), sleep).await {
-                        Either::Left((result, _)) => result,
-                        Either::Right(_) => Err(ConnectError::timeout().into()),
-                    }
+                    result.map_err(BoxError::from)
                 });
 
                 cfg_select! {
@@ -305,7 +315,7 @@ impl ConnectError {
     }
 
     #[must_use]
-    pub(super) fn timeout() -> Self {
+    fn timeout() -> Self {
         Self::new(CONNECT_TIMEOUT, io::Error::from(io::ErrorKind::TimedOut))
     }
 
@@ -416,6 +426,106 @@ mod tests {
             error.cause.unwrap().downcast::<io::Error>().unwrap().kind(),
             io::ErrorKind::NotFound
         );
+    }
+
+    #[cfg(feature = "tokio-rt")]
+    #[tokio::test(start_paused = true)]
+    async fn tcp_address_race_shares_one_timeout_after_dns() {
+        use std::{future::pending, net::TcpStream, sync::Mutex, time::Instant};
+
+        use tower::ServiceExt;
+
+        use crate::rt::{BoxSleep, Connecting, Runtime, Timer, tokio::TokioRuntime};
+
+        const DNS_DELAY: Duration = Duration::from_millis(80);
+        const RACE_TIMEOUT: Duration = Duration::from_millis(50);
+        const STAGGER: Duration = Duration::from_millis(10);
+        const FIRST_FAILURE: Duration = Duration::from_millis(20);
+        const SECOND: SocketAddr = SocketAddr::new(V4.ip(), 444);
+
+        struct DelayedResolver;
+
+        impl dns::Resolve for DelayedResolver {
+            fn resolve(&self, _: dns::Name) -> dns::Resolving {
+                Box::pin(async {
+                    tokio::time::sleep(DNS_DELAY).await;
+                    Ok(Box::new([V4, SECOND].into_iter()) as dns::Addrs)
+                })
+            }
+        }
+
+        #[derive(Debug, Default)]
+        struct PendingTcp(Mutex<Vec<SocketAddr>>);
+
+        impl Timer for PendingTcp {
+            fn sleep(&self, duration: Duration) -> BoxSleep {
+                assert_eq!(duration, STAGGER, "only the address stagger is relative");
+                TokioRuntime.sleep(duration)
+            }
+
+            fn sleep_until(&self, deadline: Instant) -> BoxSleep {
+                TokioRuntime.sleep_until(deadline)
+            }
+
+            fn now(&self) -> Instant {
+                TokioRuntime.now()
+            }
+        }
+
+        impl Runtime for PendingTcp {
+            fn execute(&self, future: BoxFuture<'static, ()>) {
+                TokioRuntime.execute(future);
+            }
+
+            fn resolver(&self) -> Arc<dyn dns::Resolve> {
+                Arc::new(DelayedResolver)
+            }
+
+            fn connect_tcp(&self, _socket: TcpStream, address: SocketAddr) -> Connecting {
+                self.0.lock().unwrap().push(address);
+                Box::pin(async move {
+                    if address == V4 {
+                        tokio::time::sleep(FIRST_FAILURE).await;
+                        return Err(io::ErrorKind::ConnectionRefused.into());
+                    }
+                    pending().await
+                })
+            }
+        }
+
+        for delay in [None, Some(STAGGER)] {
+            let runtime = Arc::new(PendingTcp::default());
+            let dialer = Dialer::new(
+                DynRuntime::new(runtime.clone()),
+                DynResolver::new(runtime.resolver()),
+                tcp::Config::default(),
+                Some(RACE_TIMEOUT),
+                delay,
+            );
+            let started = tokio::time::Instant::now();
+            let result = tokio::time::timeout(
+                Duration::from_secs(1),
+                dialer.oneshot(Dial::Tcp {
+                    uri: Uri::from_static("https://example.test/"),
+                    addresses: (None, None),
+                    interface: None,
+                    nodelay: false,
+                }),
+            )
+            .await
+            .expect("the dialer must enforce its own timeout");
+            let error = result
+                .map(drop)
+                .expect_err("the address race must time out");
+            let error = error.downcast::<ConnectError>().unwrap();
+            assert_eq!(error.msg, CONNECT_TIMEOUT);
+            assert_eq!(
+                error.cause.unwrap().downcast::<io::Error>().unwrap().kind(),
+                io::ErrorKind::TimedOut,
+            );
+            assert_eq!(*runtime.0.lock().unwrap(), [V4, SECOND]);
+            assert_eq!(started.elapsed(), DNS_DELAY + RACE_TIMEOUT);
+        }
     }
 
     #[test]

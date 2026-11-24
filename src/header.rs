@@ -8,7 +8,7 @@ use bytes::Bytes;
 pub use http::header::*;
 use netty::ext::OnPreserveHeaderCallback;
 
-use crate::config::request::impl_request_config_value;
+use crate::config::impl_request_config_value;
 
 /// Trait for types that can be converted into an [`HeaderCaseName`] (case-preserved header).
 ///

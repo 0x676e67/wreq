@@ -234,8 +234,9 @@ impl Error {
     }
 
     /// Returns `true` for errors classified as proxy connection or tunnel failures.
-    /// If the outer connection deadline expires during a proxy handshake, the error is
-    /// a [connection error](Self::is_connect) and a [timeout](Self::is_timeout).
+    ///
+    /// An outer [connection timeout](crate::ClientBuilder::connect_timeout) is reported as a
+    /// [connection error](Self::is_connect) and a [timeout](Self::is_timeout), even with a proxy.
     pub fn is_proxy_connect(&self) -> bool {
         let mut source = self.source();
 

@@ -31,14 +31,11 @@ use super::{
 use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
-    config::{
-        connect::ConnectConfig,
-        request::{RequestConfig, RequestConfigValue, impl_request_config_value},
-    },
+    config::{ConnectConfig, RequestConfig, RequestConfigValue, impl_request_config_value},
     ext::UriExt,
-    group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     redirect,
+    reuse::Group,
 };
 
 /// A request which can be executed with [`Client::execute()`].
@@ -688,7 +685,10 @@ impl RequestBuilder {
         self
     }
 
-    /// Set the proxy for this request.
+    /// Sets a proxy rule for this request.
+    ///
+    /// Checked before the client's proxy rules; falls back to the client's rules if it does
+    /// not match.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.connect_config_mut().insert(proxy.into_matcher());
@@ -696,8 +696,10 @@ impl RequestBuilder {
         self
     }
 
-    /// Sets this request's local IP address for one address family.
-    /// An unset family inherits the client's setting. Passing `None` keeps any earlier override.
+    /// Sets the local IP address for this request's address family.
+    ///
+    /// The other family inherits the client's setting. Passing `None` leaves any previous
+    /// override unchanged.
     pub fn local_address<V>(mut self, local_address: V) -> RequestBuilder
     where
         V: Into<Option<IpAddr>>,
@@ -714,8 +716,10 @@ impl RequestBuilder {
         self
     }
 
-    /// Sets this request's local IPv4 and IPv6 addresses.
-    /// For either family, `None` keeps an earlier override or inherits the client's setting.
+    /// Sets the local IPv4 and IPv6 addresses for this request.
+    ///
+    /// Passing `None` for either family keeps any earlier override or falls back to the
+    /// client's setting.
     pub fn local_addresses<V4, V6>(mut self, ipv4_address: V4, ipv6_address: V6) -> RequestBuilder
     where
         V4: Into<Option<Ipv4Addr>>,
@@ -804,9 +808,11 @@ impl RequestBuilder {
         self
     }
 
-    /// Applies the emulation's headers and protocol options to this request.
-    /// Supplied options and headers replace matching entries; absent ones stay and non-empty
-    /// original header names append. Group, proxy, version, and socket settings stay.
+    /// Applies an emulation preset's headers and protocol options to this request.
+    ///
+    /// Supplied options and headers replace matching entries, omitted ones are preserved, and
+    /// non-empty original header names are appended. Group, proxy, version, and socket
+    /// settings remain unchanged.
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let Emulation(headers, orig_headers, connect_config) = emulation.into_emulation();
@@ -822,9 +828,10 @@ impl RequestBuilder {
         self
     }
 
-    /// Adds a caller-defined connection-pool partition to this request.
-    /// A group can prevent reuse across requests, but it never makes otherwise
-    /// incompatible connection settings share a connection.
+    /// Assigns this request to a connection-pool group.
+    ///
+    /// Grouping isolates connection reuse between requests, but never causes otherwise
+    /// incompatible connection settings to share a connection.
     pub fn group(mut self, group: Group) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.connect_config_mut().insert(group);

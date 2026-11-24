@@ -1,8 +1,13 @@
+#[cfg(any(feature = "chromium-roots", feature = "webpki-roots"))]
+use std::sync::LazyLock;
 use std::{net::IpAddr, sync::Arc};
 
-use btls::x509::{
-    store::{X509Store, X509StoreBuilder},
-    verify::X509CheckFlags,
+use btls::{
+    ssl::SslContextBuilder,
+    x509::{
+        store::{X509Store, X509StoreBuilder},
+        verify::X509CheckFlags,
+    },
 };
 
 use super::{
@@ -11,7 +16,33 @@ use super::{
 };
 use crate::{Error, Result};
 
-/// A builder for constructing a [`CertStore`].
+#[cfg(any(feature = "chromium-roots", feature = "webpki-roots"))]
+static BUNDLED_CERT_STORE: LazyLock<std::result::Result<CertStore, Arc<Error>>> =
+    LazyLock::new(|| {
+        let sources = &[
+            #[cfg(feature = "chromium-roots")]
+            chromium_roots::TLS_SERVER_ROOT_CERTS,
+            #[cfg(feature = "webpki-roots")]
+            webpki_root_certs::TLS_SERVER_ROOT_CERTS,
+        ];
+
+        let certs = sources
+            .iter()
+            .enumerate()
+            .flat_map(|(source_index, source)| {
+                let previous_sources = &sources[..source_index];
+                source.iter().filter(move |cert| {
+                    !previous_sources.iter().any(|source| source.contains(*cert))
+                })
+            })
+            .map(AsRef::as_ref);
+
+        CertStore::from_der_certs(certs).map_err(Arc::new)
+    });
+
+/// Builder for constructing a [`CertStore`] from DER/PEM certificates or default root stores.
+///
+/// Created via [`CertStore::builder`]; errors are deferred until [`build`](Self::build).
 pub struct CertStoreBuilder {
     builder: Result<X509StoreBuilder>,
 }
@@ -175,7 +206,7 @@ impl CertStoreBuilder {
 /// [`Rc`]: std::rc::Rc
 /// [`Arc`]: std::sync::Arc
 #[derive(Clone)]
-pub struct CertStore(pub(in crate::tls) Arc<X509Store>);
+pub struct CertStore(Arc<X509Store>);
 
 impl CertStore {
     /// Creates a new [`CertStoreBuilder`].
@@ -219,5 +250,29 @@ impl CertStore {
         parse_certs_with_stack(certs, Certificate::stack_from_pem)
             .map(Arc::new)
             .map(CertStore)
+    }
+
+    /// Installs the chosen trust store, or falls back to bundled or system roots.
+    pub(in crate::tls) fn configure(
+        store: Option<&Self>,
+        builder: &mut SslContextBuilder,
+    ) -> Result<()> {
+        if let Some(store) = store {
+            builder.set_cert_store_ref(&store.0);
+        } else {
+            cfg_select! {
+                any(feature = "chromium-roots", feature = "webpki-roots") => {
+                    let store = BUNDLED_CERT_STORE
+                        .as_ref()
+                        .map_err(|error| Error::tls(error.clone()))?;
+                    builder.set_cert_store_ref(&store.0);
+                }
+                _ => {
+                    builder.set_default_verify_paths().map_err(Error::tls)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }

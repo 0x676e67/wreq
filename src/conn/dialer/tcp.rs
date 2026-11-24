@@ -18,7 +18,10 @@ use crate::{
 static INVALID_MISSING_SCHEME: &str = "invalid URI, scheme is missing";
 static INVALID_MISSING_HOST: &str = "invalid URI, host is missing";
 
-/// Socket options the client applies to every TCP dial.
+/// Client-wide TCP socket options applied to every outbound TCP dial.
+///
+/// Controls `TCP_NODELAY`, `SO_REUSEADDR`, linger, socket buffer sizes, keepalive parameters,
+/// and platform-specific timeouts such as `TCP_USER_TIMEOUT`.
 pub(crate) struct Config {
     pub(crate) nodelay: bool,
     pub(crate) reuse_address: bool,
@@ -93,7 +96,7 @@ fn bind_local_address(
 
 /// Opens a nonblocking TCP socket with the client's options and the dial's bindings, and
 /// starts connecting it on the runtime.
-pub(super) fn connect_socket(
+pub(super) fn connect(
     addr: &SocketAddr,
     config: &Config,
     addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),

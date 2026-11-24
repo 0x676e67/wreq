@@ -1,8 +1,7 @@
-//! Tower services used by the low-level client request path.
+//! Low-level Tower services for request preparation, pool checkout, and unsent retries.
 //!
-//! Configuration runs once before internal retries. Each attempt checks out a sender, fits the
-//! request to it, and dispatches it, handing a busy HTTP/1 sender to a readiness task. Only
-//! requests returned before encoding can be retried; bodies are never reconstructed.
+//! Each request is validated and keyed once; retries only occur when a reused connection
+//! fails before any request bytes are encoded (bodies are never cloned).
 
 use std::{
     future::Future,
@@ -17,7 +16,7 @@ use http::{
     HeaderMap,
     header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
 };
-use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST, uri::Authority};
+use http::{HeaderValue, Method, Response, Uri, Version, header::HOST, uri::Authority};
 use netty::body::Incoming;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Service, ServiceExt, util::Oneshot};
@@ -30,45 +29,49 @@ use {
 
 use super::{
     error::{Error, ErrorKind},
-    pool::{self, PoolKey},
+    pool,
     request::RequestVersion,
 };
 use crate::{
     Body,
-    config::{connect::ConnectConfig, request::RequestConfig},
-    conn::{self, BoxedConnectLayer, Conn},
+    config::{ConnectConfig, RequestConfig},
+    conn::{self, BoxedConnectLayer, Conn, Unnameable},
     dns::DynResolver,
     ext::UriExt,
     protocol::Protocol,
+    reuse,
     rt::DynRuntime,
 };
 
-/// Settings used to assemble the shared HTTP request service.
+/// Client-wide settings assembled by [`ClientBuilder`](crate::ClientBuilder) to construct
+/// the low-level [`Client`] service.
+///
+/// Bundles connector, pool, default connection config, protocol mode, and optional cookie store.
 pub(super) struct Config {
     pub(super) connect: conn::Config,
     pub(super) connect_config: ConnectConfig,
     pub(super) connector_layers: Vec<BoxedConnectLayer>,
-    pub(super) pool: pool::Config,
+    pub(super) pool_config: pool::Config,
     pub(super) protocol: Protocol,
     #[cfg(feature = "cookies")]
     pub(super) cookie_store: Option<Arc<dyn CookieStore>>,
 }
 
 /// Internal HTTP service beneath [`crate::Client`].
-/// Checks and configures each request before dispatch and retries unsent requests
-/// without cloning their bodies.
+///
+/// Validates requests before dispatch and retries unsent failures without cloning bodies.
 #[derive(Clone)]
-pub(super) struct Client<S = Dispatch<conn::Connect>> {
+pub(super) struct Client<S = Dispatch<conn::ConnectService>> {
     inner: S,
     protocol: Protocol,
     connect_config: ConnectConfig,
     retry_unsent: bool,
 }
 
-/// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
+/// Requests a dedicated HTTP/1 connection that bypasses the pool.
 ///
-/// With `extended_connect`, dispatch first tries an established connection of the
-/// default request group whose peer enabled extended CONNECT (RFC 8441, RFC 9220).
+/// When `extended_connect` is set, dispatch first probes for an established HTTP/2 or HTTP/3
+/// connection in the default group whose peer enabled extended CONNECT (RFC 8441, RFC 9220).
 #[cfg(feature = "ws")]
 #[derive(Clone, Copy)]
 pub(super) struct DedicatedConnection {
@@ -77,89 +80,92 @@ pub(super) struct DedicatedConnection {
 }
 
 pin_project! {
-    /// Drives internal retries without cloning the request body.
-    /// The first call consumes the caller's readiness reservation; subsequent
-    /// attempts use `Oneshot` to pair readiness and dispatch on the same service.
+    /// Retries unsent requests without cloning their bodies.
+    ///
+    /// Uses the caller's readiness for the first attempt and `Oneshot` for retries.
     pub(super) struct RetryUnsentFuture<S, B>
     where
-        S: Service<DispatchRequest<B>>,
+        S: Service<Request<B>>,
     {
         #[pin]
-        future: Either<S::Future, Oneshot<S, DispatchRequest<B>>>,
+        future: Either<S::Future, Oneshot<S, Request<B>>>,
         service: S,
         original: Original,
         enabled: bool,
     }
 }
 
-/// Request state restored before each unsent retry.
-/// Kept outside `pin_project!`, whose fields cannot carry `cfg` attributes.
+/// Snapshot of request fields restored before each unsent retry.
+///
+/// Kept outside `pin_project!` because its conditional fields carry `#[cfg]` attributes.
 struct Original {
     uri: Uri,
-    /// Wire version before a connection fitted it; the next connection may differ.
+    /// Wire version before connection reconciliation.
     version: Version,
     /// Whether the caller set `Cookie`; otherwise each attempt regenerates it.
     #[cfg(feature = "cookies")]
     had_cookie: bool,
 }
 
-/// An HTTP request and the pool key it keeps across unsent retries.
-/// Dispatch returns this value only when the original body has not been sent.
-pub(super) struct DispatchRequest<B> {
-    request: Request<B>,
-    pool_key: PoolKey<conn::Identity>,
-    connect_config: ConnectConfig,
-    /// Whether checkout always connects and never returns the sender to the pool.
-    #[cfg(feature = "ws")]
-    dedicated: bool,
-    /// Whether the wire version follows the connection, as an explicit `Protocol::Auto` asks.
+/// Prepared HTTP request paired with its connection request and optional pool keys.
+///
+/// Handed to [`Dispatch`] and returned inside [`DispatchError`] only when no request bytes
+/// were encoded so [`RetryUnsentFuture`] can retry without cloning the body.
+pub(super) struct Request<B> {
+    inner: http::Request<B>,
+    connect: conn::Request<ConnectConfig>,
+    /// Absent for a dedicated connection that never enters the pool.
+    pool_key: Option<reuse::Key>,
+    /// Whether the wire version may adapt to the negotiated connection (`Protocol::Auto`).
     negotiable: bool,
-    /// Default-group key whose established sender may carry this WebSocket.
+    /// Default-group key to probe for an established extended CONNECT sender.
     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-    extended_connect_key: Option<PoolKey<conn::Identity>>,
+    extended_connect_key: Option<reuse::Key>,
 }
 
-/// Performs one connection-pool checkout and protocol send attempt.
+/// Checks out a pooled sender, dispatches the request, and attaches cookies and metadata.
 ///
-/// Each call checks out a compatible sender, fits the request to it, applies cookies,
-/// dispatches the request, and attaches connection metadata. HTTP/2 and HTTP/3 release their
-/// local checkout after response headers. HTTP/1 returns immediately only when
-/// its sender is ready again; otherwise a pool-owned task waits before returning
-/// it. Errors preserve an unsent request when the protocol dispatcher can prove
-/// encoding never began.
+/// Multiplexed senders release on response headers; busy HTTP/1 senders are returned by a
+/// background readiness task. Returns [`DispatchError::Unsent`] when encoding never started.
 pub(super) struct Dispatch<C> {
-    pool: pool::Pool<C>,
+    pool: pool::Pool<reuse::Key, C>,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
     runtime: DynRuntime,
 }
 
-/// Failure from one pool checkout and send attempt.
+/// Failure returned by a [`Dispatch`] pool checkout or send attempt.
+///
+/// Distinguishes retryable unsent failures (which return the original [`Request`]
+/// intact) from terminal checkout or transport errors.
 pub(super) enum DispatchError<B> {
     /// A shared HTTP/2 or HTTP/3 checkout batch was canceled before connecting.
     CheckoutCanceled {
         error: Error,
-        request: Box<DispatchRequest<B>>,
+        request: Box<Request<B>>,
     },
     /// The connection failed before encoding any request bytes on a reused sender.
     Unsent {
         error: Error,
-        request: Box<DispatchRequest<B>>,
+        request: Box<Request<B>>,
         connection_reused: bool,
     },
     /// A non-retryable checkout or transport failure.
     Terminal(Error),
 }
 
-/// Original RFC 6455 header fields of a WebSocket handshake riding extended CONNECT.
-/// They are restored in order if the request returns unsent, so a retry can use HTTP/1.1.
+/// Original RFC 6455 headers of a WebSocket handshake rewritten for extended CONNECT.
+///
+/// Restored in order if the request returns unsent so a retry can fall back to HTTP/1.1.
 #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
 struct Http1Upgrade {
     headers: HeaderMap,
 }
 
-/// Sender checked out for one attempt.
-/// A struct rather than a tuple, since the upgrade field exists only with WebSocket + H2/H3.
+/// Checked-out pooled sender paired with any rewritten WebSocket upgrade headers.
+///
+/// Separated into a struct because the `upgrade` field exists only when WebSocket and
+/// HTTP/2 or HTTP/3 are both enabled.
 struct CheckedOut {
     pooled: pool::pooled::Pooled,
     /// WebSocket upgrade rewritten for an extended CONNECT sender, restored if unsent.
@@ -175,7 +181,7 @@ impl Default for Config {
             connect: conn::Config::default(),
             connect_config: ConnectConfig::default(),
             connector_layers: Vec::new(),
-            pool: pool::Config::default(),
+            pool_config: pool::Config::default(),
             protocol: Protocol::Auto,
             #[cfg(feature = "cookies")]
             cookie_store: None,
@@ -202,7 +208,7 @@ impl Client {
         let dispatch = Dispatch::new(
             connector,
             runtime,
-            config.pool,
+            config.pool_config,
             &config.connect_config,
             #[cfg(feature = "cookies")]
             config.cookie_store,
@@ -217,9 +223,10 @@ impl Client {
 }
 
 impl<S> Client<S> {
-    /// Checks the request, then freezes connection settings before checkout and unsent
-    /// retries. Every redirect hop and public retry passes here again.
-    fn prepare<B>(&self, mut request: Request<B>) -> Result<DispatchRequest<B>, Error> {
+    /// Validates the request and freezes its pool key and connection config before dispatch.
+    ///
+    /// Redirect hops and user-level retries pass through here again.
+    fn prepare<B>(&self, mut request: http::Request<B>) -> Result<Request<B>, Error> {
         match request.version() {
             Version::HTTP_10 if request.method() == Method::CONNECT => {
                 warn!("CONNECT is not allowed for HTTP/1.0");
@@ -248,7 +255,7 @@ impl<S> Client<S> {
         }
 
         let extensions = request.extensions_mut();
-        let connect_config = extensions.remove::<ConnectConfig>().unwrap_or_default();
+        let connect_config = extensions.remove::<ConnectConfig>();
         #[cfg(feature = "ws")]
         let dedicated = extensions.remove::<DedicatedConnection>();
 
@@ -290,7 +297,16 @@ impl<S> Client<S> {
                 .with_context("HTTP/3 requires an https URI"));
         }
 
-        let connect_config = connect_config.with_base(&self.connect_config);
+        // Attach client defaults to any request-level connection overrides.
+        let config = connect_config
+            .unwrap_or_default()
+            .with_base(&self.connect_config);
+        let connect = conn::Request::new(origin, protocol, config);
+        let pool_key = cfg_select! {
+            feature = "ws" => dedicated.is_none(),
+            _ => true,
+        }
+        .then(|| connect.reuse_key(protocol));
 
         // Probe the default group only where it may be HTTP/2, or HTTP/3 over https. Without
         // Alt-Svc discovery, an automatic client's explicit HTTP/3 group is not probed.
@@ -303,33 +319,22 @@ impl<S> Client<S> {
                 Protocol::Http3 => uri.is_https(),
                 _ => false,
             })
-        .then(|| Self::pool_key(origin.clone(), self.protocol, &connect_config));
+        .then(|| connect.reuse_key(self.protocol));
 
-        Ok(DispatchRequest {
-            request,
-            pool_key: Self::pool_key(origin, protocol, &connect_config),
-            connect_config,
-            #[cfg(feature = "ws")]
-            dedicated: dedicated.is_some(),
+        Ok(Request {
+            inner: request,
+            connect,
+            pool_key,
             negotiable,
             #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
             extended_connect_key,
         })
     }
-
-    #[must_use]
-    fn pool_key(
-        origin: Uri,
-        protocol: Protocol,
-        connect_config: &ConnectConfig,
-    ) -> PoolKey<conn::Identity> {
-        PoolKey::new(conn::Identity::new(origin, protocol, connect_config))
-    }
 }
 
-impl<S, B> Service<Request<B>> for Client<S>
+impl<S, B> Service<http::Request<B>> for Client<S>
 where
-    S: Service<DispatchRequest<B>, Error = DispatchError<B>> + Clone,
+    S: Service<Request<B>, Error = DispatchError<B>> + Clone,
 {
     type Response = S::Response;
     type Error = BoxError;
@@ -339,17 +344,17 @@ where
         self.inner.poll_ready(cx).map_err(DispatchError::into_error)
     }
 
-    fn call(&mut self, request: Request<B>) -> Self::Future {
+    fn call(&mut self, request: http::Request<B>) -> Self::Future {
         let request = match self.prepare(request) {
             Ok(request) => request,
             Err(error) => return Either::Right(future::err(error.into())),
         };
 
         let original = Original {
-            uri: request.request.uri().clone(),
-            version: request.request.version(),
+            uri: request.inner.uri().clone(),
+            version: request.inner.version(),
             #[cfg(feature = "cookies")]
-            had_cookie: request.request.headers().contains_key(COOKIE),
+            had_cookie: request.inner.headers().contains_key(COOKIE),
         };
         let replacement = self.inner.clone();
         let mut service = mem::replace(&mut self.inner, replacement);
@@ -368,7 +373,7 @@ where
 
 impl<S, B> Future for RetryUnsentFuture<S, B>
 where
-    S: Service<DispatchRequest<B>, Error = DispatchError<B>> + Clone,
+    S: Service<Request<B>, Error = DispatchError<B>> + Clone,
 {
     type Output = Result<S::Response, BoxError>;
 
@@ -400,12 +405,12 @@ where
                 Err(error) => return Poll::Ready(Err(error.into_error())),
             };
 
-            *request.request.uri_mut() = this.original.uri.clone();
-            *request.request.version_mut() = this.original.version;
+            *request.inner.uri_mut() = this.original.uri.clone();
+            *request.inner.version_mut() = this.original.version;
             // Regenerate automatic cookies for the next protocol; retain user headers.
             #[cfg(feature = "cookies")]
             if !this.original.had_cookie {
-                request.request.headers_mut().remove(COOKIE);
+                request.inner.headers_mut().remove(COOKIE);
             }
             this.future
                 .set(Either::Right(Oneshot::new(this.service.clone(), request)));
@@ -421,15 +426,13 @@ where
 
 impl<C> Dispatch<C>
 where
-    C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError, Future: Send + 'static>
+    C: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>
         + Clone
         + Send
         + Sync
         + 'static,
 {
-    /// Creates the terminal request service and its shared connection pool.
-    /// Handshakes start from the client's connection settings, and HTTP/1 generates
-    /// any missing `Host` header.
+    /// Creates the dispatch service and its underlying connection pool.
     #[must_use]
     fn new(
         connector: C,
@@ -452,12 +455,13 @@ where
         }
     }
 
-    /// Checks out a sender for the request, first probing for an extended CONNECT sender.
-    /// A canceled singleton batch returns the request for an unsent retry.
+    /// Checks out a sender (probing extended CONNECT first when applicable).
+    ///
+    /// Returns [`DispatchError::CheckoutCanceled`] if a shared singleton batch was canceled.
     async fn checkout(
         &self,
-        request: DispatchRequest<Body>,
-    ) -> Result<(DispatchRequest<Body>, CheckedOut), DispatchError<Body>> {
+        request: Request<Body>,
+    ) -> Result<(Request<Body>, CheckedOut), DispatchError<Body>> {
         // RFC 8441 §3 and RFC 9220 §3: extended CONNECT only after the peer enabled it. A
         // miss keeps the dedicated HTTP/1.1 upgrade, so no HTTP/2 or HTTP/3 connection opens.
         let reused: Option<pool::pooled::Pooled> = cfg_select! {
@@ -472,18 +476,16 @@ where
         let mut request = request;
         #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
         let upgrade = reused.as_ref().map(|pooled| {
-            Http1Upgrade::into_extended_connect(&mut request.request, pooled.version())
+            Http1Upgrade::into_extended_connect(&mut request.inner, pooled.version())
         });
 
-        let dedicated = cfg_select! {
-            feature = "ws" => request.dedicated,
-            _ => false,
-        };
-
-        let make = || pool::ConnectTarget::new(&request.pool_key, &request.connect_config);
         let pooled = match reused {
             Some(pooled) => pooled,
-            None => match self.pool.checkout(&request.pool_key, make, dedicated).await {
+            None => match self
+                .pool
+                .checkout(request.pool_key.as_ref(), &request.connect)
+                .await
+            {
                 Ok(pooled) => pooled,
                 Err(error) if pool::is_canceled(&*error) => {
                     return Err(DispatchError::CheckoutCanceled {
@@ -508,23 +510,18 @@ where
         Ok((request, checked_out))
     }
 
-    /// Fits the request to the checked-out sender, dispatches it, then attaches cookies and
-    /// connection metadata. A request returned before encoding comes back unsent.
+    /// Reconciles `request` with `checked_out`, sends it, and attaches cookies and metadata.
     async fn send(
         &self,
-        mut request: DispatchRequest<Body>,
+        mut request: Request<Body>,
         checked_out: CheckedOut,
     ) -> Result<Response<Incoming>, DispatchError<Body>> {
         // Cookies keep the request URI; only the wire target of a CONNECT changes.
-        let is_https = request.request.uri().is_https();
+        let is_https = request.inner.uri().is_https();
         #[cfg(feature = "cookies")]
-        let uri = request.request.uri().clone();
-        let extended = reconcile(
-            &mut request.request,
-            &checked_out.pooled,
-            request.negotiable,
-        )
-        .map_err(DispatchError::Terminal)?;
+        let uri = request.inner.uri().clone();
+        let extended = reconcile(&mut request.inner, &checked_out.pooled, request.negotiable)
+            .map_err(DispatchError::Terminal)?;
         #[cfg(not(any(feature = "http2", feature = "http3")))]
         let _ = extended;
 
@@ -535,22 +532,19 @@ where
         } = checked_out;
 
         #[cfg(feature = "cookies")]
-        let cookie_store = self
-            .cookie_store
-            .fetch(request.request.extensions())
-            .cloned();
+        let cookie_store = self.cookie_store.fetch(request.inner.extensions()).cloned();
 
         #[cfg(feature = "cookies")]
         if let Some(ref cookie_store) = cookie_store {
             apply_request_cookies(
-                &mut request.request,
+                &mut request.inner,
                 cookie_store.as_ref(),
                 &uri,
                 pooled.version(),
             );
         }
 
-        let mut response = match pooled.call(request.request).await {
+        let mut response = match pooled.call(request.inner).await {
             Ok(response) => response,
             Err(mut error) => {
                 let connection_reused = pooled.is_reused();
@@ -562,10 +556,10 @@ where
                 // A returned request was not sent; only protocol rejections are final,
                 // since they repeat on the same connection.
                 if let Some(unsent) = (!error.is_user()).then(|| error.take_message()).flatten() {
-                    request.request = unsent;
+                    request.inner = unsent;
                     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
                     if let Some(upgrade) = upgrade {
-                        upgrade.restore(&mut request.request);
+                        upgrade.restore(&mut request.inner);
                     }
 
                     return Err(DispatchError::Unsent {
@@ -626,9 +620,9 @@ impl<C> Clone for Dispatch<C> {
     }
 }
 
-impl<C> Service<DispatchRequest<Body>> for Dispatch<C>
+impl<C> Service<Request<Body>> for Dispatch<C>
 where
-    C: Service<Request<ConnectConfig>, Response = Conn, Error = BoxError, Future: Send + 'static>
+    C: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>
         + Clone
         + Send
         + Sync
@@ -642,7 +636,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: DispatchRequest<Body>) -> Self::Future {
+    fn call(&mut self, request: Request<Body>) -> Self::Future {
         let this = self.clone();
         Box::pin(async move {
             let (request, checked_out) = this.checkout(request).await?;
@@ -673,7 +667,7 @@ impl Http1Upgrade {
     /// other WebSocket fields ([RFC 8441 §5](https://www.rfc-editor.org/rfc/rfc8441#section-5),
     /// [RFC 9220 §3](https://www.rfc-editor.org/rfc/rfc9220#section-3)).
     #[must_use]
-    fn into_extended_connect<B>(request: &mut Request<B>, version: Version) -> Self {
+    fn into_extended_connect<B>(request: &mut http::Request<B>, version: Version) -> Self {
         *request.method_mut() = Method::CONNECT;
         *request.version_mut() = version;
         let extensions = request.extensions_mut();
@@ -703,7 +697,7 @@ impl Http1Upgrade {
     }
 
     /// Restores the RFC 6455 GET after an unsent extended CONNECT, removing either marker.
-    fn restore<B>(self, request: &mut Request<B>) {
+    fn restore<B>(self, request: &mut http::Request<B>) {
         *request.method_mut() = Method::GET;
         *request.version_mut() = Version::HTTP_11;
         #[cfg(feature = "http2")]
@@ -727,13 +721,12 @@ fn with_h2_alpn_context(error: Error, unnegotiated_h2: bool) -> Error {
     }
 }
 
-/// Fits the request to the checked-out connection and returns whether it uses extended CONNECT.
+/// Adjusts `request` to match `pooled` and returns `true` if it uses extended CONNECT.
 ///
-/// Multiplexed connections set their own wire version. HTTP/1 sets HTTP/1.1 only for a
-/// `negotiable` request and otherwise requires HTTP/1.0 or HTTP/1.1. Extended CONNECT must
-/// match the connection, and a plain CONNECT target gains its default port.
+/// Sets the wire version for multiplexed or negotiable requests, rejects incompatible
+/// versions on HTTP/1, and fills in the default port for plain CONNECT targets.
 fn reconcile(
-    request: &mut Request<Body>,
+    request: &mut http::Request<Body>,
     pooled: &pool::pooled::Pooled,
     negotiable: bool,
 ) -> Result<bool, Error> {
@@ -767,16 +760,16 @@ fn reconcile(
     Ok(extended)
 }
 
-/// Returns whether the request uses extended CONNECT on this connection.
-/// HTTP/2 takes `:protocol` from `http2::ext::Protocol` ([RFC 8441 §4]) and HTTP/3 from
-/// `netty::http3::Protocol` ([RFC 9220 §3]); a marker the connection would ignore fails
-/// instead of sending a plain CONNECT tunnel.
+/// Returns `true` if `request` carries an extended CONNECT `:protocol` marker matching
+/// `pooled`'s HTTP version ([RFC 8441 §4], [RFC 9220 §3]).
+///
+/// Fails instead of falling back to plain CONNECT when the marker targets a different version.
 ///
 /// [RFC 8441 §4]: https://www.rfc-editor.org/rfc/rfc8441#section-4
 /// [RFC 9220 §3]: https://www.rfc-editor.org/rfc/rfc9220#section-3
 #[cfg(any(feature = "http2", feature = "http3"))]
 fn matched_extended_connect<B>(
-    request: &Request<B>,
+    request: &http::Request<B>,
     pooled: &pool::pooled::Pooled,
 ) -> Result<bool, Error> {
     let extensions = request.extensions();
@@ -812,15 +805,13 @@ fn extended_connect_disabled(pooled: &pool::pooled::Pooled) -> Error {
         .with_connect_info(pooled.connected().clone())
 }
 
-/// Adds the scheme's default port to a plain CONNECT target that elides it, since
-/// CONNECT has no default port and HTTP/1, HTTP/2 and HTTP/3 send the authority as is
+/// Fills in the scheme's default port on a plain CONNECT target when omitted
 /// ([RFC 9110 §9.3.6](https://www.rfc-editor.org/rfc/rfc9110#section-9.3.6)).
 ///
-/// On HTTP/2 and HTTP/3, a Host header equal to the old authority is updated with it,
-/// since Host must not differ from `:authority`
-/// ([RFC 9113 §8.3.1](https://www.rfc-editor.org/rfc/rfc9113#section-8.3.1),
+/// On HTTP/2 and HTTP/3, also updates a matching `Host` header so it stays consistent with
+/// `:authority` ([RFC 9113 §8.3.1](https://www.rfc-editor.org/rfc/rfc9113#section-8.3.1),
 /// [RFC 9114 §4.3.1](https://www.rfc-editor.org/rfc/rfc9114#section-4.3.1)).
-fn connect_target_port<B>(request: &mut Request<B>, multiplexed: bool) -> Result<(), Error> {
+fn connect_target_port<B>(request: &mut http::Request<B>, multiplexed: bool) -> Result<(), Error> {
     let uri = request.uri();
     let Some(authority) = uri.authority() else {
         return Ok(());
@@ -861,7 +852,7 @@ fn connect_target_port<B>(request: &mut Request<B>, multiplexed: bool) -> Result
 
 #[cfg(feature = "cookies")]
 fn apply_request_cookies<B>(
-    request: &mut Request<B>,
+    request: &mut http::Request<B>,
     cookie_store: &dyn CookieStore,
     uri: &Uri,
     version: Version,
@@ -942,7 +933,7 @@ mod tests {
                 "UserAbsoluteUriRequired",
             ),
         ] {
-            let request = Request::builder()
+            let request = http::Request::builder()
                 .method(method)
                 .version(version)
                 .uri(uri)
@@ -954,11 +945,32 @@ mod tests {
             assert_eq!(error.to_string(), format!("client error ({kind})"));
         }
 
-        let prepare = |uri| client.prepare(Request::get(uri).body(()).unwrap()).unwrap();
+        let prepare = |uri| {
+            client
+                .prepare(http::Request::get(uri).body(()).unwrap())
+                .unwrap()
+        };
         let plain = prepare("http://localhost/");
         let userinfo = prepare("http://user:pw@localhost/");
-        assert_eq!(userinfo.request.uri(), "http://localhost/");
+        assert!(plain.pool_key.is_some());
+        assert_eq!(userinfo.inner.uri(), "http://localhost/");
         assert_eq!(userinfo.pool_key, plain.pool_key);
+
+        #[cfg(feature = "ws")]
+        {
+            let request = http::Request::get("http://localhost/")
+                .extension(RequestConfig::<RequestVersion>::new(Some(Version::HTTP_11)))
+                .extension(DedicatedConnection {
+                    #[cfg(any(feature = "http2", feature = "http3"))]
+                    extended_connect: true,
+                })
+                .body(())
+                .unwrap();
+            let request = client.prepare(request).unwrap();
+            assert!(request.pool_key.is_none());
+            #[cfg(feature = "http2")]
+            assert_eq!(request.extended_connect_key, plain.pool_key);
+        }
     }
 
     #[tokio::test]
@@ -971,14 +983,15 @@ mod tests {
             let calls = Arc::new(AtomicUsize::new(0));
             let attempts = calls.clone();
             let mut key = None;
-            let service = tower::service_fn(move |mut request: DispatchRequest<crate::Body>| {
+            let service = tower::service_fn(move |mut request: Request<crate::Body>| {
                 let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 {
-                    key = Some(request.pool_key.clone());
-                    *request.request.uri_mut() = Uri::from_static("/upload?part=1");
-                    *request.request.version_mut() = Version::HTTP_2;
+                    assert!(request.pool_key.is_some());
+                    key.clone_from(&request.pool_key);
+                    *request.inner.uri_mut() = Uri::from_static("/upload?part=1");
+                    *request.inner.version_mut() = Version::HTTP_2;
                     #[cfg(feature = "cookies")]
                     request
-                        .request
+                        .inner
                         .headers_mut()
                         .append(COOKIE, HeaderValue::from_static("h2=1"));
                     Err(DispatchError::Unsent {
@@ -987,19 +1000,19 @@ mod tests {
                         connection_reused: reused,
                     })
                 } else {
-                    assert_eq!(request.request.uri(), "http://localhost/upload?part=1");
-                    assert_eq!(request.request.version(), Version::HTTP_10);
+                    assert_eq!(request.inner.uri(), "http://localhost/upload?part=1");
+                    assert_eq!(request.inner.version(), Version::HTTP_10);
                     #[cfg(feature = "cookies")]
-                    assert!(!request.request.headers().contains_key(COOKIE));
-                    assert_eq!(key.as_ref(), Some(&request.pool_key));
-                    Ok(request.request.into_body())
+                    assert!(!request.inner.headers().contains_key(COOKIE));
+                    assert_eq!(key, request.pool_key);
+                    Ok(request.inner.into_body())
                 };
                 future::ready(result)
             });
 
             let result = client(service, Protocol::Auto, enabled)
                 .oneshot(
-                    Request::builder()
+                    http::Request::builder()
                         .version(Version::HTTP_10)
                         .uri("http://localhost/upload?part=1")
                         .body(crate::Body::from("payload"))
@@ -1022,8 +1035,8 @@ mod tests {
         {
             let calls = Arc::new(AtomicUsize::new(0));
             let attempts = calls.clone();
-            let service = tower::service_fn(move |request: DispatchRequest<crate::Body>| {
-                let values: Vec<_> = request.request.headers().get_all(COOKIE).iter().collect();
+            let service = tower::service_fn(move |request: Request<crate::Body>| {
+                let values: Vec<_> = request.inner.headers().get_all(COOKIE).iter().collect();
                 assert_eq!(values, ["user=1", "other=2"]);
                 future::ready(if attempts.fetch_add(1, Ordering::Relaxed) == 0 {
                     Err(DispatchError::Unsent {
@@ -1037,7 +1050,7 @@ mod tests {
             });
             client(service, Protocol::Auto, true)
                 .oneshot(
-                    Request::builder()
+                    http::Request::builder()
                         .uri("https://localhost/")
                         .header(COOKIE, "user=1")
                         .header(COOKIE, "other=2")
@@ -1060,7 +1073,7 @@ mod tests {
         let attempts = Arc::new(crate::sync::Mutex::new(Vec::new()));
         let connector = tower::service_fn({
             let attempts = attempts.clone();
-            move |request: Request<ConnectConfig>| {
+            move |Unnameable(request)| {
                 attempts.lock().push(
                     request
                         .body()
@@ -1096,7 +1109,7 @@ mod tests {
             ("http://localhost/", Some(DialOption(2))),
             ("http://localhost:8080/", Some(DialOption(3))),
         ] {
-            let mut request = Request::get(uri).body(Body::default()).unwrap();
+            let mut request = http::Request::get(uri).body(Body::default()).unwrap();
             if let Some(option) = option {
                 let mut connect_config = ConnectConfig::default();
                 connect_config.insert(option);
@@ -1129,18 +1142,19 @@ mod tests {
             }
         }
 
-        let connector = tower::service_fn(|_: Request<ConnectConfig>| {
+        let connector = tower::service_fn(|_: Unnameable| {
             let (client, server) = tokio::io::duplex(16384);
-            let service = hyper::service::service_fn(|request: Request<hyper::body::Incoming>| {
-                let target = format!("{} {:?}", request.uri(), request.headers()[COOKIE]);
-                future::ready(Ok::<_, Infallible>(
-                    Response::builder()
-                        .status(http::StatusCode::FORBIDDEN)
-                        .header(http::header::SET_COOKIE, "b=2")
-                        .body(target)
-                        .unwrap(),
-                ))
-            });
+            let service =
+                hyper::service::service_fn(|request: http::Request<hyper::body::Incoming>| {
+                    let target = format!("{} {:?}", request.uri(), request.headers()[COOKIE]);
+                    future::ready(Ok::<_, Infallible>(
+                        Response::builder()
+                            .status(http::StatusCode::FORBIDDEN)
+                            .header(http::header::SET_COOKIE, "b=2")
+                            .body(target)
+                            .unwrap(),
+                    ))
+                });
             tokio::spawn(
                 hyper::server::conn::http1::Builder::new()
                     .serve_connection(hyper_util::rt::TokioIo::new(server), service),
@@ -1157,7 +1171,7 @@ mod tests {
         );
         let response = client(dispatch, Protocol::Auto, true)
             .oneshot(
-                Request::connect("http://localhost/")
+                http::Request::connect("http://localhost/")
                     .body(Body::default())
                     .unwrap(),
             )
@@ -1181,7 +1195,7 @@ mod tests {
             #[cfg(feature = "http3")]
             Version::HTTP_3,
         ] {
-            let mut request = Request::get("https://localhost/chat")
+            let mut request = http::Request::get("https://localhost/chat")
                 .version(Version::HTTP_11)
                 .header(http::header::SEC_WEBSOCKET_VERSION, "13")
                 .header(UPGRADE, "websocket")

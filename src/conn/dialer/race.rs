@@ -1,11 +1,11 @@
-//! Races the addresses of one host, after DNS has completed.
+//! Happy Eyeballs address racing ([RFC 8305 Section 5]).
 //!
-//! With Happy Eyeballs enabled, families alternate and attempts are staggered, with at most six
-//! active attempts. If every active attempt fails, the next starts immediately; success drops
-//! pending attempts, and so does a failure that every address would repeat, such as a refused
-//! QUIC handshake. Disabling racing preserves resolver order.
+//! When a delay is configured, address families alternate and attempts stagger up to six
+//! concurrent dials. If all active attempts fail, the next starts immediately; a winning
+//! dial or a terminal failure (such as a refused QUIC handshake) cancels the rest. Without
+//! a delay, addresses are tried sequentially in resolver order.
 //!
-//! See [RFC 8305 section 5](https://www.rfc-editor.org/rfc/rfc8305#section-5).
+//! [RFC 8305 Section 5]: https://www.rfc-editor.org/rfc/rfc8305#section-5
 
 use std::{
     collections::VecDeque,
@@ -27,17 +27,24 @@ use crate::dns::SocketAddrs;
 
 const MAX_PARALLEL_CONNECT_ATTEMPTS: usize = 6;
 
-/// Address-racing policy and the clock used to stagger attempts.
+/// Happy Eyeballs address racer parameterized by a delay and timer factory.
+///
+/// Filters resolved candidates against local bindings and either races them with staggered
+/// delays or tries them sequentially when `delay` is `None`.
 pub(in crate::conn) struct Race<S> {
     delay: Option<Duration>,
     sleep: S,
 }
 
-/// The attempts in flight, oldest first. As a stream it yields the launch order and outcome of
-/// each attempt that completes; dropping it cancels the rest.
+/// Active dial futures stored in launch order.
+///
+/// Implements [`Stream`] to yield `(order, result)` as attempts complete; dropping it cancels
+/// all remaining pending dials.
 struct Attempts<F>(VecDeque<Attempt<F>>);
 
-/// One active connection attempt and its launch order.
+/// Single in-flight dial attempt paired with its target address and launch index.
+///
+/// The launch index ensures the earliest-started error is reported if every attempt fails.
 struct Attempt<F> {
     addr: SocketAddr,
     order: usize,
@@ -52,8 +59,10 @@ impl<S> Race<S> {
         Self { delay, sleep }
     }
 
-    /// Tries candidates matching the local address families. A terminal failure cancels the
-    /// pending attempts, and without a delay candidates are tried in resolver order.
+    /// Races candidate addresses matching the local address bindings.
+    ///
+    /// A terminal error cancels pending attempts immediately. Without a delay, candidates run
+    /// sequentially in resolver order.
     pub async fn run<C, F, T>(
         self,
         addrs: SocketAddrs,
@@ -163,7 +172,7 @@ impl<S> Race<S> {
     }
 }
 
-/// Keeps the error of the earliest launched attempt, whichever attempt fails first.
+/// Keeps the error from the earliest-launched attempt regardless of completion order.
 fn record(first: &mut Option<(usize, ConnectError)>, order: usize, error: ConnectError) {
     if first.as_ref().is_none_or(|(earliest, _)| order < *earliest) {
         *first = Some((order, error));

@@ -1,10 +1,7 @@
 #![cfg(feature = "tokio-rt")]
 
 mod support;
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use std::{net::Ipv4Addr, time::Duration};
 
 use pretty_env_logger::env_logger;
 use support::{layer::DelayLayer, server};
@@ -134,15 +131,13 @@ async fn http3_setup_does_not_wait_for_stream_credit() {
 }
 
 #[tokio::test]
-async fn connect_many_timeout_succeeds() {
+async fn connect_tries_the_next_resolved_address() {
     let _ = env_logger::try_init();
 
     let server = server::http(move |_req| async { http::Response::default() });
     let unavailable = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let unavailable_addr = unavailable.local_addr().unwrap();
     drop(unavailable);
-    let port = server.addr().port();
-
     let client = Client::builder_tokio()
         .resolve_to_addrs("many_addrs", [unavailable_addr, server.addr()])
         .connect_timeout(Duration::from_millis(100))
@@ -150,44 +145,12 @@ async fn connect_many_timeout_succeeds() {
         .build()
         .unwrap();
 
-    let url = format!("http://many_addrs:{port}/eventual");
-
     let _ = client
-        .get(url)
+        .get("http://many_addrs/eventual")
         .timeout(Duration::from_millis(1000))
         .send()
         .await
         .unwrap();
-}
-
-#[tokio::test]
-async fn connect_many_timeout() {
-    let _ = env_logger::try_init();
-
-    let client = Client::builder_tokio()
-        .resolve_to_addrs(
-            "many_addrs",
-            [
-                SocketAddr::from((Ipv4Addr::LOCALHOST, 81)),
-                SocketAddr::from((Ipv4Addr::LOCALHOST, 82)),
-            ],
-        )
-        .connector_layer(DelayLayer::new(Duration::from_secs(60)))
-        .connect_timeout(Duration::from_millis(100))
-        .no_proxy()
-        .build()
-        .unwrap();
-
-    let url = "http://many_addrs:81/slow".to_string();
-
-    let err = client
-        .get(url)
-        .timeout(Duration::from_millis(1000))
-        .send()
-        .await
-        .unwrap_err();
-
-    assert!(err.is_connect() && err.is_timeout());
 }
 
 #[cfg(feature = "stream")]

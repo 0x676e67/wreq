@@ -1,17 +1,21 @@
-//! TLS connection services for TCP and Unix sockets, including proxy hops.
+//! TLS connector for TCP and Unix streams, including `https://` proxy hops.
 
 use std::{
     fmt, io,
     net::IpAddr,
     pin::Pin,
     sync::{Arc, LazyLock},
-    task::{Context, Poll},
+    task::{self, Poll},
 };
 
 use btls::{
     error::ErrorStack,
     ex_data::Index,
-    ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode, SslVersion},
+    nid::Nid,
+    ssl::{
+        ClientSession, Ssl, SslCipherRef, SslConnector, SslMethod, SslOptions, SslSessionCacheMode,
+        SslVersion,
+    },
 };
 use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -19,41 +23,42 @@ use tokio_btls::SslStream;
 use tower::BoxError;
 
 use super::{
-    Config,
-    context::TlsContext,
-    ext::{SslContextBuilderExt, set_ech_grease_host},
+    AlpnProtocol, Config, KeyIdentity, TlsContext, TlsOptions,
+    macros::set_hello_options,
+    session::{Key, Ticket, Tickets},
+    set_ech_grease_host,
 };
-use crate::{
-    Error,
-    config::connect::ConnectConfig,
-    protocol::Protocol,
-    tls::{
-        AlpnProtocol, TlsOptions,
-        session::{SessionTarget, Transport},
-    },
-};
+use crate::{Error, config::ConnectConfig};
 
+/// The error message used when a URI is missing its host component.
 const URI_MISSING_HOST: &str = "URI missing host";
 
-/// Compiled TLS for TCP and Unix streams, including proxy hops.
-/// Clones share the client policy and its compiled contexts.
-/// Different request context options are compiled once and cached.
-#[derive(Clone)]
-pub struct StreamTls {
-    contexts: Arc<TlsContext<TlsOptions, SslConnector>>,
+/// The ex data index for storing the session identity in an SSL connection.
+static IDX: LazyLock<Result<Index<Ssl, Target>, ErrorStack>> = LazyLock::new(Ssl::new_ex_index);
+
+/// Shared TLS settings and compiled context cache for TCP and Unix streams.
+///
+/// Owned by the stream connector; [`Context::for_config`] resolves a [`TlsConnector`] for
+/// each request using either the base context or a cached override.
+pub struct Context {
+    config: Config,
+    context: TlsContext<TlsOptions, SslConnector>,
 }
 
-/// Runs the TLS handshakes of one request over streams it is given: the target's and an
-/// `https` proxy hop's. Holds the client's TLS state and the context selected for the
-/// request's options; the ALPN switch stays local to each copy.
+/// Performs TLS handshakes for a request and its `https://` proxy hop.
+///
+/// Holds the context selected for the request's options; ALPN can be toggled independently
+/// on each clone.
 #[derive(Clone)]
 pub struct TlsConnector {
-    tls: StreamTls,
-    context: SslConnector,
+    inner: SslConnector,
+    context: Arc<Context>,
     alpn_enabled: bool,
 }
 
-/// A stream which may be wrapped with TLS.
+/// Byte stream that may be either plaintext or wrapped in a BoringSSL [`SslStream`].
+///
+/// Used while routing direct, tunneled, and proxied stream connections before boxing.
 pub enum MaybeHttpsStream<T> {
     /// A raw HTTP stream.
     Http(T),
@@ -61,48 +66,66 @@ pub enum MaybeHttpsStream<T> {
     Https(SslStream<T>),
 }
 
-// ===== impl StreamTls =====
+/// Session lookup identity stored in an SSL connection's ex-data.
+///
+/// Carries the base session key and the underlying socket's peer IP so BoringSSL's
+/// new-session callback can store RSA tickets under an IP-bound key.
+struct Target {
+    key: Key,
+    remote_ip: Option<IpAddr>,
+}
 
-impl StreamTls {
-    /// Compiles the client's TLS context while preserving the shared session scope.
-    pub(super) fn new(tls: Config, connect_config: &ConnectConfig) -> crate::Result<Self> {
-        Ok(Self {
-            contexts: Arc::new(TlsContext::new(tls, connect_config, compile)?),
+// ===== impl Context =====
+
+impl Context {
+    /// Compiles the base TLS context from client settings and default options.
+    ///
+    /// Without [`TlsOptions`], uses BoringSSL defaults alongside the client-wide TLS settings.
+    pub(crate) fn new(tls: Config, config: &ConnectConfig) -> crate::Result<Self> {
+        compile(&tls, config.get_ref()).map(|inner| Self {
+            config: tls,
+            context: TlsContext::new(inner),
         })
     }
 
-    /// Selects the context for the request's TLS options before dialing.
-    /// Requests without different context options keep the client's context.
-    pub(crate) fn for_config(self, connect_config: &ConnectConfig) -> crate::Result<TlsConnector> {
-        let context = self.contexts.for_config(connect_config, compile)?;
-        Ok(TlsConnector {
-            tls: self,
-            context,
-            alpn_enabled: true,
-        })
+    /// Returns a [`TlsConnector`] for `config`, reusing the base context when no
+    /// context-level options differ.
+    pub(crate) fn for_config(
+        self: Arc<Self>,
+        config: &ConnectConfig,
+    ) -> crate::Result<TlsConnector> {
+        let options = config.override_if_different(KeyIdentity::same);
+        self.context
+            .get_or_compile(options, |options| compile(&self.config, Some(options)))
+            .map(|inner| TlsConnector {
+                inner,
+                alpn_enabled: true,
+                context: self,
+            })
     }
 }
 
 // ===== impl TlsConnector =====
 
 impl TlsConnector {
-    /// Prepares a connection using its request-specific or shared TLS context.
-    /// Unset or empty request ALPN inherits the client's list during handshake setup.
-    /// `remote_ip` is the dialed socket's peer, which keys session resumption.
+    /// Builds an [`Ssl`] handle for a connection to `route`.
+    ///
+    /// Unset or empty request ALPN inherits the client's list. `remote_addr` is the underlying
+    /// socket's peer address, used to key RSA session tickets.
     fn ssl_for_connection(
         &self,
         origin: &Uri,
-        protocol: Protocol,
-        connect_config: &ConnectConfig,
         route: &Uri,
-        remote_ip: Option<IpAddr>,
+        alpn: Option<AlpnProtocol>,
+        remote_addr: Option<IpAddr>,
+        config: &ConnectConfig,
     ) -> Result<Ssl, BoxError> {
-        let contexts = &self.tls.contexts;
-        let options = connect_config.get_ref::<TlsOptions>();
-        let mut cfg = self.context.configure()?;
+        let tls = &self.context.config;
+        let options = config.get_ref::<TlsOptions>();
+        let mut cfg = self.inner.configure()?;
 
-        cfg.set_use_server_name_indication(contexts.tls.sni);
-        cfg.set_verify_hostname(contexts.tls.verify_hostname);
+        cfg.set_verify_hostname(tls.verify_hostname);
+        cfg.set_use_server_name_indication(tls.sni);
 
         if let Some(options) = options
             && let Some(ref key_shares) = options.key_shares
@@ -116,7 +139,7 @@ impl TlsConnector {
             let auto = || {
                 options
                     .into_iter()
-                    .chain(connect_config.base_ref::<TlsOptions>())
+                    .chain(config.base_ref::<TlsOptions>())
                     .filter_map(|options| options.alpn_protocols.as_deref())
                     .find(|protocols| !protocols.is_empty())
                     .unwrap_or(&[
@@ -125,16 +148,7 @@ impl TlsConnector {
                         AlpnProtocol::HTTP1,
                     ])
             };
-            let protocols: &[AlpnProtocol] = match protocol {
-                Protocol::Http1 => &[AlpnProtocol::HTTP1],
-                #[cfg(feature = "http2")]
-                Protocol::Http2 => &[AlpnProtocol::HTTP2],
-                // Auto prefers the first nonempty request or client list, preserving its
-                // order. HTTP/3 dials QUIC, which sets its own ALPN, so it never gets here.
-                Protocol::Auto => auto(),
-                #[cfg(feature = "http3")]
-                Protocol::Http3 => auto(),
-            };
+            let protocols = alpn.as_ref().map_or_else(auto, std::slice::from_ref);
             cfg.set_alpn_protos(&AlpnProtocol::encode_sequence(protocols))?;
 
             // Offer ALPS only for protocols in this ALPN list, in ALPN order;
@@ -144,7 +158,7 @@ impl TlsConnector {
             {
                 let mut offered = false;
                 for (index, protocol) in protocols.iter().enumerate() {
-                    let configured = alps.iter().any(|alps| alps.0 == protocol.0);
+                    let configured = alps.iter().any(|alps| alps.as_bytes() == protocol.0);
                     let repeated = protocols[..index].iter().any(|seen| seen.0 == protocol.0);
                     if configured && !repeated {
                         cfg.add_application_settings(protocol.0, None)?;
@@ -168,27 +182,17 @@ impl TlsConnector {
         }
 
         if options.is_some_and(|options| options.pre_shared_key) {
-            let tickets = &contexts.tls.tickets;
-            let target = SessionTarget::new(
-                origin,
-                connect_config,
-                route,
-                Transport::Stream,
-                remote_ip,
-                tickets.session_id_context()?,
-            );
-
-            if let Some(session) = tickets.pop_stream(&target) {
+            let target = Target::new(&tls.tickets, origin, route, config, remote_addr)?;
+            if let Some(session) = target.take(&tls.tickets) {
                 // The key covers the TLS peer, request TLS options, proxy, and socket bindings;
                 // btls checks the domain and client scope. HTTP-only options and ALPN do not
                 // affect resumption without early data, which is never enabled.
                 cfg.set_client_session(session);
             }
-
-            let idx = target_index()?;
-            cfg.set_ex_data(idx, target);
+            cfg.set_ex_data(IDX.clone()?, target);
         }
 
+        // Convert the configured context into an SSL object for the handshake.
         let mut ssl = cfg.into_ssl(host)?;
 
         if let Some(num_bytes) = options.and_then(|options| options.server_padding) {
@@ -210,6 +214,7 @@ impl TlsConnector {
 
     /// Strips brackets from valid IPv6 literals before TLS hostname verification.
     /// BoringSSL requires the unbracketed address to recognize an IP literal.
+    #[must_use]
     fn normalize_host(host: &str) -> &str {
         let normalized = crate::util::strip_ipv6_brackets(host);
         if normalized.len() != host.len() && normalized.parse::<std::net::Ipv6Addr>().is_ok() {
@@ -229,24 +234,25 @@ impl TlsConnector {
     /// Returns whether responses carry the peer's [`TlsInfo`](crate::tls::TlsInfo).
     #[inline]
     pub(crate) fn tls_info(&self) -> bool {
-        self.tls.contexts.tls.tls_info
+        self.context.config.tls_info
     }
 
-    /// Authenticates the origin or proxy at `route` with the selected TLS options.
-    /// `remote_ip` is the peer of the underlying socket, even inside a CONNECT tunnel.
+    /// Runs a TLS handshake against `route` (either the origin or a proxy hop).
+    ///
+    /// `remote_addr` is the underlying socket's peer address, even inside a CONNECT tunnel.
     pub(crate) async fn handshake<IO>(
         &self,
         io: IO,
         origin: &Uri,
-        protocol: Protocol,
-        connect_config: &ConnectConfig,
         route: &Uri,
-        remote_ip: Option<IpAddr>,
+        alpn: Option<AlpnProtocol>,
+        remote_addr: Option<IpAddr>,
+        config: &ConnectConfig,
     ) -> Result<SslStream<IO>, BoxError>
     where
         IO: AsyncRead + AsyncWrite + Unpin,
     {
-        let ssl = self.ssl_for_connection(origin, protocol, connect_config, route, remote_ip)?;
+        let ssl = self.ssl_for_connection(origin, route, alpn, remote_addr, config)?;
         let mut stream = SslStream::new(ssl, io)?;
         Pin::new(&mut stream).connect().await?;
         Ok(stream)
@@ -281,7 +287,7 @@ where
     #[inline]
     fn poll_read(
         mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        cx: &mut task::Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         match self.as_mut().get_mut() {
@@ -298,7 +304,7 @@ where
     #[inline]
     fn poll_write(
         mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        cx: &mut task::Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         match self.as_mut().get_mut() {
@@ -308,7 +314,7 @@ where
     }
 
     #[inline]
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         match self.as_mut().get_mut() {
             MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_flush(cx),
             MaybeHttpsStream::Https(inner) => Pin::new(inner).poll_flush(cx),
@@ -316,7 +322,7 @@ where
     }
 
     #[inline]
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         match self.as_mut().get_mut() {
             MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_shutdown(cx),
             MaybeHttpsStream::Https(inner) => Pin::new(inner).poll_shutdown(cx),
@@ -334,7 +340,7 @@ where
     #[inline]
     fn poll_write_vectored(
         self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        cx: &mut task::Context<'_>,
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
         match self.get_mut() {
@@ -344,8 +350,64 @@ where
     }
 }
 
-/// Builds a TCP/Unix context from client policy and optional TLS options.
-/// ALPN selection remains deferred until an individual connection is prepared.
+// ===== impl Target =====
+
+impl Target {
+    /// Builds a session key for the given origin, peer, and socket address.
+    fn new(
+        tickets: &Tickets,
+        origin: &Uri,
+        peer: &Uri,
+        config: &ConnectConfig,
+        remote_ip: Option<IpAddr>,
+    ) -> Result<Self, ErrorStack> {
+        tickets
+            .key::<TlsOptions, ClientSession>(origin, peer, config)
+            .map(|key| Self { key, remote_ip })
+    }
+
+    /// Pops a matching session, falling back to the IP-bound RSA key.
+    #[must_use]
+    fn take(&self, tickets: &Tickets) -> Option<ClientSession> {
+        let native = |ticket| match ticket {
+            Ticket::Native(session) => Some(session),
+            Ticket::Opaque { .. } => None,
+        };
+        tickets
+            .pop(&self.key)
+            .and_then(native)
+            .or_else(|| tickets.pop(&self.rsa_key()?).and_then(native))
+    }
+
+    /// Stores a session under the key required by its negotiated key exchange.
+    fn put(&self, tickets: &Tickets, session: ClientSession) {
+        let kx = session
+            .session()
+            .cipher()
+            .and_then(SslCipherRef::cipher_kx_nid);
+        if let Some(key) = self.key_for(kx) {
+            tickets.put(key, Ticket::Native(session));
+        }
+    }
+
+    #[must_use]
+    fn rsa_key(&self) -> Option<Key> {
+        self.remote_ip.map(|ip| self.key.with_remote_ip(ip))
+    }
+
+    #[must_use]
+    fn key_for(&self, kx: Option<Nid>) -> Option<Key> {
+        if kx == Some(Nid::KX_RSA) {
+            self.rsa_key()
+        } else {
+            Some(self.key.clone())
+        }
+    }
+}
+
+/// Compiles an [`SslConnector`] from client settings and optional [`TlsOptions`].
+///
+/// ALPN is configured per connection rather than on the shared context.
 fn compile(config: &Config, opts: Option<&TlsOptions>) -> crate::Result<SslConnector> {
     let max_tls_version = opts
         .and_then(|opts| opts.max_tls_version)
@@ -365,7 +427,7 @@ fn compile(config: &Config, opts: Option<&TlsOptions>) -> crate::Result<SslConne
         .map_err(Error::tls)?;
 
     if let Some(opts) = opts {
-        builder.set_tls_options(opts)?;
+        set_hello_options!(all, opts, &mut builder);
     }
 
     // Register session storage callbacks only when resumption is enabled.
@@ -376,9 +438,9 @@ fn compile(config: &Config, opts: Option<&TlsOptions>) -> crate::Result<SslConne
         let tickets = Arc::downgrade(&config.tickets);
         builder.set_client_session_callback(move |ssl, session| {
             if let Some(tickets) = tickets.upgrade()
-                && let Ok(Some(target)) = target_index().map(|idx| ssl.ex_data(idx))
+                && let Ok(Some(target)) = IDX.clone().map(|idx| ssl.ex_data(idx))
             {
-                tickets.insert_stream(target, session);
+                target.put(&tickets, session);
             }
         });
     }
@@ -386,8 +448,23 @@ fn compile(config: &Config, opts: Option<&TlsOptions>) -> crate::Result<SslConne
     Ok(builder.build())
 }
 
-fn target_index() -> Result<Index<Ssl, SessionTarget>, ErrorStack> {
-    static IDX: LazyLock<Result<Index<Ssl, SessionTarget>, ErrorStack>> =
-        LazyLock::new(Ssl::new_ex_index);
-    IDX.clone()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rsa_key_exchange_sessions_are_keyed_by_remote_ip() {
+        let tickets = Tickets::new(None);
+        let connect_config = ConnectConfig::default();
+        let origin = Uri::from_static("https://example.com/");
+        let target = |ip| Target::new(&tickets, &origin, &origin, &connect_config, ip).unwrap();
+        let known = target(Some(IpAddr::from([192, 0, 2, 1])));
+
+        let rsa = known.key_for(Some(Nid::KX_RSA)).unwrap();
+        assert!(rsa != known.key);
+        for kx in [Some(Nid::KX_ECDHE), Some(Nid::KX_ANY), None] {
+            assert!(known.key_for(kx).is_some_and(|key| key == known.key));
+        }
+        assert!(target(None).key_for(Some(Nid::KX_RSA)).is_none());
+    }
 }

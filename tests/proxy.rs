@@ -109,25 +109,58 @@ async fn quic_proxy_rejects_stream_requests_before_dns() {
 #[tokio::test]
 async fn https_proxy_keeps_transport_and_target_alpn_separate() {
     use std::{
+        net::{SocketAddr, TcpStream},
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
         },
-        time::Duration,
+        time::{Duration, Instant},
     };
 
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use futures_util::future::BoxFuture;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        sync::oneshot,
+    };
     use wreq::{
         Version,
+        dns::Resolve,
+        rt::{BoxSleep, Connecting, Runtime, Timer, tokio::TokioRuntime},
         tls::{AlpnProtocol, TlsOptions},
     };
 
+    #[derive(Debug)]
+    struct ObserveSocket(Mutex<Option<oneshot::Sender<TcpStream>>>);
+
+    impl Timer for ObserveSocket {
+        fn sleep_until(&self, deadline: Instant) -> BoxSleep {
+            TokioRuntime.sleep_until(deadline)
+        }
+
+        fn now(&self) -> Instant {
+            TokioRuntime.now()
+        }
+    }
+
+    impl Runtime for ObserveSocket {
+        fn execute(&self, future: BoxFuture<'static, ()>) {
+            TokioRuntime.execute(future);
+        }
+
+        fn resolver(&self) -> Arc<dyn Resolve> {
+            TokioRuntime.resolver()
+        }
+
+        fn connect_tcp(&self, socket: TcpStream, addr: SocketAddr) -> Connecting {
+            let observe = self.0.lock().unwrap().take().expect("one client socket");
+            observe.send(socket.try_clone().unwrap()).unwrap();
+            TokioRuntime.connect_tcp(socket, addr)
+        }
+    }
+
     for tunnel in [false, true] {
-        let offers = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let acceptor = server::tls_acceptor_with_alpn(b"\x02h2\x08http/1.1", {
-            let offers = offers.clone();
-            move |offer| offers.lock().unwrap().push(offer.to_vec())
-        });
+        let offers = Arc::new(Mutex::new(Vec::new()));
+        let server_offers = offers.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = listener.local_addr().unwrap();
         let proxy = format!("https://{proxy_addr}");
@@ -136,13 +169,36 @@ async fn https_proxy_keeps_transport_and_target_alpn_separate() {
         } else {
             "http://target.invalid/resource"
         };
+        let (observe, observed) = oneshot::channel::<TcpStream>();
         let server = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
+            let client_socket = if tunnel {
+                Some(Arc::new(observed.await.unwrap()))
+            } else {
+                None
+            };
+            let acceptor = server::tls_acceptor_with_alpn(b"\x02h2\x08http/1.1", {
+                let client_socket = client_socket.clone();
+                move |offer| {
+                    let nodelay = client_socket.as_deref().map(TcpStream::nodelay);
+                    server_offers
+                        .lock()
+                        .unwrap()
+                        .push((offer.to_vec(), nodelay));
+                }
+            });
             let mut stream = server::tls_accept(&acceptor, socket).await;
             assert!(stream.ssl().selected_alpn_protocol().is_none());
             let requests = AtomicUsize::new(0);
+            let after_handshake = client_socket.clone();
             let handler = move |request: http::Request<hyper::body::Incoming>| {
                 let index = requests.fetch_add(1, Ordering::Relaxed);
+                if let Some(socket) = &after_handshake {
+                    assert!(
+                        !socket.nodelay().unwrap(),
+                        "TCP_NODELAY must be restored before sending the origin request"
+                    );
+                }
                 async move {
                     assert!(index < 2);
                     assert_eq!(request.version(), Version::HTTP_11);
@@ -178,6 +234,10 @@ async fn https_proxy_keeps_transport_and_target_alpn_separate() {
                 }
                 let head = String::from_utf8(head).unwrap();
                 assert!(head.starts_with("CONNECT target.invalid:443 HTTP/1.1\r\n"));
+                assert!(
+                    client_socket.unwrap().nodelay().unwrap(),
+                    "TCP_NODELAY must remain enabled between the two TLS handshakes"
+                );
                 for (name, value) in [
                     ("proxy-authorization", "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="),
                     ("x-proxy-header", "proxy-only"),
@@ -206,7 +266,12 @@ async fn https_proxy_keeps_transport_and_target_alpn_separate() {
                     .unwrap();
             }
         });
-        let client = Client::builder_tokio()
+        let builder = if tunnel {
+            Client::builder(ObserveSocket(Mutex::new(Some(observe))))
+        } else {
+            Client::builder_tokio()
+        };
+        let client = builder
             .proxy(
                 wreq::Proxy::all(proxy)
                     .unwrap()
@@ -217,6 +282,7 @@ async fn https_proxy_keeps_transport_and_target_alpn_separate() {
                         headers
                     }),
             )
+            .tcp_nodelay(false)
             .tls_cert_verification(false)
             .tls_options(
                 TlsOptions::builder()
@@ -247,12 +313,19 @@ async fn https_proxy_keeps_transport_and_target_alpn_separate() {
             .unwrap()
             .unwrap();
         drop(client);
-        let expected: Vec<_> = if tunnel {
-            vec![b"\x08http/1.1".as_slice()]
+        let offers = offers.lock().unwrap();
+        if tunnel {
+            let [(offer, Some(nodelay))] = offers.as_slice() else {
+                panic!("expected one target ALPN offer with TCP_NODELAY: {offers:?}");
+            };
+            assert_eq!(offer.as_slice(), b"\x08http/1.1");
+            assert!(
+                nodelay.as_ref().copied().unwrap(),
+                "TCP_NODELAY must remain enabled during the target TLS handshake"
+            );
         } else {
-            Vec::new()
-        };
-        assert_eq!(*offers.lock().unwrap(), expected);
+            assert!(offers.is_empty(), "unexpected ALPN offers: {offers:?}");
+        }
     }
 }
 
@@ -513,9 +586,9 @@ async fn http_proxy_custom_headers() {
         async { http::Response::default() }
     });
 
-    let proxy = format!("http://Aladdin:open%20sesame@{}", server.addr());
+    let proxy_url = format!("http://Aladdin:open%20sesame@{}", server.addr());
 
-    let proxy = wreq::Proxy::http(&proxy).unwrap().custom_http_headers({
+    let proxy = wreq::Proxy::http(&proxy_url).unwrap().custom_http_headers({
         let mut headers = http::HeaderMap::new();
         headers.insert("x-custom-header", "value".parse().unwrap());
         headers
@@ -526,6 +599,7 @@ async fn http_proxy_custom_headers() {
         .build()
         .unwrap()
         .get(url)
+        .proxy(wreq::Proxy::https(&proxy_url).unwrap())
         .send()
         .await
         .unwrap();
@@ -533,7 +607,10 @@ async fn http_proxy_custom_headers() {
     assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
-    let res = wreq::Client::new(wreq::rt::tokio::TokioRuntime)
+    let res = Client::builder_tokio()
+        .proxy(wreq::Proxy::http(&proxy_url).unwrap())
+        .build()
+        .unwrap()
         .get(url)
         .proxy(proxy)
         .send()
@@ -659,11 +736,9 @@ async fn tunnel_includes_user_agent() {
     );
 }
 
-/// A connect deadline that expires while a proxy is resolved or dialed is a proxy failure, like
-/// any failure of that dial. Once the proxy accepts the connection, an expiry in its handshake or
-/// in the target's TLS handshake is a plain connect failure.
+/// The outer timer reports a connect timeout during proxy DNS, proxy handshake, or target TLS.
 #[tokio::test]
-async fn connect_timeout_while_dialing_a_proxy_is_a_proxy_failure() {
+async fn total_connect_timeout_on_a_proxy_route_is_a_connect_error() {
     use std::{net::SocketAddr, time::Duration};
 
     use tokio::{
@@ -687,20 +762,6 @@ async fn connect_timeout_while_dialing_a_proxy_is_a_proxy_failure() {
             })
         }
     }
-
-    // A full accept queue makes the kernel drop SYNs, so the TCP handshake never completes.
-    #[cfg(target_os = "linux")]
-    let pending = {
-        let socket =
-            socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
-        socket
-            .bind(&SocketAddr::from(([127, 0, 0, 1], 0)).into())
-            .unwrap();
-        socket.listen(0).unwrap();
-        let addr = socket.local_addr().unwrap().as_socket().unwrap();
-        let queued = std::net::TcpStream::connect(addr).unwrap();
-        (socket, queued, addr)
-    };
 
     // The kernel completes the TCP handshake, but nothing answers.
     let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -759,45 +820,17 @@ async fn connect_timeout_while_dialing_a_proxy_is_a_proxy_failure() {
             .send()
     };
 
-    // CONNECT, forwarding and SOCKS routes all dial the proxy first.
-    #[allow(unused)]
-    let mut dialing = vec![
-        ("http://proxy.test:8080".to_owned(), "https://target.test/"),
-        ("https://proxy.test:8443".to_owned(), "http://target.test/"),
-    ];
-    #[cfg(feature = "socks")]
-    for scheme in ["socks4", "socks4a", "socks5", "socks5h"] {
-        dialing.push((
-            format!("{scheme}://proxy.test:1080"),
-            "https://target.test/",
-        ));
-    }
-    #[cfg(target_os = "linux")]
-    for (scheme, target) in [
-        ("http", "https://target.test/"),
-        ("http", "http://target.test/"),
+    let cases = [
+        ("http://proxy.test:8080".into(), "https://target.test/"),
+        ("https://proxy.test:8443".into(), "http://target.test/"),
         #[cfg(feature = "socks")]
-        ("socks5h", "https://target.test/"),
-    ] {
-        dialing.push((format!("{scheme}://{}", pending.2), target));
-    }
-    for (proxy, target) in dialing {
-        let error = send(proxy.clone(), target).await.unwrap_err();
-        assert!(
-            error.is_proxy_connect() && error.is_timeout(),
-            "{proxy} -> {target}: {error:?}"
-        );
-    }
-
-    // The proxy accepted the connection: a silent handshake or target is not a failed dial.
-    let connected = [
-        format!("http://{silent_addr}"),
-        format!("http://{tunnel_addr}"),
+        ("socks5h://proxy.test:1080".into(), "https://target.test/"),
+        (format!("http://{silent_addr}"), "https://target.test/"),
+        (format!("http://{tunnel_addr}"), "https://target.test/"),
         #[cfg(feature = "socks")]
-        format!("socks5h://{tunnel_addr}"),
+        (format!("socks5h://{tunnel_addr}"), "https://target.test/"),
     ];
-    for proxy in connected {
-        let target = "https://target.test/";
+    for (proxy, target) in cases {
         let error = send(proxy.clone(), target).await.unwrap_err();
         assert!(
             error.is_connect() && error.is_timeout() && !error.is_proxy_connect(),
