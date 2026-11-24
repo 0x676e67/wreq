@@ -1,10 +1,8 @@
 //! Shared sender and checkout state for multiplexed HTTP/2 and HTTP/3 connections.
 
-#[cfg(target_has_atomic = "64")]
-use std::sync::atomic::AtomicU64;
 use std::{
     future::Future,
-    sync::{Arc, atomic::Ordering},
+    sync::Arc,
     task::{self, Poll},
     time::{Duration, Instant},
 };
@@ -14,8 +12,6 @@ use futures_util::TryFutureExt;
 use futures_util::future::Either;
 use http::{Request, Response, Version};
 use netty::{body::Incoming, conn};
-#[cfg(not(target_has_atomic = "64"))]
-use portable_atomic::AtomicU64;
 
 use super::SendError;
 use crate::{
@@ -23,6 +19,7 @@ use crate::{
     client::error::Error,
     conn::Connected,
     rt::{DynRuntime, Timer as _},
+    sync::Word64,
 };
 
 /// Protocol request sender for a multiplexed HTTP/2 or HTTP/3 connection.
@@ -67,7 +64,7 @@ struct Leases {
     /// Connection creation timestamp used as the zero origin for encoded idle times.
     epoch: Instant,
     /// Encodes either an idle nanosecond offset (`< ACTIVE`) or active count + flags.
-    word: AtomicU64,
+    word: Word64,
 }
 
 // ===== impl Connection =====
@@ -252,7 +249,7 @@ impl Leases {
     fn new(epoch: Instant) -> Self {
         Self {
             epoch,
-            word: AtomicU64::new(0),
+            word: Word64::new(0),
         }
     }
 
@@ -280,7 +277,7 @@ impl Leases {
     /// Reports whether the connection is active or has not exceeded `expiry`.
     #[must_use]
     fn reusable(&self, expiry: Option<(Instant, Duration)>) -> bool {
-        let word = self.word.load(Ordering::Acquire);
+        let word = self.word.load();
         word >= Self::ACTIVE || !self.expired(word, expiry)
     }
 
@@ -291,7 +288,7 @@ impl Leases {
         expiry: Option<(Instant, Duration)>,
         defer_expiry: impl FnOnce() -> bool,
     ) -> bool {
-        let word = self.word.load(Ordering::Acquire);
+        let word = self.word.load();
         if word < Self::ACTIVE && self.expired(word, expiry) && !defer_expiry() {
             return false;
         }
@@ -301,7 +298,7 @@ impl Leases {
 
     /// Registers a checked-out sender after the expiry snapshot has been accepted.
     fn register(&self) {
-        let _ = self.update_word(|word| {
+        let _ = self.word.try_update(|word| {
             Some(if word < Self::ACTIVE {
                 Self::LAST
             } else {
@@ -313,7 +310,8 @@ impl Leases {
     /// Marks an active lease with `DEFERRED` so the final release triggers capacity tracking.
     #[must_use]
     fn defer_until_idle(&self) -> bool {
-        self.update_word(|word| (word >= Self::ACTIVE).then_some(word | Self::DEFERRED))
+        self.word
+            .try_update(|word| (word >= Self::ACTIVE).then_some(word | Self::DEFERRED))
             .is_ok()
     }
 
@@ -322,29 +320,17 @@ impl Leases {
     #[must_use]
     fn release(&self, mut now: impl FnMut() -> Instant) -> bool {
         let mut sampled = None;
-        self.update_word(|word| {
-            if word < Self::ACTIVE {
-                None
-            } else if word & !Self::DEFERRED == Self::LAST {
-                Some(self.encode(*sampled.get_or_insert_with(&mut now)))
-            } else {
-                Some(word - 1)
-            }
-        })
-        .is_ok_and(|prev| prev == (Self::LAST | Self::DEFERRED))
-    }
-
-    #[inline]
-    fn update_word(&self, update: impl FnMut(u64) -> Option<u64>) -> Result<u64, u64> {
-        cfg_select! {
-            target_has_atomic = "64" => {
-                self.word
-                    .try_update(Ordering::AcqRel, Ordering::Acquire, update)
-            }
-            _ => self
-                .word
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, update),
-        }
+        self.word
+            .try_update(|word| {
+                if word < Self::ACTIVE {
+                    None
+                } else if word & !Self::DEFERRED == Self::LAST {
+                    Some(self.encode(*sampled.get_or_insert_with(&mut now)))
+                } else {
+                    Some(word - 1)
+                }
+            })
+            .is_ok_and(|prev| prev == (Self::LAST | Self::DEFERRED))
     }
 }
 
@@ -409,7 +395,7 @@ mod tests {
         assert!(leases.acquire(at(release_at + ns(21)), || true));
         // A backwards clock clamps cleanly to `epoch` without setting `ACTIVE`.
         assert!(!leases.release(|| epoch - Duration::from_secs(1)));
-        assert_eq!(leases.word.load(Ordering::Relaxed), 0);
+        assert_eq!(leases.word.load(), 0);
         assert!(leases.reusable(at(epoch + ns(20))));
         assert!(!leases.reusable(at(epoch + ns(21))));
 
@@ -441,5 +427,16 @@ mod tests {
             });
             assert_eq!(deferred, armed);
         }
+
+        let leases = Leases::new(epoch);
+        leases.register();
+        let mut clock_reads = 0;
+        assert!(leases.release(|| {
+            clock_reads += 1;
+            // Change the observed word before release commits its timestamp.
+            assert!(leases.defer_until_idle());
+            now
+        }));
+        assert_eq!(clock_reads, 1);
     }
 }
