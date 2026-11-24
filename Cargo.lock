@@ -4107,7 +4107,6 @@ dependencies = [
  "parking_lot 0.13.0",
  "percent-encoding",
  "pin-project-lite",
- "portable-atomic",
  "pretty_env_logger",
  "quic",
  "rcgen",
