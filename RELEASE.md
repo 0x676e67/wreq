@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.16.5](https://github.com/0x676e67/wreq/compare/v0.16.4..v0.16.5) - 2026-11-24
+
+### Bug Fixes
+
+- *(cookie)* Add opt-in public suffix handling ([#1428](https://github.com/0x676e67/wreq/issues/1428)) - ([46c1a07](https://github.com/0x676e67/wreq/commit/46c1a0780afe36329980e5163b74abcd49ccaa8d))
+
 ## [0.16.4](https://github.com/0x676e67/wreq/compare/v0.16.3..v0.16.4) - 2026-11-20
 
 ### Features
