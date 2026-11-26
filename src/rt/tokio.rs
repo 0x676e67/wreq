@@ -31,7 +31,7 @@ use tokio::net::TcpSocket;
 
 use crate::{
     dns::Resolve,
-    rt::{BoxSleep, Connecting, Connection, Sleep, Timer},
+    rt::{BoxSleep, Connecting, Connection, Executor, Runtime, Sleep, Timer},
 };
 
 /// Runtime that uses Tokio for task execution, timers, DNS and socket I/O.
@@ -70,12 +70,14 @@ impl Timer for TokioRuntime {
     }
 }
 
-impl super::Runtime for TokioRuntime {
+impl Executor for TokioRuntime {
     #[inline]
     fn execute(&self, task: BoxFuture<'static, ()>) {
         ::tokio::spawn(task);
     }
+}
 
+impl Runtime for TokioRuntime {
     #[inline]
     fn resolver(&self) -> Arc<dyn Resolve> {
         Arc::new(Resolver)

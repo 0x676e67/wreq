@@ -435,7 +435,7 @@ mod tests {
 
         use tower::ServiceExt;
 
-        use crate::rt::{BoxSleep, Connecting, Runtime, Timer, tokio::TokioRuntime};
+        use crate::rt::{BoxSleep, Connecting, Executor, Runtime, Timer, tokio::TokioRuntime};
 
         const DNS_DELAY: Duration = Duration::from_millis(80);
         const RACE_TIMEOUT: Duration = Duration::from_millis(50);
@@ -472,11 +472,13 @@ mod tests {
             }
         }
 
-        impl Runtime for PendingTcp {
+        impl Executor for PendingTcp {
             fn execute(&self, future: BoxFuture<'static, ()>) {
                 TokioRuntime.execute(future);
             }
+        }
 
+        impl Runtime for PendingTcp {
             fn resolver(&self) -> Arc<dyn dns::Resolve> {
                 Arc::new(DelayedResolver)
             }

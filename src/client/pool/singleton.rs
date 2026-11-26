@@ -1,17 +1,14 @@
-//! Shares one cloneable service across concurrent checkouts.
+//! Shares a single cloneable service across concurrent checkouts.
 //!
-//! [`Singleton`] fits multiplexed protocols such as HTTP/2. The first checkout
-//! starts a maker future and becomes its driver. Concurrent checkouts join the
-//! same [`Batch`], then receive clones of the completed service.
+//! [`Singleton`] fits multiplexed protocols such as HTTP/2 and HTTP/3. The first checkout
+//! starts a maker future and drives it; concurrent checkouts join the same [`Batch`] and
+//! receive clones once it completes.
 //!
-//! If the driver is canceled, one waiter takes over the same pinned maker
-//! future. This avoids abandoning a connection attempt while another request is
-//! still waiting for it. A maker lost to a panic cancels its batch instead, so
-//! waiters retry rather than wait forever. Every batch also owns a generation
-//! marker. A failed maker reports its shared root cause to every participant, so
-//! concurrent checkouts do not retry the same failure one after another. A
-//! failed checkout may clear only the generation that produced it, so a stale
-//! sender cannot remove a newer replacement.
+//! If the driver is canceled, a waiting checkout takes over the pinned maker future instead
+//! of abandoning the attempt. If the maker panics, the batch is canceled so waiters retry
+//! rather than hanging. Each batch carries a generation marker: a maker error is shared
+//! with every participant, and a failed checkout can invalidate only its own generation so
+//! a stale sender never clears a newer replacement.
 
 use std::{
     fmt,
@@ -25,165 +22,107 @@ use std::{
 use tokio::sync::oneshot;
 use tower::{BoxError, Service};
 
-use crate::sync::Mutex;
+use crate::sync::{Mutex, Word64};
 
-/// A pool that creates at most one shared cloneable service at a time.
+/// Pool that maintains at most one shared cloneable service at a time.
 ///
-/// All clones share one [`State`]. The empty state accepts one maker call, the
-/// making state gathers concurrent participants, and the made state returns a
-/// clone without calling the maker. `poll_ready` reaches the maker only while
-/// the singleton is empty.
+/// All clones share a single [`State`]: `Empty` polls and calls `maker`, `Making` gathers
+/// concurrent participants into a batch, and `Made` hands out clones directly. Dropping
+/// the driver hands its pinned maker to a waiter; only canceling the last participant drops
+/// the maker.
 ///
-/// This type coordinates creation, but it does not decide service health.
-/// [`Singled`] clears its own generation after a readiness failure or explicit
-/// discard request. A dropped driver transfers its pinned maker to a waiter;
-/// only cancellation of the final participant destroys the maker.
+/// Health checks stay outside this type. Checkouts carry the generation for callers
+/// that need to discard a failed service.
 #[derive(Debug)]
-pub(super) struct Singleton<M, Dst>
+pub(super) struct Singleton<M, Dst, G>
 where
     M: Service<Dst>,
 {
-    /// Creates the shared service when the singleton is empty.
+    /// Underlying maker called when the singleton is empty.
     maker: M,
-    /// Shared empty, creating, or created state.
-    state: Arc<Mutex<State<M::Future, M::Response>>>,
-    /// Carries the destination type without owning a destination.
+    /// Shared per-group lock containing the singleton [`State`].
+    state: Arc<Mutex<G>>,
+    /// Destination type marker.
     _dst: PhantomData<fn(Dst)>,
+}
+
+/// Ready-checkout result, distinguishing an empty singleton from one with existing work.
+pub(super) enum Ready<S> {
+    /// No service or in-flight creation exists, so a negotiated entry may fall back.
+    Empty,
+    /// A creation batch is running or the completed service failed its reuse check.
+    Unavailable,
+    /// A reusable service clone was checked out immediately.
+    Made(S),
+}
+
+// ===== impl Ready =====
+
+impl<S> Ready<S> {
+    /// Takes the sender when checkout succeeded.
+    #[must_use]
+    pub(super) fn into_made(self) -> Option<S> {
+        match self {
+            Self::Made(service) => Some(service),
+            Self::Empty | Self::Unavailable => None,
+        }
+    }
 }
 
 // ===== impl Singleton =====
 
-impl<M, Dst> Singleton<M, Dst>
+impl<M, Dst, G> Singleton<M, Dst, G>
 where
     M: Service<Dst>,
+    G: AsMut<State<M::Future, M::Response>>,
     M::Response: Clone,
 {
-    /// Creates an empty singleton around `maker`.
+    /// Uses this group's shared state for the singleton.
     #[must_use]
-    pub(super) fn new(maker: M) -> Self {
+    pub(super) fn new(maker: M, state: Arc<Mutex<G>>) -> Self {
         Self {
             maker,
-            state: Arc::new(Mutex::new(State::Empty)),
+            state,
             _dst: PhantomData,
         }
     }
 
-    /// Retains the created service when it satisfies `predicate`.
-    ///
-    /// An in-progress creation is not interrupted.
+    /// Shares the group lock with the transport negotiation queue.
+    #[cfg(feature = "http2")]
     #[must_use]
-    pub(super) fn retain<F>(&mut self, mut predicate: F) -> Option<M::Response>
-    where
-        F: FnMut(&mut M::Response) -> bool,
-    {
-        {
-            let mut state = self.state.lock();
-            if let State::Made { service, .. } = &mut *state
-                && !predicate(service)
-            {
-                match std::mem::replace(&mut *state, State::Empty) {
-                    State::Made { service, .. } => Some(service),
-                    State::Empty | State::Making(_) => None,
-                }
-            } else {
-                None
-            }
-        }
+    pub(super) fn shared(&self) -> &Arc<Mutex<G>> {
+        &self.state
     }
 
-    /// Removes the completed service without interrupting an in-progress maker.
+    /// Runs a state operation under the group lock.
     #[must_use]
-    pub(super) fn take(&mut self) -> Option<M::Response> {
-        let mut state = self.state.lock();
-        match std::mem::replace(&mut *state, State::Empty) {
-            State::Made { service, .. } => Some(service),
-            previous => {
-                *state = previous;
-                None
-            }
-        }
+    pub(super) fn with_state<T>(
+        &self,
+        f: impl FnOnce(&mut State<M::Future, M::Response>) -> T,
+    ) -> T {
+        f(self.state.lock().as_mut())
     }
 
-    /// Returns whether no service exists and none is being created.
+    /// Joins an existing service or in-progress creation without starting the maker.
     #[must_use]
-    pub(super) fn is_empty(&self) -> bool {
-        matches!(*self.state.lock(), State::Empty)
-    }
-
-    /// Returns whether a completed shared service exists and satisfies `predicate`.
-    #[must_use]
-    pub(super) fn has_service_and<F>(&self, predicate: F) -> bool
-    where
-        F: FnOnce(&M::Response) -> bool,
-    {
-        match &*self.state.lock() {
-            State::Made { service, .. } => predicate(service),
-            State::Empty | State::Making(_) => false,
-        }
-    }
-
-    /// Clones the completed service without joining or starting creation.
-    ///
-    /// Returns `None` while the singleton is empty or still making its service.
-    #[must_use]
-    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-    pub(super) fn checkout_made(&self) -> Option<Singled<M::Future, M::Response>> {
-        match &*self.state.lock() {
-            State::Made {
-                service,
-                generation,
-            } => Some(Singled::new(
-                service.clone(),
-                Arc::downgrade(&self.state),
-                generation.clone(),
-                true,
-            )),
-            State::Empty | State::Making(_) => None,
-        }
-    }
-
-    /// Joins an existing service or in-progress creation.
-    ///
-    /// Returns `None` instead of starting the maker when the singleton is empty.
-    #[must_use]
-    pub(super) fn checkout(&self) -> Option<SingletonFuture<M::Future, M::Response>> {
-        let mut state = self.state.lock();
-        match &mut *state {
-            State::Empty => None,
-            State::Making(batch) => {
-                let (id, receiver) = batch.register_waiter();
-                Some(SingletonFuture::Participating {
-                    id,
-                    generation: batch.generation.clone(),
-                    state: self.state.clone(),
-                    receiver: Some(receiver),
-                    reused: true,
-                })
-            }
-            State::Made {
-                service,
-                generation,
-            } => Some(SingletonFuture::Made {
-                service: Some(service.clone()),
-                generation: generation.clone(),
-                state: Arc::downgrade(&self.state),
-            }),
-        }
+    pub(super) fn checkout(&self) -> Option<SingletonFuture<M::Future, M::Response, G>> {
+        self.with_state(|state| state.checkout(&self.state))
     }
 }
 
-impl<M, Dst> Service<Dst> for Singleton<M, Dst>
+impl<M, Dst, G> Service<Dst> for Singleton<M, Dst, G>
 where
     M: Service<Dst>,
+    G: AsMut<State<M::Future, M::Response>>,
     M::Response: Clone,
     M::Error: Into<BoxError>,
 {
-    type Response = Singled<M::Future, M::Response>;
+    type Response = Singled<M::Response>;
     type Error = SingletonError;
-    type Future = SingletonFuture<M::Future, M::Response>;
+    type Future = SingletonFuture<M::Future, M::Response, G>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        if matches!(*self.state.lock(), State::Empty) {
+        if matches!(self.state.lock().as_mut(), State::Empty) {
             self.maker
                 .poll_ready(cx)
                 .map_err(|error| SingletonError::new(error.into()))
@@ -193,32 +132,34 @@ where
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
-        let mut state = self.state.lock();
+        let mut guard = self.state.lock();
+        let state = guard.as_mut();
         match &mut *state {
             State::Empty => {
                 let mut batch = Batch::new();
                 let id = batch.register_driver();
-                let generation = batch.generation.clone();
+                let generation = batch.generation;
                 *state = State::Making(batch);
-                drop(state);
+                drop(guard);
 
                 // Created before the maker call so a panic there still leaves the batch.
                 let driver = SingletonFuture::Participating {
                     id,
-                    generation: generation.clone(),
+                    generation,
                     state: self.state.clone(),
                     receiver: None,
                     reused: false,
                 };
                 let future = Box::pin(self.maker.call(dst));
-                let mut state = self.state.lock();
+                let mut guard = self.state.lock();
+                let state = guard.as_mut();
                 let unused = match &mut *state {
-                    State::Making(batch) if Arc::ptr_eq(&generation, &batch.generation) => {
+                    State::Making(batch) if generation == batch.generation => {
                         batch.restore_future(id, future)
                     }
                     State::Empty | State::Making(_) | State::Made { .. } => Err(future),
                 };
-                drop(state);
+                drop(guard);
                 drop(unused);
                 driver
             }
@@ -226,7 +167,7 @@ where
                 let (id, receiver) = batch.register_waiter();
                 SingletonFuture::Participating {
                     id,
-                    generation: batch.generation.clone(),
+                    generation: batch.generation,
                     state: self.state.clone(),
                     receiver: Some(receiver),
                     reused: true,
@@ -237,16 +178,17 @@ where
                 generation,
             } => SingletonFuture::Made {
                 service: Some(service.clone()),
-                generation: generation.clone(),
-                state: Arc::downgrade(&self.state),
+                generation: *generation,
+                future: PhantomData,
             },
         }
     }
 }
 
-impl<M, Dst> Clone for Singleton<M, Dst>
+impl<M, Dst, G> Clone for Singleton<M, Dst, G>
 where
     M: Service<Dst> + Clone,
+    G: AsMut<State<M::Future, M::Response>>,
 {
     fn clone(&self) -> Self {
         Self {
@@ -259,36 +201,34 @@ where
 
 /// Future for a singleton checkout.
 ///
-/// A `Participating` future belongs to one creation generation. It either owns
-/// the driver role or waits over a oneshot channel. If its receiver closes after
-/// driver handoff, it checks shared state and can continue as the new driver.
-/// A `Made` future owns an immediately available clone.
+/// `Participating` joins an in-flight batch as either the driver or a oneshot waiter;
+/// if its receiver closes during driver handoff, it re-checks shared state and can take
+/// over driving. `Made` yields a clone that was already available.
 ///
-/// Cancellation removes the participant from its batch. Canceling the driver
-/// promotes a waiter; canceling the final participant drops the maker outside
-/// the state lock.
-pub(super) enum SingletonFuture<F, S> {
-    /// Participates in the current creation batch.
+/// Dropping a participant removes it from its batch, promoting a waiter if it was the
+/// driver or dropping the maker outside the lock if it was the last participant.
+pub(super) enum SingletonFuture<F, S, G: AsMut<State<F, S>>> {
+    /// Participates in an in-flight creation batch.
     Participating {
-        /// Identifier used for cancellation and driver handoff.
+        /// Participant ID used for cancellation and driver handoff.
         id: ParticipantId,
-        /// Creation generation this participant belongs to.
-        generation: Arc<()>,
+        /// Generation token identifying this creation batch.
+        generation: u64,
         /// Shared singleton state.
-        state: Arc<Mutex<State<F, S>>>,
-        /// Result channel for a non-driver participant.
+        state: Arc<Mutex<G>>,
+        /// Oneshot receiver for waiters; `None` once acting as driver.
         receiver: Option<oneshot::Receiver<Result<S, SingletonError>>>,
-        /// Whether this checkout joined work started by another caller.
+        /// Whether this checkout joined an existing batch rather than starting it.
         reused: bool,
     },
     /// Owns a clone of an already-created service.
     Made {
-        /// Service returned on the first poll.
+        /// Cloned service returned on the first poll.
         service: Option<S>,
-        /// Generation that produced `service`.
-        generation: Arc<()>,
-        /// Weak state used to invalidate this generation on failure.
-        state: Weak<Mutex<State<F, S>>>,
+        /// Generation token paired with `service`.
+        generation: u64,
+        /// Retains the maker future type parameter `F`.
+        future: PhantomData<fn() -> F>,
     },
 }
 
@@ -296,29 +236,110 @@ pub(super) enum SingletonFuture<F, S> {
 
 // The maker future is pinned separately inside `Batch`, so moving this outer
 // state machine never moves the maker itself.
-impl<F, S> Unpin for SingletonFuture<F, S> {}
+impl<F, S, G: AsMut<State<F, S>>> Unpin for SingletonFuture<F, S, G> {}
 
 /// Lifecycle of the shared singleton service.
 ///
-/// `Making` tracks one maker generation with at most one driver polling it.
-/// `Made` stores the cloneable service with the generation allowed to invalidate
-/// it. Transitions that destroy a future, service, or result sender move that
-/// value out first so destruction and task wakeups happen outside the lock.
+/// `Making` tracks an in-flight generation with at most one driver polling it; `Made`
+/// stores the cloneable service with the generation allowed to invalidate it. Values
+/// being destroyed or woken are moved out first so drops and wakeups run unlocked.
+#[derive(Default)]
 pub(super) enum State<F, S> {
     /// No service exists and no maker is running.
+    #[default]
     Empty,
-    /// One participant drives a maker shared by the batch.
+    /// A batch is actively creating the shared service.
     Making(Batch<F, S>),
     /// A completed service is available for cloning.
     Made {
         /// Shared cloneable service.
         service: S,
-        /// Identity used to reject invalidation from stale clones.
-        generation: Arc<()>,
+        /// Generation token guarding against invalidation by stale clones.
+        generation: u64,
     },
 }
 
 // ===== impl State =====
+
+impl<F, S> State<F, S> {
+    /// Borrows the current service when creation is complete.
+    #[must_use]
+    pub(super) fn service(&self) -> Option<&S> {
+        match self {
+            Self::Made { service, .. } => Some(service),
+            Self::Empty | Self::Making(_) => None,
+        }
+    }
+
+    /// Detaches a completed service rejected by the predicate.
+    #[must_use]
+    pub(super) fn retain(&mut self, mut predicate: impl FnMut(&mut S) -> bool) -> Option<S> {
+        if let Self::Made { service, .. } = self
+            && !predicate(service)
+        {
+            return self.take();
+        }
+        None
+    }
+
+    /// Detaches the completed service without interrupting creation.
+    #[must_use]
+    pub(super) fn take(&mut self) -> Option<S> {
+        match std::mem::replace(self, Self::Empty) {
+            Self::Made { service, .. } => Some(service),
+            previous => {
+                *self = previous;
+                None
+            }
+        }
+    }
+
+    /// Checks and clones a completed service while the caller holds the group lock.
+    #[must_use]
+    pub(super) fn checkout_ready(&self, reusable: impl FnOnce(&S) -> bool) -> Ready<Singled<S>>
+    where
+        S: Clone,
+    {
+        match self {
+            Self::Made {
+                service,
+                generation,
+            } if reusable(service) => Ready::Made(Singled::new(service.clone(), *generation, true)),
+            Self::Empty => Ready::Empty,
+            Self::Making(_) | Self::Made { .. } => Ready::Unavailable,
+        }
+    }
+
+    /// Joins an existing service or in-progress creation while the caller holds the group lock.
+    #[must_use]
+    pub(super) fn checkout<G>(&mut self, shared: &Arc<Mutex<G>>) -> Option<SingletonFuture<F, S, G>>
+    where
+        S: Clone,
+        G: AsMut<Self>,
+    {
+        match self {
+            Self::Empty => None,
+            Self::Making(batch) => {
+                let (id, receiver) = batch.register_waiter();
+                Some(SingletonFuture::Participating {
+                    id,
+                    generation: batch.generation,
+                    state: shared.clone(),
+                    receiver: Some(receiver),
+                    reused: true,
+                })
+            }
+            Self::Made {
+                service,
+                generation,
+            } => Some(SingletonFuture::Made {
+                service: Some(service.clone()),
+                generation: *generation,
+                future: PhantomData,
+            }),
+        }
+    }
+}
 
 impl<F, S: fmt::Debug> fmt::Debug for State<F, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -330,103 +351,84 @@ impl<F, S: fmt::Debug> fmt::Debug for State<F, S> {
     }
 }
 
-/// Coordinates one maker future and every checkout waiting for it.
+/// Coordinates an in-flight maker future and all checkouts waiting on it.
 ///
-/// The maker remains pinned in the batch across driver changes. Polling removes
-/// it temporarily so arbitrary future code runs without the singleton state
-/// lock, then restores it if still pending and the same participant remains the
-/// driver.
-///
-/// Participant identifiers and the generation separate cancellation from newer
-/// batches that may already occupy the singleton.
+/// The maker stays pinned across driver handoffs; each poll temporarily takes it out so
+/// arbitrary future code runs without holding the state lock, then restores it if still
+/// pending and the same participant remains driver.
 pub(super) struct Batch<F, S> {
-    /// Maker future owned by the current driver.
+    /// Pinned maker future, temporarily taken out while the driver polls it.
     future: Option<Pin<Box<F>>>,
-
-    /// Identity shared by all participants and produced clones.
-    generation: Arc<()>,
-
-    /// Wrapping participant identifier source.
+    /// Generation token shared by all participants and resulting clones.
+    generation: u64,
+    /// Wrapping counter allocating participant IDs within this batch.
     next_id: ParticipantId,
-
-    /// Participant currently responsible for polling the maker.
+    /// Participant currently driving `future`.
     driver: Option<Driver>,
-
-    /// Participants waiting for the driver's result.
+    /// Non-driver participants awaiting the broadcast result.
     waiters: Vec<Waiter<S>>,
 }
 
-/// Identifier for one participant in a creation batch.
+/// Wrapping participant identifier scoped to a single [`Batch`].
 ///
-/// The counter wraps explicitly and is scoped to a single [`Batch`]. It is used
-/// to transfer the driver role and remove canceled waiters.
+/// Used to transfer the driver role and remove canceled waiters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ParticipantId(usize);
 
-/// Participant currently responsible for polling the shared maker future.
+/// Identifies the participant currently responsible for polling the maker future.
 ///
-/// The driver stores no task handle. Ownership is represented by its
-/// [`ParticipantId`], which lets any matching checkout take the pinned future from
-/// the batch for one poll.
+/// Ownership is tracked by [`ParticipantId`] alone so the matching checkout can take the
+/// pinned maker from [`Batch`] for each poll.
 struct Driver {
-    /// Driver participant identifier.
+    /// Participant ID of the active driver.
     id: ParticipantId,
 }
 
-/// Non-driver participant waiting for the shared result.
+/// Non-driver participant waiting on the shared batch result.
 ///
-/// Dropping its sender wakes the receiver during driver promotion. Completion
-/// sends a clone of the shared service or of the maker's failure.
+/// Sending delivers a cloned service or shared error; dropping `sender` closes the channel
+/// to wake the waiter during driver promotion.
 struct Waiter<S> {
-    /// Waiter participant identifier.
+    /// Participant ID of this waiter.
     id: ParticipantId,
-    /// Delivers the shared result; closing it signals driver promotion.
+    /// Result channel; dropping it without sending signals driver promotion.
     sender: oneshot::Sender<Result<S, SingletonError>>,
 }
 
-/// Values removed when one singleton participant is canceled.
+/// Detached state returned when canceling a participant so drops run outside the lock.
 ///
-/// The caller updates [`State`] while locked, then drops the returned waiter and
-/// maker future afterward. `batch_empty` tells it whether the singleton can move
-/// back to `Empty`.
+/// `batch_empty` tells the caller whether to reset [`State`] to `Empty`; `waiter` and
+/// `future` are dropped after unlocking so wakeups and maker cancellation run unlocked.
 struct ParticipantRemoval<F, S> {
-    /// Whether no participant remains in the creation batch.
+    /// Whether removing this participant left the batch empty.
     batch_empty: bool,
-    /// Removed waiter, dropped outside the state lock to wake its receiver.
+    /// Detached waiter, dropped unlocked to wake its receiver on promotion.
     waiter: Option<Waiter<S>>,
-    /// Maker canceled with the final participant, also dropped outside the lock.
+    /// Detached maker future, dropped unlocked when the last participant cancels.
     future: Option<Pin<Box<F>>>,
 }
 
-/// A checked-out clone of the singleton service.
+/// Checked-out clone of a singleton service.
 ///
-/// The wrapper delegates requests to its inner clone and remembers the creation
-/// generation. A readiness failure or explicit discard clears the shared
-/// service only when the singleton still contains that generation. Its weak
-/// state reference allows an evicted pool entry to be destroyed independently
-/// of outstanding checkouts.
+/// The generation identifies the service without keeping any shared state alive.
 #[derive(Debug)]
-pub(super) struct Singled<F, S> {
-    /// Clone used by this checkout.
+pub(super) struct Singled<S> {
+    /// Cloned service owned by this checkout.
     inner: S,
-
-    /// Whether another checkout started or created this service.
+    /// Whether this checkout reused an existing service or in-flight batch.
     reused: bool,
-
-    /// Generation allowed to be invalidated by this checkout.
-    generation: Arc<()>,
-
-    /// Weak reference avoids keeping an unused singleton alive.
-    state: Weak<Mutex<State<F, S>>>,
+    /// Generation token checked before invalidating shared state.
+    generation: u64,
 }
 
-impl<F, S, E> Future for SingletonFuture<F, S>
+impl<F, S, E, G> Future for SingletonFuture<F, S, G>
 where
+    G: AsMut<State<F, S>>,
     F: Future<Output = Result<S, E>>,
     E: Into<BoxError>,
     S: Clone,
 {
-    type Output = Result<Singled<F, S>, SingletonError>;
+    type Output = Result<Singled<S>, SingletonError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         match &mut *self {
@@ -440,14 +442,10 @@ where
                 if let Some(rx) = receiver.as_mut() {
                     match Pin::new(rx).poll(cx) {
                         Poll::Ready(Ok(Ok(service))) => {
-                            return Poll::Ready(Ok(Singled::new(
-                                service,
-                                Arc::downgrade(state),
-                                generation.clone(),
-                                *reused,
-                            )));
+                            return Poll::Ready(Ok(Singled::new(service, *generation, *reused)));
                         }
                         Poll::Ready(Ok(Err(error))) => return Poll::Ready(Err(error)),
+                        // Channel closed without a result means this waiter was promoted to driver.
                         Poll::Ready(Err(_)) => *receiver = None,
                         // The batch may already be empty while its result is sent unlocked.
                         // Only a closed channel hands this waiter the driver role.
@@ -455,11 +453,11 @@ where
                     }
                 }
 
-                let weak = Arc::downgrade(state);
                 let mut future = {
-                    let mut locked = state.lock();
+                    let mut guard = state.lock();
+                    let locked = guard.as_mut();
                     match &mut *locked {
-                        State::Making(batch) if Arc::ptr_eq(generation, &batch.generation) => {
+                        State::Making(batch) if *generation == batch.generation => {
                             match batch.take_future(*id) {
                                 Some(future) => future,
                                 // Only the driver gets here. Its maker is missing only when
@@ -467,7 +465,7 @@ where
                                 None => {
                                     let waiters = batch.take_waiters();
                                     *locked = State::Empty;
-                                    drop(locked);
+                                    drop(guard);
                                     let error = SingletonError::canceled();
                                     send_result(waiters, Err(&error));
                                     return Poll::Ready(Err(error));
@@ -477,13 +475,8 @@ where
                         State::Made {
                             service,
                             generation: current,
-                        } if Arc::ptr_eq(generation, current) => {
-                            return Poll::Ready(Ok(Singled::new(
-                                service.clone(),
-                                weak,
-                                current.clone(),
-                                true,
-                            )));
+                        } if *generation == *current => {
+                            return Poll::Ready(Ok(Singled::new(service.clone(), *current, true)));
                         }
                         State::Making(_) | State::Made { .. } | State::Empty => {
                             return Poll::Ready(Err(SingletonError::canceled()));
@@ -494,11 +487,10 @@ where
                 match future.as_mut().poll(cx) {
                     Poll::Pending => {
                         let restored = {
-                            let mut locked = state.lock();
+                            let mut guard = state.lock();
+                            let locked = guard.as_mut();
                             match &mut *locked {
-                                State::Making(batch)
-                                    if Arc::ptr_eq(generation, &batch.generation) =>
-                                {
+                                State::Making(batch) if *generation == batch.generation => {
                                     batch.restore_future(*id, future)
                                 }
                                 State::Making(_) | State::Made { .. } | State::Empty => Err(future),
@@ -516,15 +508,14 @@ where
                         drop(future);
                         let shared_service = service.clone();
                         let waiters = {
-                            let mut locked = state.lock();
+                            let mut guard = state.lock();
+                            let locked = guard.as_mut();
                             match &mut *locked {
-                                State::Making(batch)
-                                    if Arc::ptr_eq(generation, &batch.generation) =>
-                                {
+                                State::Making(batch) if *generation == batch.generation => {
                                     let waiters = batch.take_waiters();
                                     *locked = State::Made {
                                         service: shared_service,
-                                        generation: generation.clone(),
+                                        generation: *generation,
                                     };
                                     waiters
                                 }
@@ -534,14 +525,15 @@ where
                             }
                         };
                         send_result(waiters, Ok(&service));
-                        Poll::Ready(Ok(Singled::new(service, weak, generation.clone(), *reused)))
+                        Poll::Ready(Ok(Singled::new(service, *generation, *reused)))
                     }
                     Poll::Ready(Err(error)) => {
                         drop(future);
                         let error = SingletonError::new(error.into());
-                        let mut locked = state.lock();
+                        let mut guard = state.lock();
+                        let locked = guard.as_mut();
                         let waiters = match &mut *locked {
-                            State::Making(batch) if Arc::ptr_eq(generation, &batch.generation) => {
+                            State::Making(batch) if *generation == batch.generation => {
                                 let waiters = batch.take_waiters();
                                 *locked = State::Empty;
                                 waiters
@@ -550,7 +542,7 @@ where
                                 return Poll::Ready(Err(SingletonError::canceled()));
                             }
                         };
-                        drop(locked);
+                        drop(guard);
                         send_result(waiters, Err(&error));
                         Poll::Ready(Err(error))
                     }
@@ -559,21 +551,16 @@ where
             Self::Made {
                 service,
                 generation,
-                state,
+                ..
             } => match service.take() {
-                Some(service) => Poll::Ready(Ok(Singled::new(
-                    service,
-                    state.clone(),
-                    generation.clone(),
-                    true,
-                ))),
+                Some(service) => Poll::Ready(Ok(Singled::new(service, *generation, true))),
                 None => Poll::Pending,
             },
         }
     }
 }
 
-impl<F, S> Drop for SingletonFuture<F, S> {
+impl<F, S, G: AsMut<State<F, S>>> Drop for SingletonFuture<F, S, G> {
     fn drop(&mut self) {
         let Self::Participating {
             id,
@@ -585,11 +572,12 @@ impl<F, S> Drop for SingletonFuture<F, S> {
             return;
         };
 
-        let mut locked = state.lock();
+        let mut guard = state.lock();
+        let locked = guard.as_mut();
         let State::Making(batch) = &mut *locked else {
             return;
         };
-        if !Arc::ptr_eq(generation, &batch.generation) {
+        if *generation != batch.generation {
             return;
         }
         let removed = batch.remove(*id);
@@ -597,7 +585,7 @@ impl<F, S> Drop for SingletonFuture<F, S> {
             *locked = State::Empty;
         }
 
-        drop(locked);
+        drop(guard);
         drop(removed.waiter);
         drop(removed.future);
     }
@@ -605,15 +593,14 @@ impl<F, S> Drop for SingletonFuture<F, S> {
 
 // ===== impl Singled =====
 
-impl<F, S> Singled<F, S> {
+impl<S> Singled<S> {
     /// Wraps a service clone with its generation and reuse status.
     #[must_use]
-    fn new(inner: S, state: Weak<Mutex<State<F, S>>>, generation: Arc<()>, reused: bool) -> Self {
+    fn new(inner: S, generation: u64, reused: bool) -> Self {
         Self {
             inner,
             reused,
             generation,
-            state,
         }
     }
 
@@ -623,40 +610,22 @@ impl<F, S> Singled<F, S> {
         &self.inner
     }
 
+    /// Borrows the checked-out service for dispatch.
+    #[must_use]
+    pub(super) fn inner_mut(&mut self) -> &mut S {
+        &mut self.inner
+    }
+
     /// Returns whether this checkout joined an existing singleton operation.
     #[must_use]
     pub(super) fn is_reused(&self) -> bool {
         self.reused
     }
 
-    /// Clears the singleton only if it still contains this clone's generation.
-    #[inline]
-    pub(super) fn discard_shared(&self) {
-        discard_generation(&self.state, &self.generation);
-    }
-}
-
-impl<F, S, Req> Service<Req> for Singled<F, S>
-where
-    S: Service<Req>,
-{
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = S::Future;
-
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match self.inner.poll_ready(cx) {
-            Poll::Ready(Err(error)) => {
-                self.discard_shared();
-                Poll::Ready(Err(error))
-            }
-            other => other,
-        }
-    }
-
-    #[inline]
-    fn call(&mut self, req: Req) -> Self::Future {
-        self.inner.call(req)
+    /// Identifies the service generation carried by this checkout.
+    #[must_use]
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
     }
 }
 
@@ -666,9 +635,10 @@ impl<F, S> Batch<F, S> {
     /// Creates a generation before its maker is called outside the state lock.
     #[must_use]
     fn new() -> Self {
+        static NEXT_GENERATION: Word64 = Word64::new(0);
         Self {
             future: None,
-            generation: Arc::new(()),
+            generation: NEXT_GENERATION.fetch_add(1),
             next_id: ParticipantId(0),
             driver: None,
             waiters: Vec::new(),
@@ -701,7 +671,8 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Removes a participant and reports whether the batch became empty.
-    /// If the driver leaves, one remaining waiter takes over the same maker.
+    ///
+    /// If the driver leaves, a remaining waiter takes over the same maker.
     #[must_use]
     fn remove(&mut self, id: ParticipantId) -> ParticipantRemoval<F, S> {
         if let Some(index) = self.waiters.iter().position(|waiter| waiter.id == id) {
@@ -765,7 +736,7 @@ impl<F, S> Batch<F, S> {
     }
 }
 
-/// Sends one result clone per waiter after the singleton state lock is released.
+/// Broadcasts the shared result to all waiters after the state lock is released.
 fn send_result<S>(waiters: Vec<Waiter<S>>, result: Result<&S, &SingletonError>)
 where
     S: Clone,
@@ -775,23 +746,27 @@ where
     }
 }
 
-/// Removes one completed singleton generation and drops it outside the lock.
-fn discard_generation<F, S>(state: &Weak<Mutex<State<F, S>>>, generation: &Arc<()>) {
+/// Clears `State::Made` if its generation matches `generation`, dropping it outside the lock.
+pub(super) fn discard_generation<F, S, G: AsMut<State<F, S>>>(
+    state: &Weak<Mutex<G>>,
+    generation: u64,
+) {
     let Some(state) = state.upgrade() else {
         return;
     };
-    let mut locked = state.lock();
+    let mut guard = state.lock();
+    let locked = guard.as_mut();
     if !matches!(
         &*locked,
         State::Made {
             generation: current,
             ..
-        } if Arc::ptr_eq(current, generation)
+        } if *current == generation
     ) {
         return;
     }
     let discarded = std::mem::replace(&mut *locked, State::Empty);
-    drop(locked);
+    drop(guard);
     drop(state);
     drop(discarded);
 }
@@ -875,12 +850,27 @@ mod tests {
 
     use tower::{BoxError, Service, util::Oneshot};
 
-    use super::{Singled, Singleton, State};
+    use super::{Singleton, State, discard_generation};
     use crate::sync::Mutex;
 
-    /// Maker completed explicitly by a test-held sender.
-    /// Each call stores a new completion sender and waits on its receiver.
-    /// Dropping that sender lets the test fail the current maker generation.
+    impl<F, S> AsMut<Self> for State<F, S> {
+        fn as_mut(&mut self) -> &mut Self {
+            self
+        }
+    }
+
+    impl<M, Dst> Singleton<M, Dst, State<M::Future, M::Response>>
+    where
+        M: Service<Dst>,
+        M::Response: Clone,
+    {
+        #[must_use]
+        fn new_default(maker: M) -> Self {
+            Self::new(maker, Arc::new(Mutex::new(State::Empty)))
+        }
+    }
+
+    /// Maker completed or failed explicitly via a test-held oneshot sender.
     #[derive(Clone)]
     struct ControlledMaker {
         sender: Arc<Mutex<Option<tokio::sync::oneshot::Sender<&'static str>>>>,
@@ -905,9 +895,7 @@ mod tests {
         }
     }
 
-    /// Shared service whose readiness can be failed by the test.
-    /// Clones observe the same failure flag while requests complete immediately.
-    /// Used to check that readiness failure invalidates only its own generation.
+    /// Cloneable service whose `poll_ready` fails when toggled by the test.
     #[derive(Clone)]
     struct ReadinessService {
         fail: Arc<AtomicBool>,
@@ -931,9 +919,7 @@ mod tests {
         }
     }
 
-    /// Immediately creates a readiness-controlled service and counts creations.
-    /// The test uses the count to distinguish reuse from replacement.
-    /// Maker clones and returned services share the test's failure flag.
+    /// Creates a [`ReadinessService`] immediately while counting maker invocations.
     #[derive(Clone)]
     struct CountingMaker {
         calls: Arc<AtomicUsize>,
@@ -982,11 +968,11 @@ mod tests {
     fn maker_panic_cancels_batch() {
         use std::panic::{AssertUnwindSafe, catch_unwind};
 
-        let mut singleton = Singleton::new(PanickingMaker { in_call: true });
+        let mut singleton = Singleton::new_default(PanickingMaker { in_call: true });
         assert!(catch_unwind(AssertUnwindSafe(|| singleton.call(()))).is_err());
-        assert!(singleton.is_empty());
+        assert!(singleton.with_state(|state| matches!(state, State::Empty)));
 
-        let singleton = Singleton::new(PanickingMaker { in_call: false });
+        let singleton = Singleton::new_default(PanickingMaker { in_call: false });
         let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
         let mut waiter = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
         assert!(catch_unwind(AssertUnwindSafe(|| driver.poll())).is_err());
@@ -997,35 +983,34 @@ mod tests {
             panic!("waiter should not wait for a maker lost to a panic");
         };
         assert!(super::SingletonError::is_canceled(&error));
-        assert!(singleton.is_empty());
+        assert!(singleton.with_state(|state| matches!(state, State::Empty)));
     }
 
     #[test]
     fn stale_checkout_cannot_discard_replacement() {
         type MakeFuture = Ready<Result<(), BoxError>>;
 
-        let stale_generation = Arc::new(());
-        let replacement_generation = Arc::new(());
+        let stale_generation = 0;
+        let replacement_generation = 1;
         let state = Arc::new(Mutex::new(State::<MakeFuture, ()>::Made {
             service: (),
-            generation: replacement_generation.clone(),
+            generation: replacement_generation,
         }));
-        let stale = Singled::new((), Arc::downgrade(&state), stale_generation, true);
-
-        stale.discard_shared();
+        let weak = Arc::downgrade(&state);
+        discard_generation(&weak, stale_generation);
 
         assert!(matches!(
             &*state.lock(),
             State::Made { generation, .. }
-                if Arc::ptr_eq(generation, &replacement_generation)
+                if *generation == replacement_generation
         ));
     }
 
     #[tokio::test]
-    async fn made_service_is_reused_and_readiness_failure_clears_it() {
+    async fn made_service_is_reused_until_discarded() {
         let calls = Arc::new(AtomicUsize::new(0));
         let fail = Arc::new(AtomicBool::new(false));
-        let singleton = Singleton::new(CountingMaker {
+        let singleton = Singleton::new_default(CountingMaker {
             calls: calls.clone(),
             fail: fail.clone(),
         });
@@ -1038,10 +1023,11 @@ mod tests {
 
         fail.store(true, Ordering::SeqCst);
         assert!(
-            std::future::poll_fn(|cx| reused.poll_ready(cx))
+            std::future::poll_fn(|cx| reused.inner_mut().poll_ready(cx))
                 .await
                 .is_err()
         );
+        discard_generation(&Arc::downgrade(&singleton.state), reused.generation());
         fail.store(false, Ordering::SeqCst);
 
         let replacement = Oneshot::new(singleton, ()).await.unwrap();
@@ -1052,7 +1038,7 @@ mod tests {
     #[test]
     fn cancellation_and_failure_keep_waiters_progressing() {
         let sender = Arc::new(Mutex::new(None));
-        let singleton = Singleton::new(ControlledMaker {
+        let singleton = Singleton::new_default(ControlledMaker {
             sender: sender.clone(),
         });
         let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
@@ -1071,7 +1057,7 @@ mod tests {
         assert_eq!(*service.inner(), "shared");
 
         let sender = Arc::new(Mutex::new(None));
-        let singleton = Singleton::new(ControlledMaker {
+        let singleton = Singleton::new_default(ControlledMaker {
             sender: sender.clone(),
         });
         let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
@@ -1094,7 +1080,7 @@ mod tests {
         assert_eq!(*waiter_service.inner(), "shared");
 
         let sender = Arc::new(Mutex::new(None));
-        let singleton = Singleton::new(ControlledMaker {
+        let singleton = Singleton::new_default(ControlledMaker {
             sender: sender.clone(),
         });
         let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
@@ -1125,7 +1111,7 @@ mod tests {
         drop(sender);
 
         let sender = Arc::new(Mutex::new(None));
-        let singleton = Singleton::new(ControlledMaker {
+        let singleton = Singleton::new_default(ControlledMaker {
             sender: sender.clone(),
         });
         let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
@@ -1151,7 +1137,7 @@ mod tests {
         );
 
         let sender = Arc::new(Mutex::new(None));
-        let singleton = Singleton::new(ControlledMaker {
+        let singleton = Singleton::new_default(ControlledMaker {
             sender: sender.clone(),
         });
         let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
@@ -1160,7 +1146,7 @@ mod tests {
         assert!(waiter.poll().is_pending());
         drop(driver);
         drop(waiter);
-        assert!(singleton.is_empty());
+        assert!(singleton.with_state(|state| matches!(state, State::Empty)));
         assert!(sender.lock().take().unwrap().is_closed());
     }
 }

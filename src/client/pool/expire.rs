@@ -1,14 +1,11 @@
-//! Drives periodic expiration for a retained pool service.
+//! Periodic idle expiration for pooled connections.
 //!
-//! The component follows the boundary proposed in
-//! <https://github.com/hyperium/hyper/issues/3948>: protocol pools expose a
-//! retention operation, while one outer watcher owns the runtime and decides when
-//! to inspect them. wreq wraps the destination [`Map`](super::map::Map), keeping
-//! one watcher for the whole client instead of one task per destination.
+//! Follows the split proposed in <https://github.com/hyperium/hyper/issues/3948>:
+//! protocol pools expose retention hooks, while a single outer watcher schedules sweeps
+//! on the caller's runtime across the whole [`Map`](super::map::Map).
 //!
-//! [`Expire`] holds only a weak reference to the inspected pool. The task cannot
-//! extend the pool lifetime, and dropping the final pool handle closes the
-//! shutdown channel so a long sleep ends immediately.
+//! [`Expire`] holds only a weak reference to its target so it never keeps the pool alive;
+//! dropping the last pool handle closes the shutdown channel to cancel any pending sleep.
 
 use std::{
     future::Future,
@@ -23,7 +20,7 @@ use std::{
 
 use tokio::sync::watch;
 
-use crate::rt::{BoxSleep, DynRuntime, Timer as _};
+use crate::rt::{BoxSleep, Executor, Timer};
 
 /// Retains reusable state owned by an expiration target.
 ///
@@ -31,56 +28,50 @@ use crate::rt::{BoxSleep, DynRuntime, Timer as _};
 /// them. The returned interval determines when the watcher next inspects the pool.
 pub(super) trait Retain: Send + Sync + 'static {
     /// Removes expired state and returns the next required inspection interval.
+    #[must_use]
     fn retain(&self, now: Instant) -> Option<Duration>;
 
     /// Returns the next interval when retained state currently needs inspection.
+    #[must_use]
     fn next(&self) -> Option<Duration>;
 }
 
-/// Runs one expiration watcher for a weakly owned pool target.
+/// Drives at most one periodic expiration watcher for a weakly referenced pool.
 ///
-/// `Expire` remains dormant until its owner observes retained state and calls
-/// [`Expire::schedule`]. At most one watcher runs at a time. It repeatedly asks
-/// [`Retain`] to filter the wrapped pool, then stops once no reusable state
-/// remains.
+/// Stays dormant until [`Expire::schedule`] is called after retained state appears, then
+/// sweeps via [`Retain`] until no reusable state remains or the pool is dropped.
 pub(super) struct Expire<T> {
-    /// Pool inspected on each expiration tick.
+    /// Weak reference to the pool swept on each tick.
     target: Weak<T>,
-
-    /// Held by the task running the watcher loop; a spawned task claims it on first poll or exits.
+    /// Claimed on first poll by the active watcher so duplicate spawns exit early.
     running: Arc<AtomicBool>,
-
-    /// Closes the watcher when this component is dropped.
+    /// Dropping this sender wakes and stops a sleeping watcher immediately.
     shutdown: watch::Sender<()>,
-
-    /// Runtime used to execute the watcher.
-    runtime: DynRuntime,
 }
 
 impl<T> Expire<T> {
     /// Creates an expiration component around `target`.
     #[must_use]
-    pub(super) fn new(target: Weak<T>, runtime: DynRuntime) -> Self {
+    pub(super) fn new(target: Weak<T>) -> Self {
         let (shutdown, _) = watch::channel(());
 
         Self {
             target,
             running: Arc::new(AtomicBool::new(false)),
             shutdown,
-            runtime,
         }
     }
 
-    /// Reads the selected runtime clock.
-    #[must_use]
-    pub(super) fn now(&self) -> Instant {
-        self.runtime.now()
-    }
-
     /// Returns whether the expiration watcher is active.
-    #[cfg(test)]
+    #[must_use]
     pub(super) fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
+    }
+
+    /// Shares the watcher status with an entry without retaining the pool.
+    #[must_use]
+    pub(super) fn running_flag(&self) -> Arc<AtomicBool> {
+        self.running.clone()
     }
 }
 
@@ -90,14 +81,16 @@ where
 {
     /// Starts the watcher when proactive expiration is configured.
     ///
-    /// The final policy check closes the stop/start race without holding a pool
-    /// lock while spawning or waking another task. A zero interval disables the
-    /// watcher to prevent an accidental busy loop.
-    pub(super) fn schedule(&self, interval: Option<Duration>) {
+    /// Before stopping, the watcher releases its running flag and uses [`Retain::next`]
+    /// to check for newly retained connections. A zero interval disables the watcher.
+    pub(super) fn schedule<R>(&self, interval: Option<Duration>, runtime: &R)
+    where
+        R: Timer + Executor + Clone + 'static,
+    {
         let Some(interval) = interval.filter(|interval| *interval != Duration::ZERO) else {
             return;
         };
-        let Some(deadline) = self.runtime.now().checked_add(interval) else {
+        let Some(deadline) = runtime.now().checked_add(interval) else {
             return;
         };
         if self.running.load(Ordering::Acquire) {
@@ -109,16 +102,16 @@ where
             flag: self.running.clone(),
             owned: false,
         };
-        let runtime = self.runtime.clone();
+        let timer = runtime.clone();
         let mut shutdown = self.shutdown.subscribe();
 
         // Claim on first poll so a task queued on a paused runtime cannot block a
         // watcher from starting on another runtime.
-        self.runtime.execute(Box::pin(async move {
+        runtime.execute(Box::pin(async move {
             if !running.claim() {
                 return;
             }
-            let mut sleep = runtime.sleep_until(deadline);
+            let mut sleep = timer.sleep_until(deadline);
 
             loop {
                 if !wait_for_tick(&mut sleep, &mut shutdown).await {
@@ -128,11 +121,11 @@ where
                     return;
                 };
 
-                let now = runtime.now();
+                let now = timer.now();
                 if let Some(deadline) = target
                     .retain(now)
                     .filter(|next| *next != Duration::ZERO)
-                    .and_then(|next| runtime.now().checked_add(next))
+                    .and_then(|next| timer.now().checked_add(next))
                 {
                     sleep.reset(deadline);
                     continue;
@@ -142,7 +135,7 @@ where
                 if let Some(deadline) = target
                     .next()
                     .filter(|next| *next != Duration::ZERO)
-                    .and_then(|next| runtime.now().checked_add(next))
+                    .and_then(|next| timer.now().checked_add(next))
                     && running.claim()
                 {
                     sleep.reset(deadline);
@@ -159,7 +152,9 @@ where
 /// Dropping the task without completion, for example during runtime shutdown,
 /// must still let a later [`Expire::schedule`] start a replacement watcher.
 struct Running {
+    /// Shared flag synchronized with [`Expire::running`].
     flag: Arc<AtomicBool>,
+    /// Whether this guard claimed `flag` and must clear it on drop.
     owned: bool,
 }
 
@@ -211,15 +206,13 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use super::*;
+    use crate::rt::{DynRuntime, tokio::TokioRuntime};
 
-    /// Controllable retained state inspected by the watcher.
-    /// Counts checks and lets the test switch periodic maintenance off.
-    /// The test owns the target; the watcher keeps only a weak reference.
+    /// Controllable retention target used to count watcher sweeps.
     struct TestTarget {
-        /// Whether another expiration tick is required.
+        /// Whether the target still reports retained state needing sweeps.
         retained: AtomicBool,
-
-        /// Number of completed retention checks.
+        /// Number of `retain` sweeps observed.
         checks: AtomicUsize,
     }
 
@@ -247,11 +240,8 @@ mod tests {
             .build()
             .unwrap();
         let expire = runtime.block_on(async {
-            let expire = Expire::new(
-                Arc::downgrade(&target),
-                DynRuntime::new(crate::rt::tokio::TokioRuntime),
-            );
-            expire.schedule(Some(Duration::from_mins(1)));
+            let expire = Expire::new(Arc::downgrade(&target));
+            expire.schedule(Some(Duration::from_mins(1)), &DynRuntime::new(TokioRuntime));
             assert!(!expire.is_running());
             tokio::task::yield_now().await;
             expire
@@ -269,13 +259,11 @@ mod tests {
             retained: AtomicBool::new(true),
             checks: AtomicUsize::new(0),
         });
-        let expire = Expire::new(
-            Arc::downgrade(&target),
-            DynRuntime::new(crate::rt::tokio::TokioRuntime),
-        );
+        let expire = Expire::new(Arc::downgrade(&target));
+        let runtime = DynRuntime::new(TokioRuntime);
 
-        expire.schedule(Some(Duration::from_millis(100)));
-        expire.schedule(Some(Duration::from_millis(1)));
+        expire.schedule(Some(Duration::from_millis(100)), &runtime);
+        expire.schedule(Some(Duration::from_millis(1)), &runtime);
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_millis(100)).await;
         tokio::task::yield_now().await;
@@ -288,7 +276,7 @@ mod tests {
         assert!(!expire.is_running());
 
         target.retained.store(true, Ordering::SeqCst);
-        expire.schedule(Some(Duration::from_millis(100)));
+        expire.schedule(Some(Duration::from_millis(100)), &runtime);
         tokio::task::yield_now().await;
         let watcher = Arc::downgrade(&expire.running);
         drop(expire);

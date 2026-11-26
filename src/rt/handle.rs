@@ -17,7 +17,7 @@ use std::{
 use futures_util::future::BoxFuture;
 use netty::rt;
 
-use super::{BoxSleep, IntoRuntime, Runtime, Timer};
+use super::{BoxSleep, Executor, IntoRuntime, Runtime, Timer};
 
 /// Shares one selected runtime across connection, protocol and pool services.
 ///
@@ -42,14 +42,6 @@ impl DynRuntime {
         Self(runtime.into_shared())
     }
 
-    /// Submits an already boxed task to the selected runtime.
-    /// Forwards ownership without another allocation or a runtime clone.
-    #[inline]
-    #[track_caller]
-    pub(crate) fn execute(&self, fut: BoxFuture<'static, ()>) {
-        self.0.execute(fut);
-    }
-
     /// Shares this runtime with a QUIC endpoint.
     #[cfg(feature = "http3")]
     #[inline]
@@ -64,6 +56,14 @@ impl Deref for DynRuntime {
     #[inline]
     fn deref(&self) -> &Self::Target {
         &*self.0
+    }
+}
+
+impl Executor for DynRuntime {
+    #[inline]
+    #[track_caller]
+    fn execute(&self, future: BoxFuture<'static, ()>) {
+        self.0.execute(future);
     }
 }
 
@@ -91,7 +91,7 @@ where
     #[inline]
     #[track_caller]
     fn execute(&self, fut: F) {
-        self.execute(Box::pin(fut));
+        Executor::execute(self, Box::pin(fut));
     }
 }
 
@@ -126,7 +126,7 @@ impl ::quic::Runtime for DynRuntime {
 
     #[inline]
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        self.execute(future);
+        Executor::execute(self, future);
     }
 
     #[inline]

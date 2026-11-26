@@ -23,7 +23,7 @@ use {::compio::net::UnixStream, std::path::Path};
 use self::{future::SendFuture, gai::GaiResolver, io::Compat};
 use crate::{
     dns::Resolve,
-    rt::{BoxSleep, Connecting, Runtime, Sleep, Timer},
+    rt::{BoxSleep, Connecting, Executor, Runtime, Sleep, Timer},
 };
 
 /// Runtime that uses Compio for task execution, timers, system DNS and socket I/O.
@@ -55,12 +55,14 @@ impl Timer for CompioRuntime {
     }
 }
 
-impl Runtime for CompioRuntime {
+impl Executor for CompioRuntime {
     #[inline]
     fn execute(&self, task: BoxFuture<'static, ()>) {
         runtime::spawn(task).detach();
     }
+}
 
+impl Runtime for CompioRuntime {
     #[inline]
     fn resolver(&self) -> Arc<dyn Resolve> {
         Arc::new(GaiResolver::new())

@@ -22,9 +22,8 @@ use {super::multipart, bytes::Bytes, http::header::CONTENT_LENGTH};
 ))]
 use super::layer::decoder::AcceptEncoding;
 use super::{
-    Body, Client, IntoEmulation, Response,
+    Body, Client, IntoEmulation, Pending, Response,
     emulate::Emulation,
-    future::Pending,
     layer::{config::DefaultHeaders, timeout::TimeoutOptions},
 };
 #[cfg(feature = "cookies")]

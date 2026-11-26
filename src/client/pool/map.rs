@@ -1,31 +1,22 @@
-//! Maps connection destinations to independently managed pool services.
+//! Keyed pool map with optional retained-group LRU tracking.
 //!
-//! [`Map`] routes each connection compatibility key to its pool service.
-//!
-//! Entries are created lazily in an unbounded routing map. An optional LRU tracks
-//! only entries that currently retain reusable connection state.
-//!
-//! The pool coordinator performs lookup while holding its map lock, then drops
-//! any evicted service after releasing that lock.
+//! Entries are created lazily in an unbounded map, while an optional LRU tracks only
+//! groups currently retaining reusable state. Lookups run under the caller's lock, and
+//! removed entries are returned so callers can drop connections after unlocking.
 
 use std::{collections::HashMap, hash::Hash, num::NonZeroUsize};
 
 use lru::LruCache;
 
-/// Lazily maps destination keys to independently managed pool services.
+/// Unsynchronized map from compatibility keys to pool entries with an optional idle-group LRU.
 ///
-/// `Map` owns no synchronization. The pool coordinator locks it around lookup
-/// and maintenance operations. Methods that remove an entry return the service
-/// to the caller so connection senders can be dropped only after that outer
-/// lock has been released.
-///
-/// Lookups refresh the optional idle-group LRU when the key is already tracked.
-/// The pool coordinator decides when a service gains or loses reusable state
-/// and performs any resulting eviction outside this type.
+/// The caller synchronizes access externally and drops any returned entries after unlocking.
+/// Lookups refresh the LRU when a key is already tracked, while the caller decides when an
+/// entry gains or loses retained state and performs capacity eviction.
 pub(super) struct Map<K, S> {
-    /// Services indexed by connection compatibility key.
+    /// Pool entries indexed by compatibility key.
     entries: HashMap<K, S>,
-    /// Retained-group LRU; stale markers are reconciled before capacity eviction.
+    /// LRU of retained groups; stale markers are reconciled before capacity eviction.
     retained: Option<LruCache<K, ()>>,
 }
 
@@ -56,12 +47,21 @@ where
     /// Returns the service stored for `key` without changing idle LRU order.
     #[must_use]
     pub(super) fn get_mut(&mut self, key: &K) -> Option<&mut S> {
+        // Skip hashing for the single-entry fast path without scanning a sparse table.
+        if self.entries.len() == 1 && self.entries.capacity() <= 3 {
+            return self
+                .entries
+                .iter_mut()
+                .next()
+                .and_then(|(stored, service)| (stored == key).then_some(service));
+        }
         self.entries.get_mut(key)
     }
 
     /// Removes idle markers whose services no longer satisfy `predicate`.
     ///
     /// Returns the pruned keys so the caller can reconcile entries that remain.
+    #[must_use]
     pub(super) fn prune_retained<F>(&mut self, mut predicate: F) -> Vec<K>
     where
         K: Clone,
@@ -87,13 +87,18 @@ where
         pruned
     }
 
-    /// Marks `key` as the most recently used retained group.
+    /// Ensures `key` is tracked as a retained group, promoting it to MRU when `promote` is `true`.
     ///
     /// A full LRU first removes markers rejected by `predicate` and returns their
     /// keys, then the remaining least recently used group displaced by the limit.
     /// An unbounded map returns neither.
     #[must_use]
-    pub(super) fn mark_retained<F>(&mut self, key: &K, predicate: F) -> (Vec<K>, Option<K>)
+    pub(super) fn mark_retained<F>(
+        &mut self,
+        key: &K,
+        promote: bool,
+        predicate: F,
+    ) -> (Vec<K>, Option<K>)
     where
         K: Clone,
         F: FnMut(&S) -> bool,
@@ -101,7 +106,12 @@ where
         let Some(retained) = &mut self.retained else {
             return (Vec::new(), None);
         };
-        if retained.get(key).is_some() {
+        let present = if promote {
+            retained.get(key).is_some()
+        } else {
+            retained.contains(key)
+        };
+        if present {
             return (Vec::new(), None);
         }
 
@@ -153,7 +163,7 @@ where
         self.entries.iter_mut()
     }
 
-    /// Gives `predicate` the current service and removes it if it returns `true`.
+    /// Removes and returns the service for `key` if `predicate` returns `true`.
     #[must_use]
     pub(super) fn remove_if<F>(&mut self, key: &K, predicate: F) -> Option<S>
     where
@@ -167,12 +177,6 @@ where
             None
         }
     }
-
-    /// Returns whether the map contains no service entries.
-    #[cfg(test)]
-    pub(super) fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
 }
 
 #[cfg(test)]
@@ -184,9 +188,14 @@ mod tests {
 
     use super::*;
 
-    /// Models retained state and counts when a mapped service is destroyed.
-    /// The flag lets the test change retention without replacing the entry.
-    /// Drop updates a shared counter to verify deferred destruction.
+    impl<K, S> Map<K, S> {
+        #[must_use]
+        pub(in crate::client::pool) fn is_empty(&self) -> bool {
+            self.entries.is_empty()
+        }
+    }
+
+    /// Counts drops while letting tests toggle retained state.
     struct DropProbe(Arc<AtomicUsize>, bool);
 
     impl Drop for DropProbe {
@@ -202,11 +211,13 @@ mod tests {
         let mut map = Map::new(NonZeroUsize::new(1));
 
         map.get_or_insert_with(&1, make);
-        assert_eq!(map.mark_retained(&1, |probe| probe.1), (vec![], None));
+        assert!(map.get_mut(&1).is_some());
+        assert!(map.get_mut(&2).is_none());
+        assert_eq!(map.mark_retained(&1, true, |probe| probe.1), (vec![], None));
         map.get_or_insert_with(&2, make);
         assert_eq!(drops.load(Ordering::SeqCst), 0);
 
-        let (pruned, evicted) = map.mark_retained(&2, |probe| probe.1);
+        let (pruned, evicted) = map.mark_retained(&2, true, |probe| probe.1);
         assert!(pruned.is_empty());
         assert_eq!(evicted, Some(1));
         assert_eq!(drops.load(Ordering::SeqCst), 0);
@@ -234,10 +245,10 @@ mod tests {
 
         for key in 1..=3 {
             map.get_or_insert_with(&key, make);
-            assert_eq!(map.mark_retained(&key, retains), (vec![], None));
+            assert_eq!(map.mark_retained(&key, true, retains), (vec![], None));
         }
         for _ in 0..100 {
-            assert_eq!(map.mark_retained(&1, retains), (vec![], None));
+            assert_eq!(map.mark_retained(&1, true, retains), (vec![], None));
         }
         assert_eq!(inspected.load(Ordering::Relaxed), 0);
 
@@ -246,12 +257,12 @@ mod tests {
         // healthy least recent group (2).
         map.get_or_insert_with(&3, make).1 = false;
         map.get_or_insert_with(&4, make);
-        assert_eq!(map.mark_retained(&4, retains), (vec![3], None));
+        assert_eq!(map.mark_retained(&4, true, retains), (vec![3], None));
         assert_eq!(inspected.load(Ordering::Relaxed), 3);
         assert_eq!(drops.load(Ordering::Relaxed), 0);
 
         map.get_or_insert_with(&5, make);
-        assert_eq!(map.mark_retained(&5, retains), (vec![], Some(2)));
+        assert_eq!(map.mark_retained(&5, true, retains), (vec![], Some(2)));
         assert_eq!(inspected.load(Ordering::Relaxed), 6);
         assert_eq!(
             map.retained
