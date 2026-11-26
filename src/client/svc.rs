@@ -11,11 +11,6 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-#[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-use http::{
-    HeaderMap,
-    header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
-};
 use http::{HeaderValue, Method, Response, Uri, Version, header::HOST, uri::Authority};
 use netty::{body::Incoming, conn::TrySendError};
 use tower::{BoxError, Service};
@@ -30,6 +25,7 @@ use super::{
     error::{self, ErrorKind},
     pool, proto,
     request::RequestVersion,
+    upgrade,
 };
 use crate::{
     Body,
@@ -72,17 +68,6 @@ pub(super) struct Client {
     cookie_store: Option<Arc<dyn CookieStore>>,
 }
 
-/// Requests a dedicated HTTP/1 connection that bypasses the pool.
-///
-/// When `extended_connect` is set, dispatch first probes for an established HTTP/2 or HTTP/3
-/// connection in the default group whose peer enabled extended CONNECT (RFC 8441, RFC 9220).
-#[cfg(feature = "ws")]
-#[derive(Clone, Copy)]
-pub(super) struct DedicatedConnection {
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    pub(super) extended_connect: bool,
-}
-
 /// Validated connection request and pool keys extracted once before dispatch.
 struct Prepared {
     /// Origin, protocol mode, and merged connection options used when dialing.
@@ -91,9 +76,9 @@ struct Prepared {
     pool_key: Option<reuse::Key>,
     /// Allows reconciling an HTTPS `HTTP/2` request down to HTTP/1.1 if ALPN picks HTTP/1.
     negotiable: bool,
-    /// Default-group key probed for an established extended CONNECT sender.
-    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-    extended_connect_key: Option<reuse::Key>,
+    /// Prepared Extended CONNECT or adaptive upgrade plan, boxed to keep `Prepared` compact.
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    upgrade: Option<Box<upgrade::Plan>>,
 }
 
 /// Named response future returned by [`Client`].
@@ -198,18 +183,11 @@ enum SendState {
         pooled: pool::Pooled,
         #[cfg(any(feature = "http2", feature = "http3"))]
         extended: bool,
-        #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-        upgrade: Option<Http1Upgrade>,
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        rewritten: Option<Box<upgrade::Rewritten>>,
     },
     Done,
 }
-
-/// Original RFC 6455 headers of a WebSocket handshake rewritten for extended CONNECT.
-///
-/// Boxed so non-WebSocket requests do not reserve space for a `HeaderMap` in [`State::Sending`].
-/// Restored in order if the request returns unsent so a retry can fall back to HTTP/1.1.
-#[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-struct Http1Upgrade(Box<HeaderMap>);
 
 // ===== impl Config =====
 
@@ -418,7 +396,7 @@ impl Dispatch {
             Ok(pooled) => self.poll_send(
                 request,
                 pooled,
-                #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+                #[cfg(any(feature = "http2", feature = "http3"))]
                 None,
                 uri,
                 cx,
@@ -441,13 +419,21 @@ impl Dispatch {
         &self,
         mut request: http::Request<Body>,
         mut pooled: pool::Pooled,
-        #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))] upgrade: Option<
-            Http1Upgrade,
+        #[cfg(any(feature = "http2", feature = "http3"))] rewritten: Option<
+            Box<upgrade::Rewritten>,
         >,
         uri: &Uri,
         cx: &mut Context<'_>,
     ) -> Step<SendState, Response<Incoming>> {
-        let _extended = match reconcile(&mut request, &pooled, self.prepared.negotiable) {
+        let _extended = match reconcile(
+            &mut request,
+            &pooled,
+            self.prepared.negotiable,
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            self.prepared.upgrade.as_deref(),
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            rewritten.is_some(),
+        ) {
             Ok(extended) => extended,
             Err(error) => return Step::Ready(AttemptOutcome::Done(Err(error))),
         };
@@ -473,8 +459,8 @@ impl Dispatch {
                 pooled,
                 #[cfg(any(feature = "http2", feature = "http3"))]
                 extended: _extended,
-                #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-                upgrade,
+                #[cfg(any(feature = "http2", feature = "http3"))]
+                rewritten,
             }),
             Poll::Ready(result) => {
                 drop(future);
@@ -483,8 +469,8 @@ impl Dispatch {
                     pooled,
                     #[cfg(any(feature = "http2", feature = "http3"))]
                     _extended,
-                    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-                    upgrade,
+                    #[cfg(any(feature = "http2", feature = "http3"))]
+                    rewritten,
                     uri,
                 ))
             }
@@ -497,8 +483,8 @@ impl Dispatch {
         result: Result<Response<Incoming>, TrySendError<http::Request<Body>>>,
         mut pooled: pool::Pooled,
         #[cfg(any(feature = "http2", feature = "http3"))] extended: bool,
-        #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))] upgrade: Option<
-            Http1Upgrade,
+        #[cfg(any(feature = "http2", feature = "http3"))] rewritten: Option<
+            Box<upgrade::Rewritten>,
         >,
         uri: &Uri,
     ) -> AttemptOutcome<Response<Incoming>> {
@@ -516,11 +502,13 @@ impl Dispatch {
                 if !error.error().is_user()
                     && let Some(unsent) = error.take_message()
                 {
-                    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+                    #[cfg(any(feature = "http2", feature = "http3"))]
                     let mut unsent = unsent;
-                    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-                    if let Some(upgrade) = upgrade {
-                        upgrade.restore(&mut unsent);
+                    #[cfg(any(feature = "http2", feature = "http3"))]
+                    if let Some(rewritten) = rewritten {
+                        rewritten.restore(&mut unsent);
+                    } else if extended {
+                        upgrade::Protocol::clear_from(&mut unsent);
                     }
 
                     return AttemptOutcome::Unsent {
@@ -578,22 +566,29 @@ impl Attempt for Dispatch {
 
     fn start(
         &mut self,
-        request: http::Request<Body>,
+        #[allow(unused_mut)] mut request: http::Request<Body>,
         uri: &Uri,
         cx: &mut Context<'_>,
     ) -> Step<Self::State, Self::Output> {
         // RFC 8441 §3 and RFC 9220 §3: extended CONNECT only after the peer enabled it.
         // A miss keeps the dedicated HTTP/1.1 upgrade without opening H2/H3.
-        #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-        if let Some(pooled) = self
-            .prepared
-            .extended_connect_key
-            .as_ref()
-            .and_then(|key| self.pool.checkout_extended_connect(key))
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        if let Some(upgrade::Plan::Adaptive {
+            key,
+            protocol,
+            strip_headers,
+        }) = self.prepared.upgrade.as_deref()
+            && let Some(pooled) = self.pool.checkout_extended_connect(key)
         {
-            let mut request = request;
-            let upgrade = Http1Upgrade::into_extended_connect(&mut request, pooled.version());
-            return self.poll_send(request, pooled, Some(upgrade), uri, cx);
+            if let Some(rewritten) = upgrade::Rewritten::try_rewrite(
+                &mut request,
+                pooled.version(),
+                protocol,
+                strip_headers.as_deref().unwrap_or(&[]),
+            ) {
+                return self.poll_send(request, pooled, Some(rewritten), uri, cx);
+            }
+            drop(pooled);
         }
 
         let mut future = self
@@ -636,8 +631,8 @@ impl Attempt for Dispatch {
                     pooled,
                     #[cfg(any(feature = "http2", feature = "http3"))]
                     extended,
-                    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-                    upgrade,
+                    #[cfg(any(feature = "http2", feature = "http3"))]
+                    rewritten,
                     ..
                 } = mem::replace(state, SendState::Done)
                 else {
@@ -648,8 +643,8 @@ impl Attempt for Dispatch {
                     pooled,
                     #[cfg(any(feature = "http2", feature = "http3"))]
                     extended,
-                    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-                    upgrade,
+                    #[cfg(any(feature = "http2", feature = "http3"))]
+                    rewritten,
                     uri,
                 ))
             }
@@ -699,29 +694,38 @@ impl Prepared {
         }
 
         let extensions = request.extensions_mut();
-        #[cfg(feature = "ws")]
-        let dedicated = extensions.remove::<DedicatedConnection>();
-
+        let upgrade = RequestConfig::<upgrade::Upgrade>::remove(extensions);
         // Normalize wire versions to protocol choices; HTTP/1.0 and HTTP/1.1 share a pool.
         let version = RequestConfig::<RequestVersion>::remove(extensions);
         let uri = request.uri();
 
+        let dedicated = match upgrade.as_ref() {
+            Some(upgrade) => {
+                upgrade.validate_request(request.method(), request.version(), version)?
+            }
+            None => false,
+        };
+
         // curl's ordinary H2 mode allows HTTPS negotiation; prior knowledge
         // remains explicit: https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html
-        let protocol = match version {
-            Some(Version::HTTP_10 | Version::HTTP_11) => Some(Protocol::Http1),
-            #[cfg(feature = "http2")]
-            Some(Version::HTTP_2) if uri.is_https() && client_protocol != Protocol::Http2 => {
-                Some(Protocol::Auto)
+        let protocol = if dedicated {
+            Some(Protocol::Http1)
+        } else {
+            match version {
+                Some(Version::HTTP_10 | Version::HTTP_11) => Some(Protocol::Http1),
+                #[cfg(feature = "http2")]
+                Some(Version::HTTP_2) if uri.is_https() && client_protocol != Protocol::Http2 => {
+                    Some(Protocol::Auto)
+                }
+                #[cfg(feature = "http2")]
+                Some(Version::HTTP_2) => Some(Protocol::Http2),
+                #[cfg(feature = "http3")]
+                Some(Version::HTTP_3) => Some(Protocol::Http3),
+                Some(_) => {
+                    return Err(error::Error::from_kind(ErrorKind::UserUnsupportedVersion));
+                }
+                None => None,
             }
-            #[cfg(feature = "http2")]
-            Some(Version::HTTP_2) => Some(Protocol::Http2),
-            #[cfg(feature = "http3")]
-            Some(Version::HTTP_3) => Some(Protocol::Http3),
-            Some(_) => {
-                return Err(error::Error::from_kind(ErrorKind::UserUnsupportedVersion));
-            }
-            None => None,
         };
 
         let origin = uri.origin().map_err(|source| {
@@ -747,81 +751,26 @@ impl Prepared {
             .unwrap_or_default()
             .with_base(connect_config);
         let connect = conn::Request::new(origin, protocol, config);
-        let pool_key = cfg_select! {
-            feature = "ws" => dedicated.is_none(),
-            _ => true,
-        }
-        .then(|| connect.reuse_key(protocol));
+        let pool_key = (!dedicated).then(|| connect.reuse_key(protocol));
 
-        // Probe the default group only where it may be HTTP/2, or HTTP/3 over https. Without
-        // Alt-Svc discovery, an automatic client's explicit HTTP/3 group is not probed.
-        #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-        let extended_connect_key = (dedicated.is_some_and(|d| d.extended_connect)
-            && match client_protocol {
-                #[cfg(feature = "http2")]
-                Protocol::Auto | Protocol::Http2 => true,
-                #[cfg(feature = "http3")]
-                Protocol::Http3 => request.uri().is_https(),
-                _ => false,
-            })
-        .then(|| connect.reuse_key(client_protocol));
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        let upgrade = match upgrade {
+            Some(upgrade) => upgrade.into_plan(
+                protocol,
+                client_protocol,
+                request.uri().is_https(),
+                |protocol| connect.reuse_key(protocol),
+            )?,
+            None => None,
+        };
 
         Ok(Self {
             connect,
             pool_key,
             negotiable,
-            #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-            extended_connect_key,
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            upgrade,
         })
-    }
-}
-
-// ===== impl Http1Upgrade =====
-
-#[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-impl Http1Upgrade {
-    /// Rewrites the GET upgrade as extended CONNECT for a sender of `version`, keeping the
-    /// other WebSocket fields ([RFC 8441 §5](https://www.rfc-editor.org/rfc/rfc8441#section-5),
-    /// [RFC 9220 §3](https://www.rfc-editor.org/rfc/rfc9220#section-3)).
-    #[must_use]
-    fn into_extended_connect<B>(request: &mut http::Request<B>, version: Version) -> Self {
-        *request.method_mut() = Method::CONNECT;
-        *request.version_mut() = version;
-        let extensions = request.extensions_mut();
-        match version {
-            #[cfg(feature = "http2")]
-            Version::HTTP_2 => {
-                extensions.insert(http2::ext::Protocol::from_static("websocket"));
-            }
-            #[cfg(feature = "http3")]
-            Version::HTTP_3 => {
-                extensions.insert(netty::http3::Protocol::WEBSOCKET);
-            }
-            _ => {}
-        }
-        let headers = mem::take(request.headers_mut());
-        // Connection-specific fields are malformed in HTTP/2 and HTTP/3; the rest keep their order:
-        // https://www.rfc-editor.org/rfc/rfc9113#section-8.2.2
-        // https://www.rfc-editor.org/rfc/rfc9114#section-4.2
-        let extended = request.headers_mut();
-        extended.reserve(headers.len());
-        for (name, value) in &headers {
-            if ![UPGRADE, CONNECTION, SEC_WEBSOCKET_KEY].contains(name) {
-                extended.append(name, value.clone());
-            }
-        }
-        Self(Box::new(headers))
-    }
-
-    /// Restores the RFC 6455 GET after an unsent extended CONNECT, removing either marker.
-    fn restore<B>(self, request: &mut http::Request<B>) {
-        *request.method_mut() = Method::GET;
-        *request.version_mut() = Version::HTTP_11;
-        #[cfg(feature = "http2")]
-        request.extensions_mut().remove::<http2::ext::Protocol>();
-        #[cfg(feature = "http3")]
-        request.extensions_mut().remove::<netty::http3::Protocol>();
-        *request.headers_mut() = *self.0;
     }
 }
 
@@ -846,15 +795,25 @@ fn reconcile(
     request: &mut http::Request<Body>,
     pooled: &pool::Pooled,
     negotiable: bool,
+    #[cfg(any(feature = "http2", feature = "http3"))] plan: Option<&upgrade::Plan>,
+    #[cfg(any(feature = "http2", feature = "http3"))] rewritten: bool,
 ) -> Result<bool, error::Error> {
     let extended = cfg_select! {
-        any(feature = "http2", feature = "http3") => {{
-            let extended = matched_extended_connect(request, pooled)?;
-            if extended && pooled.extended_connect() == Some(false) {
-                return Err(extended_connect_disabled(pooled));
+        any(feature = "http2", feature = "http3") => {
+            if rewritten {
+                true
+            } else if let Some(upgrade::Plan::ExtendedConnect(protocol)) = plan {
+                protocol
+                    .insert_into(request, pooled.version())
+                    .map_err(|error| error.with_connect_info(pooled.connected().clone()))?;
+                if pooled.extended_connect() == Some(false) {
+                    return Err(extended_connect_disabled(pooled));
+                }
+                true
+            } else {
+                false
             }
-            extended
-        }}
+        }
         _ => false,
     };
 
@@ -875,41 +834,6 @@ fn reconcile(
         connect_target_port(request, multiplexed)?;
     }
     Ok(extended)
-}
-
-/// Returns `true` if `request` carries an extended CONNECT `:protocol` marker matching
-/// `pooled`'s HTTP version ([RFC 8441 §4], [RFC 9220 §3]).
-///
-/// Fails instead of falling back to plain CONNECT when the marker targets a different version.
-///
-/// [RFC 8441 §4]: https://www.rfc-editor.org/rfc/rfc8441#section-4
-/// [RFC 9220 §3]: https://www.rfc-editor.org/rfc/rfc9220#section-3
-#[cfg(any(feature = "http2", feature = "http3"))]
-fn matched_extended_connect<B>(
-    request: &http::Request<B>,
-    pooled: &pool::Pooled,
-) -> Result<bool, error::Error> {
-    let extensions = request.extensions();
-    let http2 = cfg_select! {
-        feature = "http2" => extensions.get::<http2::ext::Protocol>().is_some(),
-        _ => false,
-    };
-    let http3 = cfg_select! {
-        feature = "http3" => extensions.get::<netty::http3::Protocol>().is_some(),
-        _ => false,
-    };
-    let matched = match pooled.version() {
-        Version::HTTP_2 => http2,
-        Version::HTTP_3 => http3,
-        _ => false,
-    };
-    if (http2 || http3) && !matched {
-        warn!("extended CONNECT protocol does not match the connection's HTTP version");
-        return Err(error::Error::from_kind(ErrorKind::UserUnsupportedVersion)
-            .with_context("extended CONNECT protocol does not match the connection's HTTP version")
-            .with_connect_info(pooled.connected().clone()));
-    }
-    Ok(matched)
 }
 
 /// Rejects extended CONNECT unless the peer enabled it (RFC 8441 §3, RFC 9220 §3).
@@ -1110,20 +1034,96 @@ mod tests {
         assert_eq!(userinfo_req.uri(), "http://localhost/");
         assert_eq!(userinfo.pool_key, plain.pool_key);
 
-        #[cfg(feature = "ws")]
-        {
-            let request = http::Request::get("http://localhost/")
-                .extension(RequestConfig::<RequestVersion>::new(Some(Version::HTTP_11)))
-                .extension(DedicatedConnection {
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    extended_connect: true,
-                })
-                .body(Body::default())
-                .unwrap();
-            let (_, prepared) = prepare(request).unwrap();
-            assert!(prepared.pool_key.is_none());
+        let prepare_upgrade =
+            |method: Method, version: Option<Version>, mode: Protocol, u: upgrade::Upgrade| {
+                let mut builder = http::Request::builder()
+                    .method(method)
+                    .uri("https://localhost/");
+                if let Some(version) = version {
+                    builder = builder
+                        .version(version)
+                        .extension(RequestConfig::<RequestVersion>::new(Some(version)));
+                }
+                let mut request = builder
+                    .extension(RequestConfig::<upgrade::Upgrade>::new(Some(u)))
+                    .body(Body::default())
+                    .unwrap();
+                Prepared::prepare(&mut request, mode, &connect_config)
+            };
+
+        let (_, plain_https) = prepare_uri("https://localhost/");
+        let http1 =
+            prepare_upgrade(Method::GET, None, Protocol::Auto, upgrade::Upgrade::http1()).unwrap();
+        assert!(http1.pool_key.is_none());
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        assert!(http1.upgrade.is_none());
+
+        let adaptive = prepare_upgrade(
+            Method::GET,
+            None,
+            Protocol::Auto,
+            upgrade::Upgrade::adaptive(upgrade::Protocol::WEBSOCKET),
+        )
+        .unwrap();
+        assert!(adaptive.pool_key.is_none());
+        #[cfg(feature = "http2")]
+        assert!(matches!(
+            adaptive.upgrade.as_deref(),
+            Some(upgrade::Plan::Adaptive { key, .. }) if plain_https.pool_key.as_ref() == Some(key)
+        ));
+
+        for (method, version, mode, u, expected) in [
+            (
+                Method::GET,
+                None,
+                Protocol::Auto,
+                upgrade::Upgrade::extended_connect(upgrade::Protocol::WEBSOCKET),
+                "client error (UserUnsupportedRequestMethod)",
+            ),
+            (
+                Method::CONNECT,
+                Some(Version::HTTP_11),
+                Protocol::Auto,
+                upgrade::Upgrade::extended_connect(upgrade::Protocol::WEBSOCKET),
+                "client error (UserUnsupportedVersion): extended CONNECT requires HTTP/2 or HTTP/3",
+            ),
             #[cfg(feature = "http2")]
-            assert_eq!(prepared.extended_connect_key, plain.pool_key);
+            (
+                Method::GET,
+                Some(Version::HTTP_2),
+                Protocol::Auto,
+                upgrade::Upgrade::http1(),
+                "client error (UserUnsupportedVersion)",
+            ),
+            #[cfg(feature = "http3")]
+            (
+                Method::CONNECT,
+                None,
+                Protocol::Http3,
+                upgrade::Upgrade::extended_connect(upgrade::Protocol::from_static("custom")),
+                "client error (UserUnsupportedVersion): extended CONNECT protocol is not supported on HTTP/3",
+            ),
+        ] {
+            assert_eq!(
+                prepare_upgrade(method, version, mode, u)
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                expected
+            );
+        }
+
+        // Adaptive upgrade skips HTTP/3 probing when the protocol is unsupported on HTTP/3.
+        #[cfg(feature = "http3")]
+        {
+            let adaptive_h3 = prepare_upgrade(
+                Method::GET,
+                None,
+                Protocol::Http3,
+                upgrade::Upgrade::adaptive(upgrade::Protocol::from_static("custom")),
+            )
+            .unwrap();
+            assert!(adaptive_h3.pool_key.is_none() && adaptive_h3.upgrade.is_none());
         }
     }
 
@@ -1353,52 +1353,83 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+    #[cfg(any(feature = "http2", feature = "http3"))]
     #[test]
-    fn websocket_upgrade_is_restored_after_extended_connect() {
-        for version in [
+    fn adaptive_upgrade_is_restored_after_extended_connect() {
+        use http::{
+            HeaderName,
+            header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
+        };
+
+        const CUSTOM_KEY: HeaderName = HeaderName::from_static("x-upgrade-nonce");
+        for (method, orig_version, target_version, protocol, strip) in [
             #[cfg(feature = "http2")]
-            Version::HTTP_2,
+            (
+                Method::GET,
+                Version::HTTP_11,
+                Version::HTTP_2,
+                upgrade::Protocol::WEBSOCKET,
+                SEC_WEBSOCKET_KEY,
+            ),
             #[cfg(feature = "http3")]
-            Version::HTTP_3,
+            (
+                Method::GET,
+                Version::HTTP_11,
+                Version::HTTP_3,
+                upgrade::Protocol::WEBSOCKET,
+                SEC_WEBSOCKET_KEY,
+            ),
+            #[cfg(feature = "http2")]
+            (
+                Method::POST,
+                Version::HTTP_10,
+                Version::HTTP_2,
+                upgrade::Protocol::from_static("custom"),
+                CUSTOM_KEY,
+            ),
         ] {
-            let mut request = http::Request::get("https://localhost/chat")
-                .version(Version::HTTP_11)
-                .header(http::header::SEC_WEBSOCKET_VERSION, "13")
-                .header(UPGRADE, "websocket")
+            let mut request = http::Request::builder()
+                .method(method.clone())
+                .uri("https://localhost/chat")
+                .version(orig_version)
                 .header(http::header::ORIGIN, "https://localhost")
+                .header(UPGRADE, protocol.as_str())
                 .header(CONNECTION, "upgrade")
-                .header(SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
-                .header(http::header::SEC_WEBSOCKET_PROTOCOL, "chat")
+                .header(strip.clone(), "nonce")
+                .header("x-keep", "1")
                 .body(())
                 .unwrap();
             let original = request.headers().clone();
-            let upgrade = Http1Upgrade::into_extended_connect(&mut request, version);
+            let rewritten =
+                upgrade::Rewritten::try_rewrite(&mut request, target_version, &protocol, &[strip])
+                    .unwrap();
 
             assert_eq!(request.method(), Method::CONNECT);
-            assert_eq!(request.version(), version);
+            assert_eq!(request.version(), target_version);
             #[cfg(feature = "http2")]
             assert_eq!(
                 request
                     .extensions()
                     .get::<http2::ext::Protocol>()
                     .map(http2::ext::Protocol::as_str),
-                (version == Version::HTTP_2).then_some("websocket")
+                (target_version == Version::HTTP_2).then_some(protocol.as_str())
             );
             #[cfg(feature = "http3")]
             assert_eq!(
                 request.extensions().get::<netty::http3::Protocol>(),
-                (version == Version::HTTP_3).then_some(&netty::http3::Protocol::WEBSOCKET)
+                (target_version == Version::HTTP_3).then_some(&netty::http3::Protocol::WEBSOCKET)
             );
-            assert!(request.headers().keys().map(|name| name.as_str()).eq([
-                "sec-websocket-version",
-                "origin",
-                "sec-websocket-protocol"
-            ]));
+            assert!(
+                request
+                    .headers()
+                    .keys()
+                    .map(|name| name.as_str())
+                    .eq(["origin", "x-keep"])
+            );
 
-            upgrade.restore(&mut request);
-            assert_eq!(request.method(), Method::GET);
-            assert_eq!(request.version(), Version::HTTP_11);
+            rewritten.restore(&mut request);
+            assert_eq!(request.method(), method);
+            assert_eq!(request.version(), orig_version);
             #[cfg(feature = "http2")]
             assert!(request.extensions().get::<http2::ext::Protocol>().is_none());
             #[cfg(feature = "http3")]

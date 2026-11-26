@@ -38,6 +38,7 @@ async fn http_upgrade() {
         .get(format!("http://{}", server.addr()))
         .header(http::header::CONNECTION, "upgrade")
         .header(http::header::UPGRADE, "foobar")
+        .upgrade(wreq::upgrade::Upgrade::http1())
         .send()
         .await
         .unwrap();
@@ -50,6 +51,125 @@ async fn http_upgrade() {
     let mut buf = vec![];
     upgraded.read_to_end(&mut buf).await.unwrap();
     assert_eq!(buf, b"bar=foo");
+}
+
+#[cfg(feature = "http2")]
+#[tokio::test]
+async fn adaptive_and_extended_connect_custom_protocol() {
+    use std::convert::Infallible;
+
+    use http::{
+        HeaderName, Method, StatusCode, Version,
+        header::{CONNECTION, UPGRADE},
+    };
+    use support::server::Event;
+    use wreq::upgrade::{Protocol, Upgrade};
+
+    const HANDSHAKE_KEY: HeaderName = HeaderName::from_static("x-handshake-key");
+    const PROTO: Protocol = Protocol::from_static("foobar");
+
+    for enabled in [true, false] {
+        let mut server = server::http_with_config(
+            |req: http::Request<hyper::body::Incoming>| async move {
+                let mut res = http::Response::new(wreq::Body::default());
+                if req.method() == Method::CONNECT {
+                    assert_eq!(
+                        req.extensions()
+                            .get::<hyper::ext::Protocol>()
+                            .map(hyper::ext::Protocol::as_str),
+                        Some("foobar")
+                    );
+                    assert!(
+                        [UPGRADE, CONNECTION, HANDSHAKE_KEY]
+                            .iter()
+                            .all(|h| !req.headers().contains_key(h))
+                    );
+                } else if req.headers().contains_key(UPGRADE) {
+                    assert_eq!(req.headers()[HANDSHAKE_KEY], "abc");
+                    *res.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
+                    res.headers_mut().insert(UPGRADE, "foobar".parse().unwrap());
+                    res.headers_mut()
+                        .insert(CONNECTION, "upgrade".parse().unwrap());
+                } else {
+                    return Ok::<_, Infallible>(res);
+                }
+                assert_eq!(req.headers()["x-keep"], "1");
+                tokio::spawn(async move {
+                    let mut io =
+                        hyper_util::rt::TokioIo::new(hyper::upgrade::on(req).await.unwrap());
+                    let mut buf = [0; 4];
+                    io.read_exact(&mut buf).await.unwrap();
+                    io.write_all(&buf).await.unwrap();
+                });
+                Ok::<_, Infallible>(res)
+            },
+            move |b| {
+                if enabled {
+                    b.http2().enable_connect_protocol();
+                }
+            },
+        );
+        let client = Client::builder_tokio()
+            .http2_only()
+            .no_proxy()
+            .build()
+            .unwrap();
+        let url = format!("http://{}/tunnel", server.addr());
+
+        client
+            .get(&url)
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        let res = client
+            .get(&url)
+            .header(CONNECTION, "upgrade")
+            .header(UPGRADE, "foobar")
+            .header(HANDSHAKE_KEY, "abc")
+            .header("x-keep", "1")
+            .upgrade(Upgrade::adaptive(PROTO).strip_headers([HANDSHAKE_KEY]))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            res.version(),
+            if enabled {
+                Version::HTTP_2
+            } else {
+                Version::HTTP_11
+            }
+        );
+        let accepts = server
+            .events()
+            .into_iter()
+            .filter(|e| matches!(e, Event::ConnectionAccepted))
+            .count();
+        assert_eq!(accepts, if enabled { 1 } else { 2 });
+
+        let mut io = res.upgrade().await.unwrap();
+        io.write_all(b"ping").await.unwrap();
+        let mut buf = Vec::new();
+        io.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, b"ping");
+
+        let explicit = client
+            .request(Method::CONNECT, &url)
+            .header("x-keep", "1")
+            .upgrade(Upgrade::extended_connect(PROTO))
+            .send()
+            .await;
+        if enabled {
+            assert_eq!(explicit.unwrap().status(), StatusCode::OK);
+        } else {
+            assert!(
+                format!("{:?}", explicit.unwrap_err())
+                    .contains("peer did not enable extended CONNECT")
+            );
+        }
+    }
 }
 
 #[cfg(feature = "http2")]

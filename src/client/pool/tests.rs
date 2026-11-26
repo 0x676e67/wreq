@@ -548,7 +548,7 @@ async fn idle_task_tracks_reusable_state() {
 }
 
 #[tokio::test]
-#[cfg(all(feature = "ws", feature = "http2"))]
+#[cfg(feature = "http2")]
 async fn extended_connect_checkout_only_leases_established_senders() {
     for protocol in [Protocol::Http2, Protocol::Auto] {
         let calls = Arc::new(AtomicUsize::new(0));

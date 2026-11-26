@@ -18,8 +18,6 @@ use futures_util::{Sink, SinkExt, Stream, StreamExt, stream::FusedStream};
 use http::{
     HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header, uri::Scheme,
 };
-#[cfg(feature = "http2")]
-use http2::ext::Protocol;
 use pin_project_lite::pin_project;
 use tokio_tungstenite::tungstenite::{
     self,
@@ -28,7 +26,10 @@ use tokio_tungstenite::tungstenite::{
 
 use self::message::{CloseCode, Message, Utf8Bytes};
 use super::{
-    emulate::IntoEmulation, request::RequestBuilder, response::Response, svc::DedicatedConnection,
+    emulate::IntoEmulation,
+    request::RequestBuilder,
+    response::Response,
+    upgrade::{Protocol, Upgrade},
 };
 use crate::{Error, Upgraded, header::OrigHeaderMap, proxy::Proxy, reuse::Group};
 
@@ -484,28 +485,27 @@ impl WebSocketRequestBuilder {
                 *request.version_mut() = Some(Version::HTTP_11);
                 // Never reuse an idle socket or return this one to the pool. The default
                 // route may still reuse an established HTTP/2 or HTTP/3 connection instead.
-                request.extensions_mut().insert(DedicatedConnection {
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    extended_connect: version.is_none(),
-                });
+                let upgrade = if version.is_none() {
+                    Upgrade::adaptive(Protocol::WEBSOCKET)
+                        .strip_headers([header::SEC_WEBSOCKET_KEY])
+                } else {
+                    Upgrade::http1()
+                };
+                *request.upgrade_mut() = Some(upgrade);
                 Some(nonce)
             }
             #[cfg(feature = "http2")]
             Some(Version::HTTP_2) => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_2);
-                request
-                    .extensions_mut()
-                    .insert(Protocol::from_static("websocket"));
+                *request.upgrade_mut() = Some(Upgrade::extended_connect(Protocol::WEBSOCKET));
                 None
             }
             #[cfg(feature = "http3")]
             Some(Version::HTTP_3) => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_3);
-                request
-                    .extensions_mut()
-                    .insert(netty::http3::Protocol::WEBSOCKET);
+                *request.upgrade_mut() = Some(Upgrade::extended_connect(Protocol::WEBSOCKET));
                 None
             }
             unsupported => {

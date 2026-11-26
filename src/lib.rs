@@ -331,7 +331,7 @@ pub use self::{
         pool::PoolStrategy,
         request::{Request, RequestBuilder},
         response::Response,
-        upgrade::Upgraded,
+        upgrade::{self, Upgraded},
     },
     error::{Error, Result},
     ext::{ResponseBuilderExt, ResponseExt},
@@ -364,8 +364,8 @@ pub mod http3 {
     //! HTTP/3 protocol options and utilities.
 
     pub use netty::http3::{
-        Http3Options, Http3OptionsBuilder, Protocol, PseudoId, PseudoOrder, PseudoOrderBuilder,
-        SettingId, SettingsOrder, SettingsOrderBuilder,
+        Http3Options, Http3OptionsBuilder, PseudoId, PseudoOrder, PseudoOrderBuilder, SettingId,
+        SettingsOrder, SettingsOrderBuilder,
     };
 }
 
@@ -388,6 +388,13 @@ fn _assert_impls() {
 
     assert_send::<Request>();
     assert_send::<RequestBuilder>();
+    assert_send::<upgrade::Protocol>();
+    assert_sync::<upgrade::Protocol>();
+    assert_clone::<upgrade::Protocol>();
+    assert_send::<upgrade::Upgrade>();
+    assert_sync::<upgrade::Upgrade>();
+    assert_clone::<upgrade::Upgrade>();
+    assert_send::<Upgraded>();
     #[cfg(feature = "ws")]
     assert_send::<ws::WebSocketRequestBuilder>();
 

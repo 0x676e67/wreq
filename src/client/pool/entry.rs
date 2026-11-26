@@ -38,8 +38,8 @@ pub(super) trait Entry<T>: Send + Sync {
     /// Checks out an established sender that supports extended CONNECT.
     ///
     /// A miss does not create, join, or discard work.
-    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
     #[must_use]
+    #[cfg(any(feature = "http2", feature = "http3"))]
     fn checkout_extended_connect(
         &self,
         _expiry: Option<(Instant, Duration)>,

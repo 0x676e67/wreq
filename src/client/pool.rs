@@ -402,7 +402,7 @@ where
     ///
     /// Probes completed senders only. A miss leaves pool entries intact.
     #[must_use]
-    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+    #[cfg(any(feature = "http2", feature = "http3"))]
     pub(super) fn checkout_extended_connect(&self, key: &K) -> Option<Pooled> {
         if !self.inner.enabled {
             return None;
@@ -1096,7 +1096,6 @@ where
             .map(|service| Pooled::reuse(PooledInner::Mux(service), self.state.clone()))
     }
 
-    #[cfg(feature = "ws")]
     fn checkout_extended_connect(&self, expiry: Option<(Instant, Duration)>) -> Option<Pooled> {
         checkout_extended_connect(&self.service, &self.state, expiry)
     }
@@ -1236,7 +1235,6 @@ where
         )
     }
 
-    #[cfg(feature = "ws")]
     fn checkout_extended_connect(&self, expiry: Option<(Instant, Duration)>) -> Option<Pooled> {
         checkout_extended_connect(self.service.upgrade(), &self.state, expiry)
     }
@@ -1269,7 +1267,7 @@ where
 }
 
 /// Probes `singleton` for an established, reusable sender whose peer enabled extended CONNECT.
-#[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+#[cfg(any(feature = "http2", feature = "http3"))]
 fn checkout_extended_connect<M, T>(
     singleton: &Singleton<M, T, EntryState>,
     state: &Arc<entry::EntryState>,

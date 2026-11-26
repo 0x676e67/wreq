@@ -8,10 +8,10 @@ pub(super) mod layer;
 pub(super) mod pool;
 pub(super) mod request;
 pub(super) mod response;
-pub(super) mod upgrade;
 
 #[cfg(feature = "multipart")]
 pub mod multipart;
+pub mod upgrade;
 #[cfg(feature = "ws")]
 pub mod ws;
 

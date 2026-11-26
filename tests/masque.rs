@@ -452,21 +452,20 @@ async fn connect_sends_only_the_marker_of_the_connection_protocol() {
                 .unwrap()
         };
 
-        // HTTP/3 ignores the HTTP/2 marker, which would leave an ordinary CONNECT.
-        #[cfg(feature = "http2")]
+        // HTTP/3 rejects protocols that cannot be encoded as an HTTP/3 `:protocol` token.
         {
-            let mut request = connect("/h2");
-            request
-                .extensions_mut()
-                .insert(http2::ext::Protocol::from_static("websocket"));
+            let mut request = connect("/custom");
+            *request.upgrade_mut() = Some(wreq::upgrade::Upgrade::extended_connect(
+                wreq::upgrade::Protocol::from_static("custom"),
+            ));
             let error = client.execute(request).await.unwrap_err();
             assert!(
-                format!("{error:?}").contains("does not match the connection's HTTP version"),
+                format!("{error:?}").contains("not supported on HTTP/3"),
                 "{error:?}"
             );
         }
 
-        // Without a marker, HTTP/3 sends an ordinary CONNECT naming only the authority.
+        // Without an upgrade protocol, HTTP/3 sends an ordinary CONNECT naming only the authority.
         assert_eq!(
             client.execute(connect("/")).await.unwrap().status(),
             StatusCode::OK
@@ -480,9 +479,9 @@ async fn connect_sends_only_the_marker_of_the_connection_protocol() {
         assert!(request.extensions().get::<http3::ext::Protocol>().is_none());
 
         let mut request = connect("/chat");
-        request
-            .extensions_mut()
-            .insert(wreq::http3::Protocol::WEBSOCKET);
+        *request.upgrade_mut() = Some(wreq::upgrade::Upgrade::extended_connect(
+            wreq::upgrade::Protocol::WEBSOCKET,
+        ));
         let result = client.execute(request).await;
         if extended {
             assert_eq!(result.unwrap().status(), StatusCode::OK);
@@ -503,7 +502,7 @@ async fn connect_sends_only_the_marker_of_the_connection_protocol() {
         drop(server);
     }
 
-    // HTTP/1 has no extended CONNECT, so the HTTP/3 marker fails before any byte is sent.
+    // HTTP/1 has no extended CONNECT, so it fails before any byte is sent.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let accepted = tokio::spawn(async move {
@@ -515,16 +514,16 @@ async fn connect_sends_only_the_marker_of_the_connection_protocol() {
         .timeout(TIMEOUT)
         .build()
         .unwrap();
-    let mut request = client
+    let request = client
         .request(Method::CONNECT, format!("http://{addr}/chat"))
+        .upgrade(wreq::upgrade::Upgrade::extended_connect(
+            wreq::upgrade::Protocol::WEBSOCKET,
+        ))
         .build()
         .unwrap();
-    request
-        .extensions_mut()
-        .insert(wreq::http3::Protocol::WEBSOCKET);
     let error = client.execute(request).await.unwrap_err();
     assert!(
-        format!("{error:?}").contains("does not match the connection's HTTP version"),
+        format!("{error:?}").contains("extended CONNECT requires HTTP/2 or HTTP/3"),
         "{error:?}"
     );
     drop(client);
