@@ -496,6 +496,10 @@ async fn tunnel_includes_user_agent() {
 
 #[tokio::test]
 async fn tunnel_reports_proxy_status() {
+    use std::error::Error as _;
+
+    use netty::proxy::tunnel::TunnelError;
+
     let url = "https://hyper.rs.local/prox";
 
     let server = server::http(move |req| {
@@ -521,10 +525,18 @@ async fn tunnel_reports_proxy_status() {
         .await
         .unwrap_err();
 
-    let err = support::error::inspect(err).pop().unwrap();
+    assert!(err.is_proxy_connect(), "{err:?}");
+    assert!(!err.is_proxy_auth(), "{err:?}");
+    let tunnel_error = std::iter::successors(err.source(), |&source| source.source())
+        .find_map(|source| source.downcast_ref::<TunnelError>());
     assert!(
-        err.contains("unsuccessful (status 402)"),
-        "proxy status expected, got: {err:?}"
+        matches!(
+            tunnel_error,
+            Some(TunnelError::TunnelUnsuccessful(
+                http::StatusCode::PAYMENT_REQUIRED
+            ))
+        ),
+        "{err:?}"
     );
 }
 

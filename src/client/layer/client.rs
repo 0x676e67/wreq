@@ -27,6 +27,7 @@ use netty::{
     body::Incoming,
     conn::{self, TrySendError as ConnTrySendError},
     http1::Http1Options,
+    proxy::tunnel::TunnelError,
     rt::Executor as _,
 };
 use pool::Ver;
@@ -39,13 +40,14 @@ use {
 };
 
 use self::lazy::{Started as Lazy, lazy};
+#[cfg(feature = "socks")]
+use crate::conn::proxy;
 use crate::{
     client::layer::config::RequestOptions,
     config::RequestConfig,
     conn::{
         Connected, Connection,
         descriptor::{ConnectionDescriptor, ConnectionId},
-        proxy,
     },
     error::ProxyConnect,
     rt::{Executor, Timer},
@@ -1046,7 +1048,7 @@ impl Error {
         E: Into<BoxError>,
     {
         let error = error.into();
-        let kind = if error.is::<proxy::tunnel::TunnelError>() || error.is::<ProxyConnect>() || {
+        let kind = if error.is::<TunnelError>() || error.is::<ProxyConnect>() || {
             #[cfg(feature = "socks")]
             {
                 error.is::<proxy::socks::SocksError>()
