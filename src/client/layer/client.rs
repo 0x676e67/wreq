@@ -1049,7 +1049,7 @@ impl Error {
         let kind = if error.is::<proxy::tunnel::TunnelError>() || error.is::<ProxyConnect>() || {
             #[cfg(feature = "socks")]
             {
-                error.is::<proxy::socks::SocksError>()
+                error.is::<netty::proxy::socks::SocksError>()
             }
             #[cfg(not(feature = "socks"))]
             {

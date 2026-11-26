@@ -353,6 +353,7 @@ async fn loopback_proxy_error(
 async fn socks5_preserves_rejected_credentials_error() {
     use std::error::Error;
 
+    use netty::proxy::socks::SocksError;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let err = loopback_proxy_error("socks5h://user:pass@", async |mut stream| {
@@ -372,8 +373,8 @@ async fn socks5_preserves_rejected_credentials_error() {
     assert!(err.is_proxy_auth(), "{err:?}");
     assert!(
         std::iter::successors(err.source(), |&source| source.source()).any(|source| matches!(
-            source.downcast_ref::<tokio_socks::Error>(),
-            Some(tokio_socks::Error::PasswordAuthFailure(1))
+            source.downcast_ref::<SocksError>(),
+            Some(SocksError::PasswordAuthFailure(1))
         )),
         "{err:?}"
     );

@@ -2,6 +2,8 @@ use std::{error::Error as StdError, fmt, io};
 
 use http::Uri;
 use netty::ext::ReasonPhrase;
+#[cfg(feature = "socks")]
+use netty::proxy::socks::SocksError;
 
 use crate::{StatusCode, util::Escape};
 
@@ -251,8 +253,6 @@ impl Error {
     /// credentials, and negotiation with no acceptable authentication method.
     /// A forwarding proxy's 407 is available through [`Response::status`](crate::Response::status).
     pub fn is_proxy_auth(&self) -> bool {
-        #[cfg(feature = "socks")]
-        use crate::conn::proxy::socks::SocksError;
         use crate::conn::proxy::tunnel::TunnelError;
 
         let mut source = self.source();
@@ -263,11 +263,11 @@ impl Error {
             }
 
             #[cfg(feature = "socks")]
-            if let Some(SocksError::Socks(
-                tokio_socks::Error::PasswordAuthFailure(_)
-                | tokio_socks::Error::AuthorizationRequired
-                | tokio_socks::Error::NoAcceptableAuthMethods,
-            )) = err.downcast_ref::<SocksError>()
+            if let Some(
+                SocksError::PasswordAuthFailure(_)
+                | SocksError::AuthorizationRequired
+                | SocksError::NoAcceptableAuthMethods,
+            ) = err.downcast_ref::<SocksError>()
             {
                 return true;
             }
@@ -287,7 +287,7 @@ impl Error {
 
         while let Some(err) = source {
             #[cfg(feature = "socks")]
-            if err.is::<crate::conn::proxy::socks::SocksError>() {
+            if err.is::<SocksError>() {
                 return false;
             }
 
@@ -603,22 +603,14 @@ mod tests {
     #[cfg(feature = "socks")]
     #[test]
     fn is_proxy_auth_socks() {
-        use crate::conn::proxy::socks::SocksError;
-
-        let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
-            tokio_socks::Error::PasswordAuthFailure(1),
-        ))));
-        assert!(err.is_proxy_auth());
-
-        let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
-            tokio_socks::Error::AuthorizationRequired,
-        ))));
-        assert!(err.is_proxy_auth());
-
-        let err = Error::request(ProxyConnect(Box::new(SocksError::Socks(
-            tokio_socks::Error::NoAcceptableAuthMethods,
-        ))));
-        assert!(err.is_proxy_auth());
+        for error in [
+            SocksError::PasswordAuthFailure(1),
+            SocksError::AuthorizationRequired,
+            SocksError::NoAcceptableAuthMethods,
+        ] {
+            let err = Error::request(ProxyConnect(Box::new(error)));
+            assert!(err.is_proxy_auth(), "{err:?}");
+        }
 
         let err = Error::request(ProxyConnect(Box::new(SocksError::MissingHost)));
         assert!(!err.is_proxy_auth());
@@ -627,8 +619,6 @@ mod tests {
     #[cfg(feature = "socks")]
     #[test]
     fn socks_connect_failure_exposes_its_io_error() {
-        use crate::conn::proxy::socks::SocksError;
-
         let refused = io::Error::from(io::ErrorKind::ConnectionRefused);
         let err = Error::request(ProxyConnect(Box::new(SocksError::ConnectFailed(Box::new(
             refused,
