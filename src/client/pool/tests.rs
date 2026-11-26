@@ -260,18 +260,18 @@ fn http3_connector() -> TestConnector {
     )
 }
 
+/// Counts connector clones made during pool operations.
+struct CloneCounter(Arc<AtomicUsize>);
+
+impl Clone for CloneCounter {
+    fn clone(&self) -> Self {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Self(self.0.clone())
+    }
+}
+
 #[test]
 fn protocol_modes_clone_connector_once() {
-    /// Counts connector clones made during protocol entry construction.
-    struct CloneCounter(Arc<AtomicUsize>);
-
-    impl Clone for CloneCounter {
-        fn clone(&self) -> Self {
-            self.0.fetch_add(1, Ordering::Relaxed);
-            Self(self.0.clone())
-        }
-    }
-
     let clones = Arc::new(AtomicUsize::new(0));
     let counter = CloneCounter(clones.clone());
     let connector = tower::service_fn(move |_: Unnameable| {
@@ -761,8 +761,16 @@ async fn pool_max_size_evicts_only_idle_groups() {
             .expect("successful request");
     }
 
+    let clones = Arc::new(AtomicUsize::new(0));
+    let counter = CloneCounter(clones.clone());
+    let connector = ServiceBuilder::new()
+        .map_request(move |request: Unnameable| {
+            let _counter = &counter;
+            request
+        })
+        .service(TestConnector::KeepsAlive);
     let pool = new_pool(
-        TestConnector::KeepsAlive,
+        connector,
         Config {
             max_size: NonZeroUsize::new(1),
             ..Config::default()
@@ -791,9 +799,19 @@ async fn pool_max_size_evicts_only_idle_groups() {
 
     drop(first);
 
-    let mut entries = pool.inner.entries.lock();
-    assert!(entries.get_mut(&first_key).is_some());
-    assert!(entries.get_mut(&second_key).is_none());
+    {
+        let mut entries = pool.inner.entries.lock();
+        assert!(entries.get_mut(&first_key).is_some());
+        assert!(entries.get_mut(&second_key).is_none());
+    }
+
+    let before = clones.load(Ordering::Relaxed);
+    let reused = pool
+        .checkout(Some(&first_key), &first_request)
+        .await
+        .expect("retained group checkout");
+    assert!(reused.is_reused());
+    assert_eq!(clones.load(Ordering::Relaxed), before);
 }
 
 #[tokio::test]

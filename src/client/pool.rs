@@ -407,6 +407,14 @@ where
             let entry =
                 entries.get_or_insert_with(key, || self.inner.new_entry(Some(key), request));
             let discarded = entry.prune(now, self.inner.idle_timeout);
+            if self.inner.has_group_limit
+                && let Some(pooled) = entry.checkout_ready(now, self.inner.idle_timeout)
+            {
+                drop(entries);
+                drop(discarded);
+                pooled.cleanup.maintain(true);
+                return Ok(pooled);
+            }
             let (future, redundant) = entry.checkout(request, true);
             drop(entries);
             drop(discarded);

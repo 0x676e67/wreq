@@ -253,11 +253,83 @@ impl Error {
         false
     }
 
+    /// Returns `true` for a 407 response to HTTP CONNECT (including CONNECT-UDP) or a SOCKS5
+    /// authentication error.
+    ///
+    /// With the `socks` feature, the SOCKS5 cases are missing required credentials, rejected
+    /// credentials, and negotiation with no acceptable authentication method.
+    /// A forwarding proxy's 407 is available through [`Response::status`](crate::Response::status).
+    pub fn is_proxy_auth(&self) -> bool {
+        #[cfg(feature = "http3")]
+        use netty::proxy::masque::MasqueError;
+        #[cfg(feature = "socks")]
+        use netty::proxy::socks::SocksError;
+        #[cfg(all(feature = "http3", feature = "socks"))]
+        use netty::proxy::socks::udp::AssociateError;
+        use netty::proxy::tunnel::TunnelError;
+
+        let mut source = self.source();
+
+        while let Some(err) = source {
+            if let Some(TunnelError::ProxyAuthRequired) = err.downcast_ref::<TunnelError>() {
+                return true;
+            }
+
+            #[cfg(feature = "socks")]
+            if let Some(SocksError::Handshake(cause)) = err.downcast_ref::<SocksError>()
+                && matches!(
+                    cause.downcast_ref::<tokio_socks::Error>(),
+                    Some(
+                        tokio_socks::Error::PasswordAuthFailure(_)
+                            | tokio_socks::Error::AuthorizationRequired
+                            | tokio_socks::Error::NoAcceptableAuthMethods
+                    )
+                )
+            {
+                return true;
+            }
+
+            #[cfg(feature = "http3")]
+            if let Some(MasqueError::Unsuccessful(StatusCode::PROXY_AUTHENTICATION_REQUIRED)) =
+                err.downcast_ref::<MasqueError>()
+            {
+                return true;
+            }
+
+            #[cfg(all(feature = "http3", feature = "socks"))]
+            if let Some(AssociateError::AuthFailed | AssociateError::NoAcceptableAuth) =
+                err.downcast_ref::<AssociateError>()
+            {
+                return true;
+            }
+
+            source = err.source();
+        }
+
+        false
+    }
+
     /// Returns true if the error is related to a connection reset.
+    ///
+    /// Resets during SOCKS proxy setup are reported by [`Self::is_proxy_connect`] instead.
+    /// The underlying I/O error remains available through the source chain.
     pub fn is_connection_reset(&self) -> bool {
         let mut source = self.source();
 
         while let Some(err) = source {
+            #[cfg(feature = "socks")]
+            if err.is::<netty::proxy::socks::SocksError>() {
+                return false;
+            }
+
+            #[cfg(all(feature = "http3", feature = "socks"))]
+            if matches!(
+                err.downcast_ref::<ProxyConnect>(),
+                Some(ProxyConnect::Socks(_))
+            ) {
+                return false;
+            }
+
             if let Some(io) = err.downcast_ref::<io::Error>()
                 && io.kind() == io::ErrorKind::ConnectionReset
             {
@@ -428,6 +500,8 @@ pub(crate) enum ProxyConnect {
     /// Only QUIC proxy validation fails without a source.
     #[cfg(feature = "http3")]
     Message(&'static str),
+    #[cfg(all(feature = "http3", feature = "socks"))]
+    Socks(BoxError),
     Source(BoxError),
 }
 
@@ -467,6 +541,8 @@ impl StdError for ProxyConnect {
         match self {
             #[cfg(feature = "http3")]
             Self::Message(_) => None,
+            #[cfg(all(feature = "http3", feature = "socks"))]
+            Self::Socks(error) => Some(&**error),
             Self::Source(error) => Some(&**error),
         }
     }
@@ -478,6 +554,8 @@ impl fmt::Display for ProxyConnect {
         match self {
             #[cfg(feature = "http3")]
             Self::Message(message) => f.write_str(message),
+            #[cfg(all(feature = "http3", feature = "socks"))]
+            Self::Socks(error) => fmt::Display::fmt(error, f),
             Self::Source(error) => fmt::Display::fmt(error, f),
         }
     }
@@ -581,6 +659,57 @@ mod tests {
         let io = io::Error::from(io::ErrorKind::TimedOut);
         let nested = Error::request(io);
         assert!(nested.is_timeout());
+    }
+
+    #[test]
+    fn is_proxy_auth() {
+        use netty::proxy::tunnel::TunnelError;
+
+        let err = Error::request(TunnelError::ProxyAuthRequired);
+        assert!(err.is_proxy_auth());
+
+        let err = Error::request(TunnelError::TunnelUnsuccessful(
+            StatusCode::SERVICE_UNAVAILABLE,
+        ));
+        assert!(!err.is_proxy_auth());
+    }
+
+    #[cfg(feature = "socks")]
+    #[test]
+    fn is_proxy_auth_socks() {
+        use netty::proxy::socks::SocksError;
+
+        for cause in [
+            tokio_socks::Error::PasswordAuthFailure(1),
+            tokio_socks::Error::AuthorizationRequired,
+            tokio_socks::Error::NoAcceptableAuthMethods,
+        ] {
+            let err = Error::request(SocksError::Handshake(cause.into()));
+            assert!(err.is_proxy_auth(), "{err:?}");
+        }
+
+        let err = Error::request(SocksError::MissingHost);
+        assert!(!err.is_proxy_auth());
+    }
+
+    #[cfg(feature = "socks")]
+    #[test]
+    fn socks_connect_failure_exposes_its_io_error() {
+        use netty::proxy::socks::SocksError;
+
+        let refused = io::Error::from(io::ErrorKind::ConnectionRefused);
+        let err = Error::request(SocksError::ConnectFailed(refused.into()));
+
+        let mut source = err.source();
+        let mut kind = None;
+        while let Some(inner) = source {
+            if let Some(io) = inner.downcast_ref::<io::Error>() {
+                kind = Some(io.kind());
+            }
+            source = inner.source();
+        }
+
+        assert_eq!(kind, Some(io::ErrorKind::ConnectionRefused));
     }
 
     #[test]

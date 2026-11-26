@@ -8,6 +8,7 @@ use std::{
     future::{Future, poll_fn},
     mem,
     pin::pin,
+    sync::Arc,
     task::{Context, Poll, ready},
 };
 
@@ -24,7 +25,6 @@ use tower::{BoxError, Service, ServiceExt};
 use {
     crate::cookie::{CookieStore, Cookies},
     http::header::COOKIE,
-    std::sync::Arc,
 };
 
 use super::{
@@ -63,6 +63,11 @@ pub(super) struct Config {
 /// reconciliation, and retries unsent failures without cloning bodies.
 #[derive(Clone)]
 pub(super) struct Client {
+    inner: Arc<Inner>,
+}
+
+/// Pool and defaults shared by HTTP service clones and in-flight requests.
+struct Inner {
     pool: pool::Pool<reuse::Key, conn::ConnectService, DynRuntime>,
     protocol: Protocol,
     config: ConnectConfig,
@@ -161,25 +166,24 @@ impl Client {
             &config.connect_config,
         )?;
         Ok(Self {
-            pool: pool::Pool::new(
-                connector,
-                runtime.clone(),
-                config.pool_config,
-                proto::Builder::new(runtime, &config.connect_config, true),
-            ),
-            protocol: config.protocol,
-            config: config.connect_config,
-            #[cfg(feature = "cookies")]
-            cookie_store: config.cookie_store,
+            inner: Arc::new(Inner {
+                pool: pool::Pool::new(
+                    connector,
+                    runtime.clone(),
+                    config.pool_config,
+                    proto::Builder::new(runtime, &config.connect_config, true),
+                ),
+                protocol: config.protocol,
+                config: config.connect_config,
+                #[cfg(feature = "cookies")]
+                cookie_store: config.cookie_store,
+            }),
         })
     }
 
     /// Checks out a sender, applies protocol and cookie settings, and sends the request once.
-    async fn send_once(
-        pool: &pool::Pool<reuse::Key, conn::ConnectService, DynRuntime>,
-        mut request: Request,
-        #[cfg(feature = "cookies")] cookie_store: Option<&Arc<dyn CookieStore>>,
-    ) -> Result<Response<Incoming>, Error> {
+    async fn send_once(&self, mut request: Request) -> Result<Response<Incoming>, Error> {
+        let pool = &self.inner.pool;
         // RFC 8441 §3 and RFC 9220 §3: extended CONNECT only after the peer enabled it. A
         // miss keeps the dedicated HTTP/1.1 upgrade, so no HTTP/2 or HTTP/3 connection opens.
         let established: Option<pool::Pooled> = cfg_select! {
@@ -226,7 +230,7 @@ impl Client {
 
         #[cfg(feature = "cookies")]
         let cookie_store = RequestConfig::<Arc<dyn CookieStore>>::get(request.inner.extensions())
-            .or(cookie_store)
+            .or(self.inner.cookie_store.as_ref())
             .cloned();
 
         #[cfg(feature = "cookies")]
@@ -321,29 +325,14 @@ impl Service<http::Request<Body>> for Client {
     }
 
     fn call(&mut self, request: http::Request<Body>) -> Self::Future {
-        let request = match Request::prepare(request, self.protocol, &self.config) {
+        let request = match Request::prepare(request, self.inner.protocol, &self.inner.config) {
             Ok(request) => request,
             Err(error) => return Either::Right(future::err(error.into())),
         };
 
-        let pool = self.pool.clone();
-        #[cfg(feature = "cookies")]
-        let cookie_store = self.cookie_store.clone();
-
+        let client = self.clone();
         Either::Left(Box::pin(async move {
-            let pool = &pool;
-            #[cfg(feature = "cookies")]
-            let cookie_store = cookie_store.as_ref();
-
-            retry_unsent(request, |request| {
-                Self::send_once(
-                    pool,
-                    request,
-                    #[cfg(feature = "cookies")]
-                    cookie_store,
-                )
-            })
-            .await
+            retry_unsent(request, |request| client.send_once(request)).await
         }))
     }
 }

@@ -15,6 +15,7 @@ use std::{
 
 use bytes::Bytes;
 use http::{Request, Response, Version, header::PROXY_AUTHORIZATION};
+use socket2::SockRef;
 use support::h3;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -36,7 +37,7 @@ struct SocksProxy {
     addr: SocketAddr,
     associated: mpsc::UnboundedReceiver<()>,
     closed: mpsc::UnboundedReceiver<()>,
-    shutdown: Option<oneshot::Sender<()>>,
+    shutdown: Option<oneshot::Sender<bool>>,
     task: JoinHandle<()>,
 }
 
@@ -278,7 +279,12 @@ impl SocksProxy {
                             assert_eq!(received.unwrap(), 0);
                             break;
                         }
-                        _ = &mut stopped => break,
+                        reset = &mut stopped => {
+                            if reset == Ok(true) {
+                                SockRef::from(&control).set_linger(Some(Duration::ZERO)).unwrap();
+                            }
+                            break;
+                        }
                         accepted = listener.accept() => panic!("unexpected second association: {accepted:?}"),
                     }
                 }
@@ -528,7 +534,7 @@ async fn socks_udp_authentication_dns_and_pool_reuse() {
             result = &mut request => panic!("stalled request completed early: {result:?}"),
         };
         assert_eq!(received.uri().path(), "/stall");
-        proxy.shutdown.take().unwrap().send(()).unwrap();
+        proxy.shutdown.take().unwrap().send(false).unwrap();
         next(&mut proxy.closed).await;
         (&mut proxy.task).await.unwrap();
         let error = request.await.unwrap().unwrap_err();
@@ -550,6 +556,7 @@ async fn socks_udp_authentication_rejection_closes_the_control_connection() {
         .await
         .unwrap_err();
     assert!(error.is_proxy_connect() && !error.is_timeout(), "{error:?}");
+    assert!(error.is_proxy_auth(), "{error:?}");
     assert!(messages(&error).contains(&"SOCKS5 authentication error".into()));
     next(&mut proxy.closed).await;
     (&mut proxy.task).await.unwrap();
@@ -695,10 +702,16 @@ async fn socks_udp_relay_dns_and_control_connection_share_the_attempt_lifetime()
         DnsFailure,
         Cancel,
         ControlClosed,
+        ControlReset,
     }
 
     let origin = Origin::new();
-    for end in [End::DnsFailure, End::Cancel, End::ControlClosed] {
+    for end in [
+        End::DnsFailure,
+        End::Cancel,
+        End::ControlClosed,
+        End::ControlReset,
+    ] {
         let mut proxy = SocksProxy::new(Mode::Relay {
             origin: origin.addr(),
             remote: true,
@@ -727,14 +740,24 @@ async fn socks_udp_relay_dns_and_control_connection_share_the_attempt_lifetime()
             assert!(error.is_proxy_connect() && !error.is_timeout(), "{error:?}");
         } else {
             let dropped = next(&mut resolving).await;
-            if matches!(end, End::ControlClosed) {
-                proxy.shutdown.take().unwrap().send(()).unwrap();
+            if matches!(end, End::ControlClosed | End::ControlReset) {
+                let reset = matches!(end, End::ControlReset);
+                proxy.shutdown.take().unwrap().send(reset).unwrap();
                 let error = tokio::time::timeout(Duration::from_secs(2), request)
                     .await
-                    .expect("control EOF must interrupt DNS before the request timeout")
+                    .expect("control closure must interrupt DNS before the request timeout")
                     .unwrap()
                     .unwrap_err();
                 assert!(error.is_proxy_connect() && !error.is_timeout(), "{error:?}");
+                if reset {
+                    assert!(!error.is_connection_reset(), "{error:?}");
+                    assert!(
+                        std::iter::successors(error.source(), |&source| source.source())
+                            .filter_map(|source| source.downcast_ref::<io::Error>())
+                            .any(|source| source.kind() == io::ErrorKind::ConnectionReset),
+                        "{error:?}"
+                    );
+                }
             } else {
                 request.abort();
                 assert!(request.await.unwrap_err().is_cancelled());
