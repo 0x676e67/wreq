@@ -6,26 +6,22 @@
 //! <https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2>
 
 use std::{
-    future::Future,
     sync::Arc,
     task::{self, Poll},
     time::{Duration, Instant},
 };
 
-use futures_util::{
-    TryFutureExt,
-    future::{self, BoxFuture, Either},
-};
+use futures_util::future::BoxFuture;
 use http::{
-    HeaderValue, Method, Request, Response, Uri,
+    HeaderValue, Method, Request, Uri,
     header::{HOST, PROXY_AUTHORIZATION},
 };
 use http_body::Body;
-use netty::{body::Incoming, conn, http1::Http1Options};
+use netty::{conn, http1::Http1Options};
 use tokio::sync::oneshot;
 use tower::{BoxError, Layer, Service};
 
-use super::{Established, SendError, configure};
+use super::{Established, configure};
 use crate::{
     client::error::{Error, ErrorKind},
     conn::Connected,
@@ -186,20 +182,15 @@ impl<B> Connection<B> {
 
     /// Polls the HTTP/1 sender until it can accept another request.
     #[inline(always)]
-    pub fn poll_ready(
-        &mut self,
-        cx: &mut task::Context<'_>,
-    ) -> Poll<Result<(), SendError<Request<B>>>> {
-        self.tx
-            .poll_ready(cx)
-            .map_err(|error| SendError::Request(Error::closed(error)))
+    pub fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
+        self.tx.poll_ready(cx).map_err(Error::closed)
     }
 
     /// Prepares the HTTP/1 wire headers and target, then dispatches `req` without boxing.
-    pub fn send_request(
+    pub(in crate::client) fn send_request(
         &mut self,
         mut req: Request<B>,
-    ) -> impl Future<Output = Result<Response<Incoming>, SendError<Request<B>>>> + use<B>
+    ) -> Result<conn::ResponseFuture<B>, Error>
     where
         B: Body + Send + 'static,
     {
@@ -212,8 +203,8 @@ impl<B> Connection<B> {
         }
 
         // Adjust the request URI based on the connection type and HTTP method.
-        let result = if req.method() == Method::CONNECT {
-            authority_form(req.uri_mut())
+        if req.method() == Method::CONNECT {
+            authority_form(req.uri_mut())?;
         } else if self.connected.is_proxied() {
             if let Some(auth) = self.connected.proxy_auth() {
                 req.headers_mut()
@@ -223,15 +214,11 @@ impl<B> Connection<B> {
             if let Some(headers) = self.connected.proxy_headers() {
                 crate::util::replace_headers(req.headers_mut(), headers.clone());
             }
-            Ok(())
         } else {
-            origin_form(req.uri_mut())
-        };
-
-        match result {
-            Ok(()) => Either::Left(self.tx.try_send_request(req).map_err(SendError::protocol)),
-            Err(error) => Either::Right(future::err(error.into())),
+            origin_form(req.uri_mut())?;
         }
+
+        Ok(self.tx.try_send_request(req))
     }
 }
 

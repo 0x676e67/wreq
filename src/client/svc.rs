@@ -7,24 +7,23 @@
 use std::{
     future::{Future, poll_fn},
     mem,
-    pin::pin,
+    pin::Pin,
     task::{Context, Poll, ready},
 };
 
-use futures_util::future::{self, BoxFuture, Either, Ready};
 #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
 use http::{
     HeaderMap,
     header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
 };
 use http::{HeaderValue, Method, Response, Uri, Version, header::HOST, uri::Authority};
-use netty::body::Incoming;
+use netty::{body::Incoming, conn::TrySendError};
 use tower::{BoxError, Service};
 #[cfg(feature = "cookies")]
 use {
     crate::cookie::{CookieStore, Cookies},
     http::header::COOKIE,
-    std::{borrow::Cow, sync::Arc},
+    std::sync::Arc,
 };
 
 use super::{
@@ -42,6 +41,9 @@ use crate::{
     reuse,
     rt::{DynRuntime, Executor},
 };
+
+/// Maximum unsent or canceled-checkout retries performed within a single poll.
+const MAX_ATTEMPTS_PER_POLL: usize = 2;
 
 /// Client-wide settings assembled by [`ClientBuilder`](crate::ClientBuilder) to construct
 /// the low-level [`Client`] service.
@@ -81,13 +83,8 @@ pub(super) struct DedicatedConnection {
     pub(super) extended_connect: bool,
 }
 
-/// Prepared HTTP request paired with its connection request and optional pool keys.
-///
-/// Returned inside [`Error`] only when no request bytes were encoded, so
-/// [`retry_unsent`] can retry without cloning the body.
-struct Request {
-    /// HTTP request sent over the checked-out connection and restored on unsent retry.
-    inner: http::Request<Body>,
+/// Validated connection request and pool keys extracted once before dispatch.
+struct Prepared {
     /// Origin, protocol mode, and merged connection options used when dialing.
     connect: conn::Request<ConnectConfig>,
     /// Pool compatibility key; absent for dedicated connections that bypass the pool.
@@ -99,36 +96,120 @@ struct Request {
     extended_connect_key: Option<reuse::Key>,
 }
 
-/// Failure returned by a pool checkout or send attempt.
+/// Named response future returned by [`Client`].
 ///
-/// Distinguishes retryable unsent failures (which return the original [`Request`]
-/// intact) from terminal checkout or transport errors.
-enum Error {
-    /// A shared HTTP/2 or HTTP/3 checkout batch was canceled before connecting.
-    CheckoutCanceled {
-        /// Underlying connect/cancel error.
-        error: error::Error,
-        /// Unsent request returned intact for retry.
-        request: Box<Request>,
-    },
-    /// The connection failed before encoding any request bytes.
+/// Stored inline inside `Client`'s outer `Pending` box; boxing `Pending` would add a
+/// second per-request allocation.
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub(super) struct ResponseFuture(ResponseFutureKind);
+
+#[allow(clippy::large_enum_variant)]
+enum ResponseFutureKind {
+    /// Request dispatch and retry state machine.
+    Pending(Retry<Dispatch>),
+    /// Request preparation failure deferred until the first poll.
+    Error(Option<error::Error>),
+}
+
+/// Cold-path error and unsent request carried out of an [`Attempt`] for retry.
+struct Retryable {
+    error: error::Error,
+    request: http::Request<Body>,
+}
+
+/// Terminal or retryable outcome of a single dispatch attempt.
+enum AttemptOutcome<T> {
+    /// Attempt completed with a response or terminal error.
+    Done(Result<T, error::Error>),
+    /// A shared checkout batch was canceled before connecting; retry intact.
+    CheckoutCanceled(Box<Retryable>),
+    /// Connection failed before encoding any bytes; retry only if `connection_reused`.
     Unsent {
-        /// Underlying send error surfaced if this attempt is not retried.
-        error: error::Error,
-        /// Unsent request returned intact for retry.
-        request: Box<Request>,
-        /// Whether the failed sender came from the pool; only reused connections are retried.
+        retry: Box<Retryable>,
         connection_reused: bool,
     },
-    /// A non-retryable checkout or transport failure.
-    Terminal(error::Error),
+}
+
+/// Result of advancing an [`Attempt`]: either in-flight state `S` or a final outcome.
+enum Step<S, T> {
+    Pending(S),
+    Ready(AttemptOutcome<T>),
+}
+
+/// Single-attempt state machine driven by [`Retry`], borrowing shared context across polls.
+trait Attempt {
+    type Output;
+    type State;
+
+    /// Starts a new attempt from `request` and polls it until it yields or finishes.
+    fn start(
+        &mut self,
+        request: http::Request<Body>,
+        uri: &Uri,
+        cx: &mut Context<'_>,
+    ) -> Step<Self::State, Self::Output>;
+
+    /// Polls an in-flight attempt stored in `state`.
+    fn poll(
+        &mut self,
+        state: &mut Self::State,
+        uri: &Uri,
+        cx: &mut Context<'_>,
+    ) -> Poll<AttemptOutcome<Self::Output>>;
+}
+
+/// Retries a canceled checkout or an unsent request from a reused connection.
+///
+/// Restores the original URI, wire version, and auto-generated `Cookie` headers before
+/// each retry, yielding after a bounded number of attempts per poll.
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+struct Retry<A: Attempt> {
+    attempt: A,
+    uri: Uri,
+    version: Version,
+    #[cfg(feature = "cookies")]
+    had_cookie: bool,
+    state: RetryState<A::State>,
+}
+
+// `S` is `SendState` (~168 B) in production; boxing `Start` would add a per-request allocation.
+#[allow(clippy::large_enum_variant)]
+enum RetryState<S> {
+    Start(http::Request<Body>),
+    Running(S),
+    Done,
+}
+
+/// Shared pool, cookie store, and prepared connection metadata for one HTTP dispatch.
+struct Dispatch {
+    pool: pool::Pool<reuse::Key, conn::ConnectService, DynRuntime>,
+    #[cfg(feature = "cookies")]
+    cookie_store: Option<Arc<dyn CookieStore>>,
+    prepared: Prepared,
+}
+
+/// Per-attempt dispatch state owned by [`Retry`] while [`Dispatch`] is in flight.
+enum SendState {
+    /// Cold dial or queued checkout; boxed so warm hits do not pay for `Checkout + Request`.
+    Checkout(Box<(pool::Checkout, http::Request<Body>)>),
+    /// `future` drops before `pooled` so cancellation tears down the stream first.
+    Sending {
+        future: netty::conn::ResponseFuture<Body>,
+        pooled: pool::Pooled,
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        extended: bool,
+        #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+        upgrade: Option<Http1Upgrade>,
+    },
+    Done,
 }
 
 /// Original RFC 6455 headers of a WebSocket handshake rewritten for extended CONNECT.
 ///
+/// Boxed so non-WebSocket requests do not reserve space for a `HeaderMap` in [`State::Sending`].
 /// Restored in order if the request returns unsent so a retry can fall back to HTTP/1.1.
 #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-struct Http1Upgrade(HeaderMap);
+struct Http1Upgrade(Box<HeaderMap>);
 
 // ===== impl Config =====
 
@@ -173,123 +254,305 @@ impl Client {
             cookie_store: config.cookie_store,
         })
     }
+}
 
-    /// Checks out a sender, applies protocol and cookie settings, and sends the request once.
-    async fn send_once(
-        pool: &pool::Pool<reuse::Key, conn::ConnectService, DynRuntime>,
-        mut request: Request,
-        #[cfg(feature = "cookies")] cookie_store: Option<&Arc<dyn CookieStore>>,
-    ) -> Result<Response<Incoming>, Error> {
-        // RFC 8441 §3 and RFC 9220 §3: extended CONNECT only after the peer enabled it. A
-        // miss keeps the dedicated HTTP/1.1 upgrade, so no HTTP/2 or HTTP/3 connection opens.
-        let established: Option<pool::Pooled> = cfg_select! {
-            all(feature = "ws", any(feature = "http2", feature = "http3")) => request
-                .extended_connect_key
-                .as_ref()
-                .and_then(|key| pool.checkout_extended_connect(key)),
-            _ => None,
+impl Service<http::Request<Body>> for Client {
+    type Response = Response<Incoming>;
+    type Error = BoxError;
+    type Future = ResponseFuture;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, mut request: http::Request<Body>) -> Self::Future {
+        let prepared = match Prepared::prepare(&mut request, self.protocol, &self.config) {
+            Ok(prepared) => prepared,
+            Err(error) => return ResponseFuture(ResponseFutureKind::Error(Some(error))),
         };
 
-        #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
-        let upgrade = established.as_ref().map(|pooled| {
-            Http1Upgrade::into_extended_connect(&mut request.inner, pooled.version())
-        });
-
-        let mut pooled = match established {
-            Some(pooled) => pooled,
-            None => match pool
-                .checkout(request.pool_key.as_ref(), &request.connect)
-                .await
-            {
-                Ok(pooled) => pooled,
-                Err(error) if pool::is_canceled(&*error) => {
-                    return Err(Error::CheckoutCanceled {
-                        error: error::Error::new(ErrorKind::Connect, error),
-                        request: Box::new(request),
-                    });
-                }
-                Err(error) => {
-                    return Err(Error::Terminal(error::Error::new(
-                        ErrorKind::Connect,
-                        error,
-                    )));
-                }
-            },
-        };
-
-        // Cookies keep the request URI; only the wire target of a CONNECT changes.
-        let is_https = request.inner.uri().is_https();
         #[cfg(feature = "cookies")]
-        let cookie_store = RequestConfig::<Arc<dyn CookieStore>>::get(request.inner.extensions())
+        let cookie_store = RequestConfig::<Arc<dyn CookieStore>>::get(request.extensions())
             .cloned()
-            .map(Cow::Owned)
-            .or_else(|| cookie_store.map(Cow::Borrowed));
-        #[cfg(feature = "cookies")]
-        let cookie_uri = cookie_store.is_some().then(|| request.inner.uri().clone());
+            .or_else(|| self.cookie_store.clone());
 
-        let _extended =
-            reconcile(&mut request.inner, &pooled, request.negotiable).map_err(Error::Terminal)?;
+        ResponseFuture(ResponseFutureKind::Pending(Retry::new(
+            request,
+            Dispatch {
+                pool: self.pool.clone(),
+                #[cfg(feature = "cookies")]
+                cookie_store,
+                prepared,
+            },
+        )))
+    }
+}
 
+// ===== impl ResponseFuture =====
+
+impl Future for ResponseFuture {
+    type Output = Result<Response<Incoming>, BoxError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match &mut self.get_mut().0 {
+            ResponseFutureKind::Pending(retry) => Pin::new(retry).poll(cx),
+            ResponseFutureKind::Error(error) => match error.take() {
+                Some(error) => Poll::Ready(Err(error.into())),
+                None => Poll::Pending,
+            },
+        }
+    }
+}
+
+// ===== impl Retry =====
+
+impl<A: Attempt> Retry<A> {
+    /// Captures retry restoration metadata and defers the first attempt until polled.
+    fn new(request: http::Request<Body>, attempt: A) -> Self {
+        let uri = request.uri().clone();
+        let version = request.version();
         #[cfg(feature = "cookies")]
-        if let (Some(cookie_store), Some(uri)) = (cookie_store.as_deref(), cookie_uri.as_ref()) {
-            apply_request_cookies(
-                &mut request.inner,
-                cookie_store.as_ref(),
-                uri,
-                pooled.version(),
-            );
+        let had_cookie = request.headers().contains_key(COOKIE);
+
+        Self {
+            attempt,
+            uri,
+            version,
+            #[cfg(feature = "cookies")]
+            had_cookie,
+            state: RetryState::Start(request),
+        }
+    }
+}
+
+impl<A: Attempt> Future for Retry<A>
+where
+    A: Unpin,
+    A::State: Unpin,
+{
+    type Output = Result<A::Output, BoxError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        // Retry recovery follows hyper-util's legacy client.
+        // Poll budgeting follows Hyper's HTTP/1 dispatcher.
+        for _ in 0..MAX_ATTEMPTS_PER_POLL {
+            let outcome = match &mut this.state {
+                RetryState::Start(_) => {
+                    let RetryState::Start(request) =
+                        mem::replace(&mut this.state, RetryState::Done)
+                    else {
+                        return Poll::Pending;
+                    };
+                    match this.attempt.start(request, &this.uri, cx) {
+                        Step::Pending(state) => {
+                            this.state = RetryState::Running(state);
+                            return Poll::Pending;
+                        }
+                        Step::Ready(outcome) => outcome,
+                    }
+                }
+                RetryState::Running(state) => {
+                    let outcome = ready!(this.attempt.poll(state, &this.uri, cx));
+                    this.state = RetryState::Done;
+                    outcome
+                }
+                RetryState::Done => return Poll::Pending,
+            };
+
+            let mut request = match outcome {
+                AttemptOutcome::Done(result) => return Poll::Ready(result.map_err(Into::into)),
+                AttemptOutcome::CheckoutCanceled(retry) => {
+                    let Retryable {
+                        error: _error,
+                        request,
+                    } = *retry;
+                    trace!("singleton connection batch canceled, trying again (reason={_error:?})");
+                    request
+                }
+                AttemptOutcome::Unsent {
+                    retry,
+                    connection_reused: true,
+                } => {
+                    let Retryable {
+                        error: _error,
+                        request,
+                    } = *retry;
+                    trace!("unstarted request canceled, trying again (reason={_error:?})");
+                    request
+                }
+                AttemptOutcome::Unsent {
+                    retry,
+                    connection_reused: false,
+                } => return Poll::Ready(Err(retry.error.into())),
+            };
+
+            *request.uri_mut() = this.uri.clone();
+            *request.version_mut() = this.version;
+            // Regenerate automatic cookies for the next protocol; retain user headers.
+            #[cfg(feature = "cookies")]
+            if !this.had_cookie {
+                request.headers_mut().remove(COOKIE);
+            }
+            this.state = RetryState::Start(request);
         }
 
-        let mut response = match pooled.send_request(request.inner).await {
+        // The next attempt has not registered a waker; resume it after yielding.
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    }
+}
+
+// ===== impl Dispatch =====
+
+impl Dispatch {
+    /// Transitions after a completed pool checkout.
+    fn on_checkout(
+        &self,
+        result: Result<pool::Pooled, BoxError>,
+        request: http::Request<Body>,
+        uri: &Uri,
+        cx: &mut Context<'_>,
+    ) -> Step<SendState, Response<Incoming>> {
+        match result {
+            Ok(pooled) => self.poll_send(
+                request,
+                pooled,
+                #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+                None,
+                uri,
+                cx,
+            ),
+            Err(error) if pool::is_canceled(&*error) => {
+                Step::Ready(AttemptOutcome::CheckoutCanceled(Box::new(Retryable {
+                    error: error::Error::new(ErrorKind::Connect, error),
+                    request,
+                })))
+            }
+            Err(error) => Step::Ready(AttemptOutcome::Done(Err(error::Error::new(
+                ErrorKind::Connect,
+                error,
+            )))),
+        }
+    }
+
+    /// Reconciles `request` for `pooled`, applies cookies, sends, and polls once.
+    fn poll_send(
+        &self,
+        mut request: http::Request<Body>,
+        mut pooled: pool::Pooled,
+        #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))] upgrade: Option<
+            Http1Upgrade,
+        >,
+        uri: &Uri,
+        cx: &mut Context<'_>,
+    ) -> Step<SendState, Response<Incoming>> {
+        let _extended = match reconcile(&mut request, &pooled, self.prepared.negotiable) {
+            Ok(extended) => extended,
+            Err(error) => return Step::Ready(AttemptOutcome::Done(Err(error))),
+        };
+
+        // Cookies keep the original request URI; only the wire target of a CONNECT changes.
+        #[cfg(feature = "cookies")]
+        if let Some(cookie_store) = self.cookie_store.as_deref() {
+            apply_request_cookies(&mut request, cookie_store, uri, pooled.version());
+        }
+
+        let mut future = match pooled.send_request(request) {
+            Ok(future) => future,
+            Err(error) => {
+                return Step::Ready(AttemptOutcome::Done(Err(
+                    error.with_connect_info(pooled.connected().clone())
+                )));
+            }
+        };
+
+        match Pin::new(&mut future).poll(cx) {
+            Poll::Pending => Step::Pending(SendState::Sending {
+                future,
+                pooled,
+                #[cfg(any(feature = "http2", feature = "http3"))]
+                extended: _extended,
+                #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+                upgrade,
+            }),
+            Poll::Ready(result) => {
+                drop(future);
+                Step::Ready(self.finish(
+                    result,
+                    pooled,
+                    #[cfg(any(feature = "http2", feature = "http3"))]
+                    _extended,
+                    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+                    upgrade,
+                    uri,
+                ))
+            }
+        }
+    }
+
+    /// Finalizes a completed send, classifying unsent errors or attaching metadata and cookies.
+    fn finish(
+        &self,
+        result: Result<Response<Incoming>, TrySendError<http::Request<Body>>>,
+        mut pooled: pool::Pooled,
+        #[cfg(any(feature = "http2", feature = "http3"))] extended: bool,
+        #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))] upgrade: Option<
+            Http1Upgrade,
+        >,
+        uri: &Uri,
+    ) -> AttemptOutcome<Response<Incoming>> {
+        let mut response = match result {
             Ok(response) => response,
             Err(mut error) => {
                 let connection_reused = pooled.is_reused();
                 let connect_info = pooled.connected().clone();
                 let unnegotiated_h2 = pooled.version() == Version::HTTP_2
-                    && is_https
+                    && uri.is_https()
                     && !connect_info.is_negotiated_h2();
 
                 // A returned request was not sent; only protocol rejections are final,
                 // since they repeat on the same connection.
-                if !error.is_user()
+                if !error.error().is_user()
                     && let Some(unsent) = error.take_message()
                 {
-                    request.inner = unsent;
+                    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+                    let mut unsent = unsent;
                     #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
                     if let Some(upgrade) = upgrade {
-                        upgrade.restore(&mut request.inner);
+                        upgrade.restore(&mut unsent);
                     }
 
-                    return Err(Error::Unsent {
-                        error: with_h2_alpn_context(
-                            error.into_client_error(ErrorKind::Canceled),
-                            unnegotiated_h2,
-                        )
-                        .with_connect_info(connect_info),
-                        request: Box::new(request),
+                    return AttemptOutcome::Unsent {
+                        retry: Box::new(Retryable {
+                            error: with_h2_alpn_context(
+                                error::Error::new(ErrorKind::Canceled, error.into_error()),
+                                unnegotiated_h2,
+                            )
+                            .with_connect_info(connect_info),
+                            request: unsent,
+                        }),
                         connection_reused,
-                    });
+                    };
                 }
 
                 // The peer's SETTINGS may have arrived while the send was pending.
                 #[cfg(any(feature = "http2", feature = "http3"))]
-                if _extended && pooled.extended_connect() == Some(false) {
-                    return Err(Error::Terminal(extended_connect_disabled(&pooled)));
+                if extended && pooled.extended_connect() == Some(false) {
+                    return AttemptOutcome::Done(Err(extended_connect_disabled(&pooled)));
                 }
 
-                return Err(Error::Terminal(
-                    with_h2_alpn_context(
-                        error.into_client_error(ErrorKind::SendRequest),
-                        unnegotiated_h2,
-                    )
-                    .with_connect_info(connect_info),
-                ));
+                return AttemptOutcome::Done(Err(with_h2_alpn_context(
+                    error::Error::new(ErrorKind::SendRequest, error.into_error()),
+                    unnegotiated_h2,
+                )
+                .with_connect_info(connect_info)));
             }
         };
 
         #[cfg(feature = "cookies")]
-        if let (Some(cookie_store), Some(uri)) = (cookie_store.as_deref(), cookie_uri.as_ref()) {
-            store_response_cookies(&response, cookie_store.as_ref(), uri);
+        if let Some(cookie_store) = self.cookie_store.as_deref() {
+            store_response_cookies(&response, cookie_store, uri);
         }
 
         pooled.connected().set_extras(response.extensions_mut());
@@ -300,63 +563,109 @@ impl Client {
         if pooled.version() != Version::HTTP_11 || !pooled.is_pool_enabled() || pooled.is_ready() {
             drop(pooled);
         } else {
-            pool.execute(Box::pin(async move {
+            self.pool.execute(Box::pin(async move {
                 let _ = poll_fn(|cx| pooled.poll_ready(cx)).await;
             }));
         }
 
-        Ok(response)
+        AttemptOutcome::Done(Ok(response))
     }
 }
 
-impl Service<http::Request<Body>> for Client {
-    type Response = Response<Incoming>;
-    type Error = BoxError;
-    type Future = Either<
-        BoxFuture<'static, Result<Self::Response, Self::Error>>,
-        Ready<Result<Self::Response, Self::Error>>,
-    >;
+impl Attempt for Dispatch {
+    type Output = Response<Incoming>;
+    type State = SendState;
 
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
+    fn start(
+        &mut self,
+        request: http::Request<Body>,
+        uri: &Uri,
+        cx: &mut Context<'_>,
+    ) -> Step<Self::State, Self::Output> {
+        // RFC 8441 §3 and RFC 9220 §3: extended CONNECT only after the peer enabled it.
+        // A miss keeps the dedicated HTTP/1.1 upgrade without opening H2/H3.
+        #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+        if let Some(pooled) = self
+            .prepared
+            .extended_connect_key
+            .as_ref()
+            .and_then(|key| self.pool.checkout_extended_connect(key))
+        {
+            let mut request = request;
+            let upgrade = Http1Upgrade::into_extended_connect(&mut request, pooled.version());
+            return self.poll_send(request, pooled, Some(upgrade), uri, cx);
+        }
+
+        let mut future = self
+            .pool
+            .checkout(self.prepared.pool_key.as_ref(), &self.prepared.connect);
+        match Pin::new(&mut future).poll(cx) {
+            Poll::Pending => Step::Pending(SendState::Checkout(Box::new((future, request)))),
+            Poll::Ready(result) => {
+                drop(future);
+                self.on_checkout(result, request, uri, cx)
+            }
+        }
     }
 
-    fn call(&mut self, request: http::Request<Body>) -> Self::Future {
-        let request = match Request::prepare(request, self.protocol, &self.config) {
-            Ok(request) => request,
-            Err(error) => return Either::Right(future::err(error.into())),
-        };
-
-        let pool = self.pool.clone();
-        #[cfg(feature = "cookies")]
-        let cookie_store = self.cookie_store.clone();
-
-        Either::Left(Box::pin(async move {
-            let pool = &pool;
-            #[cfg(feature = "cookies")]
-            let cookie_store = cookie_store.as_ref();
-
-            retry_unsent(request, |request| {
-                Self::send_once(
-                    pool,
-                    request,
-                    #[cfg(feature = "cookies")]
-                    cookie_store,
-                )
-            })
-            .await
-        }))
+    fn poll(
+        &mut self,
+        state: &mut Self::State,
+        uri: &Uri,
+        cx: &mut Context<'_>,
+    ) -> Poll<AttemptOutcome<Self::Output>> {
+        match state {
+            SendState::Checkout(pending) => {
+                let result = ready!(Pin::new(&mut pending.0).poll(cx));
+                let SendState::Checkout(pending) = mem::replace(state, SendState::Done) else {
+                    return Poll::Pending;
+                };
+                let (future, request) = *pending;
+                drop(future);
+                match self.on_checkout(result, request, uri, cx) {
+                    Step::Pending(next) => {
+                        *state = next;
+                        Poll::Pending
+                    }
+                    Step::Ready(outcome) => Poll::Ready(outcome),
+                }
+            }
+            SendState::Sending { future, .. } => {
+                let result = ready!(Pin::new(future).poll(cx));
+                let SendState::Sending {
+                    pooled,
+                    #[cfg(any(feature = "http2", feature = "http3"))]
+                    extended,
+                    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+                    upgrade,
+                    ..
+                } = mem::replace(state, SendState::Done)
+                else {
+                    return Poll::Pending;
+                };
+                Poll::Ready(self.finish(
+                    result,
+                    pooled,
+                    #[cfg(any(feature = "http2", feature = "http3"))]
+                    extended,
+                    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+                    upgrade,
+                    uri,
+                ))
+            }
+            SendState::Done => Poll::Pending,
+        }
     }
 }
 
-// ===== impl Request =====
+// ===== impl Prepared =====
 
-impl Request {
-    /// Validates the request and freezes its pool key and connection config before dispatch.
+impl Prepared {
+    /// Validates `request` and freezes its pool key and connection config before dispatch.
     ///
     /// Redirect hops and user-level retries pass through here again.
     fn prepare(
-        mut request: http::Request<Body>,
+        request: &mut http::Request<Body>,
         client_protocol: Protocol,
         connect_config: &ConnectConfig,
     ) -> Result<Self, error::Error> {
@@ -458,7 +767,6 @@ impl Request {
         .then(|| connect.reuse_key(client_protocol));
 
         Ok(Self {
-            inner: request,
             connect,
             pool_key,
             negotiable,
@@ -466,73 +774,6 @@ impl Request {
             extended_connect_key,
         })
     }
-}
-
-/// Retries a canceled checkout or an unsent request from a reused connection.
-///
-/// Restores the original URI, wire version, and auto-generated `Cookie` headers before
-/// each retry, yielding after a bounded number of attempts per poll.
-async fn retry_unsent<T, F>(
-    request: Request,
-    mut attempt: impl FnMut(Request) -> F,
-) -> Result<T, BoxError>
-where
-    F: Future<Output = Result<T, Error>>,
-{
-    const MAX_ATTEMPTS_PER_POLL: usize = 2;
-
-    let uri = request.inner.uri().clone();
-    let version = request.inner.version();
-    #[cfg(feature = "cookies")]
-    let had_cookie = request.inner.headers().contains_key(COOKIE);
-    let mut future = pin!(attempt(request));
-
-    poll_fn(|cx| {
-        // Retry recovery follows hyper-util's legacy client.
-        // Poll budgeting follows Hyper's HTTP/1 dispatcher.
-        for _ in 0..MAX_ATTEMPTS_PER_POLL {
-            let mut request = match ready!(future.as_mut().poll(cx)) {
-                Ok(response) => return Poll::Ready(Ok(response)),
-                Err(Error::CheckoutCanceled {
-                    error: _error,
-                    request,
-                }) => {
-                    trace!("singleton connection batch canceled, trying again (reason={_error:?})");
-                    *request
-                }
-                Err(Error::Unsent {
-                    error: _error,
-                    request,
-                    connection_reused: true,
-                }) => {
-                    trace!("unstarted request canceled, trying again (reason={_error:?})");
-                    *request
-                }
-                Err(
-                    Error::Unsent {
-                        error,
-                        connection_reused: false,
-                        ..
-                    }
-                    | Error::Terminal(error),
-                ) => return Poll::Ready(Err(error.into())),
-            };
-
-            *request.inner.uri_mut() = uri.clone();
-            *request.inner.version_mut() = version;
-            // Regenerate automatic cookies for the next protocol; retain user headers.
-            #[cfg(feature = "cookies")]
-            if !had_cookie {
-                request.inner.headers_mut().remove(COOKIE);
-            }
-            future.set(attempt(request));
-        }
-
-        // The next attempt has not registered a waker; resume it after yielding.
-        cx.waker().wake_by_ref();
-        Poll::Pending
-    })
-    .await
 }
 
 // ===== impl Http1Upgrade =====
@@ -569,7 +810,7 @@ impl Http1Upgrade {
                 extended.append(name, value.clone());
             }
         }
-        Self(headers)
+        Self(Box::new(headers))
     }
 
     /// Restores the RFC 6455 GET after an unsent extended CONNECT, removing either marker.
@@ -580,7 +821,7 @@ impl Http1Upgrade {
         request.extensions_mut().remove::<http2::ext::Protocol>();
         #[cfg(feature = "http3")]
         request.extensions_mut().remove::<netty::http3::Protocol>();
-        *request.headers_mut() = self.0;
+        *request.headers_mut() = *self.0;
     }
 }
 
@@ -775,10 +1016,37 @@ fn store_response_cookies(
 mod tests {
     use std::sync::Arc;
 
+    use futures_util::future::{self, Ready};
     use tower::ServiceExt;
 
     use super::*;
     use crate::conn::{BoxedConnectLayer, Conn, Unnameable};
+
+    impl<F, T> Attempt for F
+    where
+        F: FnMut(http::Request<Body>) -> AttemptOutcome<T>,
+    {
+        type Output = T;
+        type State = std::convert::Infallible;
+
+        fn start(
+            &mut self,
+            request: http::Request<Body>,
+            _uri: &Uri,
+            _cx: &mut Context<'_>,
+        ) -> Step<Self::State, Self::Output> {
+            Step::Ready(self(request))
+        }
+
+        fn poll(
+            &mut self,
+            state: &mut Self::State,
+            _uri: &Uri,
+            _cx: &mut Context<'_>,
+        ) -> Poll<AttemptOutcome<Self::Output>> {
+            match *state {}
+        }
+    }
 
     fn client(
         mut config: Config,
@@ -798,7 +1066,10 @@ mod tests {
     #[test]
     fn entry_checks_reject_requests_and_strip_userinfo_before_keying() {
         let connect_config = ConnectConfig::default();
-        let prepare = |request| Request::prepare(request, Protocol::Auto, &connect_config);
+        let prepare = |mut request: http::Request<Body>| {
+            Prepared::prepare(&mut request, Protocol::Auto, &connect_config)
+                .map(|prepared| (request, prepared))
+        };
         for (method, version, uri, kind) in [
             (
                 Method::CONNECT,
@@ -833,10 +1104,10 @@ mod tests {
 
         let prepare_uri =
             |uri| prepare(http::Request::get(uri).body(Body::default()).unwrap()).unwrap();
-        let plain = prepare_uri("http://localhost/");
-        let userinfo = prepare_uri("http://user:pw@localhost/");
+        let (_, plain) = prepare_uri("http://localhost/");
+        let (userinfo_req, userinfo) = prepare_uri("http://user:pw@localhost/");
         assert!(plain.pool_key.is_some());
-        assert_eq!(userinfo.inner.uri(), "http://localhost/");
+        assert_eq!(userinfo_req.uri(), "http://localhost/");
         assert_eq!(userinfo.pool_key, plain.pool_key);
 
         #[cfg(feature = "ws")]
@@ -849,10 +1120,10 @@ mod tests {
                 })
                 .body(Body::default())
                 .unwrap();
-            let request = prepare(request).unwrap();
-            assert!(request.pool_key.is_none());
+            let (_, prepared) = prepare(request).unwrap();
+            assert!(prepared.pool_key.is_none());
             #[cfg(feature = "http2")]
-            assert_eq!(request.extended_connect_key, plain.pool_key);
+            assert_eq!(prepared.extended_connect_key, plain.pool_key);
         }
     }
 
@@ -861,66 +1132,62 @@ mod tests {
         use http_body_util::BodyExt;
 
         let connect_config = ConnectConfig::default();
-        let prepare = |request| Request::prepare(request, Protocol::Auto, &connect_config).unwrap();
-
         for reused in [true, false] {
             let mut calls = 0;
-            let mut key = None;
-            let attempt = |mut request: Request| {
+            let mut request = http::Request::builder()
+                .version(Version::HTTP_10)
+                .uri("http://localhost/upload?part=1")
+                .body(Body::from("payload"))
+                .unwrap();
+            let prepared =
+                Prepared::prepare(&mut request, Protocol::Auto, &connect_config).unwrap();
+            assert!(prepared.pool_key.is_some());
+
+            let mut retry = Retry::new(request, |mut request: http::Request<Body>| {
                 calls += 1;
-                let result = if calls == 1 {
-                    assert!(request.pool_key.is_some());
-                    key.clone_from(&request.pool_key);
-                    *request.inner.uri_mut() = Uri::from_static("/upload?part=1");
-                    *request.inner.version_mut() = Version::HTTP_2;
+                if calls == 1 {
+                    *request.uri_mut() = Uri::from_static("/upload?part=1");
+                    *request.version_mut() = Version::HTTP_2;
                     #[cfg(feature = "cookies")]
                     request
-                        .inner
                         .headers_mut()
                         .append(COOKIE, HeaderValue::from_static("h2=1"));
-                    Err(Error::Unsent {
-                        error: error::Error::new(
-                            ErrorKind::Canceled,
-                            std::io::Error::other("unsent"),
-                        ),
-                        request: Box::new(request),
+                    AttemptOutcome::Unsent {
+                        retry: Box::new(Retryable {
+                            error: error::Error::new(
+                                ErrorKind::Canceled,
+                                std::io::Error::other("unsent"),
+                            ),
+                            request,
+                        }),
                         connection_reused: reused,
-                    })
-                } else {
-                    assert_eq!(request.inner.uri(), "http://localhost/upload?part=1");
-                    assert_eq!(request.inner.version(), Version::HTTP_10);
-                    #[cfg(feature = "cookies")]
-                    assert!(!request.inner.headers().contains_key(COOKIE));
-                    assert_eq!(key, request.pool_key);
-                    if calls == 2 {
-                        Err(Error::CheckoutCanceled {
-                            error: error::Error::from_kind(ErrorKind::Connect),
-                            request: Box::new(request),
-                        })
-                    } else {
-                        Ok(request.inner.into_body())
                     }
-                };
-                future::ready(result)
-            };
-            let request = prepare(
-                http::Request::builder()
-                    .version(Version::HTTP_10)
-                    .uri("http://localhost/upload?part=1")
-                    .body(Body::from("payload"))
-                    .unwrap(),
-            );
-            let result = {
-                let mut retry = pin!(retry_unsent(request, attempt));
-                if reused {
-                    assert!(futures_util::poll!(retry.as_mut()).is_pending());
-                    let Poll::Ready(result) = futures_util::poll!(retry.as_mut()) else {
-                        panic!("the third attempt must finish on the next poll");
-                    };
-                    result
                 } else {
-                    retry.await
+                    assert_eq!(request.uri(), "http://localhost/upload?part=1");
+                    assert_eq!(request.version(), Version::HTTP_10);
+                    #[cfg(feature = "cookies")]
+                    assert!(!request.headers().contains_key(COOKIE));
+                    if calls == 2 {
+                        AttemptOutcome::CheckoutCanceled(Box::new(Retryable {
+                            error: error::Error::from_kind(ErrorKind::Connect),
+                            request,
+                        }))
+                    } else {
+                        AttemptOutcome::Done(Ok(request.into_body()))
+                    }
                 }
+            });
+
+            let result = if reused {
+                let mut task = tokio_test::task::spawn(retry);
+                assert!(task.poll().is_pending());
+                assert!(task.is_woken());
+                let Poll::Ready(result) = task.poll() else {
+                    panic!("the third attempt must finish on the next poll");
+                };
+                result
+            } else {
+                Pin::new(&mut retry).await
             };
 
             if reused {
@@ -938,27 +1205,27 @@ mod tests {
         #[cfg(feature = "cookies")]
         {
             let mut calls = 0;
-            let request = prepare(
-                http::Request::builder()
-                    .uri("https://localhost/")
-                    .header(COOKIE, "user=1")
-                    .header(COOKIE, "other=2")
-                    .body(Body::default())
-                    .unwrap(),
-            );
-            retry_unsent(request, |request| {
-                let values: Vec<_> = request.inner.headers().get_all(COOKIE).iter().collect();
+            let request = http::Request::builder()
+                .uri("https://localhost/")
+                .header(COOKIE, "user=1")
+                .header(COOKIE, "other=2")
+                .body(Body::default())
+                .unwrap();
+            Retry::new(request, |request: http::Request<Body>| {
+                let values: Vec<_> = request.headers().get_all(COOKIE).iter().collect();
                 assert_eq!(values, ["user=1", "other=2"]);
                 calls += 1;
-                future::ready(if calls == 1 {
-                    Err(Error::Unsent {
-                        error: error::Error::from_kind(ErrorKind::Canceled),
-                        request: Box::new(request),
+                if calls == 1 {
+                    AttemptOutcome::Unsent {
+                        retry: Box::new(Retryable {
+                            error: error::Error::from_kind(ErrorKind::Canceled),
+                            request,
+                        }),
                         connection_reused: true,
-                    })
+                    }
                 } else {
-                    Ok(())
-                })
+                    AttemptOutcome::Done(Ok(()))
+                }
             })
             .await
             .unwrap();

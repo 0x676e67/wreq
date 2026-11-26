@@ -1,19 +1,14 @@
 //! Shared sender and checkout state for multiplexed HTTP/2 and HTTP/3 connections.
 
 use std::{
-    future::Future,
     sync::Arc,
     task::{self, Poll},
     time::{Duration, Instant},
 };
 
-use futures_util::TryFutureExt;
-#[cfg(all(feature = "http2", feature = "http3"))]
-use futures_util::future::Either;
-use http::{Request, Response, Version};
-use netty::{body::Incoming, conn};
+use http::{Request, Version};
+use netty::conn;
 
-use super::SendError;
 use crate::{
     Body,
     client::error::Error,
@@ -179,7 +174,7 @@ impl Connection {
     }
 
     /// Polls the multiplexed sender until it can accept a request, poisoning it on error.
-    pub fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), SendError>> {
+    pub fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         let ready = match &mut self.tx {
             #[cfg(feature = "http2")]
             Sender::Http2(sender) => sender.poll_ready(cx),
@@ -191,29 +186,19 @@ impl Connection {
             self.connected().poison();
         }
 
-        ready.map_err(|error| SendError::Request(Error::closed(error)))
+        ready.map_err(Error::closed)
     }
 
-    /// Dispatches `req` over the shared HTTP/2 or HTTP/3 sender without boxing.
-    pub fn send_request(
+    /// Dispatches `req` over the shared HTTP/2 or HTTP/3 sender.
+    pub(in crate::client) fn send_request(
         &mut self,
         req: Request<Body>,
-    ) -> impl Future<Output = Result<Response<Incoming>, SendError>> + use<> {
-        cfg_select! {
-            all(feature = "http2", feature = "http3") => match &mut self.tx {
-                Sender::Http2(sender) => {
-                    Either::Left(sender.try_send_request(req).map_err(SendError::protocol))
-                }
-                Sender::Http3(sender) => {
-                    Either::Right(sender.try_send_request(req).map_err(SendError::protocol))
-                }
-            },
-            feature = "http2" => match &mut self.tx {
-                Sender::Http2(sender) => sender.try_send_request(req).map_err(SendError::protocol),
-            },
-            feature = "http3" => match &mut self.tx {
-                Sender::Http3(sender) => sender.try_send_request(req).map_err(SendError::protocol),
-            },
+    ) -> conn::ResponseFuture<Body> {
+        match &mut self.tx {
+            #[cfg(feature = "http2")]
+            Sender::Http2(sender) => sender.try_send_request(req),
+            #[cfg(feature = "http3")]
+            Sender::Http3(sender) => sender.try_send_request(req),
         }
     }
 }

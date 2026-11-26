@@ -35,14 +35,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(any(feature = "http2", feature = "http3"))]
-use futures_util::future::Either;
 use futures_util::{
     FutureExt, TryFutureExt,
     future::{BoxFuture, lazy},
 };
-use http::{Response, Version};
-use netty::body::Incoming;
+use http::Version;
+use netty::conn::ResponseFuture;
 use tower::{BoxError, Layer, Service, ServiceBuilder, ServiceExt};
 #[cfg(feature = "http2")]
 use {
@@ -61,7 +59,10 @@ use self::{
     expire::{Expire, Retain},
     map::Map,
 };
-use super::proto::{self, Established, SendError, http1};
+use super::{
+    error::Error,
+    proto::{self, Established, http1},
+};
 use crate::{
     Body,
     config::ConnectConfig,
@@ -224,12 +225,18 @@ struct ServiceEntry<S> {
     state: Arc<entry::EntryState>,
 }
 
+/// Named future returned by [`Pool::checkout`].
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub(super) struct Checkout(CheckoutFuture);
+
 /// Deferred checkout future polled after the pool map lock is released.
 ///
-/// Existing HTTP/2 and HTTP/3 generations avoid an extra box by holding their singleton
-/// future directly, while cold dials and HTTP/1 races stay boxed. In both cases the entry
-/// stays active until ownership transfers to [`Pooled`].
+/// Warm hits resolve immediately via `Ready`. Existing HTTP/2 and HTTP/3 generations avoid
+/// an extra box by holding their singleton future directly, while cold dials and HTTP/1
+/// races stay boxed.
 enum CheckoutFuture {
+    /// Reusable sender checked out synchronously on a pool hit.
+    Ready(Option<Pooled>),
     /// Unboxed checkout joining an existing multiplexed generation.
     #[cfg(any(feature = "http2", feature = "http3"))]
     Mux {
@@ -343,62 +350,52 @@ where
 
     /// Checks out a sender for `key`, creating a pool entry or dialing with `request` on a miss.
     ///
-    /// Entry creation and cloning `request` may run under the map lock; the checkout future is
+    /// Entry creation and cloning `request` may run under the map lock; the returned future is
     /// polled after unlocking. When pooling is disabled or `key` is absent, uses a
     /// temporary entry whose sender never returns to the pool.
-    pub(super) async fn checkout(
-        &self,
-        key: Option<&K>,
-        request: &Request<ConnectConfig>,
-    ) -> Result<Pooled, BoxError> {
+    pub(super) fn checkout(&self, key: Option<&K>, request: &Request<ConnectConfig>) -> Checkout {
         let Some(key) = key.filter(|_| self.inner.enabled) else {
             let (future, discarded) = self.inner.new_entry(None, request).checkout(request, false);
             drop(discarded);
-            return future.await;
+            return Checkout(future);
         };
 
-        // The guard needs a lexical scope outside await for this future to remain Send.
-        let future = {
-            let expiry = self.inner.expiry();
-            let mut entries = self.inner.entries.lock();
-            // Bounded checkout and pruning must stay serialized with LRU eviction.
-            if !self.inner.has_max_size
-                && let Some(entry) = entries.get_mut(key).cloned()
-            {
-                drop(entries);
-                if let Some(pooled) = entry.checkout_ready(expiry) {
-                    if !self.inner.expire.is_running() {
-                        self.inner.schedule_expiration();
-                    }
-                    return Ok(pooled);
+        let expiry = self.inner.expiry();
+        let mut entries = self.inner.entries.lock();
+        // Bounded checkout and pruning must stay serialized with LRU eviction.
+        if !self.inner.has_max_size
+            && let Some(entry) = entries.get_mut(key).cloned()
+        {
+            drop(entries);
+            if let Some(pooled) = entry.checkout_ready(expiry) {
+                if !self.inner.expire.is_running() {
+                    self.inner.schedule_expiration();
                 }
-                drop(entry);
-                entries = self.inner.entries.lock();
+                return Checkout(CheckoutFuture::Ready(Some(pooled)));
             }
-            // Prune only this group on checkout. A global retained-group scan
-            // would add O(group count) work and nested locking to every pool hit.
-            let entry =
-                entries.get_or_insert_with(key, || self.inner.new_entry(Some(key), request));
-            let discarded = entry.prune(expiry);
-            #[cfg(feature = "http2")]
-            if self.inner.has_max_size
-                && request.protocol() == Protocol::Auto
-                && let Some(pooled) = entry.checkout_ready(expiry)
-            {
-                // An established sender does not need an upgrade notification.
-                drop(entries);
-                drop(discarded);
-                pooled.cleanup.maintain(true);
-                return Ok(pooled);
-            }
-            let (future, redundant) = entry.checkout(request, true);
+            drop(entry);
+            entries = self.inner.entries.lock();
+        }
+        // Prune only this group on checkout. A global retained-group scan
+        // would add O(group count) work and nested locking to every pool hit.
+        let entry = entries.get_or_insert_with(key, || self.inner.new_entry(Some(key), request));
+        let discarded = entry.prune(expiry);
+        #[cfg(feature = "http2")]
+        if self.inner.has_max_size
+            && request.protocol() == Protocol::Auto
+            && let Some(pooled) = entry.checkout_ready(expiry)
+        {
+            // An established sender does not need an upgrade notification.
             drop(entries);
             drop(discarded);
-            drop(redundant);
-            future
-        };
-
-        future.await
+            pooled.cleanup.maintain(true);
+            return Checkout(CheckoutFuture::Ready(Some(pooled)));
+        }
+        let (future, redundant) = entry.checkout(request, true);
+        drop(entries);
+        drop(discarded);
+        drop(redundant);
+        Checkout(future)
     }
 
     /// Checks out an established HTTP/2 or HTTP/3 sender whose peer enabled extended CONNECT.
@@ -542,7 +539,7 @@ impl Pooled {
     }
 
     /// Polls the underlying sender for readiness, discarding dead connections on error.
-    pub(super) fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), SendError>> {
+    pub(super) fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         match &mut self.inner {
             PooledInner::Http1(service) => service.inner_mut().poll_ready(cx).map_err(|error| {
                 service.discard_on_drop();
@@ -556,19 +553,15 @@ impl Pooled {
         }
     }
 
-    /// Dispatches `req` over the checked-out connection without boxing the response future.
+    /// Dispatches `req` over the checked-out connection.
     pub(super) fn send_request(
         &mut self,
         req: http::Request<Body>,
-    ) -> impl Future<Output = Result<Response<Incoming>, SendError>> + use<> {
-        cfg_select! {
-            any(feature = "http2", feature = "http3") => match &mut self.inner {
-                PooledInner::Http1(service) => Either::Left(service.inner_mut().send_request(req)),
-                PooledInner::Mux(service) => Either::Right(service.inner_mut().send_request(req)),
-            },
-            _ => match &mut self.inner {
-                PooledInner::Http1(service) => service.inner_mut().send_request(req),
-            },
+    ) -> Result<ResponseFuture<Body>, Error> {
+        match &mut self.inner {
+            PooledInner::Http1(service) => service.inner_mut().send_request(req),
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            PooledInner::Mux(service) => Ok(service.inner_mut().send_request(req)),
         }
     }
 }
@@ -1295,13 +1288,29 @@ where
         .map(|service| Pooled::reuse(PooledInner::Mux(service), state.clone()))
 }
 
+// ===== impl Checkout =====
+
+impl Future for Checkout {
+    type Output = Result<Pooled, BoxError>;
+
+    #[inline]
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.get_mut().0).poll(cx)
+    }
+}
+
 // ===== impl CheckoutFuture =====
 
 impl Future for CheckoutFuture {
     type Output = Result<Pooled, BoxError>;
 
+    #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         match self.get_mut() {
+            Self::Ready(pooled) => match pooled.take() {
+                Some(pooled) => Poll::Ready(Ok(pooled)),
+                None => Poll::Pending,
+            },
             #[cfg(any(feature = "http2", feature = "http3"))]
             Self::Mux {
                 future,

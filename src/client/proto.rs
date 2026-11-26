@@ -20,12 +20,7 @@ use std::sync::Arc;
 #[cfg(feature = "http2")]
 use std::time::Instant;
 
-use http::Request;
-use netty::conn::TrySendError;
-
-use super::error::{Error, ErrorKind};
 use crate::{
-    Body,
     config::ConnectConfig,
     conn::{Connected, Io},
     rt::DynRuntime,
@@ -76,20 +71,6 @@ pub(super) struct Established {
     /// Time when the transport became available for protocol selection.
     #[cfg(feature = "http2")]
     idle_at: Instant,
-}
-
-/// Error returned while preparing or dispatching a protocol request.
-///
-/// Local failures, including HTTP/1 request preparation and sender readiness,
-/// carry no request for retry. Protocol failures preserve netty's optional
-/// unsent request so the outer client can retry only when encoding did not
-/// begin.
-#[derive(Debug)]
-pub enum SendError<R = Request<Body>> {
-    /// Local request preparation or readiness failure with no recoverable request.
-    Request(Error),
-    /// Protocol send failure that may carry the unsent request for retry.
-    Protocol(Box<TrySendError<R>>),
 }
 
 // ===== impl Builder =====
@@ -187,46 +168,5 @@ impl Established {
     #[cfg(feature = "http2")]
     pub(super) fn idle_at(&self) -> Instant {
         self.idle_at
-    }
-}
-
-// ===== impl SendError =====
-
-impl<R> From<Error> for SendError<R> {
-    fn from(error: Error) -> Self {
-        Self::Request(error)
-    }
-}
-
-impl<R> SendError<R> {
-    /// Boxes a protocol failure that may carry the complete unsent request.
-    #[must_use]
-    pub(super) fn protocol(error: TrySendError<R>) -> Self {
-        Self::Protocol(Box::new(error))
-    }
-
-    /// Returns whether the protocol rejected the request itself; such a failure repeats
-    /// on the same connection, so the returned request must not be retried.
-    #[must_use]
-    pub fn is_user(&self) -> bool {
-        matches!(self, Self::Protocol(error) if error.error().is_user())
-    }
-
-    /// Takes a request recovered before protocol encoding began.
-    #[must_use]
-    pub fn take_message(&mut self) -> Option<R> {
-        match self {
-            Self::Request(_) => None,
-            Self::Protocol(error) => error.take_message(),
-        }
-    }
-
-    /// Preserves local errors and assigns `kind` to protocol failures.
-    #[must_use]
-    pub fn into_client_error(self, kind: ErrorKind) -> Error {
-        match self {
-            Self::Request(error) => error,
-            Self::Protocol(error) => Error::new(kind, (*error).into_error()),
-        }
     }
 }

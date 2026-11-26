@@ -453,6 +453,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
                     .body(crate::Body::default())
                     .unwrap(),
             )
+            .unwrap()
             .await
             .unwrap();
         assert_eq!(response.version(), http::Version::HTTP_2);
@@ -583,7 +584,7 @@ async fn extended_connect_checkout_only_leases_established_senders() {
         let request = Request::get("http://localhost/")
             .body(crate::Body::default())
             .unwrap();
-        pooled.send_request(request).await.unwrap();
+        pooled.send_request(request).unwrap().await.unwrap();
         drop(pooled);
         let probed = pool.checkout_extended_connect(&key).unwrap();
         assert!(probed.version() == http::Version::HTTP_2 && probed.is_reused());
@@ -647,6 +648,7 @@ async fn checkouts_remove_empty_map_entries() {
                 .body(crate::Body::default())
                 .unwrap(),
         )
+        .unwrap()
         .await
         .expect("successful request");
     assert_eq!(response.status(), http::StatusCode::OK);
@@ -670,12 +672,14 @@ async fn checkouts_remove_empty_map_entries() {
         .await
         .expect("ready sender");
     let mut response = tokio_test::task::spawn(
-        pooled.send_request(
-            Request::builder()
-                .uri("http://localhost/")
-                .body(crate::Body::default())
-                .unwrap(),
-        ),
+        pooled
+            .send_request(
+                Request::builder()
+                    .uri("http://localhost/")
+                    .body(crate::Body::default())
+                    .unwrap(),
+            )
+            .unwrap(),
     );
     assert!(response.poll().is_pending());
     tokio::time::timeout(Duration::from_secs(1), request_read.notified())
@@ -704,6 +708,7 @@ async fn checkouts_remove_empty_map_entries() {
                 .body(crate::Body::default())
                 .unwrap(),
         )
+        .unwrap()
         .await
         .expect("successful request");
 
@@ -751,6 +756,7 @@ async fn pool_max_size_evicts_only_idle_groups() {
                     .body(crate::Body::default())
                     .unwrap(),
             )
+            .unwrap()
             .await
             .expect("successful request");
     }

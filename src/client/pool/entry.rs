@@ -29,6 +29,12 @@ pub(super) trait Entry<T>: Send + Sync {
     #[must_use]
     fn checkout_ready(&self, expiry: Option<(Instant, Duration)>) -> Option<Self::Sender>;
 
+    /// Selects a checkout, cloning `target` only if the chosen path needs it.
+    ///
+    /// Release the map lock before dropping detached transports or polling the future.
+    fn checkout(&self, target: &T, pool_enabled: bool)
+    -> (Self::Checkout, Option<Self::Discarded>);
+
     /// Checks out an established sender that supports extended CONNECT.
     ///
     /// A miss does not create, join, or discard work.
@@ -40,12 +46,6 @@ pub(super) trait Entry<T>: Send + Sync {
     ) -> Option<Self::Sender> {
         None
     }
-
-    /// Selects a checkout, cloning `target` only if the chosen path needs it.
-    ///
-    /// Release the map lock before dropping detached transports or polling the future.
-    fn checkout(&self, target: &T, pool_enabled: bool)
-    -> (Self::Checkout, Option<Self::Discarded>);
 
     /// Prunes stale state and returns it for drop after unlocking.
     ///
