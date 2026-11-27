@@ -64,7 +64,7 @@ impl ConfigServiceLayer {
                 https_only,
                 headers,
                 orig_headers: RequestConfig::new(orig_headers),
-                default_headers: RequestConfig::new(Some(true)),
+                default_headers: RequestConfig::new(true),
             }),
         }
     }

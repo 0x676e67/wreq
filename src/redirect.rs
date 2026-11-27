@@ -353,7 +353,7 @@ impl FollowRedirectPolicy {
     /// Creates a new redirect policy handler with the given [`Policy`].
     pub fn new(policy: Policy) -> Self {
         FollowRedirectPolicy {
-            policy: RequestConfig::new(Some(policy)),
+            policy: RequestConfig::new(policy),
             referrer: None,
             uris: Vec::new(),
             https_only: false,

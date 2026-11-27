@@ -449,7 +449,11 @@ impl ClientBuilder {
 
         // Prepare proxies
         if self.config.auto_sys_proxy {
-            self.config.svc.connect.proxies.push(ProxyMatcher::system());
+            self.config
+                .svc
+                .conn_config
+                .proxies
+                .push(ProxyMatcher::system());
         }
 
         // Create base client service
@@ -855,7 +859,11 @@ impl ClientBuilder {
     /// ```
     #[inline]
     pub fn proxy(mut self, proxy: Proxy) -> ClientBuilder {
-        self.config.svc.connect.proxies.push(proxy.into_matcher());
+        self.config
+            .svc
+            .conn_config
+            .proxies
+            .push(proxy.into_matcher());
         self.config.auto_sys_proxy = false;
         self
     }
@@ -869,7 +877,7 @@ impl ClientBuilder {
     /// This also disables the automatic usage of the "system" proxy.
     #[inline]
     pub fn no_proxy(mut self) -> ClientBuilder {
-        self.config.svc.connect.proxies.clear();
+        self.config.svc.conn_config.proxies.clear();
         self.config.auto_sys_proxy = false;
         self
     }
@@ -912,7 +920,7 @@ impl ClientBuilder {
     /// By default there is no connection timeout.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.svc.connect.connect_timeout = Some(timeout);
+        self.config.svc.conn_config.connect_timeout = Some(timeout);
         self
     }
 
@@ -925,7 +933,7 @@ impl ClientBuilder {
     /// [log]: https://crates.io/crates/log
     #[inline]
     pub fn connection_verbose(mut self, verbose: bool) -> ClientBuilder {
-        self.config.svc.connect.verbose = verbose;
+        self.config.svc.conn_config.verbose = verbose;
         self
     }
 
@@ -1033,7 +1041,7 @@ impl ClientBuilder {
     where
         T: Into<Option<Http1Options>>,
     {
-        self.config.svc.connect_config.set(options.into());
+        self.config.svc.config.set(options.into());
         self
     }
 
@@ -1045,7 +1053,7 @@ impl ClientBuilder {
     where
         T: Into<Option<Http2Options>>,
     {
-        self.config.svc.connect_config.set(options.into());
+        self.config.svc.config.set(options.into());
         self
     }
 
@@ -1056,7 +1064,7 @@ impl ClientBuilder {
     where
         T: Into<Option<netty::http3::Http3Options>>,
     {
-        self.config.svc.connect_config.set(options.into());
+        self.config.svc.config.set(options.into());
         self
     }
 
@@ -1070,7 +1078,7 @@ impl ClientBuilder {
     where
         T: Into<Option<crate::quic::QuicOptions>>,
     {
-        self.config.svc.connect_config.set(options.into());
+        self.config.svc.config.set(options.into());
         self
     }
 
@@ -1081,7 +1089,7 @@ impl ClientBuilder {
     /// Default is `true`.
     #[inline]
     pub fn tcp_nodelay(mut self, enabled: bool) -> ClientBuilder {
-        self.config.svc.connect.tcp_config.nodelay = enabled;
+        self.config.svc.conn_config.tcp_config.nodelay = enabled;
         self
     }
 
@@ -1095,7 +1103,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.connect.tcp_config.keepalive = val.into();
+        self.config.svc.conn_config.tcp_config.keepalive = val.into();
         self
     }
 
@@ -1109,7 +1117,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.connect.tcp_config.keepalive_interval = val.into();
+        self.config.svc.conn_config.tcp_config.keepalive_interval = val.into();
         self
     }
 
@@ -1123,7 +1131,7 @@ impl ClientBuilder {
     where
         C: Into<Option<u32>>,
     {
-        self.config.svc.connect.tcp_config.keepalive_retries = retries.into();
+        self.config.svc.conn_config.tcp_config.keepalive_retries = retries.into();
         self
     }
 
@@ -1145,14 +1153,14 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.connect.tcp_config.tcp_user_timeout = val.into();
+        self.config.svc.conn_config.tcp_config.tcp_user_timeout = val.into();
         self
     }
 
     /// Set whether sockets have `SO_REUSEADDR` enabled.
     #[inline]
     pub fn tcp_reuse_address(mut self, enabled: bool) -> ClientBuilder {
-        self.config.svc.connect.tcp_config.reuse_address = enabled;
+        self.config.svc.conn_config.tcp_config.reuse_address = enabled;
         self
     }
 
@@ -1173,7 +1181,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.connect.tcp_config.linger = val.into();
+        self.config.svc.conn_config.tcp_config.linger = val.into();
         self
     }
 
@@ -1185,7 +1193,7 @@ impl ClientBuilder {
     where
         S: Into<Option<usize>>,
     {
-        self.config.svc.connect.tcp_config.send_buffer_size = size.into();
+        self.config.svc.conn_config.tcp_config.send_buffer_size = size.into();
         self
     }
 
@@ -1197,7 +1205,7 @@ impl ClientBuilder {
     where
         S: Into<Option<usize>>,
     {
-        self.config.svc.connect.tcp_config.recv_buffer_size = size.into();
+        self.config.svc.conn_config.tcp_config.recv_buffer_size = size.into();
         self
     }
 
@@ -1219,7 +1227,7 @@ impl ClientBuilder {
     where
         D: Into<Option<Duration>>,
     {
-        self.config.svc.connect.happy_eyeballs_timeout = val.into();
+        self.config.svc.conn_config.happy_eyeballs_timeout = val.into();
         self
     }
 
@@ -1279,7 +1287,7 @@ impl ClientBuilder {
         let (ipv4, ipv6) = (ipv4.into(), ipv6.into());
         self.config
             .svc
-            .connect_config
+            .config
             .insert_if_some(ipv4)
             .insert_if_some(ipv6);
         self
@@ -1359,7 +1367,7 @@ impl ClientBuilder {
     {
         self.config
             .svc
-            .connect_config
+            .config
             .insert(Arc::<str>::from(interface.into()));
         self
     }
@@ -1371,7 +1379,7 @@ impl ClientBuilder {
     /// The identity is also offered to `https://` and `quic://` proxies that request one.
     #[inline]
     pub fn tls_identity(mut self, identity: Identity) -> ClientBuilder {
-        self.config.svc.connect.tls_config.identity = Some(identity);
+        self.config.svc.conn_config.tls_config.identity = Some(identity);
         self
     }
 
@@ -1381,7 +1389,7 @@ impl ClientBuilder {
     /// `https://` and `quic://` proxies.
     #[inline]
     pub fn tls_cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.svc.connect.tls_config.cert_store = Some(store);
+        self.config.svc.conn_config.tls_config.cert_store = Some(store);
         self
     }
 
@@ -1398,7 +1406,7 @@ impl ClientBuilder {
     /// as a last resort.
     #[inline]
     pub fn tls_cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
-        self.config.svc.connect.tls_config.cert_verification = cert_verification;
+        self.config.svc.conn_config.tls_config.cert_verification = cert_verification;
         self
     }
 
@@ -1414,7 +1422,7 @@ impl ClientBuilder {
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     #[inline]
     pub fn tls_verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.svc.connect.tls_config.verify_hostname = verify_hostname;
+        self.config.svc.conn_config.tls_config.verify_hostname = verify_hostname;
         self
     }
 
@@ -1424,14 +1432,14 @@ impl ClientBuilder {
     /// are never sent. Defaults to `true`.
     #[inline]
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.svc.connect.tls_config.sni = tls_sni;
+        self.config.svc.conn_config.tls_config.sni = tls_sni;
         self
     }
 
     /// Configures TLS key logging for the client.
     #[inline]
     pub fn tls_keylog(mut self, keylog: KeyLog) -> ClientBuilder {
-        self.config.svc.connect.tls_config.keylog = Some(keylog);
+        self.config.svc.conn_config.tls_config.keylog = Some(keylog);
         self
     }
 
@@ -1441,7 +1449,7 @@ impl ClientBuilder {
     /// TLS 1.3 and ignores this setting.
     #[inline]
     pub fn tls_min_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.svc.connect.tls_config.min_version = Some(version);
+        self.config.svc.conn_config.tls_config.min_version = Some(version);
         self
     }
 
@@ -1451,7 +1459,7 @@ impl ClientBuilder {
     /// maximum makes every HTTP/3 connection fail.
     #[inline]
     pub fn tls_max_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.svc.connect.tls_config.max_version = Some(version);
+        self.config.svc.conn_config.tls_config.max_version = Some(version);
         self
     }
 
@@ -1462,7 +1470,7 @@ impl ClientBuilder {
     /// feature to be enabled.
     #[inline]
     pub fn tls_info(mut self, tls_info: bool) -> ClientBuilder {
-        self.config.svc.connect.tls_config.tls_info = tls_info;
+        self.config.svc.conn_config.tls_config.tls_info = tls_info;
         self
     }
 
@@ -1472,7 +1480,7 @@ impl ClientBuilder {
     /// session settings. Setting a store does not enable session resumption on its own.
     #[inline]
     pub fn tls_session_store<S: IntoTlsSessionStore>(mut self, store: S) -> ClientBuilder {
-        self.config.svc.connect.tls_config.tickets =
+        self.config.svc.conn_config.tls_config.tickets =
             Arc::new(Tickets::new(Some(store.into_shared())));
         self
     }
@@ -1485,7 +1493,7 @@ impl ClientBuilder {
     where
         T: Into<Option<TlsOptions>>,
     {
-        self.config.svc.connect_config.set(options.into());
+        self.config.svc.config.set(options.into());
         self
     }
 
@@ -1628,7 +1636,7 @@ impl ClientBuilder {
             + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
-        self.config.svc.connect.layers.push(layer);
+        self.config.svc.conn_config.layers.push(layer);
         self
     }
 
@@ -1640,7 +1648,7 @@ impl ClientBuilder {
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> ClientBuilder {
         let emulate::Emulation(headers, orig_headers, connect_config) = emulation.into_emulation();
-        self.config.svc.connect_config.extend(connect_config);
+        self.config.svc.config.extend(connect_config);
         self.default_headers(headers).orig_headers(orig_headers)
     }
 }

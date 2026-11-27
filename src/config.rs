@@ -19,10 +19,10 @@ pub(crate) struct ConnectConfig {
 // ===== impl ConnectConfig =====
 
 impl ConnectConfig {
-    /// Attaches `base`'s local settings as defaults without chaining nested bases.
+    /// Uses `base`'s local settings as defaults, or clears the defaults when absent.
     #[must_use]
-    pub(crate) fn with_base(mut self, base: &Self) -> Self {
-        self.base = base.local.clone();
+    pub(crate) fn with_base<'a, T: Into<Option<&'a Self>>>(mut self, base: T) -> Self {
+        self.base = base.into().and_then(|base| base.local.clone());
         self
     }
 
@@ -122,6 +122,8 @@ impl ConnectConfig {
     }
 }
 
+impl_request_config_value!(ConnectConfig);
+
 /// Maps a marker key type to the value type stored inside [`http::Extensions`].
 ///
 /// Implement directly or via [`impl_request_config_value!`] to pair a key with
@@ -152,13 +154,13 @@ where
 {
     /// Creates a config holding `v`.
     #[must_use]
-    pub(crate) const fn new(v: Option<T::Value>) -> Self {
-        RequestConfig(v)
+    pub(crate) fn new<V: Into<Option<T::Value>>>(v: V) -> Self {
+        RequestConfig(v.into())
     }
 
     /// Borrows the stored value, if set.
     #[must_use]
-    pub(crate) const fn as_ref(&self) -> Option<&T::Value> {
+    pub(crate) fn as_ref(&self) -> Option<&T::Value> {
         self.0.as_ref()
     }
 
@@ -171,7 +173,7 @@ where
     /// Moves any override out of `extensions` into `self` and returns the effective value.
     #[must_use]
     pub(crate) fn load(&mut self, extensions: &mut Extensions) -> Option<&T::Value> {
-        if let Some(value) = RequestConfig::<T>::remove(extensions) {
+        if let Some(value) = self.remove(extensions) {
             self.0.replace(value);
         }
         self.as_ref()
@@ -197,8 +199,8 @@ where
 
     /// Removes and returns the override for `T` from `extensions`.
     #[must_use]
-    pub(crate) fn remove(extensions: &mut Extensions) -> Option<T::Value> {
-        extensions.remove::<RequestConfig<T>>()?.0
+    pub(crate) fn remove(&self, extensions: &mut Extensions) -> Option<T::Value> {
+        extensions.remove::<Self>()?.0
     }
 }
 
