@@ -233,25 +233,26 @@ impl Client {
     pub(super) fn new(
         runtime: DynRuntime,
         resolver: DynResolver,
-        config: Config,
+        Config {
+            protocol,
+            conn_config,
+            pool_config,
+            config,
+            #[cfg(feature = "cookies")]
+            cookie_store,
+        }: Config,
     ) -> crate::Result<Self> {
-        let connector = conn::Connect::new(
-            runtime.clone(),
-            resolver,
-            config.conn_config,
-            &config.config,
-        )?;
         Ok(Self {
             pool: pool::Pool::new(
-                connector,
+                conn::Connect::new(runtime.clone(), resolver, conn_config, &config)?,
                 runtime.clone(),
-                config.pool_config,
-                proto::Builder::new(runtime, &config.config, true),
+                pool_config,
+                proto::Builder::new(runtime, &config, true),
             ),
-            protocol: config.protocol,
-            config: RequestConfig::new(config.config),
+            protocol,
+            config: RequestConfig::new(config),
             #[cfg(feature = "cookies")]
-            cookie_store: RequestConfig::new(config.cookie_store),
+            cookie_store: RequestConfig::new(cookie_store),
         })
     }
 }
