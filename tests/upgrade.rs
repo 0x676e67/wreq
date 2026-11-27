@@ -38,7 +38,6 @@ async fn http_upgrade() {
         .get(format!("http://{}", server.addr()))
         .header(http::header::CONNECTION, "upgrade")
         .header(http::header::UPGRADE, "foobar")
-        .upgrade(wreq::upgrade::Upgrade::http1())
         .send()
         .await
         .unwrap();

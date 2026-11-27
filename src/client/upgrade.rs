@@ -42,10 +42,11 @@ pub struct Upgraded(upgrade::Upgraded);
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Protocol(Cow<'static, str>);
 
-/// Request-level HTTP upgrade and Extended CONNECT configuration.
+/// Optional request-level HTTP upgrade and Extended CONNECT configuration.
 ///
-/// Controls connection pool isolation, Extended CONNECT `:protocol` signaling, and adaptive
-/// reuse of an established HTTP/2 or HTTP/3 connection for HTTP/1.1 upgrades.
+/// Ordinary HTTP/1 `Upgrade` and plain `CONNECT` requests work without this setting. Use it
+/// only when requiring a dedicated HTTP/1 connection, Extended CONNECT `:protocol`, or
+/// adaptive reuse of an established HTTP/2 or HTTP/3 connection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Upgrade(Kind);
 
