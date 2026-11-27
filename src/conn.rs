@@ -6,7 +6,6 @@ pub(super) mod connector;
 pub(super) mod descriptor;
 pub(super) mod http;
 pub(super) mod net;
-pub(super) mod proxy;
 
 use std::{
     fmt::{self, Debug, Formatter},

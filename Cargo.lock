@@ -3982,7 +3982,6 @@ dependencies = [
  "http-body",
  "http-body-util",
  "http2",
- "httparse",
  "hyper",
  "hyper-util",
  "ipnet",
