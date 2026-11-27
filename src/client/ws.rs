@@ -84,13 +84,14 @@ impl WebSocketRequestBuilder {
     /// A WebSocket on a shared connection counts toward the server's concurrent stream limit and
     /// shares the connection flow-control window, so many open or unread WebSockets can delay
     /// other requests on that connection. A non-200 response to the Extended CONNECT fails the
-    /// handshake without retrying over HTTP/1.1. Use [`Version::HTTP_11`] to keep the WebSocket on
-    /// its own connection.
+    /// handshake without retrying over HTTP/1.1. Use [`Version::HTTP_11`] to avoid sharing a
+    /// multiplexed connection.
     ///
     /// # HTTP/1.1
     ///
-    /// - Always uses the standard `Upgrade: websocket` mechanism (RFC 6455) on a new, never pooled
-    ///   connection
+    /// - Always uses the standard `Upgrade: websocket` mechanism (RFC 6455) over HTTP/1.1
+    /// - The handshake can reuse an idle connection. A successful upgrade takes that connection out
+    ///   of the pool.
     ///
     /// # HTTP/2 and HTTP/3
     ///
@@ -483,15 +484,12 @@ impl WebSocketRequestBuilder {
 
                 *request.method_mut() = Method::GET;
                 *request.version_mut() = Some(Version::HTTP_11);
-                // Never reuse an idle socket or return this one to the pool. The default
-                // route may still reuse an established HTTP/2 or HTTP/3 connection instead.
-                let upgrade = if version.is_none() {
+                // The default route reuses an established HTTP/2 or HTTP/3 connection whose
+                // peer enabled extended CONNECT, otherwise opens a dedicated HTTP/1.1 socket.
+                *request.upgrade_mut() = version.is_none().then(|| {
                     Upgrade::adaptive(Protocol::WEBSOCKET)
                         .strip_headers([header::SEC_WEBSOCKET_KEY])
-                } else {
-                    Upgrade::http1()
-                };
-                *request.upgrade_mut() = Some(upgrade);
+                });
                 Some(nonce)
             }
             #[cfg(feature = "http2")]

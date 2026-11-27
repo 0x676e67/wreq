@@ -284,7 +284,7 @@ impl<T> Request<T> {
 
     /// Returns the origin URI for this connection.
     #[must_use]
-    fn uri(&self) -> &Uri {
+    pub(crate) fn uri(&self) -> &Uri {
         &self.uri
     }
 

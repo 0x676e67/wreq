@@ -257,6 +257,21 @@ async fn connect_target_names_default_port() {
             assert_eq!(res.headers()["x-host"], host);
         }
     }
+
+    #[cfg(feature = "http2")]
+    {
+        let client = Client::builder_tokio().proxy(proxy).build().unwrap();
+        let mut request = client
+            .request(http::Method::CONNECT, "http://connect.test/")
+            .version(http::Version::HTTP_11)
+            .build()
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(http2::ext::Protocol::from_static("foobar"));
+        let error = client.execute(request).await.unwrap_err();
+        assert!(format!("{error:?}").contains("UserUnsupportedVersion"));
+    }
 }
 
 #[cfg(feature = "ws")]
@@ -333,6 +348,27 @@ async fn websocket_uses_dedicated_http1_connection() {
     // The idle connection is still pooled, and the WebSocket socket never joined it.
     get().await.unwrap().bytes().await.unwrap();
     assert_eq!(accepted.load(Ordering::SeqCst), 2);
+
+    let request =
+        client
+            .get(format!("ws://{addr}"))
+            .upgrade(wreq::upgrade::Upgrade::extended_connect(
+                wreq::upgrade::Protocol::WEBSOCKET,
+            ));
+    let websocket = wreq::ws::WebSocketRequestBuilder::new(request)
+        .version(http::Version::HTTP_11)
+        .send()
+        .await
+        .unwrap()
+        .into_websocket()
+        .await
+        .unwrap();
+    assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    drop(websocket);
+
+    // The explicit HTTP/1.1 handshake consumed the idle socket.
+    get().await.unwrap().bytes().await.unwrap();
+    assert_eq!(accepted.load(Ordering::SeqCst), 3);
 }
 
 #[cfg(all(feature = "ws", feature = "http2"))]
