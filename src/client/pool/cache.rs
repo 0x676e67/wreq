@@ -1,14 +1,14 @@
 //! Races reusable services against newly created services.
 //!
 //! Manages exclusive services that handle one checkout at a time, such as HTTP/1 senders.
-//! Each [`Cache`] clone owns an independent readiness reservation, while idle services,
-//! FIFO waiters, and active counts are shared.
+//! Idle services, FIFO waiters, and active counts are shared under one group lock.
 //!
 //! # Checkout lifecycle
 //!
-//! 1. `poll_ready` reserves an idle service when available. Otherwise it polls the maker and
-//!    registers a waiter if the maker is pending.
-//! 2. `call` either returns the reserved service or races the waiter against a newly made service.
+//! 1. `poll_ready` always succeeds immediately so callers register in the FIFO queue before waiting
+//!    on connector admission or reuse delays.
+//! 2. `call` either returns an available idle service immediately or registers a FIFO waiter and
+//!    races reuse against maker readiness and dialing inside [`CacheFuture`].
 //! 3. [`Cached`] returns the service on drop unless readiness failed or the caller marked it for
 //!    discard. The caller is responsible for protocol-specific health checks before return.
 //!
@@ -23,24 +23,18 @@ use std::{
     pin::Pin,
     sync::{Arc, Weak},
     task::{self, Poll, Waker, ready},
+    time::Duration,
 };
 
 use futures_util::future::BoxFuture;
+use pin_project_lite::pin_project;
 use tokio::sync::watch;
 use tower::Service;
 
-use crate::{rt::Executor, sync::Mutex};
-
-/// Reports whether a raced maker future has begun work worth completing.
-///
-/// Cache policy waits can be canceled cheaply. Physical connection work may
-/// already own resources, so the event handler uses this signal before deciding
-/// whether to continue a lost race in the background.
-pub trait Started: Future {
-    /// Returns `true` after canceling the future would waste started work.
-    #[must_use]
-    fn started(&self) -> bool;
-}
+use crate::{
+    rt::{BoxSleep, Executor, Timer},
+    sync::Mutex,
+};
 
 /// Starts configuring a cache around a service maker.
 #[must_use]
@@ -53,9 +47,6 @@ pub(super) fn builder() -> Builder<events::Ignore> {
 
 /// A cloneable cache of exclusive services produced by `M`.
 ///
-/// Each clone reserves at most one service during `poll_ready`, and only its next `call`
-/// consumes that reservation, preserving Tower's readiness contract under concurrent use.
-///
 /// [`Shared`] owns idle services and FIFO handoff state. Checked-out services and
 /// background makers hold only weak references to it so they never keep an unused cache
 /// alive; dropping the last shared owner also signals background makers to stop.
@@ -65,16 +56,12 @@ where
     M: Service<Dst>,
     G: AsMut<Shared<M::Response>>,
 {
-    /// Underlying maker polled and called on a cache miss.
+    /// Underlying maker polled and called inside [`CacheFuture`] on a cache miss.
     maker: M,
     /// Shared per-group lock containing [`Shared`] idle connections, waiters, and active count.
     shared: Arc<Mutex<G>>,
-    /// Policy handling maker futures that lose the reuse race.
+    /// Policy handling reuse-first delays and maker futures that lose the reuse race.
     events: Ev,
-    /// Idle service reserved for this clone's next `call`; drop releases the reservation.
-    ready: Option<Cached<M::Response, G>>,
-    /// Waiter registered while this clone's `poll_ready` is pending.
-    ready_waiter: Option<WaiterId>,
     /// Destination type marker.
     _dst: PhantomData<fn(Dst)>,
 }
@@ -109,30 +96,79 @@ pub(super) struct Cached<S, G: AsMut<Shared<S>>> {
     shared: Weak<Mutex<G>>,
 }
 
-/// Future returned by a cache checkout.
-///
-/// `Racing` polls a FIFO reservation before the maker on every wake, handing started maker
-/// work to the event policy if reuse wins; dropping it cancels its waiter and reassigns
-/// any reserved service. `Cached` yields a service already reserved during readiness.
-pub(super) enum CacheFuture<M, Dst, Ev, G>
+/// State of a racing maker attempt before and after physical connection work starts.
+enum RaceMaker<M, Dst>
 where
     M: Service<Dst>,
-    G: AsMut<Shared<M::Response>>,
 {
-    Racing {
-        /// Shared cache state checked for a reserved return on each poll.
-        shared: Arc<Mutex<G>>,
-        /// FIFO waiter ID assigned to this racing checkout.
-        waiter: WaiterId,
+    /// Waiting out a reuse-first delay before polling the maker ready and calling it.
+    Waiting {
+        /// Reuse-first sleep future.
+        sleep: BoxSleep,
+        /// Cloned maker ready to dial once `sleep` completes.
+        maker: M,
+        /// Target forwarded to `maker` once ready.
+        target: Option<Dst>,
+    },
+    /// Polling a cloned maker for readiness before starting the dial.
+    Preparing {
+        /// Cloned maker waiting to become ready.
+        maker: M,
+        /// Target forwarded to `maker` once ready.
+        target: Option<Dst>,
+    },
+    /// Polling the in-flight maker future; `started` flips true on the first poll.
+    Connecting {
         /// In-flight maker future racing against reuse.
-        future: Option<M::Future>,
-        /// Policy invoked if reuse wins after the maker started.
-        events: Ev,
+        future: M::Future,
+        /// Whether `future` has been polled at least once.
+        started: bool,
     },
-    Cached {
-        /// Service already reserved during `poll_ready`.
-        service: Option<Cached<M::Response, G>>,
-    },
+    /// Terminal state after completion, failure, or handoff to background completion.
+    Done,
+}
+
+pin_project! {
+    /// Future returned by a cache checkout.
+    ///
+    /// `Racing` polls a FIFO reservation before advancing the maker on every wake, handing
+    /// started maker work to the event policy if reuse wins; dropping it cancels its waiter
+    /// and reassigns any reserved service. `Cached` yields an idle service taken immediately
+    /// in `call`.
+    #[project = CacheFutureProj]
+    pub(super) enum CacheFuture<M, Dst, Ev, G>
+    where
+        M: Service<Dst>,
+        G: AsMut<Shared<M::Response>>,
+    {
+        Racing {
+            // Shared cache state checked for a reserved return on each poll.
+            shared: Arc<Mutex<G>>,
+            // FIFO waiter ID assigned to this racing checkout.
+            waiter: WaiterId,
+            // Maker attempt, optionally waiting out a reuse-first delay before dialing.
+            maker: RaceMaker<M, Dst>,
+            // Policy providing reuse delays and handling lost started races.
+            events: Ev,
+        },
+        Cached {
+            // Idle service taken immediately in `call`.
+            service: Option<Cached<M::Response, G>>,
+        },
+    }
+
+    impl<M, Dst, Ev, G> PinnedDrop for CacheFuture<M, Dst, Ev, G>
+    where
+        M: Service<Dst>,
+        G: AsMut<Shared<M::Response>>,
+    {
+        fn drop(this: Pin<&mut Self>) {
+            if let CacheFutureProj::Racing { shared, waiter, .. } = this.project() {
+                let result = shared.lock().as_mut().cancel_waiter(*waiter);
+                finish_cancel(result);
+            }
+        }
+    }
 }
 
 /// Shared idle services and FIFO checkout handoff state.
@@ -196,10 +232,14 @@ struct CancelResult<S> {
 impl<Ev> Builder<Ev> {
     /// Completes useful maker work on the supplied runtime after reuse wins.
     #[must_use]
-    pub(super) fn runtime<R: Executor>(self, runtime: R) -> Builder<events::WithRuntime<R>> {
+    pub(super) fn runtime<R: Executor + Timer>(
+        self,
+        runtime: R,
+    ) -> Builder<events::WithRuntime<R>> {
         Builder {
             events: events::WithRuntime {
                 runtime,
+                reuse_delay: None,
                 on_complete: None,
             },
             max_idle: self.max_idle,
@@ -229,8 +269,6 @@ impl<Ev> Builder<Ev> {
         Cache {
             maker,
             events: self.events,
-            ready: None,
-            ready_waiter: None,
             shared,
             _dst: PhantomData,
         }
@@ -238,6 +276,13 @@ impl<Ev> Builder<Ev> {
 }
 
 impl<R> Builder<events::WithRuntime<R>> {
+    /// Delays new dials when the group already has active or waiting work.
+    #[must_use]
+    pub(super) fn reuse_delay(mut self, delay: Option<Duration>) -> Self {
+        self.events.reuse_delay = delay;
+        self
+    }
+
     /// Runs `callback` after useful lost maker work finishes.
     #[must_use]
     pub(super) fn on_background_complete<F>(mut self, callback: F) -> Self
@@ -296,13 +341,13 @@ where
         self.shared.lock().as_mut().drain_idle()
     }
 
-    /// Returns whether shared idle state or this clone holds a ready service.
+    /// Returns whether shared idle state holds an unreserved service.
     #[must_use]
     pub(super) fn has_idle(&self) -> bool {
-        self.ready.is_some() || self.shared.lock().as_mut().has_idle()
+        self.shared.lock().as_mut().has_idle()
     }
 
-    /// Returns whether no ready, idle, reserved, waiting, or active work remains.
+    /// Returns whether no idle, reserved, waiting, or active work remains.
     #[must_use]
     pub(super) fn is_empty(&self) -> bool {
         self.shared.lock().as_mut().is_empty()
@@ -311,129 +356,62 @@ where
 
 impl<M, Dst, Ev, G> Service<Dst> for Cache<M, Dst, Ev, G>
 where
-    M: Service<Dst>,
+    M: Service<Dst> + Clone,
     G: AsMut<Shared<M::Response>>,
     M::Future: Unpin,
     M::Response: Unpin,
-    Ev: events::Events<BackgroundConnect<M::Future, M::Response, G>> + Clone + Unpin,
+    Ev: events::Events<BackgroundConnect<M::Future, M::Response, G>> + Clone,
 {
     type Response = Cached<M::Response, G>;
     type Error = M::Error;
     type Future = CacheFuture<M, Dst, Ev, G>;
 
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        if self.ready.is_some() {
-            return Poll::Ready(Ok(()));
-        }
-
-        let reserved = {
-            let mut guard = self.shared.lock();
-            let shared = guard.as_mut();
-            let service = if let Some(id) = self.ready_waiter {
-                shared.take_reserved(id)
-            } else {
-                shared.take_available()
-            };
-            service.map(|service| Cached::new(service, &self.shared, shared, true))
-        };
-        if let Some(service) = reserved {
-            self.ready_waiter = None;
-            self.ready = Some(service);
-            return Poll::Ready(Ok(()));
-        }
-
-        match self.maker.poll_ready(cx) {
-            Poll::Ready(result) => {
-                if let Some(id) = self.ready_waiter.take() {
-                    let result = self.shared.lock().as_mut().cancel_waiter(id);
-                    finish_cancel(result);
-                }
-                Poll::Ready(result)
-            }
-            Poll::Pending => {
-                let mut guard = self.shared.lock();
-                let shared = guard.as_mut();
-                let (reserved, replaced_waker) = if let Some(id) = self.ready_waiter {
-                    let service = shared.take_reserved(id);
-                    let replaced = if service.is_none() {
-                        shared.store_waker(id, cx.waker())
-                    } else {
-                        None
-                    };
-                    (service, replaced)
-                } else if let Some(service) = shared.take_available() {
-                    (Some(service), None)
-                } else {
-                    let id = shared.push_waiter();
-                    let replaced = shared.store_waker(id, cx.waker());
-                    self.ready_waiter = Some(id);
-                    (None, replaced)
-                };
-                let reserved =
-                    reserved.map(|service| Cached::new(service, &self.shared, shared, true));
-                drop(guard);
-                drop(replaced_waker);
-
-                if let Some(service) = reserved {
-                    self.ready_waiter = None;
-                    self.ready = Some(service);
-                    Poll::Ready(Ok(()))
-                } else {
-                    Poll::Pending
-                }
-            }
-        }
+    #[inline(always)]
+    fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        // Checkouts enter `CacheFuture::Racing` before waiting on maker readiness so returning
+        // senders still satisfy FIFO waiters even when connector admission is pending or errors.
+        Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, target: Dst) -> Self::Future {
-        if let Some(service) = self.ready.take() {
-            return CacheFuture::Cached {
-                service: Some(service),
-            };
-        }
-
-        if let Some(id) = self.ready_waiter.take() {
-            let reserved = {
-                let mut guard = self.shared.lock();
-                let shared = guard.as_mut();
-                match shared.take_reserved(id) {
-                    Some(service) => Ok(Cached::new(service, &self.shared, shared, true)),
-                    None => Err(shared.cancel_waiter(id)),
-                }
-            };
-            match reserved {
-                Ok(service) => {
-                    return CacheFuture::Cached {
-                        service: Some(service),
-                    };
-                }
-                Err(result) => finish_cancel(result),
-            }
-        }
-
-        let available = {
+        let (waiter, had_work) = {
             let mut guard = self.shared.lock();
             let shared = guard.as_mut();
             match shared.take_available() {
-                Some(service) => Ok(Cached::new(service, &self.shared, shared, true)),
-                None => Err(shared.push_waiter()),
+                Some(service) => {
+                    return CacheFuture::Cached {
+                        service: Some(Cached::new(service, &self.shared, shared, true)),
+                    };
+                }
+                None => {
+                    let had_work = !shared.is_empty();
+                    (shared.push_waiter(), had_work)
+                }
             }
         };
 
-        let waiter = match available {
-            Ok(service) => {
-                return CacheFuture::Cached {
-                    service: Some(service),
-                };
-            }
-            Err(waiter) => waiter,
-        };
-        CacheFuture::Racing {
+        // Own the waiter before creating a timer, which can panic without a time driver.
+        let mut checkout = CacheFuture::Racing {
             shared: self.shared.clone(),
             waiter,
-            future: Some(self.maker.call(target)),
+            maker: RaceMaker::Done,
             events: self.events.clone(),
+        };
+        if let CacheFuture::Racing { maker, .. } = &mut checkout {
+            *maker = if had_work && let Some(sleep) = self.events.reuse_delay() {
+                RaceMaker::Waiting {
+                    sleep,
+                    maker: self.maker.clone(),
+                    target: Some(target),
+                }
+            } else {
+                RaceMaker::Preparing {
+                    maker: self.maker.clone(),
+                    target: Some(target),
+                }
+            };
         }
+        checkout
     }
 }
 
@@ -448,41 +426,12 @@ where
             maker: self.maker.clone(),
             shared: self.shared.clone(),
             events: self.events.clone(),
-            ready: None,
-            ready_waiter: None,
             _dst: PhantomData,
         }
     }
 }
 
-impl<M, Dst, Ev, G> Drop for Cache<M, Dst, Ev, G>
-where
-    M: Service<Dst>,
-    G: AsMut<Shared<M::Response>>,
-{
-    fn drop(&mut self) {
-        drop(self.ready.take());
-        if let Some(id) = self.ready_waiter.take() {
-            let result = self.shared.lock().as_mut().cancel_waiter(id);
-            finish_cancel(result);
-        }
-    }
-}
-
 // ===== impl CacheFuture =====
-
-impl<M, Dst, Ev, G> Drop for CacheFuture<M, Dst, Ev, G>
-where
-    M: Service<Dst>,
-    G: AsMut<Shared<M::Response>>,
-{
-    fn drop(&mut self) {
-        if let Self::Racing { shared, waiter, .. } = self {
-            let result = shared.lock().as_mut().cancel_waiter(*waiter);
-            finish_cancel(result);
-        }
-    }
-}
 
 impl<M, Dst, Ev, G> Future for CacheFuture<M, Dst, Ev, G>
 where
@@ -490,41 +439,60 @@ where
     G: AsMut<Shared<M::Response>>,
     M::Future: Unpin,
     M::Response: Unpin,
-    Ev: events::Events<BackgroundConnect<M::Future, M::Response, G>> + Unpin,
+    Ev: events::Events<BackgroundConnect<M::Future, M::Response, G>>,
 {
     type Output = Result<Cached<M::Response, G>, M::Error>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        match &mut *self {
-            Self::Racing {
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        match self.project() {
+            CacheFutureProj::Racing {
                 shared,
                 waiter,
-                future,
+                maker,
                 events,
             } => {
                 let mut guard = shared.lock();
                 let locked = guard.as_mut();
-                let (reused, replaced_waker) = if let Some(service) = locked.take_reserved(*waiter)
-                {
-                    let background = locked.shutdown.as_ref().and_then(|shutdown| {
-                        let future = future.take()?;
-                        let shutdown = cache_shutdown(shutdown.subscribe());
-                        locked.active += 1;
-                        Some(BackgroundConnect {
-                            future,
-                            shared: Arc::downgrade(shared),
-                            shutdown,
-                            _service: PhantomData,
-                        })
-                    });
-                    let service = Cached::new(service, shared, locked, true);
-                    (Some((service, background)), None)
-                } else {
-                    let replaced = locked.store_waker(*waiter, cx.waker());
-                    (None, replaced)
-                };
+                let (reused, replaced_waker, dropped_maker) =
+                    if let Some(service) = locked.take_reserved(*waiter) {
+                        let taken = std::mem::replace(maker, RaceMaker::Done);
+                        let (background, dropped) = match taken {
+                            RaceMaker::Connecting {
+                                future,
+                                started: true,
+                            } => match locked.shutdown.as_ref() {
+                                Some(shutdown) => {
+                                    let shutdown = cache_shutdown(shutdown.subscribe());
+                                    locked.active += 1;
+                                    (
+                                        Some(BackgroundConnect {
+                                            future,
+                                            shared: Arc::downgrade(shared),
+                                            shutdown,
+                                            _service: PhantomData,
+                                        }),
+                                        None,
+                                    )
+                                }
+                                None => (
+                                    None,
+                                    Some(RaceMaker::Connecting {
+                                        future,
+                                        started: true,
+                                    }),
+                                ),
+                            },
+                            other => (None, Some(other)),
+                        };
+                        let service = Cached::new(service, shared, locked, true);
+                        (Some((service, background)), None, dropped)
+                    } else {
+                        let replaced = locked.store_waker(*waiter, cx.waker());
+                        (None, replaced, None)
+                    };
                 drop(guard);
                 drop(replaced_waker);
+                drop(dropped_maker);
 
                 if let Some((service, background)) = reused {
                     if let Some(background) = background {
@@ -533,44 +501,87 @@ where
                     return Poll::Ready(Ok(service));
                 }
 
-                let Some(connecting) = future.as_mut() else {
-                    return Poll::Pending;
+                let resolve_error = |error| {
+                    // A returned service may have been reserved while the dial failed;
+                    // prefer reuse over surfacing the dial error.
+                    let reserved = {
+                        let mut guard = shared.lock();
+                        let locked = guard.as_mut();
+                        match locked.take_reserved(*waiter) {
+                            Some(service) => Ok(Cached::new(service, shared, locked, true)),
+                            None => Err(locked.cancel_waiter(*waiter)),
+                        }
+                    };
+                    Poll::Ready(match reserved {
+                        Ok(service) => Ok(service),
+                        Err(canceled) => {
+                            finish_cancel(canceled);
+                            Err(error)
+                        }
+                    })
                 };
 
-                let connected = match ready!(Pin::new(connecting).poll(cx)) {
-                    Ok(service) => service,
-                    Err(error) => {
-                        // A returned service may have been reserved while the dial failed;
-                        // prefer reuse over surfacing the dial error.
-                        let reserved = {
-                            let mut guard = shared.lock();
-                            let locked = guard.as_mut();
-                            match locked.take_reserved(*waiter) {
-                                Some(service) => Ok(Cached::new(service, shared, locked, true)),
-                                None => Err(locked.cancel_waiter(*waiter)),
+                loop {
+                    match maker {
+                        RaceMaker::Waiting { sleep, .. } => {
+                            ready!(Pin::new(sleep).poll(cx));
+                            if let RaceMaker::Waiting {
+                                maker: service,
+                                target,
+                                ..
+                            } = std::mem::replace(maker, RaceMaker::Done)
+                            {
+                                *maker = RaceMaker::Preparing {
+                                    maker: service,
+                                    target,
+                                };
                             }
-                        };
-                        return Poll::Ready(match reserved {
-                            Ok(service) => Ok(service),
-                            Err(canceled) => {
-                                finish_cancel(canceled);
-                                Err(error)
+                        }
+                        RaceMaker::Preparing {
+                            maker: service,
+                            target,
+                        } => match ready!(service.poll_ready(cx)) {
+                            Ok(()) => {
+                                let Some(target) = target.take() else {
+                                    *maker = RaceMaker::Done;
+                                    return Poll::Pending;
+                                };
+                                let future = service.call(target);
+                                *maker = RaceMaker::Connecting {
+                                    future,
+                                    started: false,
+                                };
                             }
-                        });
+                            Err(error) => {
+                                *maker = RaceMaker::Done;
+                                return resolve_error(error);
+                            }
+                        },
+                        RaceMaker::Connecting { future, started } => {
+                            *started = true;
+                            let connected = match ready!(Pin::new(future).poll(cx)) {
+                                Ok(service) => service,
+                                Err(error) => {
+                                    *maker = RaceMaker::Done;
+                                    return resolve_error(error);
+                                }
+                            };
+
+                            let (service, result) = {
+                                let mut guard = shared.lock();
+                                let locked = guard.as_mut();
+                                let service = Cached::new(connected, shared, locked, false);
+                                (service, locked.cancel_waiter(*waiter))
+                            };
+                            finish_cancel(result);
+                            *maker = RaceMaker::Done;
+                            return Poll::Ready(Ok(service));
+                        }
+                        RaceMaker::Done => return Poll::Pending,
                     }
-                };
-
-                let (service, result) = {
-                    let mut guard = shared.lock();
-                    let locked = guard.as_mut();
-                    let service = Cached::new(connected, shared, locked, false);
-                    (service, locked.cancel_waiter(*waiter))
-                };
-                finish_cancel(result);
-                future.take();
-                Poll::Ready(Ok(service))
+                }
             }
-            Self::Cached { service } => match service.take() {
+            CacheFutureProj::Cached { service } => match service.take() {
                 Some(service) => Poll::Ready(Ok(service)),
                 None => Poll::Pending,
             },
@@ -849,16 +860,6 @@ impl<F, S, G: AsMut<Shared<S>>> Drop for BackgroundConnect<F, S, G> {
     }
 }
 
-impl<F, S, E, G> Started for BackgroundConnect<F, S, G>
-where
-    F: Started + Future<Output = Result<S, E>> + Unpin,
-    G: AsMut<Shared<S>>,
-{
-    fn started(&self) -> bool {
-        self.future.started()
-    }
-}
-
 impl<F, S, E, G> Future for BackgroundConnect<F, S, G>
 where
     F: Future<Output = Result<S, E>> + Unpin,
@@ -890,9 +891,11 @@ fn cache_shutdown(mut receiver: watch::Receiver<()>) -> BoxFuture<'static, ()> {
 
 /// Policies for maker futures that lose the reuse race.
 pub(super) mod events {
-    use std::sync::Arc;
+    use std::{future::Future, sync::Arc, time::Duration};
 
-    use super::{Executor, Started};
+    use futures_util::FutureExt;
+
+    use super::{BoxSleep, Executor, Timer};
 
     /// Policy that cancels maker futures after another service wins the race.
     ///
@@ -901,22 +904,26 @@ pub(super) mod events {
     #[derive(Clone, Debug)]
     pub struct Ignore;
 
-    /// Policy that completes started lost maker futures on a runtime.
-    ///
-    /// Futures that have only waited for reuse are still canceled; once physical
-    /// connection work has started, the runtime finishes it and caches a successful
-    /// service for a later checkout.
+    /// Policy that delays new dials when configured and completes started lost races on a runtime.
     #[derive(Clone)]
     pub struct WithRuntime<R> {
-        /// Runtime executing detached background connects.
+        /// Runtime executing detached background connects and reuse-first sleeps.
         pub(super) runtime: R,
+        /// Optional delay before dialing when the cache already has active or waiting work.
+        pub(super) reuse_delay: Option<Duration>,
         /// Optional entry maintenance callback run after the background task finishes.
         pub(super) on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
     }
 
-    /// Handles a maker future after connection reuse wins.
+    /// Handles reuse-first delays and started maker futures that lose the reuse race.
     pub trait Events<F> {
-        /// Receives the maker future that lost the race.
+        /// Returns an optional sleep delaying a new dial when other work is active.
+        #[must_use]
+        fn reuse_delay(&self) -> Option<BoxSleep> {
+            None
+        }
+
+        /// Receives a started maker future that lost the race.
         fn on_race_lost(&self, future: F);
     }
 
@@ -928,24 +935,27 @@ pub(super) mod events {
 
     // ===== impl WithRuntime =====
 
-    // Neither the runtime nor the callback is ever pinned by the cache future.
-    impl<R> Unpin for WithRuntime<R> {}
-
     impl<F, R> Events<F> for WithRuntime<R>
     where
-        F: Started<Output = ()> + Send + 'static,
-        R: Executor,
+        F: Future<Output = ()> + Send + 'static,
+        R: Executor + Timer,
     {
+        fn reuse_delay(&self) -> Option<BoxSleep> {
+            self.reuse_delay
+                .map(|duration| self.runtime.sleep(duration))
+        }
+
         fn on_race_lost(&self, future: F) {
-            if future.started() {
-                let on_complete = self.on_complete.clone();
-                self.runtime.execute(Box::pin(async move {
-                    future.await;
-                    if let Some(on_complete) = on_complete {
-                        on_complete();
-                    }
-                }));
-            }
+            let on_complete = self.on_complete.clone();
+            self.runtime.execute(
+                future
+                    .map(move |()| {
+                        if let Some(on_complete) = on_complete {
+                            on_complete();
+                        }
+                    })
+                    .boxed(),
+            );
         }
     }
 }
@@ -1135,41 +1145,31 @@ mod tests {
         let connector = QueueConnector::default();
         connector.allow_ready.store(true, Ordering::SeqCst);
         let mut cache = builder().build(connector.clone());
-        std::future::poll_fn(|cx| cache.poll_ready(cx))
-            .await
-            .unwrap();
         let held = cache.call(0).await.unwrap();
 
         connector.allow_ready.store(false, Ordering::SeqCst);
         let wake = Arc::new(WakeFlag(AtomicBool::new(false)));
         let waker = Waker::from(wake.clone());
         let mut wake_cx = Context::from_waker(&waker);
-        let mut ready = Box::pin(std::future::poll_fn(|cx| cache.poll_ready(cx)));
-        assert!(ready.as_mut().poll(&mut wake_cx).is_pending());
+        let mut waiting = Box::pin(cache.call(0));
+        assert!(waiting.as_mut().poll(&mut wake_cx).is_pending());
 
         drop(held);
         assert!(wake.0.load(Ordering::SeqCst));
-        std::assert_matches!(ready.as_mut().poll(&mut wake_cx), Poll::Ready(Ok(())));
-        drop(ready);
-        let held = cache.call(0).await.unwrap();
+        let Poll::Ready(Ok(held)) = waiting.as_mut().poll(&mut wake_cx) else {
+            panic!("waiter blocked on maker readiness should wake and reuse returned service");
+        };
+        assert!(held.is_reused());
+        drop(waiting);
 
         connector.allow_ready.store(true, Ordering::SeqCst);
         let mut cx = Context::from_waker(Waker::noop());
-        std::future::poll_fn(|cx| cache.poll_ready(cx))
-            .await
-            .unwrap();
         let mut first = std::pin::pin!(cache.call(1));
         assert!(first.as_mut().poll(&mut cx).is_pending());
 
-        std::future::poll_fn(|cx| cache.poll_ready(cx))
-            .await
-            .unwrap();
         let mut canceled = Box::pin(cache.call(2));
         assert!(canceled.as_mut().poll(&mut cx).is_pending());
 
-        std::future::poll_fn(|cx| cache.poll_ready(cx))
-            .await
-            .unwrap();
         let mut third = std::pin::pin!(cache.call(3));
         assert!(third.as_mut().poll(&mut cx).is_pending());
         drop(canceled);
@@ -1188,9 +1188,6 @@ mod tests {
         assert_eq!(*third_service.inner(), 0);
         drop(third_service);
 
-        std::future::poll_fn(|cx| cache.poll_ready(cx))
-            .await
-            .unwrap();
         assert!(cache.call(4).await.unwrap().is_reused());
     }
 
@@ -1201,59 +1198,46 @@ mod tests {
         let calls = connector.calls.clone();
         let mut cache = builder().build(connector);
 
-        std::future::poll_fn(|cx| cache.poll_ready(cx))
-            .await
-            .unwrap();
         let service = cache.call(1).await.unwrap();
         assert_eq!(*service.inner(), 0);
+        assert_eq!(poll_ready_count.load(Ordering::SeqCst), 1);
         drop(service);
 
         let mut first = cache.clone();
         let mut second = cache.clone();
-        std::future::poll_fn(|cx| first.poll_ready(cx))
-            .await
-            .unwrap();
-        assert_eq!(poll_ready_count.load(Ordering::SeqCst), 1);
-        std::future::poll_fn(|cx| second.poll_ready(cx))
-            .await
-            .unwrap();
-        assert_eq!(poll_ready_count.load(Ordering::SeqCst), 2);
-
-        let first_service = first.call(10).await.unwrap();
-        let second_service = second.call(20).await.unwrap();
+        let first_future = first.call(10);
+        let second_future = second.call(20);
+        let first_service = first_future.await.unwrap();
+        let second_service = second_future.await.unwrap();
         assert_eq!(*first_service.inner(), 0);
         assert_eq!(*second_service.inner(), 1);
+        assert_eq!(poll_ready_count.load(Ordering::SeqCst), 2);
         assert_eq!(*calls.lock().unwrap(), vec![1, 20]);
         drop(first_service);
         drop(second_service);
 
+        // Dropping an unpolled cached future returns its reserved idle service.
         let mut reserved = cache.clone();
-        std::future::poll_fn(|cx| reserved.poll_ready(cx))
-            .await
-            .unwrap();
-        drop(reserved);
+        drop(reserved.call(30));
         let before = poll_ready_count.load(Ordering::SeqCst);
-        std::future::poll_fn(|cx| cache.poll_ready(cx))
-            .await
-            .unwrap();
-        assert_eq!(poll_ready_count.load(Ordering::SeqCst), before);
-
+        let reserved = cache.call(31);
         assert_eq!(cache.retain_idle(|_| false), vec![0]);
-        let mut service = cache.call(30).await.unwrap();
+        let mut service = reserved.await.unwrap();
         assert!(service.is_reused());
         assert_eq!(*service.inner(), 1);
         assert_eq!(poll_ready_count.load(Ordering::SeqCst), before);
         service.discard_on_drop();
         drop(service);
         assert!(cache.is_empty());
-        std::future::poll_fn(|cx| cache.poll_ready(cx))
-            .await
-            .unwrap();
+        let dialed = cache.call(32).await.unwrap();
+        assert!(!dialed.is_reused());
         assert_eq!(poll_ready_count.load(Ordering::SeqCst), before + 1);
+        drop(dialed);
 
         // Bulk pruning must preserve the order used by subsequent LIFO reuse.
         let discarded = {
             let mut shared = cache.shared.lock();
+            shared.idle.clear();
             shared.idle.extend(0..64);
             let mut visited = Vec::new();
             let discarded = shared.retain_idle(|value| {
@@ -1271,5 +1255,230 @@ mod tests {
             discarded,
             (0..64).filter(|value| value % 3 != 0).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn reuse_delay_panic_does_not_leave_a_waiter() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut cache = builder()
+                .runtime(crate::rt::tokio::TokioRuntime)
+                .reuse_delay(Some(Duration::from_millis(50)))
+                .build(StrictConnector::default());
+            let held = cache.call(1).await.unwrap();
+
+            // This runtime deliberately has no time driver.
+            let checkout = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cache.call(2)));
+            assert!(checkout.is_err());
+            drop(held);
+
+            assert!(
+                cache.has_idle(),
+                "the returned service must not be reserved for a dead waiter"
+            );
+            assert!(cache.call(3).await.unwrap().is_reused());
+        });
+    }
+
+    #[tokio::test]
+    async fn reuse_delay_cancels_before_dial_and_finishes_started_races() {
+        #[derive(Clone, Default)]
+        struct TestRuntime {
+            spawned: Arc<AtomicUsize>,
+        }
+
+        impl Executor for TestRuntime {
+            fn execute(&self, future: BoxFuture<'static, ()>) {
+                self.spawned.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(future);
+            }
+        }
+
+        struct TestSleep(Pin<Box<tokio::time::Sleep>>);
+
+        impl Future for TestSleep {
+            type Output = ();
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                self.0.as_mut().poll(cx)
+            }
+        }
+
+        impl crate::rt::Sleep for TestSleep {
+            fn reset(mut self: Pin<&mut Self>, deadline: std::time::Instant) {
+                self.0.as_mut().reset(deadline.into());
+            }
+        }
+
+        impl Timer for TestRuntime {
+            fn now(&self) -> std::time::Instant {
+                tokio::time::Instant::now().into_std()
+            }
+
+            fn sleep(&self, duration: Duration) -> BoxSleep {
+                BoxSleep::new(TestSleep(Box::pin(tokio::time::sleep(duration))))
+            }
+
+            fn sleep_until(&self, deadline: std::time::Instant) -> BoxSleep {
+                BoxSleep::new(TestSleep(Box::pin(tokio::time::sleep_until(
+                    deadline.into(),
+                ))))
+            }
+        }
+
+        #[derive(Clone)]
+        struct GatedConnector {
+            calls: Arc<AtomicUsize>,
+            gate: Arc<tokio::sync::Notify>,
+            fail_ready: Arc<AtomicBool>,
+        }
+
+        struct UnlockedDrop {
+            shared: Weak<Mutex<Shared<usize>>>,
+            dropped_unlocked: Arc<AtomicBool>,
+        }
+
+        impl Drop for UnlockedDrop {
+            fn drop(&mut self) {
+                if let Some(shared) = self.shared.upgrade() {
+                    // Re-acquiring the group mutex proves the loser dropped unlocked.
+                    let _guard = shared.lock();
+                    self.dropped_unlocked.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+
+        impl Service<Option<UnlockedDrop>> for GatedConnector {
+            type Response = usize;
+            type Error = &'static str;
+            type Future = BoxFuture<'static, Result<usize, Self::Error>>;
+
+            fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                if self.fail_ready.load(Ordering::SeqCst) {
+                    Poll::Ready(Err("readiness failed"))
+                } else {
+                    Poll::Ready(Ok(()))
+                }
+            }
+
+            fn call(&mut self, _target: Option<UnlockedDrop>) -> Self::Future {
+                let id = self.calls.fetch_add(1, Ordering::SeqCst);
+                let gate = self.gate.clone();
+                Box::pin(async move {
+                    if id > 0 {
+                        gate.notified().await;
+                    }
+                    Ok(id)
+                })
+            }
+        }
+
+        tokio::time::pause();
+        let runtime = TestRuntime::default();
+        let connector = GatedConnector {
+            calls: Arc::new(AtomicUsize::new(0)),
+            gate: Arc::new(tokio::sync::Notify::new()),
+            fail_ready: Arc::new(AtomicBool::new(false)),
+        };
+        let mut cache = builder()
+            .runtime(runtime.clone())
+            .reuse_delay(Some(Duration::from_millis(50)))
+            .build(connector.clone());
+
+        // First checkout on an empty cache dials immediately without waiting.
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let held = cache.call(None).await.unwrap();
+        assert_eq!(*held.inner(), 0);
+        assert_eq!(connector.calls.load(Ordering::SeqCst), 1);
+
+        // Reuse winning during the delay must not fail early on dialer readiness,
+        // must cancel before dialing, and must drop the losing target unlocked.
+        connector.fail_ready.store(true, Ordering::SeqCst);
+        let dropped_unlocked = Arc::new(AtomicBool::new(false));
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut delayed = tokio_test::task::spawn(cache.call(Some(UnlockedDrop {
+            shared: Arc::downgrade(&cache.shared),
+            dropped_unlocked: dropped_unlocked.clone(),
+        })));
+        assert!(delayed.poll().is_pending());
+        assert_eq!(connector.calls.load(Ordering::SeqCst), 1);
+        drop(held);
+        let Poll::Ready(Ok(reused)) = delayed.poll() else {
+            panic!("waiter should reuse returned service before delay expires");
+        };
+        assert!(reused.is_reused());
+        assert!(dropped_unlocked.load(Ordering::SeqCst));
+        assert_eq!(connector.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(runtime.spawned.load(Ordering::SeqCst), 0);
+        connector.fail_ready.store(false, Ordering::SeqCst);
+
+        // Once the delay elapses and dialing starts, a lost race finishes in the background.
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut raced = tokio_test::task::spawn(cache.call(None));
+        assert!(raced.poll().is_pending());
+        tokio::time::advance(Duration::from_millis(51)).await;
+        assert!(raced.is_woken());
+        assert!(raced.poll().is_pending());
+        assert_eq!(connector.calls.load(Ordering::SeqCst), 2);
+        drop(reused);
+        let Poll::Ready(Ok(reused)) = raced.poll() else {
+            panic!("waiter should still prefer returned service over pending dial");
+        };
+        assert!(reused.is_reused());
+        assert_eq!(runtime.spawned.load(Ordering::SeqCst), 1);
+
+        connector.gate.notify_one();
+        tokio::task::yield_now().await;
+        assert!(cache.has_idle());
+        drop(reused);
+
+        // In default Race mode, a sender returned while maker.poll_ready fails must still win.
+        type TestCached = Cached<usize, Shared<usize>>;
+
+        #[derive(Clone)]
+        struct ReturnOnFailReady {
+            held: Arc<Mutex<Option<TestCached>>>,
+        }
+
+        impl Service<()> for ReturnOnFailReady {
+            type Response = usize;
+            type Error = &'static str;
+            type Future = std::future::Ready<Result<usize, Self::Error>>;
+
+            fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                if let Some(held) = self.held.lock().take() {
+                    drop(held);
+                    return Poll::Ready(Err("readiness failed after return"));
+                }
+                Poll::Ready(Ok(()))
+            }
+
+            fn call(&mut self, _target: ()) -> Self::Future {
+                std::future::ready(Ok(42))
+            }
+        }
+
+        let held_slot = Arc::new(Mutex::new(None));
+        let mut race_cache = builder().build(ReturnOnFailReady {
+            held: held_slot.clone(),
+        });
+        let held = race_cache.call(()).await.unwrap();
+        assert_eq!(*held.inner(), 42);
+        *held_slot.lock() = Some(held);
+
+        let reused = race_cache
+            .call(())
+            .await
+            .expect("returned sender must win over maker.poll_ready error");
+        assert!(reused.is_reused());
+        assert_eq!(*reused.inner(), 42);
     }
 }

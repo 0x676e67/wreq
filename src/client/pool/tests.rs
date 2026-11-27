@@ -14,10 +14,7 @@ use {
     std::net::{Ipv4Addr, SocketAddr},
 };
 #[cfg(feature = "http2")]
-use {
-    bytes::Bytes, http::Response, http_body_util::Empty, netty::http1::Http1Options,
-    tower::util::Oneshot,
-};
+use {bytes::Bytes, http::Response, http_body_util::Empty, netty::http1::Http1Options};
 
 use super::*;
 use crate::{
@@ -260,18 +257,18 @@ fn http3_connector() -> TestConnector {
     )
 }
 
+/// Counts connector clones.
+struct CloneCounter(Arc<AtomicUsize>);
+
+impl Clone for CloneCounter {
+    fn clone(&self) -> Self {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Self(self.0.clone())
+    }
+}
+
 #[test]
 fn protocol_modes_clone_connector_once() {
-    /// Counts connector clones made during protocol entry construction.
-    struct CloneCounter(Arc<AtomicUsize>);
-
-    impl Clone for CloneCounter {
-        fn clone(&self) -> Self {
-            self.0.fetch_add(1, Ordering::Relaxed);
-            Self(self.0.clone())
-        }
-    }
-
     let clones = Arc::new(AtomicUsize::new(0));
     let counter = CloneCounter(clones.clone());
     let connector = tower::service_fn(move |_: Unnameable| {
@@ -419,13 +416,7 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         // Response::forbid_recycle poisons after dispatch releases its checkout.
         // Another unpolled checkout must not suppress this health check.
         connected.poison();
-        let discarded = pool
-            .inner
-            .entries
-            .lock()
-            .get_mut(&key)
-            .unwrap()
-            .prune(pool.inner.now(), None);
+        let discarded = pool.inner.entries.lock().get_mut(&key).unwrap().prune(None);
         assert!(
             discarded.is_some(),
             "{protocol:?}: poisoned sender was retained"
@@ -452,15 +443,19 @@ async fn http2_checkouts_preserve_generation_and_cancellation() {
         );
         assert_eq!(pool.inner.entries.lock().iter_mut().count(), 1);
 
-        let response = Oneshot::new(
-            &mut replacement,
-            Request::builder()
-                .uri("http://localhost/")
-                .body(crate::Body::default())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+        std::future::poll_fn(|cx| replacement.poll_ready(cx))
+            .await
+            .unwrap();
+        let response = replacement
+            .send_request(
+                Request::builder()
+                    .uri("http://localhost/")
+                    .body(crate::Body::default())
+                    .unwrap(),
+            )
+            .unwrap()
+            .await
+            .unwrap();
         assert_eq!(response.version(), http::Version::HTTP_2);
         let hot = pool
             .checkout(Some(&equivalent_key), &waiter_request)
@@ -589,7 +584,7 @@ async fn extended_connect_checkout_only_leases_established_senders() {
         let request = Request::get("http://localhost/")
             .body(crate::Body::default())
             .unwrap();
-        pooled.call(request).await.unwrap();
+        pooled.send_request(request).unwrap().await.unwrap();
         drop(pooled);
         let probed = pool.checkout_extended_connect(&key).unwrap();
         assert!(probed.version() == http::Version::HTTP_2 && probed.is_reused());
@@ -647,12 +642,13 @@ async fn checkouts_remove_empty_map_entries() {
         .await
         .expect("ready sender");
     let response = pooled
-        .call(
+        .send_request(
             Request::builder()
                 .uri("http://localhost/")
                 .body(crate::Body::default())
                 .unwrap(),
         )
+        .unwrap()
         .await
         .expect("successful request");
     assert_eq!(response.status(), http::StatusCode::OK);
@@ -676,12 +672,14 @@ async fn checkouts_remove_empty_map_entries() {
         .await
         .expect("ready sender");
     let mut response = tokio_test::task::spawn(
-        pooled.call(
-            Request::builder()
-                .uri("http://localhost/")
-                .body(crate::Body::default())
-                .unwrap(),
-        ),
+        pooled
+            .send_request(
+                Request::builder()
+                    .uri("http://localhost/")
+                    .body(crate::Body::default())
+                    .unwrap(),
+            )
+            .unwrap(),
     );
     assert!(response.poll().is_pending());
     tokio::time::timeout(Duration::from_secs(1), request_read.notified())
@@ -704,12 +702,13 @@ async fn checkouts_remove_empty_map_entries() {
         .await
         .expect("ready sender");
     first
-        .call(
+        .send_request(
             Request::builder()
                 .uri("http://localhost/")
                 .body(crate::Body::default())
                 .unwrap(),
         )
+        .unwrap()
         .await
         .expect("successful request");
 
@@ -720,7 +719,7 @@ async fn checkouts_remove_empty_map_entries() {
         let mut entries = pool.inner.entries.lock();
         let mut discarded = Vec::new();
         let removed = entries.retain(|_, entry| {
-            discarded.extend(entry.prune(pool.inner.now(), Some(Duration::ZERO)));
+            discarded.extend(entry.prune(Some((pool.inner.now(), Duration::ZERO))));
             !entry.is_empty()
         });
         (removed, discarded)
@@ -751,12 +750,13 @@ async fn pool_max_size_evicts_only_idle_groups() {
             .await
             .expect("ready sender");
         client
-            .call(
+            .send_request(
                 Request::builder()
                     .uri("http://localhost/")
                     .body(crate::Body::default())
                     .unwrap(),
             )
+            .unwrap()
             .await
             .expect("successful request");
     }
@@ -791,9 +791,90 @@ async fn pool_max_size_evicts_only_idle_groups() {
 
     drop(first);
 
-    let mut entries = pool.inner.entries.lock();
-    assert!(entries.get_mut(&first_key).is_some());
-    assert!(entries.get_mut(&second_key).is_none());
+    {
+        let mut entries = pool.inner.entries.lock();
+        assert!(entries.get_mut(&first_key).is_some());
+        assert!(entries.get_mut(&second_key).is_none());
+    }
+
+    // Bounded hits without idle_timeout must resolve on the first poll without reading the clock.
+    #[derive(Clone, Default)]
+    struct CountingRuntime {
+        now_calls: Arc<AtomicUsize>,
+    }
+
+    impl Executor for CountingRuntime {
+        fn execute(&self, future: BoxFuture<'static, ()>) {
+            TokioRuntime.execute(future);
+        }
+    }
+
+    impl Timer for CountingRuntime {
+        fn now(&self) -> Instant {
+            self.now_calls.fetch_add(1, Ordering::SeqCst);
+            TokioRuntime.now()
+        }
+
+        fn sleep(&self, duration: Duration) -> crate::rt::BoxSleep {
+            TokioRuntime.sleep(duration)
+        }
+
+        fn sleep_until(&self, deadline: Instant) -> crate::rt::BoxSleep {
+            TokioRuntime.sleep_until(deadline)
+        }
+    }
+
+    let runtime = CountingRuntime::default();
+    let config = ConnectConfig::default();
+    let clones = Arc::new(AtomicUsize::new(0));
+    let counter = CloneCounter(clones.clone());
+    let connector = ServiceBuilder::new()
+        .map_request(move |request: Unnameable| {
+            let _counter = &counter;
+            request
+        })
+        .service(TestConnector::KeepsAlive);
+    let pool = Pool::new(
+        connector,
+        runtime.clone(),
+        Config {
+            idle_timeout: None,
+            max_size: NonZeroUsize::new(2),
+            ..Config::default()
+        },
+        proto::Builder::new(DynRuntime::new(TokioRuntime), &config, true),
+    );
+    let protocol = cfg_select! {
+        feature = "http2" => Protocol::Auto,
+        _ => Protocol::Http1,
+    };
+    let [a, b, c] = ["a", "b", "c"].map(|name| grouped_request(Group::new(name), protocol));
+    let [key_a, key_b, key_c] = [&a, &b, &c].map(|request| request.reuse_key(protocol));
+    drop(pool.checkout(Some(&key_b), &b).await.unwrap());
+
+    let older = pool.checkout(Some(&key_a), &a).await.unwrap();
+    let newer = pool.checkout(Some(&key_a), &a).await.unwrap();
+    let connected = older.connected().clone();
+    drop(older);
+    drop(newer);
+    connected.poison();
+
+    let before = runtime.now_calls.load(Ordering::SeqCst);
+    #[cfg(feature = "http2")]
+    let clones_before = clones.load(Ordering::Relaxed);
+    let mut hit = tokio_test::task::spawn(Box::pin(pool.checkout(Some(&key_a), &a)));
+    let Poll::Ready(Ok(reused)) = hit.poll() else {
+        panic!("bounded warm hit must resolve synchronously on the first poll");
+    };
+    assert_eq!(runtime.now_calls.load(Ordering::SeqCst), before);
+    #[cfg(feature = "http2")]
+    assert_eq!(clones.load(Ordering::Relaxed), clones_before);
+    assert!(reused.is_reused());
+
+    // A's dead sender below the healthy one must not count against capacity.
+    drop(pool.checkout(Some(&key_c), &c).await.unwrap());
+    assert!(pool.checkout(Some(&key_b), &b).await.unwrap().is_reused());
+    drop(reused);
 }
 
 #[tokio::test]
@@ -958,5 +1039,227 @@ async fn mismatched_transport_fails_checkout() {
                 .any(|error| error.to_string() == message),
             "{protocol:?}: {error}"
         );
+    }
+}
+
+/// Verifies `Singleton` batch cancellation still pairs `poll_ready` with `call` on
+/// stateful connectors, and `Auto + ReuseFirst` joins an H2 upgrade published during
+/// the reuse delay without dialing a second connection.
+#[tokio::test]
+#[cfg(any(feature = "http2", feature = "http3"))]
+async fn mux_readiness_after_cancel_and_auto_reuse_first_upgrade() {
+    struct StrictConnector<C> {
+        inner: C,
+        ready: bool,
+    }
+
+    impl<C: Clone> Clone for StrictConnector<C> {
+        fn clone(&self) -> Self {
+            Self {
+                inner: self.inner.clone(),
+                ready: false,
+            }
+        }
+    }
+
+    impl<C> Service<Unnameable> for StrictConnector<C>
+    where
+        C: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>,
+    {
+        type Response = Conn;
+        type Error = BoxError;
+        type Future = C::Future;
+
+        fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+            let ready = self.inner.poll_ready(cx);
+            if matches!(ready, Poll::Ready(Ok(()))) {
+                self.ready = true;
+            }
+            ready
+        }
+
+        fn call(&mut self, req: Unnameable) -> Self::Future {
+            assert!(self.ready, "connector called without readiness");
+            self.ready = false;
+            self.inner.call(req)
+        }
+    }
+
+    // Finding 1: Singleton::poll_ready skips inner readiness while a batch is active;
+    // canceling that batch before the next call must still pair readiness with call.
+    #[cfg(feature = "http2")]
+    {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let runtime = DynRuntime::new(TokioRuntime);
+        let config = ConnectConfig::default();
+        let proto = proto::Builder::new(runtime.clone(), &config, true);
+        let shared = Arc::new(Mutex::new(EntryState::default()));
+        let maker = StreamMaker {
+            connector: StrictConnector {
+                inner: TestConnector::Http2(calls, gate.clone()),
+                ready: false,
+            }
+            .map_request(Unnameable),
+            timer: TokioRuntime,
+        };
+        let mut first_svc = Singleton::new(proto.http2(&config).layer(maker), shared);
+        let mut second_svc = first_svc.clone();
+        let request = connect_request(Protocol::Http2);
+
+        std::future::poll_fn(|cx| first_svc.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut first = tokio_test::task::spawn(first_svc.call(request.clone()));
+        assert!(first.poll().is_pending());
+
+        // `second_svc.poll_ready` sees `State::Making` and skips inner readiness.
+        std::future::poll_fn(|cx| second_svc.poll_ready(cx))
+            .await
+            .unwrap();
+        drop(first);
+
+        gate.add_permits(1);
+        let second = second_svc.call(request).await.unwrap();
+        assert_eq!(second.inner().version(), http::Version::HTTP_2);
+    }
+    #[cfg(feature = "http3")]
+    {
+        let runtime = DynRuntime::new(TokioRuntime);
+        let config = ConnectConfig::default();
+        let proto = proto::Builder::new(runtime.clone(), &config, true);
+        let shared = Arc::new(Mutex::new(EntryState::default()));
+        let connector = StrictConnector {
+            inner: http3_connector(),
+            ready: false,
+        }
+        .map_request(Unnameable);
+        let mut first_svc = Singleton::new(proto.http3(&config).layer(connector), shared);
+        let mut second_svc = first_svc.clone();
+        let request = connect_request(Protocol::Http3);
+
+        std::future::poll_fn(|cx| first_svc.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut first = tokio_test::task::spawn(first_svc.call(request.clone()));
+        assert!(first.poll().is_pending());
+
+        std::future::poll_fn(|cx| second_svc.poll_ready(cx))
+            .await
+            .unwrap();
+        drop(first);
+
+        let second = second_svc.call(request).await.unwrap();
+        assert_eq!(second.inner().version(), http::Version::HTTP_3);
+    }
+
+    // Finding 3: Auto + ReuseFirst must observe an H2 upgrade published during the
+    // reuse delay and reuse it without waiting out the delay or dialing twice.
+    #[cfg(feature = "http2")]
+    {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let pool = new_pool(
+            TestConnector::Http2(calls.clone(), gate.clone()),
+            Config {
+                strategy: PoolStrategy::ReuseFirst(Duration::from_secs(3)),
+                ..Config::default()
+            },
+            &ConnectConfig::default(),
+        );
+        let request = connect_request(Protocol::Auto);
+        let key = request.reuse_key(Protocol::Auto);
+
+        let mut first = tokio_test::task::spawn(Box::pin(pool.checkout(Some(&key), &request)));
+        assert!(first.poll().is_pending());
+
+        let mut second = tokio_test::task::spawn(Box::pin(pool.checkout(Some(&key), &request)));
+        assert!(second.poll().is_pending());
+
+        // Release the first dial: it negotiates H2, consumes pending, and completes.
+        gate.add_permits(1);
+        let first_pooled = tokio::time::timeout(Duration::from_secs(1), first.into_inner())
+            .await
+            .expect("first checkout should complete promptly")
+            .unwrap();
+        assert_eq!(first_pooled.version(), http::Version::HTTP_2);
+
+        // Second checkout must wake from its 3s ReuseFirst wait and join H2 directly.
+        let second_pooled = tokio::time::timeout(Duration::from_secs(1), second.into_inner())
+            .await
+            .expect("second checkout should observe H2 upgrade without waiting 3s")
+            .unwrap();
+        assert_eq!(second_pooled.version(), http::Version::HTTP_2);
+        assert!(second_pooled.is_reused());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        drop(first_pooled);
+        drop(second_pooled);
+    }
+
+    // Finding 1 (round 2): Under ConcurrencyLimitLayer(1), a same-group H2 checkout must
+    // join its group's Making batch even when the first checkout is still waiting on the
+    // limiter, instead of queueing behind an unrelated group's dial.
+    #[cfg(feature = "http2")]
+    {
+        use tower::limit::ConcurrencyLimitLayer;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let connector =
+            ConcurrencyLimitLayer::new(1).layer(TestConnector::Http2(calls.clone(), gate.clone()));
+        let pool = new_pool(connector, Config::default(), &ConnectConfig::default());
+
+        let group_c = grouped_request(Group::new("c"), Protocol::Http2);
+        let key_c = group_c.reuse_key(Protocol::Http2);
+        let group_a = grouped_request(Group::new("a"), Protocol::Http2);
+        let key_a = group_a.reuse_key(Protocol::Http2);
+        let group_b = grouped_request(Group::new("b"), Protocol::Http2);
+        let key_b = group_b.reuse_key(Protocol::Http2);
+
+        // C1 holds the single ConcurrencyLimit permit while dialing.
+        let mut c1 = tokio_test::task::spawn(Box::pin(pool.checkout(Some(&key_c), &group_c)));
+        assert!(c1.poll().is_pending());
+
+        // A1 registers group A's Making batch immediately even though it blocks on the limiter.
+        let mut a1 = tokio_test::task::spawn(Box::pin(pool.checkout(Some(&key_a), &group_a)));
+        assert!(a1.poll().is_pending());
+
+        // B1 queues on the limiter behind A1.
+        let mut b1 = tokio_test::task::spawn(Box::pin(pool.checkout(Some(&key_b), &group_b)));
+        assert!(b1.poll().is_pending());
+
+        // A2 must join A1's already-registered batch instead of queueing behind B1 on the limiter.
+        let mut a2 = tokio_test::task::spawn(Box::pin(pool.checkout(Some(&key_a), &group_a)));
+        assert!(a2.poll().is_pending());
+
+        // Release C1 so A1 acquires the permit, then release A1; B1 stays blocked on its dial,
+        // yet A2 must wake immediately and reuse A1's connection.
+        gate.add_permits(1);
+        let c1_pooled = tokio::time::timeout(Duration::from_secs(1), c1.into_inner())
+            .await
+            .expect("C1 should complete")
+            .unwrap();
+        assert_eq!(c1_pooled.version(), http::Version::HTTP_2);
+
+        gate.add_permits(1);
+        let a1_pooled = tokio::time::timeout(Duration::from_secs(1), a1.into_inner())
+            .await
+            .expect("A1 should complete after C1 releases permit")
+            .unwrap();
+        assert_eq!(a1_pooled.version(), http::Version::HTTP_2);
+        assert!(a2.is_woken());
+
+        let a2_pooled = tokio::time::timeout(Duration::from_secs(1), a2.into_inner())
+            .await
+            .expect("A2 must wake and reuse A1 without waiting on unrelated group B")
+            .unwrap();
+        assert_eq!(a2_pooled.version(), http::Version::HTTP_2);
+        assert!(a2_pooled.is_reused());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        drop(b1);
+        drop(c1_pooled);
+        drop(a1_pooled);
+        drop(a2_pooled);
     }
 }
