@@ -365,6 +365,7 @@ async fn masque_rejects_authentication_and_missing_extended_connect() {
             .await
             .unwrap_err();
         assert!(error.is_proxy_connect() && !error.is_timeout(), "{error:?}");
+        assert_eq!(error.is_proxy_auth(), !unsupported, "{error:?}");
         if unsupported {
             assert!(proxy.requests.try_recv().is_err());
         } else {

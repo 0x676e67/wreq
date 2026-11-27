@@ -153,7 +153,7 @@ pub(super) async fn open(
                     if let Poll::Ready(result) = association.poll_closed(cx) {
                         let error = match result {
                             Ok(()) => io::Error::new(io::ErrorKind::BrokenPipe, ASSOCIATION_CLOSED),
-                            Err(error) => io::Error::new(io::ErrorKind::BrokenPipe, error),
+                            Err(error) => error,
                         };
                         return Poll::Ready(Err::<_, BoxError>(error.into()));
                     }
@@ -210,7 +210,7 @@ pub(super) async fn open(
 
 /// Wraps a proxy stage failure as a [`ConnectError`] carrying [`ProxyConnect`].
 fn proxy_error<E: Into<BoxError>>(stage: &'static str) -> impl FnOnce(E) -> ConnectError {
-    move |error| ConnectError::new(stage, ProxyConnect::Source(error.into()))
+    move |error| ConnectError::new(stage, ProxyConnect::Socks(error.into()))
 }
 
 // ===== impl Socket =====
