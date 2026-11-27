@@ -111,7 +111,14 @@ async fn test_proxy_unix_socket() {
             upgrade_tx
                 .try_send(hyper::upgrade::on(req))
                 .expect("one CONNECT request");
-            async { Ok::<_, hyper::Error>(Response::new(Full::new(&b""[..]))) }
+            async {
+                Ok::<_, hyper::Error>(
+                    Response::builder()
+                        .status(StatusCode::CREATED)
+                        .body(Full::new(&b""[..]))
+                        .unwrap(),
+                )
+            }
         });
         hyper::server::conn::http1::Builder::new()
             .serve_connection(TokioIo::new(stream), service)

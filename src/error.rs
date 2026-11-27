@@ -1,7 +1,9 @@
 use std::{error::Error as StdError, fmt, io};
 
 use http::Uri;
-use netty::ext::ReasonPhrase;
+#[cfg(feature = "socks")]
+use netty::proxy::socks::SocksError;
+use netty::{ext::ReasonPhrase, proxy::tunnel::TunnelError};
 
 use crate::{StatusCode, util::Escape};
 
@@ -262,11 +264,8 @@ impl Error {
     pub fn is_proxy_auth(&self) -> bool {
         #[cfg(feature = "http3")]
         use netty::proxy::masque::MasqueError;
-        #[cfg(feature = "socks")]
-        use netty::proxy::socks::SocksError;
         #[cfg(all(feature = "http3", feature = "socks"))]
         use netty::proxy::socks::udp::AssociateError;
-        use netty::proxy::tunnel::TunnelError;
 
         let mut source = self.source();
 
@@ -276,15 +275,11 @@ impl Error {
             }
 
             #[cfg(feature = "socks")]
-            if let Some(SocksError::Handshake(cause)) = err.downcast_ref::<SocksError>()
-                && matches!(
-                    cause.downcast_ref::<tokio_socks::Error>(),
-                    Some(
-                        tokio_socks::Error::PasswordAuthFailure(_)
-                            | tokio_socks::Error::AuthorizationRequired
-                            | tokio_socks::Error::NoAcceptableAuthMethods
-                    )
-                )
+            if let Some(
+                SocksError::PasswordAuthFailure(_)
+                | SocksError::AuthorizationRequired
+                | SocksError::NoAcceptableAuthMethods,
+            ) = err.downcast_ref::<SocksError>()
             {
                 return true;
             }
@@ -318,7 +313,7 @@ impl Error {
 
         while let Some(err) = source {
             #[cfg(feature = "socks")]
-            if err.is::<netty::proxy::socks::SocksError>() {
+            if err.is::<SocksError>() {
                 return false;
             }
 
@@ -663,8 +658,6 @@ mod tests {
 
     #[test]
     fn is_proxy_auth() {
-        use netty::proxy::tunnel::TunnelError;
-
         let err = Error::request(TunnelError::ProxyAuthRequired);
         assert!(err.is_proxy_auth());
 
@@ -677,14 +670,12 @@ mod tests {
     #[cfg(feature = "socks")]
     #[test]
     fn is_proxy_auth_socks() {
-        use netty::proxy::socks::SocksError;
-
-        for cause in [
-            tokio_socks::Error::PasswordAuthFailure(1),
-            tokio_socks::Error::AuthorizationRequired,
-            tokio_socks::Error::NoAcceptableAuthMethods,
+        for error in [
+            SocksError::PasswordAuthFailure(1),
+            SocksError::AuthorizationRequired,
+            SocksError::NoAcceptableAuthMethods,
         ] {
-            let err = Error::request(SocksError::Handshake(cause.into()));
+            let err = Error::request(error);
             assert!(err.is_proxy_auth(), "{err:?}");
         }
 
@@ -695,8 +686,6 @@ mod tests {
     #[cfg(feature = "socks")]
     #[test]
     fn socks_connect_failure_exposes_its_io_error() {
-        use netty::proxy::socks::SocksError;
-
         let refused = io::Error::from(io::ErrorKind::ConnectionRefused);
         let err = Error::request(SocksError::ConnectFailed(refused.into()));
 
