@@ -2019,6 +2019,7 @@ dependencies = [
  "smallvec",
  "tokio",
  "tokio-util",
+ "tower-service",
  "tracing",
  "want",
 ]
@@ -3981,7 +3982,6 @@ dependencies = [
  "http-body",
  "http-body-util",
  "http2",
- "httparse",
  "hyper",
  "hyper-util",
  "ipnet",

@@ -6,6 +6,7 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
+use netty::proxy::tunnel::TunnelConnector;
 use tokio_btls::SslStream;
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
@@ -14,13 +15,14 @@ use tower::{
 
 #[cfg(unix)]
 use super::net::UnixConnector;
+#[cfg(feature = "socks")]
+use super::proxy;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection,
     HttpConnector, TlsConn, TlsInfoFactory, Unnameable,
     descriptor::ConnectionDescriptor,
     http::HttpConnect,
     net::TcpConnector,
-    proxy,
     timeout::{Timeout, TimeoutLayer},
     verbose::Verbose,
 };
@@ -402,8 +404,7 @@ impl TransportConnector {
 
                     // Build a tunnel connector to establish the CONNECT tunnel.
                     let tunneled = {
-                        let mut tunnel =
-                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
+                        let mut tunnel = TunnelConnector::new(proxy_uri, connector.clone());
 
                         // If the proxy requires basic authentication, add it to the tunnel.
                         if let Some(auth) = proxy.basic_auth() {
@@ -416,7 +417,7 @@ impl TransportConnector {
                         }
 
                         // Connect to the proxy and establish the tunnel.
-                        tunnel.call(uri).await?
+                        tunnel.oneshot(uri).await?
                     };
 
                     // Wrap the established tunneled stream with TLS.
@@ -456,14 +457,9 @@ impl TransportConnector {
 
                     // The tunnel connector will first establish a CONNECT tunnel,
                     // then perform the TLS handshake over the tunneled stream.
-                    let tunneled = {
-                        // Create a tunnel connector using the Unix socket and the HTTPS
-                        // connector.
-                        let mut tunnel =
-                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
-
-                        tunnel.call(uri).await?
-                    };
+                    let tunneled = TunnelConnector::new(proxy_uri, connector.clone())
+                        .oneshot(uri)
+                        .await?;
 
                     // Wrap the established tunneled stream with TLS.
                     let io = connector

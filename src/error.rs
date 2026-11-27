@@ -1,7 +1,7 @@
 use std::{error::Error as StdError, fmt, io};
 
 use http::Uri;
-use netty::ext::ReasonPhrase;
+use netty::{ext::ReasonPhrase, proxy::tunnel::TunnelError};
 
 use crate::{StatusCode, util::Escape};
 
@@ -253,7 +253,6 @@ impl Error {
     pub fn is_proxy_auth(&self) -> bool {
         #[cfg(feature = "socks")]
         use crate::conn::proxy::socks::SocksError;
-        use crate::conn::proxy::tunnel::TunnelError;
 
         let mut source = self.source();
 
@@ -589,13 +588,11 @@ mod tests {
 
     #[test]
     fn is_proxy_auth() {
-        use crate::conn::proxy::tunnel::TunnelError;
-
         let err = Error::request(ProxyConnect(Box::new(TunnelError::ProxyAuthRequired)));
         assert!(err.is_proxy_auth());
 
         let err = Error::request(ProxyConnect(Box::new(TunnelError::TunnelUnsuccessful(
-            Some(503),
+            StatusCode::SERVICE_UNAVAILABLE,
         ))));
         assert!(!err.is_proxy_auth());
     }
