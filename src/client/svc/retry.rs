@@ -19,13 +19,13 @@ use crate::Body;
 const MAX_ATTEMPTS_PER_POLL: usize = 2;
 
 /// Cold-path error and unsent request carried out of an [`Attempt`] for retry.
-pub(super) struct Retryable {
+pub(in crate::client) struct Retryable {
     pub(super) error: error::Error,
     pub(super) request: http::Request<Body>,
 }
 
 /// Terminal or retryable outcome of a single dispatch attempt.
-pub(super) enum AttemptOutcome<T> {
+pub(in crate::client) enum AttemptOutcome<T> {
     /// Attempt completed with a response or terminal error.
     Done(Result<T, error::Error>),
     /// A shared checkout batch was canceled before connecting; retry intact.
@@ -38,13 +38,13 @@ pub(super) enum AttemptOutcome<T> {
 }
 
 /// Result of advancing an [`Attempt`]: either in-flight state `S` or a final outcome.
-pub(super) enum Step<S, T> {
+pub(in crate::client) enum Step<S, T> {
     Pending(S),
     Ready(AttemptOutcome<T>),
 }
 
 /// Single-attempt state machine driven by [`Retry`], borrowing shared context across polls.
-pub(super) trait Attempt {
+pub(in crate::client) trait Attempt {
     type Output;
     type State;
 
@@ -70,7 +70,7 @@ pub(super) trait Attempt {
 /// Restores the original URI, wire version, and auto-generated `Cookie` headers before
 /// each retry, yielding after a bounded number of attempts per poll.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-pub(super) struct Retry<A: Attempt> {
+pub(in crate::client) struct Retry<A: Attempt> {
     attempt: A,
     uri: Uri,
     version: Version,

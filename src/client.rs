@@ -17,7 +17,6 @@ pub mod ws;
 
 use std::{
     borrow::Cow,
-    collections::HashMap,
     convert::TryInto,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroUsize,
@@ -68,7 +67,7 @@ use crate::http2::Http2Options;
 use crate::{
     IntoUri, Method, Proxy,
     conn::{BoxedConnectService, Conn, Unnameable},
-    dns::{DynResolver, IntoResolve, OverrideResolver, Resolve},
+    dns::IntoResolve,
     error::Error,
     header::OrigHeaderMap,
     http1::Http1Options,
@@ -173,8 +172,6 @@ struct Config {
     redirect_policy: redirect::Policy,
     referer: bool,
     timeout_options: TimeoutOptions,
-    dns_overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
-    dns_resolver: Option<Arc<dyn Resolve>>,
     https_only: bool,
     layers: Vec<BoxedClientServiceLayer>,
     svc: svc::Config,
@@ -223,8 +220,6 @@ impl Client {
                 redirect_policy: redirect::Policy::none(),
                 referer: true,
                 timeout_options: TimeoutOptions::default(),
-                dns_overrides: HashMap::new(),
-                dns_resolver: None,
                 https_only: false,
                 layers: Vec::new(),
                 svc: svc::Config::default(),
@@ -456,23 +451,9 @@ impl ClientBuilder {
                 .push(ProxyMatcher::system());
         }
 
-        // Create base client service
-        let service = {
-            let resolver = {
-                let mut resolver: Arc<dyn Resolve> = match self.config.dns_resolver {
-                    Some(dns_resolver) => dns_resolver,
-                    None => self.runtime.resolver(),
-                };
-                if !self.config.dns_overrides.is_empty() {
-                    resolver = Arc::new(OverrideResolver::new(resolver, self.config.dns_overrides));
-                }
-                DynResolver::new(resolver)
-            };
-            svc::Client::new(self.runtime.clone(), resolver, self.config.svc)?
-        };
-
         // Configured client service with layers
         let client = {
+            let client = svc::Client::new(self.runtime.clone(), self.config.svc)?;
             let service = ServiceBuilder::new()
                 .layer({
                     let policy = FollowRedirectPolicy::new(self.config.redirect_policy)
@@ -481,7 +462,7 @@ impl ClientBuilder {
                     FollowRedirectLayer::with_policy(policy)
                 })
                 .layer(RetryLayer::new(RetryPolicy::new(self.config.retry_policy)))
-                .service(service);
+                .service(client);
 
             #[cfg(any(
                 feature = "gzip",
@@ -1530,6 +1511,8 @@ impl ClientBuilder {
         A: IntoIterator<Item = SocketAddr>,
     {
         self.config
+            .svc
+            .conn_config
             .dns_overrides
             .insert(domain.into(), addrs.into_iter().collect());
         self
@@ -1542,7 +1525,7 @@ impl ClientBuilder {
     /// still be applied on top of this resolver.
     #[inline]
     pub fn dns_resolver<R: IntoResolve>(mut self, resolver: R) -> ClientBuilder {
-        self.config.dns_resolver = Some(resolver.into_shared());
+        self.config.svc.conn_config.dns_resolver = Some(resolver.into_shared());
         self
     }
 

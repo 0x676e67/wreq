@@ -58,13 +58,12 @@ async fn adaptive_and_extended_connect_custom_protocol() {
     use std::convert::Infallible;
 
     use http::{
-        HeaderName, Method, StatusCode, Version,
+        Method, StatusCode, Version,
         header::{CONNECTION, UPGRADE},
     };
     use support::server::Event;
     use wreq::upgrade::{Protocol, Upgrade};
 
-    const HANDSHAKE_KEY: HeaderName = HeaderName::from_static("x-handshake-key");
     const PROTO: Protocol = Protocol::from_static("foobar");
 
     for enabled in [true, false] {
@@ -79,12 +78,11 @@ async fn adaptive_and_extended_connect_custom_protocol() {
                         Some("foobar")
                     );
                     assert!(
-                        [UPGRADE, CONNECTION, HANDSHAKE_KEY]
+                        [UPGRADE, CONNECTION]
                             .iter()
                             .all(|h| !req.headers().contains_key(h))
                     );
                 } else if req.headers().contains_key(UPGRADE) {
-                    assert_eq!(req.headers()[HANDSHAKE_KEY], "abc");
                     *res.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
                     res.headers_mut().insert(UPGRADE, "foobar".parse().unwrap());
                     res.headers_mut()
@@ -127,9 +125,8 @@ async fn adaptive_and_extended_connect_custom_protocol() {
             .get(&url)
             .header(CONNECTION, "upgrade")
             .header(UPGRADE, "foobar")
-            .header(HANDSHAKE_KEY, "abc")
             .header("x-keep", "1")
-            .upgrade(Upgrade::adaptive(PROTO).strip_headers([HANDSHAKE_KEY]))
+            .upgrade(Upgrade::adaptive(PROTO))
             .send()
             .await
             .unwrap();

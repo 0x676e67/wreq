@@ -486,10 +486,9 @@ impl WebSocketRequestBuilder {
                 *request.version_mut() = Some(Version::HTTP_11);
                 // The default route reuses an established HTTP/2 or HTTP/3 connection whose
                 // peer enabled extended CONNECT, otherwise opens a dedicated HTTP/1.1 socket.
-                *request.upgrade_mut() = version.is_none().then(|| {
-                    Upgrade::adaptive(Protocol::WEBSOCKET)
-                        .strip_headers([header::SEC_WEBSOCKET_KEY])
-                });
+                *request.upgrade_mut() = version
+                    .is_none()
+                    .then(|| Upgrade::adaptive(Protocol::WEBSOCKET));
                 Some(nonce)
             }
             #[cfg(feature = "http2")]

@@ -21,8 +21,7 @@ pub(super) struct Prepared {
     pub(super) request: conn::Request<ConnectConfig>,
     pub(super) key: Option<reuse::Key>,
     pub(super) negotiable: bool,
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    pub(super) upgrade: Option<Box<upgrade::Plan>>,
+    pub(super) upgrade: upgrade::Plan,
 }
 
 impl Prepared {
@@ -121,22 +120,18 @@ impl Prepared {
         let request = conn::Request::new(origin, protocol, config);
         let key = (!dedicated).then(|| request.reuse_key(protocol));
 
-        #[cfg(any(feature = "http2", feature = "http3"))]
-        let upgrade = match upgrade {
-            Some(upgrade) => upgrade.into_plan(
-                protocol,
-                client_protocol,
-                request.uri().is_https(),
-                |protocol| request.reuse_key(protocol),
-            )?,
-            None => None,
-        };
+        let upgrade = upgrade::Plan::new(
+            upgrade,
+            protocol,
+            client_protocol,
+            request.uri().is_https(),
+            |protocol| request.reuse_key(protocol),
+        )?;
 
         Ok(Self {
             request,
             key,
             negotiable,
-            #[cfg(any(feature = "http2", feature = "http3"))]
             upgrade,
         })
     }

@@ -183,7 +183,7 @@ where
         connector,
         TokioRuntime,
         config,
-        proto::Builder::new(DynRuntime::new(TokioRuntime), connect_config, true),
+        proto::Builder::new(DynRuntime::new(TokioRuntime), connect_config),
     )
 }
 
@@ -842,7 +842,7 @@ async fn pool_max_size_evicts_only_idle_groups() {
             max_size: NonZeroUsize::new(2),
             ..Config::default()
         },
-        proto::Builder::new(DynRuntime::new(TokioRuntime), &config, true),
+        proto::Builder::new(DynRuntime::new(TokioRuntime), &config),
     );
     let protocol = cfg_select! {
         feature = "http2" => Protocol::Auto,
@@ -1093,7 +1093,7 @@ async fn mux_readiness_after_cancel_and_auto_reuse_first_upgrade() {
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let runtime = DynRuntime::new(TokioRuntime);
         let config = ConnectConfig::default();
-        let proto = proto::Builder::new(runtime.clone(), &config, true);
+        let proto = proto::Builder::new(runtime.clone(), &config);
         let shared = Arc::new(Mutex::new(EntryState::default()));
         let maker = StreamMaker {
             connector: StrictConnector {
@@ -1127,7 +1127,7 @@ async fn mux_readiness_after_cancel_and_auto_reuse_first_upgrade() {
     {
         let runtime = DynRuntime::new(TokioRuntime);
         let config = ConnectConfig::default();
-        let proto = proto::Builder::new(runtime.clone(), &config, true);
+        let proto = proto::Builder::new(runtime.clone(), &config);
         let shared = Arc::new(Mutex::new(EntryState::default()));
         let connector = StrictConnector {
             inner: http3_connector(),

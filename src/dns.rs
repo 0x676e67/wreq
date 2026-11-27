@@ -14,8 +14,8 @@ mod resolve;
 ))]
 pub(crate) mod hickory;
 
+pub(crate) use self::resolve::DynResolver;
 pub use self::resolve::{Addrs, IntoResolve, Name, Resolve, Resolving};
-pub(crate) use self::resolve::{DynResolver, OverrideResolver};
 
 /// Address iterator with IP parsing and address-family selection for connection attempts.
 pub(crate) struct SocketAddrs {

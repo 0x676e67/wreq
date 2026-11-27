@@ -35,7 +35,6 @@ use crate::{
 pub struct Connection<B = crate::Body> {
     tx: conn::http1::SendRequest<B>,
     connected: Connected,
-    set_host: bool,
     idle_at: Instant,
     runtime: DynRuntime,
 }
@@ -48,7 +47,6 @@ pub struct ConnectLayer<'a> {
     builder: &'a Arc<conn::http1::Builder>,
     options: Option<&'a Http1Options>,
     runtime: &'a DynRuntime,
-    set_host: bool,
 }
 
 /// Connects a transport and performs an HTTP/1 handshake.
@@ -56,7 +54,6 @@ pub struct ConnectLayer<'a> {
 pub struct Connect<S> {
     inner: S,
     builder: Arc<conn::http1::Builder>,
-    set_host: bool,
     runtime: DynRuntime,
 }
 
@@ -69,13 +66,11 @@ impl<'a> ConnectLayer<'a> {
         runtime: &'a DynRuntime,
         builder: &'a Arc<conn::http1::Builder>,
         options: Option<&'a Http1Options>,
-        set_host: bool,
     ) -> Self {
         Self {
             runtime,
             builder,
             options,
-            set_host,
         }
     }
 }
@@ -88,7 +83,6 @@ impl<S> Layer<S> for ConnectLayer<'_> {
             inner,
             builder: configure(self.builder, self.options, conn::http1::Builder::options),
             runtime: self.runtime.clone(),
-            set_host: self.set_host,
         }
     }
 }
@@ -112,7 +106,6 @@ where
         let future = self.inner.call(target);
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
-        let set_host = self.set_host;
         Box::pin(async move {
             let Established { io, connected, .. } = future.await?;
             let (mut tx, connection) = Arc::unwrap_or_clone(builder).handshake(io).await?;
@@ -137,7 +130,6 @@ where
             Ok(Connection {
                 tx,
                 connected,
-                set_host,
                 idle_at: runtime.now(),
                 runtime,
             })
@@ -195,8 +187,7 @@ impl<B> Connection<B> {
         B: Body + Send + 'static,
     {
         // Host must be derived before the absolute URI becomes a wire target.
-        if self.set_host
-            && !req.headers().contains_key(HOST)
+        if !req.headers().contains_key(HOST)
             && let Some(host) = generate_host_header(req.uri())
         {
             req.headers_mut().insert(HOST, host);

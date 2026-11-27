@@ -47,8 +47,6 @@ pub(super) fn configure<B: Clone, O: Clone>(
 pub(super) struct Builder {
     /// Runtime spawning HTTP connection drivers and timers.
     runtime: DynRuntime,
-    /// Whether the HTTP/1 sender supplies a missing `Host` header.
-    set_host: bool,
     /// Client-wide default HTTP/1 handshake builder.
     http1: Arc<netty::conn::http1::Builder>,
     /// Client-wide default HTTP/2 handshake builder.
@@ -78,7 +76,7 @@ pub(super) struct Established {
 impl Builder {
     /// Builds the default protocol settings for the client.
     #[must_use]
-    pub(super) fn new(runtime: DynRuntime, config: &ConnectConfig, set_host: bool) -> Self {
+    pub(super) fn new(runtime: DynRuntime, config: &ConnectConfig) -> Self {
         let http1 = netty::conn::http1::Builder::default();
         let http1 = match config.get_ref::<netty::http1::Http1Options>() {
             Some(options) => http1.options(options.clone()),
@@ -105,7 +103,6 @@ impl Builder {
 
         Self {
             runtime,
-            set_host,
             http1: Arc::new(http1),
             #[cfg(feature = "http2")]
             http2: Arc::new(http2),
@@ -118,20 +115,20 @@ impl Builder {
     #[must_use]
     pub(super) fn http1<'a>(&'a self, config: &'a ConnectConfig) -> http1::ConnectLayer<'a> {
         let options = config.override_if_different(PartialEq::eq).map(Arc::as_ref);
-        http1::ConnectLayer::new(&self.runtime, &self.http1, options, self.set_host)
+        http1::ConnectLayer::new(&self.runtime, &self.http1, options)
     }
 
     /// Applies the request's HTTP/2 handshake overrides.
-    #[cfg(feature = "http2")]
     #[must_use]
+    #[cfg(feature = "http2")]
     pub(super) fn http2<'a>(&'a self, config: &'a ConnectConfig) -> http2::ConnectLayer<'a> {
         let options = config.override_if_different(PartialEq::eq).map(Arc::as_ref);
         http2::ConnectLayer::new(&self.runtime, &self.http2, options)
     }
 
     /// Applies the request's HTTP/3 handshake overrides.
-    #[cfg(feature = "http3")]
     #[must_use]
+    #[cfg(feature = "http3")]
     pub(super) fn http3<'a>(&'a self, config: &'a ConnectConfig) -> http3::ConnectLayer<'a> {
         let options = config.override_if_different(PartialEq::eq).map(Arc::as_ref);
         http3::ConnectLayer::new(&self.runtime, &self.http3, options)

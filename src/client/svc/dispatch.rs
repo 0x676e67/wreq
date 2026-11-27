@@ -9,56 +9,55 @@ use std::{
 
 use http::{HeaderValue, Method, Response, Uri, Version, header::HOST, uri::Authority};
 use netty::{body::Incoming, conn::TrySendError};
-use tower::BoxError;
+use tower::{BoxError, Service};
 #[cfg(feature = "cookies")]
 use {
     crate::cookie::{CookieStore, Cookies},
-    http::header::COOKIE,
+    http::header::{COOKIE, SET_COOKIE},
     std::sync::Arc,
 };
 
-#[cfg(any(feature = "http2", feature = "http3"))]
-use super::super::upgrade;
 use super::{
     super::{
         error::{self, ErrorKind},
-        pool,
+        pool, upgrade,
     },
     prepare::Prepared,
     retry::{Attempt, AttemptOutcome, Retryable, Step},
 };
 use crate::{
-    Body, conn,
+    Body,
+    conn::{Conn, Unnameable},
     ext::UriExt,
     reuse,
-    rt::{DynRuntime, Executor},
+    rt::{Executor, Timer},
 };
 
 /// Shared pool, cookie store, and prepared connection metadata for one HTTP dispatch.
-pub(super) struct Dispatch {
-    pub(super) pool: pool::Pool<reuse::Key, conn::ConnectService, DynRuntime>,
+pub(in crate::client) struct Dispatch<C, R> {
+    pub(super) pool: pool::Pool<reuse::Key, C, R>,
     #[cfg(feature = "cookies")]
     pub(super) cookie_store: Option<Arc<dyn CookieStore>>,
     pub(super) prepared: Prepared,
 }
 
 /// Per-attempt dispatch state owned by [`super::retry::Retry`] while [`Dispatch`] is in flight.
-pub(super) enum SendState {
+pub(in crate::client) enum SendState {
     /// Cold dial or queued checkout; boxed so warm hits do not pay for `Checkout + Request`.
     Checkout(Box<(pool::Checkout, http::Request<Body>)>),
     /// `future` drops before `pooled` so cancellation tears down the stream first.
     Sending {
         future: netty::conn::ResponseFuture<Body>,
         pooled: pool::Pooled,
-        #[cfg(any(feature = "http2", feature = "http3"))]
-        extended: bool,
-        #[cfg(any(feature = "http2", feature = "http3"))]
-        rewritten: Option<Box<upgrade::Rewritten>>,
+        upgrade: upgrade::State,
     },
     Done,
 }
 
-impl Dispatch {
+impl<C, R> Dispatch<C, R>
+where
+    R: Executor,
+{
     /// Transitions after a completed pool checkout.
     fn on_checkout(
         &self,
@@ -68,14 +67,7 @@ impl Dispatch {
         cx: &mut Context<'_>,
     ) -> Step<SendState, Response<Incoming>> {
         match result {
-            Ok(pooled) => self.poll_send(
-                request,
-                pooled,
-                #[cfg(any(feature = "http2", feature = "http3"))]
-                None,
-                uri,
-                cx,
-            ),
+            Ok(pooled) => self.poll_send(request, pooled, upgrade::State::none(), uri, cx),
             Err(error) if pool::is_canceled(&*error) => {
                 Step::Ready(AttemptOutcome::CheckoutCanceled(Box::new(Retryable {
                     error: error::Error::new(ErrorKind::Connect, error),
@@ -94,29 +86,37 @@ impl Dispatch {
         &self,
         mut request: http::Request<Body>,
         mut pooled: pool::Pooled,
-        #[cfg(any(feature = "http2", feature = "http3"))] rewritten: Option<
-            Box<upgrade::Rewritten>,
-        >,
+        mut upgrade: upgrade::State,
         uri: &Uri,
         cx: &mut Context<'_>,
     ) -> Step<SendState, Response<Incoming>> {
-        let _extended = match reconcile(
+        if let Err(error) = reconcile(
             &mut request,
             &pooled,
             self.prepared.negotiable,
-            #[cfg(any(feature = "http2", feature = "http3"))]
-            self.prepared.upgrade.as_deref(),
-            #[cfg(any(feature = "http2", feature = "http3"))]
-            rewritten.is_some(),
+            &self.prepared.upgrade,
+            &mut upgrade,
         ) {
-            Ok(extended) => extended,
-            Err(error) => return Step::Ready(AttemptOutcome::Done(Err(error))),
-        };
+            return Step::Ready(AttemptOutcome::Done(Err(error)));
+        }
 
         // Cookies keep the original request URI; only the wire target of a CONNECT changes.
         #[cfg(feature = "cookies")]
-        if let Some(cookie_store) = self.cookie_store.as_deref() {
-            apply_request_cookies(&mut request, cookie_store, uri, pooled.version());
+        if let Some(cookie_store) = self.cookie_store.as_deref()
+            && !request.headers().contains_key(COOKIE)
+        {
+            let headers = request.headers_mut();
+            match cookie_store.cookies(uri, pooled.version()) {
+                Cookies::Compressed(value) => {
+                    headers.insert(COOKIE, value);
+                }
+                Cookies::Uncompressed(values) => {
+                    for value in values {
+                        headers.append(COOKIE, value);
+                    }
+                }
+                Cookies::Empty => {}
+            }
         }
 
         let mut future = match pooled.send_request(request) {
@@ -132,22 +132,11 @@ impl Dispatch {
             Poll::Pending => Step::Pending(SendState::Sending {
                 future,
                 pooled,
-                #[cfg(any(feature = "http2", feature = "http3"))]
-                extended: _extended,
-                #[cfg(any(feature = "http2", feature = "http3"))]
-                rewritten,
+                upgrade,
             }),
             Poll::Ready(result) => {
                 drop(future);
-                Step::Ready(self.finish(
-                    result,
-                    pooled,
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    _extended,
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    rewritten,
-                    uri,
-                ))
+                Step::Ready(self.finish(result, pooled, upgrade, uri))
             }
         }
     }
@@ -157,10 +146,7 @@ impl Dispatch {
         &self,
         result: Result<Response<Incoming>, TrySendError<http::Request<Body>>>,
         mut pooled: pool::Pooled,
-        #[cfg(any(feature = "http2", feature = "http3"))] extended: bool,
-        #[cfg(any(feature = "http2", feature = "http3"))] rewritten: Option<
-            Box<upgrade::Rewritten>,
-        >,
+        upgrade: upgrade::State,
         uri: &Uri,
     ) -> AttemptOutcome<Response<Incoming>> {
         let mut response = match result {
@@ -175,19 +161,9 @@ impl Dispatch {
                 // A returned request was not sent; only protocol rejections are final,
                 // since they repeat on the same connection.
                 if !error.error().is_user()
-                    && let Some(unsent) = error.take_message()
+                    && let Some(mut unsent) = error.take_message()
                 {
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    let mut unsent = unsent;
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    if let Some(rewritten) = rewritten {
-                        rewritten.restore(&mut unsent);
-                    } else if matches!(
-                        self.prepared.upgrade.as_deref(),
-                        Some(upgrade::Plan::ExtendedConnect(_))
-                    ) {
-                        upgrade::Protocol::clear_from(&mut unsent);
-                    }
+                    upgrade.restore_unsent(&mut unsent);
 
                     return AttemptOutcome::Unsent {
                         retry: Box::new(Retryable {
@@ -203,9 +179,8 @@ impl Dispatch {
                 }
 
                 // The peer's SETTINGS may have arrived while the send was pending.
-                #[cfg(any(feature = "http2", feature = "http3"))]
-                if extended && pooled.extended_connect() == Some(false) {
-                    return AttemptOutcome::Done(Err(extended_connect_disabled(&pooled)));
+                if let Some(error) = upgrade.send_error(pooled.extended_connect()) {
+                    return AttemptOutcome::Done(Err(error.with_connect_info(connect_info)));
                 }
 
                 return AttemptOutcome::Done(Err(with_h2_alpn_context(
@@ -218,7 +193,8 @@ impl Dispatch {
 
         #[cfg(feature = "cookies")]
         if let Some(cookie_store) = self.cookie_store.as_deref() {
-            store_response_cookies(&response, cookie_store, uri);
+            let mut cookies = response.headers().get_all(SET_COOKIE).iter();
+            cookie_store.set_cookies(&mut cookies, uri);
         }
 
         pooled.connected().set_extras(response.extensions_mut());
@@ -238,35 +214,32 @@ impl Dispatch {
     }
 }
 
-impl Attempt for Dispatch {
+impl<C, R> Attempt for Dispatch<C, R>
+where
+    C: Service<Unnameable, Response = Conn, Error = BoxError, Future: Send + 'static>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    R: Executor + Timer + Clone + 'static,
+{
     type Output = Response<Incoming>;
     type State = SendState;
 
     fn start(
         &mut self,
-        #[allow(unused_mut)] mut request: http::Request<Body>,
+        mut request: http::Request<Body>,
         uri: &Uri,
         cx: &mut Context<'_>,
     ) -> Step<Self::State, Self::Output> {
         // RFC 8441 §3 and RFC 9220 §3: extended CONNECT only after the peer enabled it.
         // A miss keeps the dedicated HTTP/1.1 upgrade without opening H2/H3.
-        #[cfg(any(feature = "http2", feature = "http3"))]
-        if let Some(upgrade::Plan::Adaptive {
-            key,
-            protocol,
-            strip_headers,
-        }) = self.prepared.upgrade.as_deref()
-            && let Some(pooled) = self.pool.checkout_extended_connect(key)
-        {
-            if let Some(rewritten) = upgrade::Rewritten::try_rewrite(
-                &mut request,
-                pooled.version(),
-                protocol,
-                strip_headers.as_deref().unwrap_or(&[]),
-            ) {
-                return self.poll_send(request, pooled, Some(rewritten), uri, cx);
-            }
-            drop(pooled);
+        if let Some((pooled, upgrade)) = self.prepared.upgrade.try_adaptive(
+            &mut request,
+            |key| self.pool.checkout_extended_connect(key),
+            pool::Pooled::version,
+        ) {
+            return self.poll_send(request, pooled, upgrade, uri, cx);
         }
 
         let mut future = self
@@ -306,25 +279,12 @@ impl Attempt for Dispatch {
             SendState::Sending { future, .. } => {
                 let result = ready!(Pin::new(future).poll(cx));
                 let SendState::Sending {
-                    pooled,
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    extended,
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    rewritten,
-                    ..
+                    pooled, upgrade, ..
                 } = mem::replace(state, SendState::Done)
                 else {
                     return Poll::Pending;
                 };
-                Poll::Ready(self.finish(
-                    result,
-                    pooled,
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    extended,
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    rewritten,
-                    uri,
-                ))
+                Poll::Ready(self.finish(result, pooled, upgrade, uri))
             }
             SendState::Done => Poll::Pending,
         }
@@ -344,7 +304,7 @@ fn with_h2_alpn_context(error: error::Error, unnegotiated_h2: bool) -> error::Er
     }
 }
 
-/// Adjusts `request` to match `pooled` and returns `true` if it uses extended CONNECT.
+/// Adjusts `request` to match `pooled` and records Extended CONNECT attempt state.
 ///
 /// Sets the wire version for multiplexed or negotiable requests, rejects incompatible
 /// versions on HTTP/1, and fills in the default port for plain CONNECT targets.
@@ -352,30 +312,13 @@ fn reconcile(
     request: &mut http::Request<Body>,
     pooled: &pool::Pooled,
     negotiable: bool,
-    #[cfg(any(feature = "http2", feature = "http3"))] plan: Option<&upgrade::Plan>,
-    #[cfg(any(feature = "http2", feature = "http3"))] rewritten: bool,
-) -> Result<bool, error::Error> {
-    let extended = cfg_select! {
-        any(feature = "http2", feature = "http3") => {{
-            let extended = if rewritten {
-                true
-            } else if let Some(upgrade::Plan::ExtendedConnect(protocol)) = plan {
-                protocol
-                    .insert_into(request, pooled.version())
-                    .map_err(|error| error.with_connect_info(pooled.connected().clone()))?;
-                true
-            } else {
-                request.method() == Method::CONNECT && matched_extended_connect(request, pooled)?
-            };
-            if extended && !rewritten && pooled.extended_connect() == Some(false) {
-                return Err(extended_connect_disabled(pooled));
-            }
-            extended
-        }}
-        _ => false,
-    };
-
+    plan: &upgrade::Plan,
+    upgrade: &mut upgrade::State,
+) -> Result<(), error::Error> {
     let version = pooled.version();
+    plan.reconcile(request, upgrade, version, pooled.extended_connect())
+        .map_err(|error| error.with_connect_info(pooled.connected().clone()))?;
+
     let multiplexed = version != Version::HTTP_11;
     if multiplexed || negotiable {
         *request.version_mut() = version;
@@ -388,48 +331,10 @@ fn reconcile(
             .with_connect_info(pooled.connected().clone()));
     }
 
-    if request.method() == Method::CONNECT && !extended {
+    if request.method() == Method::CONNECT && !upgrade.is_extended_connect() {
         connect_target_port(request, multiplexed)?;
     }
-    Ok(extended)
-}
-
-/// Validates protocol markers provided directly through request extensions.
-#[cfg(any(feature = "http2", feature = "http3"))]
-fn matched_extended_connect(
-    request: &http::Request<Body>,
-    pooled: &pool::Pooled,
-) -> Result<bool, error::Error> {
-    let extensions = request.extensions();
-    let http2 = cfg_select! {
-        feature = "http2" => extensions.get::<http2::ext::Protocol>().is_some(),
-        _ => false,
-    };
-    let http3 = cfg_select! {
-        feature = "http3" => extensions.get::<netty::http3::Protocol>().is_some(),
-        _ => false,
-    };
-    let matched = match pooled.version() {
-        Version::HTTP_2 => http2,
-        Version::HTTP_3 => http3,
-        _ => false,
-    };
-    if (http2 || http3) && !matched {
-        warn!("extended CONNECT protocol does not match the connection's HTTP version");
-        return Err(error::Error::from_kind(ErrorKind::UserUnsupportedVersion)
-            .with_connect_info(pooled.connected().clone()));
-    }
-    Ok(matched)
-}
-
-/// Rejects extended CONNECT unless the peer enabled it (RFC 8441 §3, RFC 9220 §3).
-#[must_use]
-#[cfg(any(feature = "http2", feature = "http3"))]
-fn extended_connect_disabled(pooled: &pool::Pooled) -> error::Error {
-    warn!("peer did not enable extended CONNECT");
-    error::Error::from_kind(ErrorKind::UserUnsupportedVersion)
-        .with_context("peer did not enable extended CONNECT")
-        .with_connect_info(pooled.connected().clone())
+    Ok(())
 }
 
 /// Fills in the scheme's default port on a plain CONNECT target when omitted
@@ -478,46 +383,4 @@ fn connect_target_port<B>(
     *request.uri_mut() =
         Uri::from_parts(parts).map_err(|error| error::Error::new(ErrorKind::SendRequest, error))?;
     Ok(())
-}
-
-/// Populates `Cookie` headers from `cookie_store` unless the caller already set one.
-#[cfg(feature = "cookies")]
-fn apply_request_cookies<B>(
-    request: &mut http::Request<B>,
-    cookie_store: &dyn CookieStore,
-    uri: &Uri,
-    version: Version,
-) {
-    let headers = request.headers_mut();
-    if headers.contains_key(COOKIE) {
-        return;
-    }
-    match cookie_store.cookies(uri, version) {
-        Cookies::Compressed(value) => {
-            headers.insert(COOKIE, value);
-        }
-        Cookies::Uncompressed(values) => {
-            for value in values {
-                headers.append(COOKIE, value);
-            }
-        }
-        Cookies::Empty => {}
-    }
-}
-
-/// Persists any `Set-Cookie` response headers into `cookie_store`.
-#[cfg(feature = "cookies")]
-fn store_response_cookies(
-    response: &Response<Incoming>,
-    cookie_store: &dyn CookieStore,
-    uri: &Uri,
-) {
-    let mut cookies = response
-        .headers()
-        .get_all(http::header::SET_COOKIE)
-        .iter()
-        .peekable();
-    if cookies.peek().is_some() {
-        cookie_store.set_cookies(&mut cookies, uri);
-    }
 }

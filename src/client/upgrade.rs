@@ -8,25 +8,25 @@ use std::{
     borrow::Cow,
     fmt, io,
     pin::Pin,
-    sync::Arc,
     task::{self, Poll},
 };
 
-use http::{HeaderName, Method, Version};
+use http::{Method, Version};
 use netty::upgrade;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 #[cfg(any(feature = "http2", feature = "http3"))]
 use {
-    crate::{protocol::Protocol as ClientProtocol, reuse},
     http::{
         HeaderMap,
-        header::{CONNECTION, UPGRADE},
+        header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
     },
     std::mem,
 };
 
 use super::error::{self, ErrorKind};
-use crate::{Error, config::impl_request_config_value};
+use crate::{
+    Error, config::impl_request_config_value, protocol::Protocol as ClientProtocol, reuse,
+};
 
 /// A bidirectional stream from an HTTP upgrade or CONNECT tunnel.
 /// An HTTP/2 or HTTP/3 tunnel owns one stream on a shared connection and shares its flow
@@ -54,26 +54,45 @@ pub struct Upgrade(Kind);
 enum Kind {
     Http1,
     ExtendedConnect(Protocol),
-    Adaptive {
-        protocol: Protocol,
-        strip_headers: Option<Arc<[HeaderName]>>,
-    },
+    Adaptive(Protocol),
 }
 
-/// Prepared upgrade plan consumed by `svc::Client` across connection checkouts and retries.
+/// Prepared upgrade plan consumed by `svc` across connection checkouts and retries.
+///
+/// Zero-sized when neither `http2` nor `http3` is enabled.
+pub(super) struct Plan {
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    inner: Option<Box<PlanInner>>,
+}
+
 #[cfg(any(feature = "http2", feature = "http3"))]
-pub(super) enum Plan {
+enum PlanInner {
     ExtendedConnect(Protocol),
-    Adaptive {
-        key: reuse::Key,
-        protocol: Protocol,
-        strip_headers: Option<Arc<[HeaderName]>>,
-    },
+    Adaptive { key: reuse::Key, protocol: Protocol },
+}
+
+/// Per-attempt upgrade state carried while a request is in flight.
+///
+/// Zero-sized when neither `http2` nor `http3` is enabled.
+pub(super) struct State {
+    #[cfg(any(feature = "http2", feature = "http3"))]
+    inner: StateInner,
+}
+
+#[cfg(any(feature = "http2", feature = "http3"))]
+enum StateInner {
+    None,
+    /// Caller supplied a raw H2/H3 `:protocol` extension directly on the request.
+    ExternalExtendedConnect,
+    /// `PlanInner::ExtendedConnect` inserted the wire `:protocol` extension for this attempt.
+    ExtendedConnect,
+    /// `PlanInner::Adaptive` rewrote an HTTP/1 upgrade request into an Extended CONNECT.
+    Rewritten(Box<Rewritten>),
 }
 
 /// Original HTTP/1 upgrade fields saved while attempting Extended CONNECT, restored if unsent.
 #[cfg(any(feature = "http2", feature = "http3"))]
-pub(super) struct Rewritten {
+struct Rewritten {
     method: Method,
     version: Version,
     headers: HeaderMap,
@@ -153,10 +172,13 @@ impl Protocol {
     /// [RFC 8441]: https://www.rfc-editor.org/rfc/rfc8441
     /// [RFC 9220]: https://www.rfc-editor.org/rfc/rfc9220
     pub const WEBSOCKET: Self = Self::from_static("websocket");
+
     /// WebTransport protocol.
     pub const WEB_TRANSPORT: Self = Self::from_static("webtransport");
+
     /// UDP proxying over HTTP ([RFC 9298](https://www.rfc-editor.org/rfc/rfc9298)).
     pub const CONNECT_UDP: Self = Self::from_static("connect-udp");
+
     /// IP proxying over HTTP ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)).
     pub const CONNECT_IP: Self = Self::from_static("connect-ip");
 
@@ -182,7 +204,7 @@ impl Protocol {
 
     /// Inserts the wire `:protocol` extension for `version`, or returns a version error.
     #[cfg(any(feature = "http2", feature = "http3"))]
-    pub(super) fn insert_into<B>(
+    fn insert_into<B>(
         &self,
         request: &mut http::Request<B>,
         version: Version,
@@ -214,7 +236,7 @@ impl Protocol {
 
     /// Removes any wire `:protocol` extensions inserted for HTTP/2 or HTTP/3.
     #[cfg(any(feature = "http2", feature = "http3"))]
-    pub(super) fn clear_from<B>(request: &mut http::Request<B>) {
+    fn clear_from<B>(request: &mut http::Request<B>) {
         let extensions = request.extensions_mut();
         #[cfg(feature = "http2")]
         extensions.remove::<http2::ext::Protocol>();
@@ -283,26 +305,11 @@ impl Upgrade {
     /// connection whose peer enabled Extended CONNECT for `protocol`.
     ///
     /// On a hit, rewrites to `CONNECT` with `:protocol` (stripping `connection`, `upgrade`,
-    /// and [`Self::strip_headers`]) and restores the original request if unsent.
+    /// and `sec-websocket-key` for [`Protocol::WEBSOCKET`]) and restores the request if unsent.
     #[inline]
     #[must_use]
     pub fn adaptive<P: Into<Protocol>>(protocol: P) -> Self {
-        Self(Kind::Adaptive {
-            protocol: protocol.into(),
-            strip_headers: None,
-        })
-    }
-
-    /// Strips additional HTTP/1-only headers when an [`Self::adaptive`] upgrade rewrites for
-    /// Extended CONNECT (`connection` and `upgrade` are always stripped).
-    #[inline]
-    #[must_use]
-    pub fn strip_headers<I: IntoIterator<Item = HeaderName>>(mut self, headers: I) -> Self {
-        if let Kind::Adaptive { strip_headers, .. } = &mut self.0 {
-            let headers: Arc<[HeaderName]> = headers.into_iter().collect();
-            *strip_headers = (!headers.is_empty()).then_some(headers);
-        }
-        self
+        Self(Kind::Adaptive(protocol.into()))
     }
 
     /// Returns the Extended CONNECT protocol token, if configured.
@@ -311,7 +318,7 @@ impl Upgrade {
     pub fn protocol(&self) -> Option<&Protocol> {
         match &self.0 {
             Kind::Http1 => None,
-            Kind::ExtendedConnect(protocol) | Kind::Adaptive { protocol, .. } => Some(protocol),
+            Kind::ExtendedConnect(protocol) | Kind::Adaptive(protocol) => Some(protocol),
         }
     }
 
@@ -323,7 +330,7 @@ impl Upgrade {
         request_version: Option<Version>,
     ) -> Result<bool, error::Error> {
         match &self.0 {
-            Kind::Http1 | Kind::Adaptive { .. } => {
+            Kind::Http1 | Kind::Adaptive(_) => {
                 if !matches!(
                     request_version.unwrap_or(wire_version),
                     Version::HTTP_10 | Version::HTTP_11
@@ -347,52 +354,206 @@ impl Upgrade {
             }
         }
     }
+}
 
-    /// Validates protocol compatibility and constructs the dispatch plan for H2/H3.
-    #[cfg(any(feature = "http2", feature = "http3"))]
-    pub(super) fn into_plan(
-        self,
+// ===== impl Plan =====
+
+impl Plan {
+    /// Validates protocol compatibility and constructs the dispatch plan for `upgrade`.
+    #[inline]
+    pub(super) fn new(
+        upgrade: Option<Upgrade>,
         protocol: ClientProtocol,
         client_protocol: ClientProtocol,
         is_https: bool,
         reuse_key: impl FnOnce(ClientProtocol) -> reuse::Key,
-    ) -> Result<Option<Box<Plan>>, error::Error> {
-        match self.0 {
-            Kind::Http1 => Ok(None),
-            Kind::ExtendedConnect(proto) => {
-                if protocol == ClientProtocol::Http1 {
-                    return Err(requires_multiplexed());
-                }
-                #[cfg(feature = "http3")]
-                if protocol == ClientProtocol::Http3 && proto.to_http3().is_none() {
-                    warn!("extended CONNECT protocol {proto:?} is not supported on HTTP/3");
-                    return Err(error::Error::from_kind(ErrorKind::UserUnsupportedVersion)
-                        .with_context("extended CONNECT protocol is not supported on HTTP/3"));
-                }
-                Ok(Some(Box::new(Plan::ExtendedConnect(proto))))
-            }
-            Kind::Adaptive {
-                protocol: proto,
-                strip_headers,
-            } => {
-                let probe = match client_protocol {
-                    #[cfg(feature = "http2")]
-                    ClientProtocol::Auto | ClientProtocol::Http2 => true,
+    ) -> Result<Self, error::Error> {
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        {
+            let inner = match upgrade.map(|upgrade| upgrade.0) {
+                None | Some(Kind::Http1) => None,
+                Some(Kind::ExtendedConnect(proto)) => {
+                    if protocol == ClientProtocol::Http1 {
+                        return Err(requires_multiplexed());
+                    }
                     #[cfg(feature = "http3")]
-                    ClientProtocol::Http3 => is_https && proto.to_http3().is_some(),
-                    _ => false,
-                };
-                #[cfg(not(feature = "http3"))]
-                let _ = is_https;
-                Ok(probe.then(|| {
-                    Box::new(Plan::Adaptive {
-                        key: reuse_key(client_protocol),
-                        protocol: proto,
-                        strip_headers,
+                    if protocol == ClientProtocol::Http3 && proto.to_http3().is_none() {
+                        warn!("extended CONNECT protocol {proto:?} is not supported on HTTP/3");
+                        return Err(error::Error::from_kind(ErrorKind::UserUnsupportedVersion)
+                            .with_context("extended CONNECT protocol is not supported on HTTP/3"));
+                    }
+                    Some(Box::new(PlanInner::ExtendedConnect(proto)))
+                }
+                Some(Kind::Adaptive(proto)) => {
+                    let probe = match client_protocol {
+                        #[cfg(feature = "http2")]
+                        ClientProtocol::Auto | ClientProtocol::Http2 => true,
+                        #[cfg(feature = "http3")]
+                        ClientProtocol::Http3 => is_https && proto.to_http3().is_some(),
+                        _ => false,
+                    };
+                    #[cfg(not(feature = "http3"))]
+                    let _ = is_https;
+                    probe.then(|| {
+                        Box::new(PlanInner::Adaptive {
+                            key: reuse_key(client_protocol),
+                            protocol: proto,
+                        })
                     })
-                }))
-            }
+                }
+            };
+            Ok(Self { inner })
         }
+        #[cfg(not(any(feature = "http2", feature = "http3")))]
+        {
+            let _ = (upgrade, protocol, client_protocol, is_https, reuse_key);
+            Ok(Self {})
+        }
+    }
+
+    /// Probes an established H2/H3 connection for an adaptive upgrade and rewrites `request`.
+    ///
+    /// Returns `None` untouched on a miss or if the checked-out version cannot encode `:protocol`.
+    #[inline]
+    pub(super) fn try_adaptive<B, C>(
+        &self,
+        request: &mut http::Request<B>,
+        checkout: impl FnOnce(&reuse::Key) -> Option<C>,
+        version: impl FnOnce(&C) -> Version,
+    ) -> Option<(C, State)> {
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        {
+            let Some(PlanInner::Adaptive { key, protocol }) = self.inner.as_deref() else {
+                return None;
+            };
+            let conn = checkout(key)?;
+            let rewritten = Rewritten::try_rewrite(request, version(&conn), protocol)?;
+            Some((
+                conn,
+                State {
+                    inner: StateInner::Rewritten(rewritten),
+                },
+            ))
+        }
+        #[cfg(not(any(feature = "http2", feature = "http3")))]
+        {
+            let _ = (request, checkout, version);
+            None
+        }
+    }
+
+    /// Attaches or validates Extended CONNECT `:protocol` extensions for `version` and records
+    /// the attempt state, rejecting peers known to have disabled Extended CONNECT.
+    #[inline]
+    pub(super) fn reconcile<B>(
+        &self,
+        request: &mut http::Request<B>,
+        state: &mut State,
+        version: Version,
+        extended_connect: Option<bool>,
+    ) -> Result<(), error::Error> {
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        {
+            if matches!(state.inner, StateInner::Rewritten(_)) {
+                return Ok(());
+            }
+            if let Some(PlanInner::ExtendedConnect(protocol)) = self.inner.as_deref() {
+                protocol.insert_into(request, version)?;
+                if extended_connect == Some(false) {
+                    return Err(extended_connect_disabled());
+                }
+                state.inner = StateInner::ExtendedConnect;
+            } else if request.method() == Method::CONNECT
+                && matched_extended_connect(request, version)?
+            {
+                if extended_connect == Some(false) {
+                    return Err(extended_connect_disabled());
+                }
+                state.inner = StateInner::ExternalExtendedConnect;
+            }
+            Ok(())
+        }
+        #[cfg(not(any(feature = "http2", feature = "http3")))]
+        {
+            let _ = (request, state, version, extended_connect);
+            Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(super) fn is_none(&self) -> bool {
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        {
+            self.inner.is_none()
+        }
+        #[cfg(not(any(feature = "http2", feature = "http3")))]
+        {
+            true
+        }
+    }
+
+    #[cfg(all(test, feature = "http2"))]
+    #[must_use]
+    pub(super) fn adaptive_key(&self) -> Option<&reuse::Key> {
+        match self.inner.as_deref() {
+            Some(PlanInner::Adaptive { key, .. }) => Some(key),
+            _ => None,
+        }
+    }
+}
+
+// ===== impl State =====
+
+impl State {
+    /// Creates an empty upgrade state for a normal connection checkout.
+    #[inline]
+    #[must_use]
+    pub(super) const fn none() -> Self {
+        Self {
+            #[cfg(any(feature = "http2", feature = "http3"))]
+            inner: StateInner::None,
+        }
+    }
+
+    /// Returns whether this attempt uses HTTP/2 or HTTP/3 Extended CONNECT.
+    #[inline]
+    #[must_use]
+    pub(super) const fn is_extended_connect(&self) -> bool {
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        {
+            !matches!(self.inner, StateInner::None)
+        }
+        #[cfg(not(any(feature = "http2", feature = "http3")))]
+        {
+            false
+        }
+    }
+
+    /// Restores or clears upgrade mutations before retrying an unsent request.
+    #[inline]
+    pub(super) fn restore_unsent<B>(self, request: &mut http::Request<B>) {
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        match self.inner {
+            StateInner::None | StateInner::ExternalExtendedConnect => {}
+            StateInner::ExtendedConnect => Protocol::clear_from(request),
+            StateInner::Rewritten(rewritten) => rewritten.restore(request),
+        }
+        #[cfg(not(any(feature = "http2", feature = "http3")))]
+        let _ = request;
+    }
+
+    /// Returns a clearer error if the peer disabled Extended CONNECT while sending.
+    #[inline]
+    #[must_use]
+    pub(super) fn send_error(&self, extended_connect: Option<bool>) -> Option<error::Error> {
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        if self.is_extended_connect() && extended_connect == Some(false) {
+            return Some(extended_connect_disabled());
+        }
+        #[cfg(not(any(feature = "http2", feature = "http3")))]
+        let _ = extended_connect;
+        None
     }
 }
 
@@ -406,23 +567,25 @@ impl Rewritten {
     /// [RFC 8441 §5]: https://www.rfc-editor.org/rfc/rfc8441#section-5
     /// [RFC 9220 §3]: https://www.rfc-editor.org/rfc/rfc9220#section-3
     #[must_use]
-    pub(super) fn try_rewrite<B>(
+    fn try_rewrite<B>(
         request: &mut http::Request<B>,
         version: Version,
         protocol: &Protocol,
-        strip_headers: &[HeaderName],
     ) -> Option<Box<Self>> {
         protocol.insert_into(request, version).ok()?;
         let method = mem::replace(request.method_mut(), Method::CONNECT);
         let orig_version = mem::replace(request.version_mut(), version);
         let headers = mem::take(request.headers_mut());
-        // Connection-specific fields are malformed in HTTP/2 and HTTP/3; the rest keep their order:
+        // Connection-specific fields are malformed in HTTP/2 and HTTP/3, and RFC 8441 §5 /
+        // RFC 9220 §3 omit Sec-WebSocket-Key; the remaining headers keep their order:
         // https://www.rfc-editor.org/rfc/rfc9113#section-8.2.2
         // https://www.rfc-editor.org/rfc/rfc9114#section-4.2
+        let strip_ws_key = *protocol == Protocol::WEBSOCKET;
         let extended = request.headers_mut();
         extended.reserve(headers.len());
         for (name, value) in &headers {
-            if name != UPGRADE && name != CONNECTION && !strip_headers.contains(name) {
+            if name != UPGRADE && name != CONNECTION && !(strip_ws_key && name == SEC_WEBSOCKET_KEY)
+            {
                 extended.append(name, value.clone());
             }
         }
@@ -434,12 +597,48 @@ impl Rewritten {
     }
 
     /// Restores the original HTTP/1 upgrade request after an unsent Extended CONNECT.
-    pub(super) fn restore<B>(self, request: &mut http::Request<B>) {
+    fn restore<B>(self, request: &mut http::Request<B>) {
         *request.method_mut() = self.method;
         *request.version_mut() = self.version;
         Protocol::clear_from(request);
         *request.headers_mut() = self.headers;
     }
+}
+
+/// Validates protocol markers provided directly through request extensions.
+#[cfg(any(feature = "http2", feature = "http3"))]
+fn matched_extended_connect<B>(
+    request: &http::Request<B>,
+    version: Version,
+) -> Result<bool, error::Error> {
+    let extensions = request.extensions();
+    let http2 = cfg_select! {
+        feature = "http2" => extensions.get::<http2::ext::Protocol>().is_some(),
+        _ => false,
+    };
+    let http3 = cfg_select! {
+        feature = "http3" => extensions.get::<netty::http3::Protocol>().is_some(),
+        _ => false,
+    };
+    let matched = match version {
+        Version::HTTP_2 => http2,
+        Version::HTTP_3 => http3,
+        _ => false,
+    };
+    if (http2 || http3) && !matched {
+        warn!("extended CONNECT protocol does not match the connection's HTTP version");
+        return Err(error::Error::from_kind(ErrorKind::UserUnsupportedVersion));
+    }
+    Ok(matched)
+}
+
+/// Rejects Extended CONNECT unless the peer enabled it (RFC 8441 §3, RFC 9220 §3).
+#[cfg(any(feature = "http2", feature = "http3"))]
+#[must_use]
+fn extended_connect_disabled() -> error::Error {
+    warn!("peer did not enable extended CONNECT");
+    error::Error::from_kind(ErrorKind::UserUnsupportedVersion)
+        .with_context("peer did not enable extended CONNECT")
 }
 
 #[must_use]
