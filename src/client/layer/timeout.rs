@@ -55,7 +55,7 @@ impl TimeoutLayer {
     pub fn new(runtime: DynRuntime, options: TimeoutOptions) -> Self {
         TimeoutLayer {
             runtime,
-            timeout: RequestConfig::new(Some(options)),
+            timeout: RequestConfig::new(options),
         }
     }
 }
