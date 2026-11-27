@@ -76,7 +76,7 @@ hickory-dns = ["dep:hickory-resolver"]
 stream = ["dep:tokio-util", "dep:sync_wrapper", "sync_wrapper?/futures"]
 
 # Enable SOCKS/4/5 proxy support.
-socks = ["dep:tokio-socks"]
+socks = ["netty/socks"]
 
 # Enable WebSocket support.
 ws = ["dep:tokio-tungstenite", "tokio-tungstenite?/handshake"]
@@ -155,9 +155,6 @@ psl = { version = "2.1", optional = true }
 
 ## tower http
 tower-http = { version = "0.7.1", default-features = false, optional = true }
-
-## tokio socks
-tokio-socks = { version = "0.5.2", optional = true }
 
 ## tokio websocket
 tokio-tungstenite = { version = "0.29.0", default-features = false, optional = true }

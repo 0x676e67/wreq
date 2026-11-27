@@ -40,8 +40,6 @@ use {
 };
 
 use self::lazy::{Started as Lazy, lazy};
-#[cfg(feature = "socks")]
-use crate::conn::proxy;
 use crate::{
     client::layer::config::RequestOptions,
     config::RequestConfig,
@@ -1051,7 +1049,7 @@ impl Error {
         let kind = if error.is::<TunnelError>() || error.is::<ProxyConnect>() || {
             #[cfg(feature = "socks")]
             {
-                error.is::<proxy::socks::SocksError>()
+                error.is::<netty::proxy::socks::SocksError>()
             }
             #[cfg(not(feature = "socks"))]
             {

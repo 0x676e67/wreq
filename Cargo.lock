@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "btls"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?branch=main#8879c026b548c25441f83ff58b39d7e22ba1b5b1"
+source = "git+https://github.com/0x676e67/btls?branch=main#d88da9f11b2cc0384aae816f4aab103b783ca336"
 dependencies = [
  "bitflags",
  "btls-sys",
@@ -271,7 +271,7 @@ dependencies = [
 [[package]]
 name = "btls-sys"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?branch=main#8879c026b548c25441f83ff58b39d7e22ba1b5b1"
+source = "git+https://github.com/0x676e67/btls?branch=main#d88da9f11b2cc0384aae816f4aab103b783ca336"
 dependencies = [
  "bindgen",
  "cmake",
@@ -2005,7 +2005,7 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 [[package]]
 name = "netty"
 version = "0.2.5"
-source = "git+https://github.com/0x676e67/netty?branch=main#314db585d85e7ea9c15535f458e7324b800fc702"
+source = "git+https://github.com/0x676e67/netty?branch=main#69b1e15faa036bacdebe320d15ef877e40299b09"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -2018,6 +2018,7 @@ dependencies = [
  "pin-project-lite",
  "smallvec",
  "tokio",
+ "tokio-socks",
  "tokio-util",
  "tower-service",
  "tracing",
@@ -3203,7 +3204,7 @@ dependencies = [
 [[package]]
 name = "tokio-btls"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?branch=main#8879c026b548c25441f83ff58b39d7e22ba1b5b1"
+source = "git+https://github.com/0x676e67/btls?branch=main#d88da9f11b2cc0384aae816f4aab103b783ca336"
 dependencies = [
  "btls",
  "btls-sys",
@@ -3240,7 +3241,6 @@ dependencies = [
  "either",
  "futures-util",
  "thiserror 1.0.69",
- "tokio",
 ]
 
 [[package]]
@@ -4006,7 +4006,6 @@ dependencies = [
  "system-configuration 0.8.0",
  "tokio",
  "tokio-btls",
- "tokio-socks",
  "tokio-test",
  "tokio-tungstenite",
  "tokio-util",

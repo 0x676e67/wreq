@@ -15,8 +15,6 @@ use tower::{
 
 #[cfg(unix)]
 use super::net::UnixConnector;
-#[cfg(feature = "socks")]
-use super::proxy;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection,
     HttpConnector, TlsConn, TlsInfoFactory, Unnameable,
@@ -352,7 +350,9 @@ impl TransportConnector {
 
                 #[cfg(feature = "socks")]
                 {
-                    use proxy::socks::{DnsResolve, SocksConnector, Version};
+                    use netty::proxy::socks::{DnsResolve, SocksConnector, Version};
+
+                    use crate::dns::Name;
 
                     if let Some((version, dns_resolve)) = match proxy_uri.scheme_str() {
                         Some("socks4") => Some((Version::V4, DnsResolve::Local)),
@@ -369,12 +369,12 @@ impl TransportConnector {
                             let mut socks = SocksConnector::new(
                                 proxy_uri,
                                 self.http.clone(),
-                                self.resolver.clone(),
+                                self.resolver.clone().map_request(Name::new),
                             );
                             socks.set_auth(proxy.raw_auth());
                             socks.set_version(version);
                             socks.set_dns_mode(dns_resolve);
-                            socks.call(uri).await?
+                            socks.oneshot(uri).await?
                         };
 
                         // Build an HTTPS connector.
