@@ -47,10 +47,10 @@ const MAX_ATTEMPTS_PER_POLL: usize = 2;
 /// Bundles transport connector settings, pool policy, default connection options, protocol
 /// mode, and optional cookie storage.
 pub(super) struct Config {
-    pub(super) connect: conn::Config,
-    pub(super) pool_config: pool::Config,
-    pub(super) connect_config: ConnectConfig,
     pub(super) protocol: Protocol,
+    pub(super) conn_config: conn::Config,
+    pub(super) pool_config: pool::Config,
+    pub(super) config: ConnectConfig,
     #[cfg(feature = "cookies")]
     pub(super) cookie_store: Option<Arc<dyn CookieStore>>,
 }
@@ -63,9 +63,9 @@ pub(super) struct Config {
 pub(super) struct Client {
     pool: pool::Pool<reuse::Key, conn::ConnectService, DynRuntime>,
     protocol: Protocol,
-    config: ConnectConfig,
+    config: RequestConfig<ConnectConfig>,
     #[cfg(feature = "cookies")]
-    cookie_store: Option<Arc<dyn CookieStore>>,
+    cookie_store: RequestConfig<Arc<dyn CookieStore>>,
 }
 
 /// Validated connection request and pool keys extracted once before dispatch.
@@ -194,8 +194,8 @@ enum SendState {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            connect: conn::Config::default(),
-            connect_config: ConnectConfig::default(),
+            conn_config: conn::Config::default(),
+            config: ConnectConfig::default(),
             pool_config: pool::Config::default(),
             protocol: Protocol::Auto,
             #[cfg(feature = "cookies")]
@@ -211,25 +211,26 @@ impl Client {
     pub(super) fn new(
         runtime: DynRuntime,
         resolver: DynResolver,
-        config: Config,
+        Config {
+            protocol,
+            conn_config,
+            pool_config,
+            config,
+            #[cfg(feature = "cookies")]
+            cookie_store,
+        }: Config,
     ) -> crate::Result<Self> {
-        let connector = conn::Connect::new(
-            runtime.clone(),
-            resolver,
-            config.connect,
-            &config.connect_config,
-        )?;
         Ok(Self {
             pool: pool::Pool::new(
-                connector,
+                conn::Connect::new(runtime.clone(), resolver, conn_config, &config)?,
                 runtime.clone(),
-                config.pool_config,
-                proto::Builder::new(runtime, &config.connect_config, true),
+                pool_config,
+                proto::Builder::new(runtime, &config, true),
             ),
-            protocol: config.protocol,
-            config: config.connect_config,
+            protocol,
+            config: RequestConfig::new(config),
             #[cfg(feature = "cookies")]
-            cookie_store: config.cookie_store,
+            cookie_store: RequestConfig::new(cookie_store),
         })
     }
 }
@@ -244,25 +245,17 @@ impl Service<http::Request<Body>> for Client {
     }
 
     fn call(&mut self, mut request: http::Request<Body>) -> Self::Future {
-        let prepared = match Prepared::prepare(&mut request, self.protocol, &self.config) {
-            Ok(prepared) => prepared,
+        let dispatch = match Prepared::prepare(&mut request, self.protocol, &self.config) {
+            Ok(prepared) => Dispatch {
+                #[cfg(feature = "cookies")]
+                cookie_store: self.cookie_store.fetch(request.extensions()).cloned(),
+                prepared,
+                pool: self.pool.clone(),
+            },
             Err(error) => return ResponseFuture(ResponseFutureKind::Error(Some(error))),
         };
 
-        #[cfg(feature = "cookies")]
-        let cookie_store = RequestConfig::<Arc<dyn CookieStore>>::get(request.extensions())
-            .cloned()
-            .or_else(|| self.cookie_store.clone());
-
-        ResponseFuture(ResponseFutureKind::Pending(Retry::new(
-            request,
-            Dispatch {
-                pool: self.pool.clone(),
-                #[cfg(feature = "cookies")]
-                cookie_store,
-                prepared,
-            },
-        )))
+        ResponseFuture(ResponseFutureKind::Pending(Retry::new(request, dispatch)))
     }
 }
 
@@ -662,7 +655,7 @@ impl Prepared {
     fn prepare(
         request: &mut http::Request<Body>,
         client_protocol: Protocol,
-        connect_config: &ConnectConfig,
+        config: &RequestConfig<ConnectConfig>,
     ) -> Result<Self, error::Error> {
         match request.version() {
             Version::HTTP_10 if request.method() == Method::CONNECT => {
@@ -694,9 +687,9 @@ impl Prepared {
         }
 
         let extensions = request.extensions_mut();
-        let upgrade = RequestConfig::<upgrade::Upgrade>::remove(extensions);
+        let upgrade = RequestConfig::<upgrade::Upgrade>::default().remove(extensions);
         // Normalize wire versions to protocol choices; HTTP/1.0 and HTTP/1.1 share a pool.
-        let version = RequestConfig::<RequestVersion>::remove(extensions);
+        let version = RequestConfig::<RequestVersion>::default().remove(extensions);
         let uri = request.uri();
 
         let dedicated = match upgrade.as_ref() {
@@ -744,12 +737,10 @@ impl Prepared {
                 .with_context("HTTP/3 requires an https URI"));
         }
 
-        // Attach client defaults to any request-level connection overrides.
-        let config = request
-            .extensions_mut()
-            .remove::<ConnectConfig>()
+        let config = config
+            .remove(request.extensions_mut())
             .unwrap_or_default()
-            .with_base(connect_config);
+            .with_base(config.as_ref());
         let connect = conn::Request::new(origin, protocol, config);
         let pool_key = (!dedicated).then(|| connect.reuse_key(protocol));
 
@@ -977,7 +968,7 @@ mod tests {
         connect: impl Fn(Unnameable) -> Ready<Result<Conn, BoxError>> + Clone + Send + Sync + 'static,
     ) -> Client {
         config
-            .connect
+            .conn_config
             .layers
             .push(BoxedConnectLayer::new(tower::layer::layer_fn(move |_| {
                 tower::service_fn(connect.clone())
@@ -989,7 +980,7 @@ mod tests {
 
     #[test]
     fn entry_checks_reject_requests_and_strip_userinfo_before_keying() {
-        let connect_config = ConnectConfig::default();
+        let connect_config = RequestConfig::new(ConnectConfig::default());
         let prepare = |mut request: http::Request<Body>| {
             Prepared::prepare(&mut request, Protocol::Auto, &connect_config)
                 .map(|prepared| (request, prepared))
@@ -1131,7 +1122,7 @@ mod tests {
     async fn unsent_retries_restore_request_state_and_respect_reused_flag() {
         use http_body_util::BodyExt;
 
-        let connect_config = ConnectConfig::default();
+        let connect_config = RequestConfig::new(ConnectConfig::default());
         for reused in [true, false] {
             let mut calls = 0;
             let mut request = http::Request::builder()
@@ -1261,12 +1252,12 @@ mod tests {
                 future::ready(Ok::<_, BoxError>(Conn::test(client)))
             }
         };
-        let mut connect_config = ConnectConfig::default();
-        connect_config.insert(DialOption(1));
+        let mut config = ConnectConfig::default();
+        config.insert(DialOption(1));
         let mut client = client(
             Config {
                 protocol: Protocol::Http1,
-                connect_config,
+                config,
                 ..Config::default()
             },
             connect,
@@ -1278,9 +1269,9 @@ mod tests {
         ] {
             let mut request = http::Request::get(uri).body(Body::default()).unwrap();
             if let Some(option) = option {
-                let mut connect_config = ConnectConfig::default();
-                connect_config.insert(option);
-                request.extensions_mut().insert(connect_config);
+                RequestConfig::<ConnectConfig>::get_mut(request.extensions_mut())
+                    .get_or_insert_default()
+                    .insert(option);
             }
             let response = client.ready().await.unwrap().call(request).await.unwrap();
             assert_eq!(response.status(), http::StatusCode::OK);

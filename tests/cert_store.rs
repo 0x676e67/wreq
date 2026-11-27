@@ -1,41 +1,29 @@
 #![cfg(feature = "tokio-rt")]
 
+#[path = "support/tls_cert.rs"]
+mod tls_cert;
+
 use std::{net::SocketAddr, pin::Pin};
 
 use btls::{
-    pkey::PKey,
-    ssl::{Ssl, SslAcceptor, SslAcceptorBuilder, SslMethod, SslVersion},
+    pkey::{PKey, Private},
+    ssl::Ssl,
     x509::X509,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
 };
-use wreq::{
-    Client, ClientBuilder, Response,
-    tls::{TlsInfo, trust::CertStore},
-};
+use wreq::{Client, tls::trust::CertStore};
 
-// Issued by LOCALHOST_CA for localhost and 127.0.0.1.
-const LOCALHOST_CERT: &[u8] = include_bytes!("support/localhost.cert");
-const LOCALHOST_KEY: &[u8] = include_bytes!("support/localhost.key");
-const LOCALHOST_CA: &[u8] = include_bytes!("support/localhost-ca.cert");
+async fn serve(cert: &X509, key: &PKey<Private>) -> SocketAddr {
+    let acceptor = tls_cert::acceptor(cert, key);
 
-/// Builds an acceptor for a DER certificate and private key.
-fn acceptor(certificate: &[u8], private_key: &[u8]) -> SslAcceptorBuilder {
-    let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
-    acceptor
-        .set_certificate(&X509::from_der(certificate).unwrap())
-        .unwrap();
-    acceptor
-        .set_private_key(&PKey::private_key_from_der(private_key).unwrap())
-        .unwrap();
-    acceptor
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    start_tls_server(listener, acceptor)
 }
 
-/// Answers every TLS connection with an empty HTTP/1.1 response.
-async fn serve_with(acceptor: SslAcceptor) -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+fn start_tls_server(listener: TcpListener, acceptor: btls::ssl::SslAcceptor) -> SocketAddr {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         while let Ok((tcp, _)) = listener.accept().await {
@@ -55,28 +43,11 @@ async fn serve_with(acceptor: SslAcceptor) -> SocketAddr {
     addr
 }
 
-/// Serves a self-signed certificate for `wreq.test` and `192.0.2.1`.
-async fn serve() -> (SocketAddr, Vec<u8>) {
-    let cert =
-        rcgen::generate_simple_self_signed(vec!["wreq.test".into(), "192.0.2.1".into()]).unwrap();
-    let der = cert.cert.der().to_vec();
-    let acceptor = acceptor(&der, &cert.signing_key.serialize_der()).build();
-    (serve_with(acceptor).await, der)
-}
-
-async fn send(builder: ClientBuilder, url: &str) -> wreq::Result<Response> {
-    builder.no_proxy().build().unwrap().get(url).send().await
-}
-
-/// Returns whether the request failed certificate verification.
-fn is_untrusted(result: wreq::Result<Response>) -> bool {
-    result.is_err_and(|err| format!("{err:?}").contains("CERTIFICATE_VERIFY_FAILED"))
-}
-
 #[tokio::test]
 async fn verify_host_overrides_uri_host() {
-    let (addr, der) = serve().await;
-    let url = format!("https://{addr}/");
+    let (cert, key) = tls_cert::self_signed("wreq.test", [192, 0, 2, 1].into());
+    let der = cert.to_der().unwrap();
+    let url = format!("https://{}/", serve(&cert, &key).await);
 
     let get = |host: &'static str| {
         let store = CertStore::builder()
@@ -99,17 +70,39 @@ async fn verify_host_overrides_uri_host() {
     assert!(get("other.test").await.is_err());
 }
 
+async fn send(builder: wreq::ClientBuilder, url: &str) -> wreq::Result<wreq::Response> {
+    builder.no_proxy().build().unwrap().get(url).send().await
+}
+
+fn assert_verification_failure(result: wreq::Result<wreq::Response>) {
+    let error = result.unwrap_err();
+    assert!(
+        format!("{error:?}").contains("CERTIFICATE_VERIFY_FAILED"),
+        "{error:?}"
+    );
+}
+
 #[tokio::test]
 async fn ca_issued_certificate_verifies_over_tls13() {
-    // TLS 1.3 only, as in Mozilla's modern server configuration.
-    let mut acceptor = acceptor(LOCALHOST_CERT, LOCALHOST_KEY);
+    use btls::ssl::{SslAcceptor, SslMethod, SslVersion};
+
+    // Issued by LOCALHOST_CA for localhost and 127.0.0.1.
+    const LOCALHOST_CERT: &[u8] = include_bytes!("support/localhost.cert");
+    const LOCALHOST_KEY: &[u8] = include_bytes!("support/localhost.key");
+    const LOCALHOST_CA: &[u8] = include_bytes!("support/localhost-ca.cert");
+
+    let cert = X509::from_der(LOCALHOST_CERT).unwrap();
+    let key = PKey::private_key_from_der(LOCALHOST_KEY).unwrap();
+    let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+    acceptor.set_certificate(&cert).unwrap();
+    acceptor.set_private_key(&key).unwrap();
     acceptor
         .set_min_proto_version(Some(SslVersion::TLS1_3))
         .unwrap();
-    let url = format!("https://{}/", serve_with(acceptor.build()).await);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("https://{}/", start_tls_server(listener, acceptor.build()));
 
-    // Default trust does not include the test CA; a store holding it verifies the chain and host.
-    assert!(is_untrusted(send(Client::builder_tokio(), &url).await));
+    assert_verification_failure(send(Client::builder_tokio(), &url).await);
     let store = CertStore::builder()
         .add_der_cert(LOCALHOST_CA)
         .build()
@@ -122,29 +115,38 @@ async fn ca_issued_certificate_verifies_over_tls13() {
 
 #[tokio::test]
 async fn self_signed_certificate_requires_explicit_trust() {
-    let (addr, der) = serve().await;
+    use wreq::tls::TlsInfo;
+
+    let (cert, key) = tls_cert::self_signed("wreq.test", [127, 0, 0, 1].into());
+    let addr = serve(&cert, &key).await;
     let url = format!("https://{addr}/");
 
-    // Default trust rejects it, and skipping the hostname check does not trust it.
-    assert!(is_untrusted(send(Client::builder_tokio(), &url).await));
-    assert!(is_untrusted(
-        send(Client::builder_tokio().tls_verify_hostname(false), &url).await
-    ));
+    assert_verification_failure(send(Client::builder_tokio(), &url).await);
+    assert_verification_failure(
+        send(Client::builder_tokio().tls_verify_hostname(false), &url).await,
+    );
 
-    // Without verification the handshake succeeds; TLS info is attached only when enabled.
     let builder = Client::builder_tokio()
         .tls_cert_verification(false)
         .tls_info(true);
     let response = send(builder, &url).await.unwrap();
-    let info = response.extensions().get::<TlsInfo>().unwrap();
-    assert_eq!(info.peer_certificate(), Some(der.as_slice()));
+    assert!(response.status().is_success());
+    let peer_cert = response
+        .extensions()
+        .get::<TlsInfo>()
+        .and_then(TlsInfo::peer_certificate)
+        .unwrap();
+    assert_eq!(peer_cert, cert.to_der().unwrap().as_slice());
+
     let response = send(Client::builder_tokio().tls_cert_verification(false), &url)
         .await
         .unwrap();
     assert!(response.extensions().get::<TlsInfo>().is_none());
 
-    // A store trusting the certificate verifies the requested DNS name against its SAN.
-    let store = CertStore::builder().add_der_cert(&der).build().unwrap();
+    let store = CertStore::builder()
+        .add_der_cert(peer_cert)
+        .build()
+        .unwrap();
     let named = |host: &'static str| {
         Client::builder_tokio()
             .resolve(host, addr)
@@ -155,8 +157,18 @@ async fn self_signed_certificate_requires_explicit_trust() {
         .await
         .unwrap();
     assert!(response.status().is_success());
-    let other = format!("https://other.test:{port}/");
-    assert!(is_untrusted(send(named("other.test"), &other).await));
-    let builder = named("other.test").tls_verify_hostname(false);
-    assert!(send(builder, &other).await.unwrap().status().is_success());
+    let wrong_host = format!("https://other.test:{port}/");
+    assert_verification_failure(send(named("other.test"), &wrong_host).await);
+    let response = send(named("other.test").tls_verify_hostname(false), &wrong_host)
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+
+    // Both certificates cover loopback, but the trust store contains only the first.
+    let (other_cert, other_key) = tls_cert::self_signed("wreq.test", addr.ip());
+    let other_addr = serve(&other_cert, &other_key).await;
+    let other_url = format!("https://{other_addr}/");
+    assert_verification_failure(
+        send(Client::builder_tokio().tls_cert_store(store), &other_url).await,
+    );
 }

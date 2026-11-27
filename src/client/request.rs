@@ -206,8 +206,7 @@ impl Request {
 
     #[inline]
     fn connect_config_mut(&mut self) -> &mut ConnectConfig {
-        self.extensions_mut()
-            .get_or_insert_default::<ConnectConfig>()
+        self.config_mut::<ConnectConfig>().get_or_insert_default()
     }
 }
 

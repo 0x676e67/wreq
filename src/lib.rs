@@ -263,7 +263,10 @@
 //! - **compio-rt**: Provides the Compio runtime adapter for HTTP/1 and HTTP/2.
 //! - **http2** *(enabled by default)*: Enables HTTP/2.
 //! - **http3**: Enables HTTP/3 over QUIC with a runtime that supports it.
-//! - **cookies**: Provides cookie session support.
+//! - **cookies**: Provides cookie session support. Cookies scoped to a single-label domain such as
+//!   `com` are rejected unless it is the request host.
+//! - **cookies-psl**: Also rejects cookies scoped to any public suffix, using the Public Suffix
+//!   List.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **brotli**: Provides response body brotli decompression.
 //! - **zstd**: Provides response body zstd decompression.
