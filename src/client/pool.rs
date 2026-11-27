@@ -402,19 +402,26 @@ where
     ///
     /// Probes completed senders only. A miss leaves pool entries intact.
     #[must_use]
-    #[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
     pub(super) fn checkout_extended_connect(&self, key: &K) -> Option<Pooled> {
-        if !self.inner.enabled {
-            return None;
+        #[cfg(any(feature = "http2", feature = "http3"))]
+        {
+            if !self.inner.enabled {
+                return None;
+            }
+            let expiry = self.inner.expiry();
+            let pooled = {
+                let mut entries = self.inner.entries.lock();
+                entries.get_mut(key)?.checkout_extended_connect(expiry)?
+            };
+            // Retained-group maintenance may lock the map again.
+            pooled.cleanup.maintain(true);
+            Some(pooled)
         }
-        let expiry = self.inner.expiry();
-        let pooled = {
-            let mut entries = self.inner.entries.lock();
-            entries.get_mut(key)?.checkout_extended_connect(expiry)?
-        };
-        // Retained-group maintenance may lock the map again.
-        pooled.cleanup.maintain(true);
-        Some(pooled)
+        #[cfg(not(any(feature = "http2", feature = "http3")))]
+        {
+            let _ = key;
+            None
+        }
     }
 }
 
@@ -494,10 +501,10 @@ impl Pooled {
     ///
     /// Always returns `Some(false)` for HTTP/1.
     #[must_use]
-    #[cfg(any(feature = "http2", feature = "http3"))]
     pub(super) fn extended_connect(&self) -> Option<bool> {
         match &self.inner {
             PooledInner::Http1(_) => Some(false),
+            #[cfg(any(feature = "http2", feature = "http3"))]
             PooledInner::Mux(service) => service.inner().extended_connect(),
         }
     }
@@ -1096,7 +1103,6 @@ where
             .map(|service| Pooled::reuse(PooledInner::Mux(service), self.state.clone()))
     }
 
-    #[cfg(feature = "ws")]
     fn checkout_extended_connect(&self, expiry: Option<(Instant, Duration)>) -> Option<Pooled> {
         checkout_extended_connect(&self.service, &self.state, expiry)
     }
@@ -1236,7 +1242,6 @@ where
         )
     }
 
-    #[cfg(feature = "ws")]
     fn checkout_extended_connect(&self, expiry: Option<(Instant, Duration)>) -> Option<Pooled> {
         checkout_extended_connect(self.service.upgrade(), &self.state, expiry)
     }
@@ -1269,7 +1274,7 @@ where
 }
 
 /// Probes `singleton` for an established, reusable sender whose peer enabled extended CONNECT.
-#[cfg(all(feature = "ws", any(feature = "http2", feature = "http3")))]
+#[cfg(any(feature = "http2", feature = "http3"))]
 fn checkout_extended_connect<M, T>(
     singleton: &Singleton<M, T, EntryState>,
     state: &Arc<entry::EntryState>,

@@ -25,6 +25,7 @@ use super::{
     Body, Client, IntoEmulation, Pending, Response,
     emulate::Emulation,
     layer::{config::DefaultHeaders, timeout::TimeoutOptions},
+    upgrade::Upgrade,
 };
 #[cfg(feature = "cookies")]
 use crate::cookie::{CookieStore, IntoCookieStore};
@@ -125,6 +126,18 @@ impl Request {
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
         self.config_mut::<RequestVersion>()
+    }
+
+    /// Returns the request-level HTTP upgrade configuration, if set.
+    #[inline]
+    pub fn upgrade(&self) -> Option<&Upgrade> {
+        RequestConfig::<Upgrade>::get(self.extensions())
+    }
+
+    /// Returns the request-level HTTP upgrade configuration for mutation.
+    #[inline]
+    pub fn upgrade_mut(&mut self) -> &mut Option<Upgrade> {
+        self.config_mut::<Upgrade>()
     }
 
     /// Returns a reference to the associated extensions.
@@ -610,6 +623,14 @@ impl RequestBuilder {
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.version_mut().replace(version);
+        }
+        self
+    }
+
+    /// Configures HTTP upgrade or Extended CONNECT handling for this request.
+    pub fn upgrade(mut self, upgrade: Upgrade) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            req.upgrade_mut().replace(upgrade);
         }
         self
     }

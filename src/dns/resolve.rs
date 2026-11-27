@@ -102,6 +102,17 @@ impl DynResolver {
         Self { resolver }
     }
 
+    /// Applies hostname-to-address overrides on top of this resolver when non-empty.
+    pub(crate) fn with_overrides(
+        mut self,
+        overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
+    ) -> Self {
+        if !overrides.is_empty() {
+            self.resolver = Arc::new(OverrideResolver::new(self.resolver, overrides));
+        }
+        self
+    }
+
     /// Resolves `name` through a shared reference; the resolver is always ready.
     pub(crate) fn resolve(&self, name: Name) -> DynResolving {
         self.resolver
@@ -130,14 +141,14 @@ impl Service<Name> for DynResolver {
 /// This resolver first checks for manual hostname-to-IP mappings before
 /// falling back to the underlying DNS resolver. Useful for testing or
 /// bypassing DNS for specific domains.
-pub(crate) struct OverrideResolver {
+struct OverrideResolver {
     resolver: Arc<dyn Resolve>,
     overrides: Arc<HashMap<Cow<'static, str>, Vec<SocketAddr>>>,
 }
 
 impl OverrideResolver {
     /// Creates a new [`OverrideResolver`] with the provided DNS resolver and overrides.
-    pub(crate) fn new(
+    fn new(
         resolver: Arc<dyn Resolve>,
         overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     ) -> Self {

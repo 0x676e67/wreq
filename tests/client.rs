@@ -1402,9 +1402,9 @@ async fn connection_pool_http2_errors_respect_negotiation() {
         let mut request = request.build().unwrap();
         if extended_connect {
             *request.method_mut() = http::Method::CONNECT;
-            request
-                .extensions_mut()
-                .insert(http2::ext::Protocol::from_static("websocket"));
+            *request.upgrade_mut() = Some(wreq::upgrade::Upgrade::extended_connect(
+                wreq::upgrade::Protocol::WEBSOCKET,
+            ));
         }
         let result = client.execute(request).await;
         if forced {

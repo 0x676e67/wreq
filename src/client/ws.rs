@@ -18,8 +18,6 @@ use futures_util::{Sink, SinkExt, Stream, StreamExt, stream::FusedStream};
 use http::{
     HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header, uri::Scheme,
 };
-#[cfg(feature = "http2")]
-use http2::ext::Protocol;
 use pin_project_lite::pin_project;
 use tokio_tungstenite::tungstenite::{
     self,
@@ -28,7 +26,10 @@ use tokio_tungstenite::tungstenite::{
 
 use self::message::{CloseCode, Message, Utf8Bytes};
 use super::{
-    emulate::IntoEmulation, request::RequestBuilder, response::Response, svc::DedicatedConnection,
+    emulate::IntoEmulation,
+    request::RequestBuilder,
+    response::Response,
+    upgrade::{Protocol, Upgrade},
 };
 use crate::{Error, Upgraded, header::OrigHeaderMap, proxy::Proxy, reuse::Group};
 
@@ -83,13 +84,14 @@ impl WebSocketRequestBuilder {
     /// A WebSocket on a shared connection counts toward the server's concurrent stream limit and
     /// shares the connection flow-control window, so many open or unread WebSockets can delay
     /// other requests on that connection. A non-200 response to the Extended CONNECT fails the
-    /// handshake without retrying over HTTP/1.1. Use [`Version::HTTP_11`] to keep the WebSocket on
-    /// its own connection.
+    /// handshake without retrying over HTTP/1.1. Use [`Version::HTTP_11`] to avoid sharing a
+    /// multiplexed connection.
     ///
     /// # HTTP/1.1
     ///
-    /// - Always uses the standard `Upgrade: websocket` mechanism (RFC 6455) on a new, never pooled
-    ///   connection
+    /// - Always uses the standard `Upgrade: websocket` mechanism (RFC 6455) over HTTP/1.1
+    /// - The handshake can reuse an idle connection. A successful upgrade takes that connection out
+    ///   of the pool.
     ///
     /// # HTTP/2 and HTTP/3
     ///
@@ -482,30 +484,25 @@ impl WebSocketRequestBuilder {
 
                 *request.method_mut() = Method::GET;
                 *request.version_mut() = Some(Version::HTTP_11);
-                // Never reuse an idle socket or return this one to the pool. The default
-                // route may still reuse an established HTTP/2 or HTTP/3 connection instead.
-                request.extensions_mut().insert(DedicatedConnection {
-                    #[cfg(any(feature = "http2", feature = "http3"))]
-                    extended_connect: version.is_none(),
-                });
+                // The default route reuses an established HTTP/2 or HTTP/3 connection whose
+                // peer enabled extended CONNECT, otherwise opens a dedicated HTTP/1.1 socket.
+                *request.upgrade_mut() = version
+                    .is_none()
+                    .then(|| Upgrade::adaptive(Protocol::WEBSOCKET));
                 Some(nonce)
             }
             #[cfg(feature = "http2")]
             Some(Version::HTTP_2) => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_2);
-                request
-                    .extensions_mut()
-                    .insert(Protocol::from_static("websocket"));
+                *request.upgrade_mut() = Some(Upgrade::extended_connect(Protocol::WEBSOCKET));
                 None
             }
             #[cfg(feature = "http3")]
             Some(Version::HTTP_3) => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_3);
-                request
-                    .extensions_mut()
-                    .insert(netty::http3::Protocol::WEBSOCKET);
+                *request.upgrade_mut() = Some(Upgrade::extended_connect(Protocol::WEBSOCKET));
                 None
             }
             unsupported => {

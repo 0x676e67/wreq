@@ -11,8 +11,10 @@ mod quic;
 mod stream;
 
 use std::{
+    borrow::Cow,
+    collections::HashMap,
     hash::Hash,
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     task::{Context, Poll, ready},
     time::Duration,
@@ -37,7 +39,7 @@ pub(crate) use self::connected::{Connected, HttpInfo};
 use crate::http2::Http2Options;
 use crate::{
     config::ConnectConfig,
-    dns::DynResolver,
+    dns::{DynResolver, Resolve},
     error::map_timeout_to_connector_error,
     http1::Http1Options,
     protocol::Protocol,
@@ -79,6 +81,8 @@ pub(crate) struct Connect {
 pub(crate) struct Config {
     pub(crate) tcp_config: tcp::Config,
     pub(crate) tls_config: tls::Config,
+    pub(crate) dns_resolver: Option<Arc<dyn Resolve>>,
+    pub(crate) dns_overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     pub(crate) proxies: Vec<ProxyMatcher>,
     pub(crate) connect_timeout: Option<Duration>,
     pub(crate) happy_eyeballs_timeout: Option<Duration>,
@@ -148,6 +152,8 @@ impl Default for Config {
         Self {
             tcp_config: tcp::Config::default(),
             tls_config: tls::Config::default(),
+            dns_resolver: None,
+            dns_overrides: HashMap::new(),
             proxies: Vec::new(),
             connect_timeout: None,
             happy_eyeballs_timeout: Some(Duration::from_millis(300)),
@@ -163,10 +169,11 @@ impl Connect {
     /// Builds the connection service with user layers and the total timeout.
     pub(crate) fn new(
         runtime: DynRuntime,
-        resolver: DynResolver,
         Config {
             tcp_config,
             tls_config,
+            dns_resolver,
+            dns_overrides,
             proxies,
             connect_timeout,
             happy_eyeballs_timeout,
@@ -175,6 +182,9 @@ impl Connect {
         }: Config,
         connect_config: &ConnectConfig,
     ) -> crate::Result<ConnectService> {
+        let resolver = DynResolver::new(dns_resolver.unwrap_or_else(|| runtime.resolver()))
+            .with_overrides(dns_overrides);
+
         let dialer = Dialer::new(
             runtime.clone(),
             resolver.clone(),
@@ -284,7 +294,7 @@ impl<T> Request<T> {
 
     /// Returns the origin URI for this connection.
     #[must_use]
-    fn uri(&self) -> &Uri {
+    pub(crate) fn uri(&self) -> &Uri {
         &self.uri
     }
 
@@ -459,10 +469,10 @@ mod tests {
             ::quic::Endpoint::server(server_config, (Ipv4Addr::LOCALHOST, 0).into()).unwrap();
         // Bound without replying, so a dial to it stays pending until the deadline.
         let blackhole = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let resolver = DynResolver::new(Arc::new(Fixed(vec![
+        let resolver: Arc<dyn Resolve> = Arc::new(Fixed(vec![
             blackhole.local_addr().unwrap(),
             server.local_addr().unwrap(),
-        ])));
+        ]));
         let runtime = DynRuntime::new(crate::rt::tokio::TokioRuntime);
         for delay in [Some(Duration::from_millis(10)), None] {
             let config = Config {
@@ -472,17 +482,13 @@ mod tests {
                     ),
                     ..Default::default()
                 },
+                dns_resolver: Some(resolver.clone()),
                 connect_timeout: Some(Duration::from_millis(500)),
                 happy_eyeballs_timeout: delay,
                 ..Default::default()
             };
-            let connector = Connect::new(
-                runtime.clone(),
-                resolver.clone(),
-                config,
-                &ConnectConfig::default(),
-            )
-            .unwrap();
+            let connector =
+                Connect::new(runtime.clone(), config, &ConnectConfig::default()).unwrap();
             let request = test_connect_request(
                 Uri::from_static("https://localhost/"),
                 Protocol::Http3,
@@ -531,16 +537,12 @@ mod tests {
             (Vec::new(), overridden),
         ] {
             let config = Config {
+                dns_resolver: Some(Arc::new(NoDns)),
                 proxies,
                 ..Default::default()
             };
-            let connector = Connect::new(
-                runtime.clone(),
-                DynResolver::new(Arc::new(NoDns)),
-                config,
-                &ConnectConfig::default(),
-            )
-            .unwrap();
+            let connector =
+                Connect::new(runtime.clone(), config, &ConnectConfig::default()).unwrap();
             let request = test_connect_request(
                 Uri::from_static("https://localhost/"),
                 Protocol::Http3,
