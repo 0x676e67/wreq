@@ -33,7 +33,7 @@ pub struct ConnectLayer<'a> {
 /// shared sender stored by the singleton pool.
 #[derive(Clone)]
 pub struct Connect<S> {
-    service: S,
+    inner: S,
     builder: Arc<conn::http2::Builder<DynRuntime>>,
     runtime: DynRuntime,
 }
@@ -59,9 +59,9 @@ impl<'a> ConnectLayer<'a> {
 impl<S> Layer<S> for ConnectLayer<'_> {
     type Service = Connect<S>;
 
-    fn layer(&self, service: S) -> Self::Service {
+    fn layer(&self, inner: S) -> Self::Service {
         Connect {
-            service,
+            inner,
             builder: configure(self.builder, self.options, conn::http2::Builder::options),
             runtime: self.runtime.clone(),
         }
@@ -72,8 +72,7 @@ impl<S> Layer<S> for ConnectLayer<'_> {
 
 impl<S, Dst> Service<Dst> for Connect<S>
 where
-    S: Service<Dst, Response = Established, Error = BoxError> + Clone + Send + 'static,
-    S::Future: Send + 'static,
+    S: Service<Dst, Response = Established, Error = BoxError, Future: Send + 'static>,
 {
     type Response = Connection;
     type Error = BoxError;
@@ -81,11 +80,11 @@ where
 
     #[inline(always)]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.service.poll_ready(cx)
+        self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
-        let future = self.service.call(dst);
+        let future = self.inner.call(dst);
         let builder = self.builder.clone();
         let runtime = self.runtime.clone();
         Box::pin(async move {
