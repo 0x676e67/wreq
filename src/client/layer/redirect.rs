@@ -8,6 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use bytes::Buf;
 use futures_util::future::Either;
 use http::{Request, Response};
 use http_body::Body as HttpBody;
@@ -94,6 +95,8 @@ impl<ResBody, S> Service<Request<Body>> for FollowRedirect<S>
 where
     S: Service<Request<Body>, Response = Response<ResBody>> + Clone,
     S::Error: From<BoxError>,
+    ResBody: HttpBody + Unpin,
+    ResBody::Data: Buf,
 {
     type Response = Response<ResBody>;
     type Error = S::Error;
