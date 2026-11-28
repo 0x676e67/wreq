@@ -781,11 +781,11 @@ impl ClientBuilder {
     ///
     /// If auto gzip decompression is turned on:
     ///
-    /// - Requests without `Accept-Encoding` advertise `gzip`. Range requests use `Accept-Encoding:
-    ///   identity` instead. The request body is **not** automatically compressed.
-    /// - When receiving a response, if its headers contain a `Content-Encoding` value of `gzip`,
-    ///   both `Content-Encoding` and `Content-Length` are removed from the headers' set. The
-    ///   response body is automatically decompressed.
+    /// - Requests without `Accept-Encoding` advertise `gzip`, or `identity` for a range request.
+    ///   The request body is **not** automatically compressed.
+    /// - Responses with `Content-Encoding: gzip` are decompressed and lose their `Content-Encoding`
+    ///   and `Content-Length` headers. `206 Partial Content` responses retain their encoded bytes
+    ///   and headers.
     ///
     /// If the `gzip` feature is turned on, the default option is enabled.
     ///
@@ -804,11 +804,11 @@ impl ClientBuilder {
     ///
     /// If auto brotli decompression is turned on:
     ///
-    /// - Requests without `Accept-Encoding` advertise `br`. Range requests use `Accept-Encoding:
-    ///   identity` instead. The request body is **not** automatically compressed.
-    /// - When receiving a response, if its headers contain a `Content-Encoding` value of `br`, both
-    ///   `Content-Encoding` and `Content-Length` are removed from the headers' set. The response
-    ///   body is automatically decompressed.
+    /// - Requests without `Accept-Encoding` advertise `br`, or `identity` for a range request. The
+    ///   request body is **not** automatically compressed.
+    /// - Responses with `Content-Encoding: br` are decompressed and lose their `Content-Encoding`
+    ///   and `Content-Length` headers. `206 Partial Content` responses retain their encoded bytes
+    ///   and headers.
     ///
     /// If the `brotli` feature is turned on, the default option is enabled.
     ///
@@ -827,11 +827,11 @@ impl ClientBuilder {
     ///
     /// If auto zstd decompression is turned on:
     ///
-    /// - Requests without `Accept-Encoding` advertise `zstd`. Range requests use `Accept-Encoding:
-    ///   identity` instead. The request body is **not** automatically compressed.
-    /// - When receiving a response, if its headers contain a `Content-Encoding` value of `zstd`,
-    ///   both `Content-Encoding` and `Content-Length` are removed from the headers' set. The
-    ///   response body is automatically decompressed.
+    /// - Requests without `Accept-Encoding` advertise `zstd`, or `identity` for a range request.
+    ///   The request body is **not** automatically compressed.
+    /// - Responses with `Content-Encoding: zstd` are decompressed and lose their `Content-Encoding`
+    ///   and `Content-Length` headers. `206 Partial Content` responses retain their encoded bytes
+    ///   and headers.
     ///
     /// If the `zstd` feature is turned on, the default option is enabled.
     ///
@@ -850,11 +850,11 @@ impl ClientBuilder {
     ///
     /// If auto deflate decompression is turned on:
     ///
-    /// - Requests without `Accept-Encoding` advertise `deflate`. Range requests use
-    ///   `Accept-Encoding: identity` instead. The request body is **not** automatically compressed.
-    /// - When receiving a response, if it's headers contain a `Content-Encoding` value that equals
-    ///   to `deflate`, both values `Content-Encoding` and `Content-Length` are removed from the
-    ///   headers' set. The response body is automatically decompressed.
+    /// - Requests without `Accept-Encoding` advertise `deflate`, or `identity` for a range request.
+    ///   The request body is **not** automatically compressed.
+    /// - Responses with `Content-Encoding: deflate` are decompressed and lose their
+    ///   `Content-Encoding` and `Content-Length` headers. `206 Partial Content` responses retain
+    ///   their encoded bytes and headers.
     ///
     /// If the `deflate` feature is turned on, the default option is enabled.
     ///

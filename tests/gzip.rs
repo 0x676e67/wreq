@@ -84,39 +84,91 @@ async fn test_accept_encoding_header_is_not_changed_if_set() {
 }
 
 #[tokio::test]
-async fn test_range_requests_use_identity_encoding() {
-    let server = server::http(move |req| async move {
-        match req.uri().path() {
-            "/range" => {
-                assert_eq!(req.headers()[header::RANGE], "bytes=0-3");
-                assert_eq!(req.headers()[header::ACCEPT_ENCODING], "identity");
-            }
-            "/regular" => {
-                assert!(
-                    req.headers()[header::ACCEPT_ENCODING]
-                        .to_str()
-                        .unwrap()
-                        .contains("gzip")
-                );
-            }
-            "/disabled" => {
-                assert_eq!(req.headers()[header::ACCEPT_ENCODING], "gzip");
-            }
-            path => panic!("unexpected path: {path}"),
-        }
+async fn test_range_requests_preserve_encoding_and_partial_bytes() {
+    const CONTENT: &[u8] = b"full gzip response";
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(CONTENT).unwrap();
+    let encoded = bytes::Bytes::from(encoder.finish().unwrap());
+    let partial = encoded.slice(..4);
+    let content_range = format!("bytes 0-3/{}", encoded.len());
+    let server = server::http({
+        let content_range = content_range.clone();
+        let partial = partial.clone();
+        move |req| {
+            let content_range = content_range.clone();
+            let partial = partial.clone();
+            let encoded = encoded.clone();
+            async move {
+                match req.uri().path() {
+                    "/identity" => {
+                        assert_eq!(req.headers()[header::RANGE], "bytes=0-3");
+                        assert_eq!(req.headers()[header::ACCEPT_ENCODING], "identity");
+                    }
+                    "/partial" | "/full" => {
+                        assert_eq!(req.headers()[header::RANGE], "bytes=0-3");
+                        assert_eq!(req.headers()[header::ACCEPT_ENCODING], "gzip");
+                        let response =
+                            http::Response::builder().header(header::CONTENT_ENCODING, "gzip");
+                        return if req.uri().path() == "/partial" {
+                            response
+                                .status(http::StatusCode::PARTIAL_CONTENT)
+                                .header(header::CONTENT_RANGE, content_range)
+                                .header(header::CONTENT_LENGTH, "4")
+                                .body(partial.into())
+                                .unwrap()
+                        } else {
+                            response
+                                .header(header::CONTENT_LENGTH, encoded.len())
+                                .body(encoded.into())
+                                .unwrap()
+                        };
+                    }
+                    "/regular" => {
+                        assert!(
+                            req.headers()[header::ACCEPT_ENCODING]
+                                .to_str()
+                                .unwrap()
+                                .contains("gzip")
+                        );
+                    }
+                    "/disabled" => {
+                        assert_eq!(req.headers()[header::ACCEPT_ENCODING], "gzip");
+                    }
+                    path => panic!("unexpected path: {path}"),
+                }
 
-        http::Response::default()
+                http::Response::default()
+            }
+        }
     });
     let base = format!("http://{}", server.addr());
 
     let client = wreq::Client::new();
     client
-        .get(format!("{base}/range"))
+        .get(format!("{base}/identity"))
         .header(header::RANGE, "bytes=0-3")
-        .header(header::ACCEPT_ENCODING, "gzip")
         .send()
         .await
         .unwrap();
+    let range_with_gzip = |path| {
+        client
+            .get(format!("{base}/{path}"))
+            .header(header::RANGE, "bytes=0-3")
+            .header(header::ACCEPT_ENCODING, "gzip")
+    };
+    let response = range_with_gzip("partial").send().await.unwrap();
+    assert_eq!(response.status(), http::StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+    assert_eq!(response.headers()[header::CONTENT_RANGE], content_range);
+    assert_eq!(response.headers()[header::CONTENT_LENGTH], "4");
+    assert_eq!(response.bytes().await.unwrap(), partial);
+
+    let response = range_with_gzip("full").send().await.unwrap();
+    assert_eq!(response.status(), http::StatusCode::OK);
+    assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+    assert!(!response.headers().contains_key(header::CONTENT_LENGTH));
+    assert_eq!(response.bytes().await.unwrap().as_ref(), CONTENT);
+
     client.get(format!("{base}/regular")).send().await.unwrap();
 
     wreq::Client::builder()
