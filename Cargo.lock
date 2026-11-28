@@ -3976,6 +3976,7 @@ dependencies = [
  "flate2",
  "futures",
  "futures-util",
+ "hickory-proto",
  "hickory-resolver",
  "http",
  "http-body",

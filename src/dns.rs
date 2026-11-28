@@ -11,6 +11,12 @@ mod resolve;
 #[cfg(feature = "hickory-dns")]
 pub(crate) mod hickory;
 
+#[cfg(feature = "doh")]
+mod doh;
+
+#[cfg(feature = "doh")]
+#[cfg_attr(docsrs, doc(cfg(feature = "doh")))]
+pub use self::doh::{DohResolver, DohResolverBuilder};
 pub use self::resolve::{Addrs, IntoResolve, Name, Resolve, Resolving};
 pub(crate) use self::{
     gai::GaiResolver,

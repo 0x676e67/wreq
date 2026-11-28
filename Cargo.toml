@@ -72,6 +72,9 @@ multipart = ["dep:mime_guess", "dep:sync_wrapper", "sync_wrapper?/futures"]
 # Enable hickory DNS resolver.
 hickory-dns = ["dep:hickory-resolver"]
 
+# Enable the DNS-over-HTTPS resolver.
+doh = ["dep:hickory-proto"]
+
 # Enable streaming support.
 stream = ["dep:tokio-util", "dep:sync_wrapper", "sync_wrapper?/futures"]
 
@@ -168,6 +171,9 @@ tokio-util = { version = "0.7.18", default-features = false, optional = true }
 
 ## hickory-dns
 hickory-resolver = { version = "0.26.0", optional = true }
+
+## doh
+hickory-proto = { version = "0.26.0", default-features = false, features = ["std"], optional = true }
 
 ## parking_lot
 parking_lot = { version = "0.13.0", optional = true }
@@ -277,6 +283,11 @@ name = "http2_over_tls_multi_thread"
 path = "bench/http2_over_tls_multi_thread.rs"
 harness = false
 required-features = ["tokio-rt", "stream", "http2"]
+
+[[test]]
+name = "doh"
+path = "tests/doh.rs"
+required-features = ["doh"]
 
 [[test]]
 name = "cookie"
