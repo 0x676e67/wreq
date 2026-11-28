@@ -1,5 +1,6 @@
 use std::{
-    future::Future,
+    future::{Future, Ready},
+    ops::ControlFlow,
     pin::Pin,
     str,
     task::{Context, Poll, ready},
@@ -49,6 +50,10 @@ pin_project! {
             #[pin]
             future: S::Future,
         },
+        Error {
+            #[pin]
+            future: Ready<Result<S::Response, S::Error>>,
+        },
     }
 }
 
@@ -62,6 +67,7 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
             ResponseFutureProj::Direct { mut future } => future.as_mut().poll(cx),
+            ResponseFutureProj::Error { future } => future.poll(cx),
             ResponseFutureProj::Redirect {
                 mut future,
                 pending_future,
@@ -97,11 +103,18 @@ where
                 }
 
                 // Poll the current future to get the response
-                let mut res = {
+                let res = {
                     let mut res = ready!(future.as_mut().poll(cx)?);
                     res.extensions_mut()
                         .insert(RequestUri(request.uri().clone()));
                     res
+                };
+
+                // Observe the completed hop before rewriting its method or headers for a redirect.
+                // https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4
+                let res = match policy.on_response(request, res) {
+                    ControlFlow::Continue(res) => res,
+                    ControlFlow::Break(res) => return Poll::Ready(Ok(policy.finish(res))),
                 };
 
                 // Determine if the response is a redirect
@@ -126,14 +139,13 @@ where
                     StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => {}
                     _ => {
                         // Not a redirect status code, return the response as is.
-                        policy.on_response(&mut res);
-                        return Poll::Ready(Ok(res));
+                        return Poll::Ready(Ok(policy.finish(res)));
                     }
                 };
 
                 // Extract the request body for potential reuse
                 let Some(body) = body_repr.take() else {
-                    return Poll::Ready(Ok(res));
+                    return Poll::Ready(Ok(policy.finish(res)));
                 };
 
                 // Get and resolve the Location header
@@ -143,7 +155,7 @@ where
                     .and_then(|loc| std::str::from_utf8(loc.as_bytes()).ok())
                     .and_then(|loc| resolve_uri(loc, request.uri()))
                 else {
-                    return Poll::Ready(Ok(res));
+                    return Poll::Ready(Ok(policy.finish(res)));
                 };
 
                 // Prepare the attempt for the policy decision
@@ -241,8 +253,11 @@ where
     match redirect.action {
         Action::Follow => {
             *redirect.request.uri_mut() = redirect.location;
+            redirect.policy.on_request(redirect.request)?;
             redirect.body_repr.try_clone_from(&redirect.body);
-            redirect.policy.on_request(redirect.request);
+            redirect
+                .policy
+                .record_redirect(&redirect.res, redirect.request.uri());
 
             redirect.future.set(Either::Right(Oneshot::new(
                 redirect.service.clone(),
@@ -252,7 +267,7 @@ where
             cx.waker().wake_by_ref();
             Poll::Pending
         }
-        Action::Stop => Poll::Ready(Ok(redirect.res)),
+        Action::Stop => Poll::Ready(Ok(redirect.policy.finish(redirect.res))),
         Action::Error(err) => Poll::Ready(Err(err.into())),
         Action::Pending(_) => unreachable!(),
     }
